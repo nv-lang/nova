@@ -30,5 +30,21 @@ check "код >=128 (сигнал) — красный" "$(run)" "1"
 mkbin 'echo "thread panicked at ..." >&2; exit 1'
 check "слово panic в stderr — красный" "$(run)" "1"
 
+echo "== пул (№1717): итог у каждой фикстуры =="
+# Семь фикстур на три потока (3/2/2 строки): паника одной в середине списка
+# обязана быть названа поимённо, а чистый корпус — сосчитан целиком.
+for k in 1 2 3 4 5 6; do echo "x" > "$FIX/novac/fixtures/pos_n$k.nv"; done
+mkbin 'exit 0'
+NOVAC_POOL_JOBS=3 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "семь фикстур на три потока — зелёный" "$?" "0"
+grep -q 'фикстур 7,.*потоков 3' "$TMP/pool.out"
+check "сосчитаны все семь, потоков 3" "$?" "0"
+mkbin 'case "$2" in *pos_n5.nv) exit 134;; esac; exit 0'
+NOVAC_POOL_JOBS=3 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "паника одной фикстуры пула — красный" "$?" "1"
+grep -q 'pos_n5.nv: код возврата 134' "$TMP/pool.out"
+check "красный называет ИМЕННО её" "$?" "0"
+rm -f "$FIX"/novac/fixtures/pos_n*.nv
+
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -55,18 +55,36 @@ if [ "$N" -eq 0 ]; then
     exit 0
 fi
 
+# ПУЛ (реестр 221.1 №1717): корпус рос 226 -> 284 -> 400 фикстур, страж шёл одним
+# потоком под постоянным пределом и 2026-10-03 был им снят (e41b47d44). Каждая
+# фикстура — один `novac check` в своём потоке, код и вывод — в файлы по номеру
+# строки; сводка ниже идёт по списку и требует итог у КАЖДОЙ строки.
+mkdir -p "$T/r"
+one_check() {
+    "$BIN" check "$2" > "$T/r/$1.out" 2> "$T/r/$1.err" </dev/null
+    echo "$?" > "$T/r/$1.rc"
+}
+J=$(novac_pool_jobs)
+t0=$(date +%s)
+novac_pool one_check "$T/list" "$J"
 bad=0
+i=0
 while IFS= read -r f; do
+    i=$((i+1))
     rel=${f#"$ROOT"/}
-    "$BIN" check "$f" > "$T/out" 2> "$T/err" </dev/null
-    rc=$?
+    if [ ! -f "$T/r/$i.rc" ]; then
+        printf '  %s: итога нет — поток пула его не записал (№1717)\n' "$rel" >> "$T/bad"
+        bad=$((bad+1))
+        continue
+    fi
+    read -r rc < "$T/r/$i.rc"
     if novac_is_panic_rc "$rc"; then
         printf '  %s: код возврата %s (контракт §7: вердикт 0/1, дверь 2)\n' "$rel" "$rc" >> "$T/bad"
         bad=$((bad+1))
-    elif novac_is_silent_door "$rc" "$T/out" "$T/err"; then
+    elif novac_is_silent_door "$rc" "$T/r/$i.out" "$T/r/$i.err"; then
         printf '  %s: exit 2 БЕЗ вывода — отказ двери без причины (274.3/F3)\n' "$rel" >> "$T/bad"
         bad=$((bad+1))
-    elif grep -qi 'panic' "$T/err"; then
+    elif grep -qi 'panic' "$T/r/$i.err"; then
         printf '  %s: слово panic в stderr (код %s)\n' "$rel" "$rc" >> "$T/bad"
         bad=$((bad+1))
     fi
@@ -80,5 +98,5 @@ if [ "$bad" -gt 0 ]; then
     echo "  той же волной; catch_unwind-обёртка — не починка." >&2
     exit 1
 fi
-echo "$NAME ok: фикстур $N, паник/крэшей нет (все коды 0/1, stderr без 'panic')"
+echo "$NAME ok: фикстур $N, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена $(( $(date +%s) - t0 ))с, потоков $J"
 exit 0

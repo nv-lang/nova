@@ -84,5 +84,26 @@ rm -f "$FIX/novac/fixtures/pos_twin.nv"
 check "близнеца нет — красный" "$(run)" "1"
 echo "x" > "$FIX/novac/fixtures/pos_probe.nv"
 
+echo "== пул (№1717): фикстуры делятся между потоками, итог у КАЖДОЙ =="
+# Семь фикстур на три потока: делёж по модулю оставляет потокам 3/2/2 строки,
+# так что потерянный хвост любого потока виден числом. Поддельный novac
+# отвергает pos_n4 (оба отвергли — исход совпал), смоук ругается на pos_n6.
+for k in 1 2 3 4 5 6; do echo "x" > "$FIX/novac/fixtures/pos_n$k.nv"; done
+mkoracle 'case "$2" in *pos_n4.nv) exit 1;; esac; exit 0'
+mkbin 'case "$2" in *pos_n4.nv) exit 1;; esac; exit 0'
+mksmoke 'exit 0'
+NOVAC_POOL_JOBS=3 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "семь фикстур на три потока — зелёный" "$?" "0"
+grep -q 'ПОВЕДЕНИЕ: 6 из 7 байт-в-байт.*не судились 1.*потоков 3' "$TMP/pool.out"
+check "сводка считает все семь: 6 совпали, 1 не судилась, потоков 3" "$?" "0"
+grep -q 'pos_n4.nv: не судилась — novac отверг' "$TMP/pool.out"
+check "несудимая фикстура названа поимённо с причиной" "$?" "0"
+mksmoke 'case "$1" in *pos_n6.nv) echo "stdout: 1 vs 2"; exit 1;; esac; exit 0'
+NOVAC_POOL_JOBS=3 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
+check "одна фикстура пула разошлась — красный" "$?" "1"
+grep -q 'pos_n6.nv: поведение разошлось' "$TMP/pool.out"
+check "красный называет ИМЕННО её" "$?" "0"
+rm -f "$FIX"/novac/fixtures/pos_n*.nv
+
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -197,6 +197,30 @@ jobs:
       - name: Build nova-cli (release — the oracle that compiles novac)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
 
+      # THE ORACLE'S FIXTURE BINARIES OUTLIVE THE RUN (registry 221.1 #1717).
+      # check-novac-differential builds every novac fixture with the oracle to get
+      # the reference behaviour; that build was more than half of the guard's cost
+      # and was repeated on every run, because the cache key was the oracle's mtime.
+      # The key is now content (novac_oracle_key in scripts/guards/lib/novac.sh:
+      # the oracle binary, compiler-codegen/ and std/ trees, clang), so the
+      # directory can travel between runs: a changed oracle, runtime, std or
+      # fixture changes the key and the stale binary is simply never looked up.
+      # Only the binaries travel -- the captured argv and PCH name this runner's
+      # paths and are rebuilt each run.
+      - name: Oracle key for the fixture-binary cache
+        id: oracle-key
+        run: |
+          . scripts/guards/lib/novac.sh
+          echo "key=$(novac_oracle_key "$PWD" nova-cli/target/release/nova "$(command -v clang)")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the oracle's fixture binaries
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/novac-oracle-exe
+          key: ${{ runner.os }}-novac-oracle-exe-${{ steps.oracle-key.outputs.key }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-novac-oracle-exe-${{ steps.oracle-key.outputs.key }}-
+
       # Conventions first: they are cheap and they fail with a legible line.
       # They used to live in scripts/gate.sh and gated every compiler change;
       # split out on the owner's decision 2026-08-16 so the two failure
@@ -209,7 +233,29 @@ jobs:
       - name: novac conventions gate (scripts/gate-novac.sh)
         env:
           NOVAC_TIER: ${{ github.event_name == 'schedule' && 'full' || 'push' }}
-        run: bash scripts/gate-novac.sh "$(pwd)"
+        run: NOVAC_SMOKE_EXE_CACHE="$HOME/.cache/novac-oracle-exe" bash scripts/gate-novac.sh "$(pwd)"
+
+      # Saved even when the gate is red: the binaries are the oracle's, not a
+      # verdict. Binaries of other oracle keys are dropped first (the smoke writes
+      # the current key beside them), and the save key is the content of what is
+      # left, so a run that built nothing new saves nothing.
+      - name: Prune the oracle's fixture binaries to the current key
+        id: oracle-exe
+        if: always()
+        run: |
+          d=~/.cache/novac-oracle-exe
+          [ -f "$d/current-oracle-key" ] || { echo "no current key: nothing to save"; exit 0; }
+          k=$(cat "$d/current-oracle-key")
+          find "$d" -name 'oracle-*.exe' ! -name "*-$k.exe" -delete
+          echo "binaries kept: $(find "$d" -name 'oracle-*.exe' | wc -l)"
+          echo "save=$k-$(ls "$d" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Save the oracle's fixture binaries
+        if: always() && steps.oracle-exe.outputs.save != ''
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/novac-oracle-exe
+          key: ${{ runner.os }}-novac-oracle-exe-${{ steps.oracle-exe.outputs.save }}
 
       - name: Build novac (the self-hosted compiler itself)
         run: |

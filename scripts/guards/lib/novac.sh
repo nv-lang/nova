@@ -141,6 +141,64 @@ novac_bin() {
     else novac_bin_out "$1"; fi
 }
 
+# novac_oracle_key ROOT ORACLE CLANG — ключ ПО СОДЕРЖИМОМУ для бинаря, который оракул
+# собрал из фикстуры (реестр 221.1 №1717). Бинарь фикстуры — функция четырёх вещей:
+# самого оракула, рантайма и std, которые оракул читает С ДИСКА при сборке
+# (compiler-codegen/nova_rt, вендоренные libuv/bdwgc, std/src), clang, которым он
+# собирает, и текста фикстуры (его добавляет вызывающий). Ключ знает первые три.
+#
+# Прежний ключ смоука — штамп ВРЕМЕНИ оракула плюс самый свежий заголовок рантайма —
+# знал меньше, чем то, от чего бинарь зависит (правка std или runtime-.c без
+# пересборки оракула отдавала старый бинарь), и при этом менялся на КАЖДОЙ сборке
+# оракула: на CI оракул собирается заново в каждом прогоне, и кэш между прогонами был
+# невозможен в принципе. Содержимое снимается git-ом: дерево HEAD по путям (одна
+# строка хеша на каталог, подмодули — их коммитом), плюс грязная разница рабочего
+# дерева и неотслеживаемые файлы — правка без коммита тоже меняет ключ. Вне git ключа
+# нет (rc=1): вызывающий остаётся при штампе времени, как было.
+novac_oracle_key() {
+    _ok_root="$1"; _ok_oracle="$2"; _ok_cc="$3"
+    _ok_paths="compiler-codegen std"
+    _ok_tree=$(git -C "$_ok_root" rev-parse HEAD:compiler-codegen HEAD:std 2>/dev/null) || return 1
+    {
+        printf '%s\n' "$_ok_tree"
+        sha256sum < "$_ok_oracle"
+        # shellcheck disable=SC2086
+        git -C "$_ok_root" diff HEAD --binary -- $_ok_paths 2>/dev/null
+        # shellcheck disable=SC2086
+        git -C "$_ok_root" ls-files -o --exclude-standard -z -- $_ok_paths 2>/dev/null \
+            | (cd "$_ok_root" && xargs -0 -r sha256sum)
+        "$_ok_cc" --version 2>/dev/null | head -n 1
+    } | sha256sum | cut -c1-16
+}
+
+# novac_pool FN LIST [J] — FN <номер строки> <строка> для каждой строки файла LIST,
+# в J потоков (по умолчанию novac_pool_jobs). Реестр 221.1 №1717: стражи над корпусом
+# фикстур шли одним потоком, корпус растёт мержами, а предел постоянен — каждые ~30
+# новых фикстур снимали стража без вердикта. Поток s берёт строки с номером
+# i ≡ s (mod J): делёж детерминирован, и вызывающий ОБЯЗАН сверить, что итог есть у
+# каждой строки (FN пишет файл по номеру) — строка без итога красная, а не пропуск.
+novac_pool() {
+    _np_fn="$1"; _np_list="$2"; _np_j="${3:-$(novac_pool_jobs)}"
+    _np_s=0
+    while [ "$_np_s" -lt "$_np_j" ]; do
+        ( _np_i=0
+          while IFS= read -r _np_f; do
+              _np_i=$((_np_i + 1))
+              [ $(( (_np_i - 1) % _np_j )) -eq "$_np_s" ] || continue
+              "$_np_fn" "$_np_i" "$_np_f"
+          done < "$_np_list" ) &
+        _np_s=$((_np_s + 1))
+    done
+    wait
+}
+
+# novac_pool_jobs — число потоков пула: NOVAC_POOL_JOBS, иначе число ядер.
+novac_pool_jobs() {
+    _pj="${NOVAC_POOL_JOBS:-$(nproc 2>/dev/null || echo 2)}"
+    case "$_pj" in ''|*[!0-9]*|0) _pj=2 ;; esac
+    printf '%s\n' "$_pj"
+}
+
 # novac_bin_out ROOT — куда СОБИРАТЬ Карину: `novac.exe` на Windows, `novac` иначе
 # (так её собирает CI, .github/workflows/nova-gate.yml). Пара к novac_bin.
 novac_bin_out() {

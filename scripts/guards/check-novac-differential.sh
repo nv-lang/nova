@@ -107,12 +107,51 @@ if [ "$N" -eq 0 ]; then
     exit 0
 fi
 
+# ---- ПУЛ: фикстуры судятся параллельно, вердикт остаётся поштучным (№1717) ---
+# ВРЕМЯ ЛИНЕЙНО ПО КОРПУСУ, а предел — нет. Корпус рос 109 -> 141 -> 186 -> 190
+# фикстур за неделю, страж шёл одним потоком и 2026-10-05 на CI (a16c01868, run
+# 37342004286) был снят пределом 1200с на этапе 2: вердикта не было вовсе.
+# ЗАМЕР НА ФИКСТУРУ (Windows, 8 фикстур, через одну на 24, холодный кэш), мс:
+#   novac check 1922 · оракул check 822 · сборка оракулом 10736 ·
+#   novac emit + clang -c (PCH) + линковка + два запуска 1523.
+# Этап 2 ЗАНОВО звал оба `check` (ещё 2744мс: дубль этапа 1), и сборка оракулом —
+# больше половины цены — повторялась в каждом прогоне CI. Итого ~18с на фикстуру,
+# 57–75 мин на корпус одним потоком. Три правки класса, а не числа предела:
+#   1) этап 1 пишет исход каждой фикстуры в файл, этап 2 читает его, а не зовёт
+#      `check` снова — минус две трети процессов этапа 1 в этапе 2;
+#   2) фикстуры делятся между NOVAC_POOL_JOBS потоками (по умолчанию — ядра;
+#      общая дверь novac_pool в lib/novac.sh, ею же ходит check-novac-no-panic),
+#      а сводка СВЕРЯЕТ, что исход есть у КАЖДОЙ строки списка: фикстура без
+#      файла исхода — красный «пул потерял», а не тихий пропуск;
+#   3) бинарь оракула кэшируется по СОДЕРЖИМОМУ (novac_oracle_key в lib/novac.sh,
+#      ключ печатает `novac-e1-smoke.sh --prepare`), и каталог бинарей переносится
+#      между прогонами CI (NOVAC_SMOKE_EXE_CACHE, .github/workflows/nova-gate.yml).
+# Каждая строка этапа 2 печатает стену и число потоков: следующий рост корпуса виден
+# числом в логе, а не обрывом.
+J=$(novac_pool_jobs)
+mkdir -p "$T/r"
+# Исход фикстуры: $T/r/<номер>.v = «<novac> <оракул>», слова «принял»/«отверг».
+one_verdict() {
+    if "$BIN" check "$2" >/dev/null 2>&1 </dev/null; then _b="принял"; else _b="отверг"; fi
+    if "$ORACLE" check "$2" >/dev/null 2>&1 </dev/null; then _o="принял"; else _o="отверг"; fi
+    printf '%s %s\n' "$_b" "$_o" > "$T/r/$1.v"
+}
+
+t_stage=$(date +%s)
+novac_pool one_verdict "$T/list" "$J"
 bad=0
 allowed=0
+lost=0
+i=0
 while IFS= read -r f; do
+    i=$((i+1))
     rel=${f#"$ROOT"/}
-    if "$BIN" check "$f" >/dev/null 2>&1 </dev/null; then b="принял"; else b="отверг"; fi
-    if "$ORACLE" check "$f" >/dev/null 2>&1 </dev/null; then o="принял"; else o="отверг"; fi
+    if [ ! -f "$T/r/$i.v" ]; then
+        printf '  %s: исхода нет — поток пула его не записал\n' "$rel" >> "$T/lost"
+        lost=$((lost+1))
+        continue
+    fi
+    read -r b o < "$T/r/$i.v"
     if [ "$b" != "$o" ]; then
         if [ -f "$ALLOW" ] && grep -Fxq "$rel" "$ALLOW"; then
             allowed=$((allowed+1))
@@ -123,6 +162,11 @@ while IFS= read -r f; do
     fi
 done < "$T/list"
 
+if [ "$lost" -gt 0 ]; then
+    echo "$NAME: FAIL — фикстур без исхода: $lost из $N — пул потерял их, о них не узнали ничего (№1717):" >&2
+    cat "$T/lost" >&2
+    exit 1
+fi
 if [ "$bad" -gt 0 ]; then
     echo "$NAME: FAIL — расхождений с оракулом вне novac/divergences.allow: $bad" >&2
     cat "$T/bad" >&2
@@ -132,7 +176,7 @@ if [ "$bad" -gt 0 ]; then
     echo "  (план 274 §10.3а)." >&2
     exit 1
 fi
-echo "$NAME этап 1/3 ИСХОДЫ: фикстур $N, совпали с оракулом (в allow: $allowed) — НЕ ВЕРДИКТ, поведение и храповик ниже"
+echo "$NAME этап 1/3 ИСХОДЫ: фикстур $N, совпали с оракулом (в allow: $allowed); стена $(( $(date +%s) - t_stage ))с, потоков $J — НЕ ВЕРДИКТ, поведение и храповик ниже"
 
 # ---- ОТВЕТ, а не только вердикт (274.3/F18, урок 2026-08-16) -------------
 # Вердикт «оба приняли» ничего не говорит о ЗНАЧЕНИИ. Живой случай: фикстура
@@ -153,34 +197,67 @@ else
         # реализует (D476, реестр 221.1 №1107). Тогда оракул собирает БЛИЗНЕЦА, novac —
         # фикстуру, и ответ сверяется так же байт в байт. Это не пропуск: allow здесь
         # ничего не снимает, а близнец без файла — красный.
-        beh=0; behbad=0; twins=0
-        while IFS= read -r f; do
-            rel=${f#"$ROOT"/}
-            "$BIN" check "$f" >/dev/null 2>&1 </dev/null || continue
-            twin=$(sed -n 's|^// NOVAC_TWIN \([^ ]*\)$|\1|p' "$f" | head -n 1)
-            src="$f"
-            if [ -n "$twin" ]; then
-                src="$(dirname "$f")/$twin"
-                if [ ! -f "$src" ]; then
-                    behbad=$((behbad+1))
-                    printf '  %s: близнец NOVAC_TWIN %s не найден\n' "$rel" "$twin" >> "$T/behbad"
-                    continue
+        #
+        # Итог фикстуры: $T/r/<номер>.b — первое слово `совпало`, `близнец` (совпало
+        # против близнеца), `разошлось` или `не-судилась`, дальше причина. Каждая
+        # фикстура получает РОВНО ОДНО из них, и сводка это сверяет (№1717).
+        one_behaviour() {
+            _r="$T/r/$1"
+            read -r _b _o < "$_r.v"
+            if [ "$_b" != "принял" ]; then echo "не-судилась novac отверг" > "$_r.b"; return 0; fi
+            _twin=$(sed -n 's|^// NOVAC_TWIN \([^ ]*\)$|\1|p' "$2" | head -n 1)
+            _src="$2"
+            if [ -n "$_twin" ]; then
+                _src="$(dirname "$2")/$_twin"
+                if [ ! -f "$_src" ]; then
+                    echo "разошлось близнец NOVAC_TWIN $_twin не найден" > "$_r.b"
+                    return 0
                 fi
-            else
-                # Без близнеца: оракул и novac собирают одну и ту же фикстуру.
-                :
+                # Оракул судит ТО, что собирает: близнеца. Фикстура, которую оракул
+                # отвергает (исход — в allow), сверяется так же, если близнец есть.
+                if "$ORACLE" check "$_src" >/dev/null 2>&1 </dev/null; then _o="принял"; else _o="отверг"; fi
             fi
-            # Оракул судит ТО, что собирает: близнеца, если он назван. Фикстура, которую
-            # оракул отвергает (исход — в allow), сверяется так же, если близнец есть.
-            "$ORACLE" check "$src" >/dev/null 2>&1 </dev/null || continue
-            [ "$src" = "$f" ] || twins=$((twins+1))
-            if bash "$SMOKE" "$src" "$f" >"$T/smoke.out" 2>&1; then
-                beh=$((beh+1))
+            if [ "$_o" != "принял" ]; then echo "не-судилась оракул отверг" > "$_r.b"; return 0; fi
+            if bash "$SMOKE" "$_src" "$2" > "$_r.out" 2>&1; then
+                if [ "$_src" = "$2" ]; then echo "совпало" > "$_r.b"; else echo "близнец" > "$_r.b"; fi
             else
+                echo "разошлось поведение разошлось с оракулом" > "$_r.b"
+            fi
+        }
+        t_stage=$(date +%s)
+        # Общее на прогон готовится ОДИН раз до пула; не вышло — пул в один поток,
+        # и каждый смоук готовит сам и сам называет отказ, как было до пула.
+        jb=$J
+        if bash "$SMOKE" --prepare > "$T/prepare.out" 2>&1; then
+            okey=$(sed -n 's/.*ключ оракула \([0-9a-zA-Z]*\).*/\1/p' "$T/prepare.out" | head -n 1)
+            [ -n "$okey" ] && export NOVAC_SMOKE_ORACLE_KEY="$okey"
+        else
+            jb=1
+        fi
+        novac_pool one_behaviour "$T/list" "$jb"
+        beh=0; behbad=0; twins=0; skipped=0; fromcache=0
+        i=0
+        while IFS= read -r f; do
+            i=$((i+1))
+            rel=${f#"$ROOT"/}
+            if [ ! -f "$T/r/$i.b" ]; then
                 behbad=$((behbad+1))
-                printf '  %s: поведение разошлось с оракулом\n' "$rel" >> "$T/behbad"
-                sed 's/^/      /' "$T/smoke.out" | head -n 4 >> "$T/behbad"
+                printf '  %s: итога нет — поток пула его не записал (№1717)\n' "$rel" >> "$T/behbad"
+                continue
             fi
+            read -r verdict why < "$T/r/$i.b"
+            [ -f "$T/r/$i.out" ] && grep -q 'оракул из кэша' "$T/r/$i.out" && fromcache=$((fromcache+1))
+            case "$verdict" in
+                совпало) beh=$((beh+1)) ;;
+                близнец) beh=$((beh+1)); twins=$((twins+1)) ;;
+                не-судилась)
+                    skipped=$((skipped+1))
+                    printf '  %s: не судилась — %s\n' "$rel" "$why" >> "$T/skipped" ;;
+                *)
+                    behbad=$((behbad+1))
+                    printf '  %s: %s\n' "$rel" "$why" >> "$T/behbad"
+                    [ -f "$T/r/$i.out" ] && sed 's/^/      /' "$T/r/$i.out" | head -n 4 >> "$T/behbad" ;;
+            esac
         done < "$T/list"
         if [ "$behbad" -gt 0 ]; then
             echo "$NAME: FAIL — фикстура принята обоими, но ОТВЕТ разный: $behbad" >&2
@@ -189,7 +266,8 @@ else
             echo "  подмножество имеет право ОТКАЗАТЬ, но не имеет права посчитать иначе." >&2
             exit 1
         fi
-        echo "$NAME этап 2/3 ПОВЕДЕНИЕ: $beh из $N байт-в-байт (из них против близнеца NOVAC_TWIN: $twins) — НЕ ВЕРДИКТ, храповик ниже"
+        echo "$NAME этап 2/3 ПОВЕДЕНИЕ: $beh из $N байт-в-байт (из них против близнеца NOVAC_TWIN: $twins), не судились $skipped — каждая названа ниже; стена $(( $(date +%s) - t_stage ))с, потоков $jb, бинарь оракула из кэша $fromcache из $beh — НЕ ВЕРДИКТ, храповик ниже"
+        [ "$skipped" -gt 0 ] && cat "$T/skipped"
     fi
 fi
 
