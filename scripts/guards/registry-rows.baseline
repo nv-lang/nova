@@ -1545,8 +1545,9 @@
 # 2026-10-05, integrator (OpenCode): rows -> 1654, max -> 1717 (row 1717 with-deadline does not grow with the fixture corpus, filed by p-ci-red2, numbered at merge).
 # 2026-10-05, integrator (OpenCode): rows -> 1655, max -> 1718 (row 1718 the novac smoke's PCH flag filter keeps the value of a two-token -L option, found by the no-limit differential run).
 # 2026-10-05, integrator (OpenCode): rows -> 1656, max -> 1730 (row 1730 filed CLOSED -- in OpenCode the window role came from the branch of the shared main copy; fixed by reading the peers plugin status file; 1719-1729 issued to tasks #1 (1725-1726), #2 (1719-1724, 1727, 1729) and #3 (1728), rows travel in their branches -- reserved in gaps; condition to drop: the merge bringing a row removes its number from gaps).
-rows=1656
-max=1730
+# 2026-10-05, task #6 (numbers from the integrator): rows -> 1658, max -> 1732 (row 1731 filed CLOSED -- a guard swollen in memory took the CI runner down, the gate step died 143 with no line; fixed by the memory cap in with-deadline.sh; row 1732 filed open -- novac check does not terminate on a stray `}` in a match-arm pattern, route 274).
+rows=1658
+max=1732
 rows=1611
 max=1693
 rows=1590
