@@ -253,6 +253,10 @@ done < "$T/list"
 # вскрыто волной И1 (2026-09-02), когда greeter/core.nv перешёл из «наш
 # отказ» в «оба приняли» и смоук честно упал линковкой оракула.
 beh=0; behfail=0; behallow=0; noentry=0
+# Ключ бинаря оракула по содержимому — один раз на прогон (№1717): с ним бинари
+# корпуса переживают прогон, как и бинари фикстур в check-novac-differential.
+_okey=$(sh "$ROOT/scripts/tools/novac-e1-smoke.sh" --prepare 2>/dev/null | sed -n 's/.*ключ оракула \([0-9a-zA-Z]*\).*/\1/p')
+[ -n "$_okey" ] && export NOVAC_SMOKE_ORACLE_KEY="$_okey"
 if [ -f "$T/acc" ]; then
     while IFS= read -r rel; do
         if ! grep -q "fn main(" "$rel"; then

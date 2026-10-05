@@ -28,6 +28,11 @@
 # Проверялся: Windows (Git Bash), 2026-08-15.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# `--prepare` — только общее на прогон (перехват argv, PCH), без фикстуры (№1717).
+# Его зовёт дифференциал ОДИН раз перед пулом: смоуки, стартующие разом над пустым
+# кэшем, собирали бы пробу наперегонки и писали `link-*.argv` друг поверх друга.
+PREPARE=0
+if [ "${1:-}" = "--prepare" ]; then PREPARE=1; shift; fi
 FILE="${1:-examples/basics/hello.nv}"
 NFILE="${2:-$FILE}"
 # NOVAC_BIN — мерить ПРИВАТНУЮ сборку, не устанавливая общий бинарь. Дисциплина
@@ -96,18 +101,46 @@ EFFN=$(sed -n '1s/.*nova-effect-count: \([0-9][0-9]*\).*/\1/p' "$ROOT/novac/src/
 FLAGKEY="$ORACLE_STAMP-e$EFFN"
 
 # ---- 1. oracle binary (per file) + captured argv (per oracle and shell) ---
-KEY=$(cksum < "$FILE" | cut -d' ' -f1)-$ORACLE_STAMP
-ORACLE_EXE="$CACHE/oracle-$KEY.exe"
+# БИНАРЬ ФИКСТУРЫ — ПО СОДЕРЖИМОМУ (реестр 221.1 №1717, 2026-10-05). Замер на
+# Windows, 8 фикстур корпуса: сборка оракулом 10.7с из ~18с на фикстуру, то есть
+# больше половины стоимости дифференциала — и она ПОВТОРЯЛАСЬ в каждом прогоне CI,
+# потому что ключ был штампом времени оракула, а оракул там собирается заново.
+# Ключ теперь — sha256 текста фикстуры плюс novac_oracle_key (оракул, рантайм, std,
+# clang — по содержимому); дифференциал считает его один раз и подаёт через
+# NOVAC_SMOKE_ORACLE_KEY. Считает его только `--prepare`: ключ стоит ~2.6с на
+# Windows (git по двум деревьям), а одиночный вызов без ключа — горячий путь
+# check-novac-iteration-cost (smoke-warm-ms), и там остаётся прежний дешёвый штамп
+# с префиксом `t`, в своём пространстве имён. Вне git — тот же штамп. Каталог
+# бинарей отдельный (NOVAC_SMOKE_EXE_CACHE): только его и можно переносить между
+# прогонами, argv и PCH ссылаются на пути этой машины. Слово «из кэша» в строке ok
+# — для счёта.
+if [ -z "${NOVAC_SMOKE_ORACLE_KEY:-}" ]; then
+    NOVAC_SMOKE_ORACLE_KEY="t$ORACLE_STAMP"
+    if [ "$PREPARE" = 1 ]; then
+        _ck=$(novac_oracle_key "$ROOT" "$ORACLE" "$REAL_CLANG") && NOVAC_SMOKE_ORACLE_KEY="$_ck"
+    fi
+fi
+EXE_CACHE="${NOVAC_SMOKE_EXE_CACHE:-$CACHE}"
+mkdir -p "$EXE_CACHE"
+# Имя файла — тоже вход: оракул собирает копию с `module`, переписанным по имени
+# (шаг ниже), и тот же текст под другим именем — другая программа.
+_STEMK=${FILE##*/}
+KEY=$(sha256sum < "$FILE" | cut -c1-16)-${_STEMK%.nv}-$NOVAC_SMOKE_ORACLE_KEY
+ORACLE_EXE="$EXE_CACHE/oracle-$KEY.exe"
 LINKCMD="$CACHE/link-$FLAGKEY.argv"
 CFLAGS="$CACHE/cflags-$FLAGKEY.argv"
 PCH="$CACHE/prelude-$FLAGKEY.pch"
-if [ ! -f "$ORACLE_EXE" ]; then
+EXE_FROM="из кэша"
+if [ "$PREPARE" = 0 ] && [ ! -f "$ORACLE_EXE" ]; then
+    EXE_FROM="собран"
     STEM=$(basename "$FILE" .nv)
     mkdir -p "$T/pkgless"
     sed "s/^module [a-zA-Z_.]*${STEM}\$/module ${STEM}/" "$FILE" > "$T/pkgless/$STEM.nv"
     "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
         || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
-    cp "$T/oracle.exe" "$ORACLE_EXE"
+    # Публикация атомарна: соседний смоук пула видит либо целый бинарь, либо ничего.
+    cp "$T/oracle.exe" "$ORACLE_EXE.$$" && { mv -f "$ORACLE_EXE.$$" "$ORACLE_EXE" 2>/dev/null || rm -f "$ORACLE_EXE.$$"; }
+    [ -f "$ORACLE_EXE" ] || fail "бинарь оракула не лёг в кэш: $ORACLE_EXE"
 fi
 if [ ! -f "$LINKCMD" ]; then
     LOG="$T/cc.log"; : > "$LOG"
@@ -168,6 +201,13 @@ if [ ! -f "$PCH" ]; then
     eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$CFLAGS") -x c-header \"$CACHE/prelude-$FLAGKEY.h\" -o \"$PCH\"" > "$T/pch.out" 2>&1 \
         || fail "PCH не собрался: $(head -3 "$T/pch.out") | перехваченные CFLAGS ($(grep -c '' "$CFLAGS") строк): $(tr '\n' ' ' < "$CFLAGS" | head -c 400)"
 fi
+if [ "$PREPARE" = 1 ]; then
+    # Текущий ключ — рядом с бинарями: по нему CI чистит каталог от бинарей
+    # прежних оракулов, прежде чем сохранить его между прогонами.
+    printf '%s\n' "$NOVAC_SMOKE_ORACLE_KEY" > "$EXE_CACHE/current-oracle-key"
+    echo "novac-e1-smoke ok: подготовлено (argv и PCH для ключа $FLAGKEY в $CACHE), ключ оракула $NOVAC_SMOKE_ORACLE_KEY"
+    exit 0
+fi
 
 # ---- 3. novac emit -> compile against PCH -> link with the oracle's argv --
 # ОТКАЗ ОБЯЗАН ПОКАЗАТЬ ДИАГНОСТИКИ (2026-09-04). novac печатает диагностики
@@ -185,8 +225,8 @@ eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/emitted_prog.exe\" \"$
     || fail "clang не слинковал: $(head -5 "$T/link.out")"
 
 # ---- 4. behavior diff ---------------------------------------------------
-"$ORACLE_EXE" > "$T/out.oracle" 2>&1; e_o=$?
-"$T/emitted_prog.exe"  > "$T/out.novac"  2>&1; e_n=$?
+"$ORACLE_EXE" > "$T/out.oracle" 2>&1 </dev/null; e_o=$?
+"$T/emitted_prog.exe"  > "$T/out.novac"  2>&1 </dev/null; e_n=$?
 # `head -3` показывал только «1c1», строку оракула и разделитель — НАШЕЙ строки
 # в отчёте не было вовсе (замерено 2026-08-27 на `[7, 8].cap()`: видно «< 8»,
 # не видно «> 2»). Отчёт, показывающий одну сторону расхождения, заставляет
@@ -194,5 +234,5 @@ eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/emitted_prog.exe\" \"$
 # успех». Двенадцать строк: хватает на несколько расходящихся строк вывода.
 cmp -s "$T/out.oracle" "$T/out.novac" || fail "stdout расходится (< оракул, > novac): $(diff "$T/out.oracle" "$T/out.novac" | head -12)"
 [ "$e_o" -eq "$e_n" ] || fail "exit-коды расходятся: oracle=$e_o novac=$e_n"
-echo "novac-e1-smoke ok: $FILE — поведение идентично оракулу (stdout байт-в-байт, exit $e_o)"
+echo "novac-e1-smoke ok: $FILE — поведение идентично оракулу (stdout байт-в-байт, exit $e_o; оракул $EXE_FROM)"
 exit 0

@@ -1,0 +1,20 @@
+== run A: fresh T ==
+rc=1
+<scratch>/p3-stale-rc-nopanic/work/root/scripts/guards/lib/novac.sh: line 192: 1878820 Killed                     ( _np_i=0; while IFS= read -r _np_f; do
+    _np_i=$((_np_i + 1)); [ $(( (_np_i - 1) % _np_j )) -eq "$_np_s" ] || continue; "$_np_fn" "$_np_i" "$_np_f";
+done < "$_np_list" )
+check-novac-no-panic: FAIL — паника/крэш novac на 2 фикстур(ах):
+== run B: stale T with r/2.rc empty, r/3.rc=0 ==
+rc=0
+pre-created <scratch>/p3-stale-rc-nopanic/work/tmp/novac-no-panic.1878828
+<scratch>/p3-stale-rc-nopanic/work/root/scripts/guards/lib/novac.sh: line 192: 1878846 Killed                     ( _np_i=0; while IFS= read -r _np_f; do
+    _np_i=$((_np_i + 1)); [ $(( (_np_i - 1) % _np_j )) -eq "$_np_s" ] || continue; "$_np_fn" "$_np_i" "$_np_f";
+done < "$_np_list" )
+<scratch>/p3-stale-rc-nopanic/work/root/scripts/guards/lib/novac.sh: line 38: [: : integer expected
+<scratch>/p3-stale-rc-nopanic/work/root/scripts/guards/lib/novac.sh: line 42: [: : integer expected
+grep: <scratch>/p3-stale-rc-nopanic/work/tmp/novac-no-panic.1878828/r/3.err: No such file or directory
+check-novac-no-panic ok: фикстур 3, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 1
+== kill.log (proves the thread was killed in both runs) ==
+killing pool thread 1878820 at <scratch>/p3-stale-rc-nopanic/work/root/novac/fixtures/pos_n2.nv
+killing pool thread 1878846 at <scratch>/p3-stale-rc-nopanic/work/root/novac/fixtures/pos_n2.nv
+== leftover dirs in TMPDIR after B (empty = guard used and removed the pre-created dir) ==

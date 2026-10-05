@@ -326,9 +326,11 @@ par_run() {
         # NOVAC_STEP_DEADLINE — предел ЭТОГО шага, отданный стражу: у кого
         # внутри свой бюджет времени (фаззер), тот обязан уложиться в предел,
         # а не узнавать о нём по сигналу (реестр №1372, ci-green-0930).
-        ( NOVAC_STEP_DEADLINE="$_pdl" bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
+        ( _t0=$(date +%s)
+          NOVAC_STEP_DEADLINE="$_pdl" bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
               > "$PAR_DIR/$_i.out" 2>&1
           rc=$?
+          echo $(( $(date +%s) - _t0 )) > "$PAR_DIR/$_i.sec"
           # ТРЕТЬЕ СЛОВО РЯДОМ С ВЫЗОВОМ (Г16). Разбор ниже собирает исходы со
           # всех потоков и переводит 124/137/143 в «ОБРЫВ, вердикта нет», но
           # НАЗВАН исход должен быть там, где случился: иначе и человек, и
@@ -339,9 +341,15 @@ par_run() {
           [ "$rc" -eq 124 ] && echo "СНЯТ ПРЕДЕЛОМ (${_pdl}с или память, см. строку with-deadline): вердикта нет" >> "$PAR_DIR/$_i.out"
           echo "$rc" > "$PAR_DIR/$_i.rc" ) &
         _running=$((_running + 1))
+        # ОСВОБОДИВШЕЕСЯ МЕСТО ЗАНИМАЕТСЯ СРАЗУ (реестр 221.1 №1717). Здесь стоял
+        # голый `wait` — он ждёт ВСЮ пачку, и девятый страж блока стартовал только
+        # после самого долгого из первых восьми. Замер CI 2026-10-05 (run
+        # 37342004286): fixture-expect ждал снятия дифференциала (1200с) и затем
+        # шёл ещё 222с один — блок стоил сумму, а не максимум. `wait -n` (bash 4.3+)
+        # возвращает на первом завершившемся.
         if [ "$_running" -ge "$_jobs" ]; then
-            wait
-            _running=0
+            wait -n
+            _running=$((_running - 1))
         fi
         _i=$((_i + 1))
     done
@@ -352,6 +360,13 @@ par_run() {
         # разбор рассинхрона идут по ней, а не тремя процессами по файлу.
         _out=$(cat "$PAR_DIR/$_i.out" 2>/dev/null)
         [ -n "$_out" ] && printf '%s\n' "$_out"
+        # Стена каждого shell-стража блока (№1717): без неё лог CI говорил только
+        # время блока целиком, и вопрос «кто его держит» решался догадкой.
+        if [ -f "$PAR_DIR/$_i.sec" ]; then
+            read -r _sec < "$PAR_DIR/$_i.sec"
+            read -r _cmd < "$PAR_DIR/$_i.cmd"
+            echo "  [стена ${_cmd##*/}: ${_sec}с]"
+        fi
         # ТРИ ИСХОДА, А НЕ ДВА (Г16, реестр №1113). Прежде здесь стояло
         # `_rc=1` по умолчанию: пропавший файл кода возврата — то есть
         # ОБРЫВ, о предмете не узнали ничего — переводился в единицу и уезжал
@@ -578,6 +593,17 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     # (№1442, замер в шапке пола выше и в самом страже). Экспорт только на блок:
     # самотесты, которые гейт зовёт позже, зовут стража без яруса — всеми тремя.
     export NOVAC_DIFF_TIER="$NOVAC_TIER"
+    # ОДИН `novac check` НА ФИКСТУРУ ЗА ПРОГОН (реестр 221.1 №1717). Замер CI
+    # 2026-10-05 (run 37353522969): no-panic, diag-schema, no-cascade, fixture-expect
+    # и этап 1 дифференциала гоняли novac по одним и тем же фикстурам — ~1200
+    # запусков вместо ~390, — и на четырёх ядрах diag-schema, no-cascade и
+    # fixture-expect снимались пределом 600с. Корпус прогоняется здесь один раз,
+    # стражи читают итог дверью novac_check; оборванный прогон кэша никого не
+    # делает зелёным — записи нет, страж зовёт novac сам.
+    NOVAC_CHECK_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/novac-check-cache.XXXXXX")
+    export NOVAC_CHECK_CACHE
+    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 600 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
+        || echo "novac-check-cache: прогон не завершён — стражи досчитают недостающее сами"
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
     par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
     par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
@@ -600,6 +626,9 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-self-accepted.py" "$ROOT" || fail "самосборка отвергла файл вне базы (регресс меры 0.2, реестр №1665) — или база не сужена"
     par_run
     unset NOVAC_DIFF_TIER
+    # Кэш живёт ровно блок: самотесты ниже подают своих поддельных novac.
+    rm -rf "${NOVAC_CHECK_CACHE:?}"
+    unset NOVAC_CHECK_CACHE
 fi
 
 if [ "$NOVAC_TIER" != "loop" ]; then

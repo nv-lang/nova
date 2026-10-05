@@ -1,0 +1,30 @@
+NOVAC_POOL_JOBS='8' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 0с, потоков 8
+NOVAC_POOL_JOBS='08' rc=1
+    check-novac-no-panic: FAIL — паника/крэш novac на 5 фикстур(ах):
+      novac/fixtures/pos_n1.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n2.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n3.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n4.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n5.nv: итога нет — поток пула его не записал (№1717)
+      Инвариант 11 плана 274: сломанный ввод пережёвывается узлами-
+      ошибками и диагностикой, не паникой. Чинить причину в novac
+NOVAC_POOL_JOBS='09' rc=1
+    check-novac-no-panic: FAIL — паника/крэш novac на 5 фикстур(ах):
+      novac/fixtures/pos_n1.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n2.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n3.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n4.nv: итога нет — поток пула его не записал (№1717)
+      novac/fixtures/pos_n5.nv: итога нет — поток пула его не записал (№1717)
+      Инвариант 11 плана 274: сломанный ввод пережёвывается узлами-
+      ошибками и диагностикой, не паникой. Чинить причину в novac
+NOVAC_POOL_JOBS='010' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 010
+NOVAC_POOL_JOBS='abc' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 0с, потоков 2
+NOVAC_POOL_JOBS='-1' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 2
+NOVAC_POOL_JOBS='0' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 0с, потоков 2
+NOVAC_POOL_JOBS='' rc=0
+    check-novac-no-panic ok: фикстур 5, паник/крэшей нет (все коды 0/1, stderr без 'panic'); стена 1с, потоков 16

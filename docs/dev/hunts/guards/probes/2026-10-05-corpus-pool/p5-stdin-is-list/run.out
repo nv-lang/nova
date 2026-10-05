@@ -1,0 +1,28 @@
+== J=1 rc=1 ==
+check-novac-differential этап 1/3 ИСХОДЫ: фикстур 7, совпали с оракулом (в allow: 0); стена 1с, потоков 1 — НЕ ВЕРДИКТ, поведение и храповик ниже
+check-novac-differential: FAIL — фикстура принята обоими, но ОТВЕТ разный: 5
+  novac/fixtures/pos_n3.nv: итога нет — поток пула его не записал (№1717)
+  novac/fixtures/pos_n4.nv: итога нет — поток пула его не записал (№1717)
+  novac/fixtures/pos_n5.nv: итога нет — поток пула его не записал (№1717)
+  novac/fixtures/pos_n6.nv: итога нет — поток пула его не записал (№1717)
+  novac/fixtures/pos_n7.nv: итога нет — поток пула его не записал (№1717)
+  Одинаковый вердикт при разном ответе — худший вид зелёного:
+  подмножество имеет право ОТКАЗАТЬ, но не имеет права посчитать иначе.
+-- what the 'fixture program' on pos_n2 read from stdin:
+  .../novac/fixtures/pos_n3.nv
+  .../novac/fixtures/pos_n4.nv
+  .../novac/fixtures/pos_n5.nv
+  .../novac/fixtures/pos_n6.nv
+  .../novac/fixtures/pos_n7.nv
+== J=3 rc=1 ==
+check-novac-differential этап 1/3 ИСХОДЫ: фикстур 7, совпали с оракулом (в allow: 0); стена 1с, потоков 3 — НЕ ВЕРДИКТ, поведение и храповик ниже
+check-novac-differential: FAIL — фикстура принята обоими, но ОТВЕТ разный: 1
+  novac/fixtures/pos_n5.nv: итога нет — поток пула его не записал (№1717)
+  Одинаковый вердикт при разном ответе — худший вид зелёного:
+  подмножество имеет право ОТКАЗАТЬ, но не имеет права посчитать иначе.
+-- what the 'fixture program' on pos_n2 read from stdin:
+  .../novac/fixtures/pos_n3.nv
+  .../novac/fixtures/pos_n4.nv
+  .../novac/fixtures/pos_n5.nv
+  .../novac/fixtures/pos_n6.nv
+  .../novac/fixtures/pos_n7.nv

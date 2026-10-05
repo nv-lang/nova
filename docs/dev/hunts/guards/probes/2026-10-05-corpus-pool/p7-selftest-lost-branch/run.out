@@ -1,0 +1,9 @@
+control (no mutation):
+  selftest test-check-novac-no-panic on mutant: rc=0 :: итог: 9 ok, 0 FAIL
+  selftest test-check-novac-differential on mutant: rc=0 :: итог: 22 ok, 0 FAIL
+mutant m1: check-novac-no-panic branch .rc replaced: before=1 after=1
+  selftest test-check-novac-no-panic on mutant: rc=0 :: итог: 9 ok, 0 FAIL
+mutant m2: check-novac-differential branch .v replaced: before=1 after=1
+  selftest test-check-novac-differential on mutant: rc=0 :: итог: 22 ok, 0 FAIL
+mutant m3: check-novac-differential branch .b replaced: before=1 after=1
+  selftest test-check-novac-differential on mutant: rc=0 :: итог: 22 ok, 0 FAIL

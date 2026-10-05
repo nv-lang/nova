@@ -1,0 +1,15 @@
+== run A: fresh T ==
+rc=1
+check-novac-differential: FAIL — фикстур без исхода: 2 из 3 — пул потерял их, о них не узнали ничего (№1717):
+  novac/fixtures/pos_n2.nv: исхода нет — поток пула его не записал
+  novac/fixtures/pos_n3.nv: исхода нет — поток пула его не записал
+== run B: stale T with r/2.v empty, r/3.v='x x' ==
+rc=0
+pre-created <scratch>/p4-stale-v-differential/work/tmp/novac-differential.1878959
+check-novac-differential этап 1/3 ИСХОДЫ: фикстур 3, совпали с оракулом (в allow: 0); стена 1с, потоков 1 — НЕ ВЕРДИКТ, поведение и храповик ниже
+check-novac-differential: стадия ПОВЕДЕНИЯ фикстур пропущена (NOVAC_SMOKE=0) — компиляция C и запуск НЕ проверялись, сверены только исходы принял/отверг
+check-novac-differential ok: ИТОГ ЯРУСА push — этапы 1–2 (исходы и поведение фикстур 3); этап 3/3 (корпус, храповик, самосборка) судит ярус full — ночной прогон (№1442)
+== kill.log ==
+killing pool thread 1878952 at <scratch>/p4-stale-v-differential/work/root/novac/fixtures/pos_n2.nv
+killing pool thread 1878975 at <scratch>/p4-stale-v-differential/work/root/novac/fixtures/pos_n2.nv
+== leftover dirs in TMPDIR after B ==
