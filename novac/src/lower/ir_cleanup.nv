@@ -32,7 +32,7 @@ import ../sem.{FnRow}
 /// day one did (registry 221.1 #1707).
 export type ExitOutcome enum
     | NormalExit // `Success`: a block's end, a `return`, a `break`/`continue`, `?` over an `Option` leaving with `None`
-    | FailureExit(Local) // `Failure(e)`, `e` held by the local: `?` over a `Result` leaving with `Err(e)` -- outside the subset (E2-b3)
+    | FailureExit(Local) // `Failure(e)`, `e` in the local: `?` over a `Result` at `Err(e)`, outside the subset (E2-b3)
 
 /// One auto-`@cleanup` call: the value is a local of the body (a `consume x = e`
 /// binding) or, when `local` is none, a parameter named `name` (D432 rev-2: a
@@ -106,7 +106,9 @@ fn Lowerer mut @d476_args(call Node) -> []CleanupCall {
             ro r = @out.cleanups[k]
             if r.site != call.id_of() { break }
             if r.binder == c.id_of() {
-                out.push(CleanupCall { local: t, name: "", row: r.row, gone: no_local(), outcome: ExitOutcome.NormalExit })
+                out.push(CleanupCall {
+                    local: t, name: "", row: r.row, gone: no_local(), outcome: ExitOutcome.NormalExit
+                })
             } else {
                 continue
             }

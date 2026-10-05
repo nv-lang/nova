@@ -615,7 +615,7 @@ export fn c_tag(ctx Ctx, vrow VariantRow) -> str {
     ro vd = ctx.variant_rows[raw_vrow(vrow)]
     // A HANDED sum's tags are the SHELL's (`NOVA_TAG_ScopeOutcome_Success`) -- the split
     // `c_maker` below makes for its maker. Spelled in our namespace, a test of an
-    // auto-cleanup's outcome named an undeclared constant (registry 221.1 #TBD).
+    // auto-cleanup's outcome named an undeclared constant (registry 221.1 #1728).
     if raw_decl(ctx.tys.decl_head_of(vd.sum_id)) < ctx.foreign_types_cnt { return c_shell_tag(ctx, vrow) }
     // TWICE QUALIFIED, exactly as section 9.1d point 3 asks: the module, then the
     // sum, then the variant. Two same-named sums in one unit used to collapse

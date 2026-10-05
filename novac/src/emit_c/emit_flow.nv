@@ -40,7 +40,7 @@ import ../sem.{branch_children, leaf_text, vec_op_c}
 import ../sem.{is_unit_ty}
 import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
-import ../lower.{HandlerSwap, CleanupCall, ExitOutcome, raw_local}
+import ../lower.{HandlerSwap, CleanupCall, raw_local}
 import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow}
 import ../types.{TyId, no_ty}
 import ../sem.{c_type, effect_slot_c}
