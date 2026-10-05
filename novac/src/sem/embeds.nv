@@ -137,7 +137,7 @@ export fn embed_dir_of(path str) -> str {
     }
     if cut < 0 { return "." }
     if cut == 0 { return "/" }
-    path[0..cut]
+    path[..cut]
 }
 
 /// A path with `.` and `..` resolved by its TEXT (D412 speaks of `..` above the

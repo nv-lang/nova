@@ -225,7 +225,7 @@ fn canon_text(p str) Fs -> Option[str] {
         Ok(cp) => {
             ro t = (cp.os_bytes().to_str() ?? "").replace("\\", "/")
             if t == "" { return None }
-            if t.starts_with("//?/") { return Some(t[4..t.byte_len()]) }
+            if t.starts_with("//?/") { return Some(t[4..]) }
             Some(t)
         }
         // nova:allow W_RESULT_DISCARDED -- no such path: the caller's finding

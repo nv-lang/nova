@@ -55,5 +55,5 @@ fn blob_defs(embeds EmbedTable, rows []int) -> str {
         }
         out.append("\n};\n")
     }
-    out.into_str()
+    out
 }

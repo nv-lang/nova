@@ -58,12 +58,12 @@ fn Checker mut @typed_as_intrinsic(e Node, kids []Node, cname str) -> bool {
 /// type `[]u8` with the row noted on the call for the emitter.
 fn Checker mut @type_embed(e Node, kids []Node) -> () {
     mut n = 0
-    mut arg = e
+    mut arg_at = 0 - 1
     mut at = 0
     for c in kids {
         if at >= 1 && is_arg_node(c) {
             n += 1
-            arg = c
+            arg_at = at
         } else {
             // The callee's name, or punctuation: not an argument.
         }
@@ -73,7 +73,7 @@ fn Checker mut @type_embed(e Node, kids []Node) -> () {
         @reject_first_leaf_of(kids, EMBED_ARG_MSG)
         return
     }
-    ro a = arg_expr_of(arg)
+    ro a = arg_expr_of(kids[arg_at])
     if a.kind_of() != NodeKind.Lit {
         @reject_first_leaf_of(kids, EMBED_ARG_MSG)
         return
