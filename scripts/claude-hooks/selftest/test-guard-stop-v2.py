@@ -81,8 +81,9 @@ def handoff(tmp, session="s1", age_sec=0):
 
 
 def run(tmp, turns, session="s1", active=False, role="integrator",
-        hook=None, env_extra=None):
-    u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым."""
+        hook=None, env_extra=None, env_drop=None):
+    u"""role=None — окно без роли: ворота по роли обязаны сделать хук немым.
+    env_drop — переменные, которых в окне НЕТ (чтобы не унаследовать их из своей среды)."""
     payload = {"transcript_path": transcript(tmp, turns), "cwd": tmp,
                "session_id": session, "stop_hook_active": active}
     env = dict(os.environ)
@@ -90,6 +91,8 @@ def run(tmp, turns, session="s1", active=False, role="integrator",
         env["NOVA_WINDOW_ROLE"] = role
     else:
         env.pop("NOVA_WINDOW_ROLE", None)
+    for k in (env_drop or []):
+        env.pop(k, None)
     if env_extra:
         env.update(env_extra)
     r = subprocess.run([sys.executable, hook or HOOK], input=json.dumps(payload),
@@ -327,6 +330,125 @@ def c_no_agents_no_line_needed(tmp):
                       u"СТОП: очередь-пуста", 0)]), False
 
 
+# --------------------------------------- код «жду» (задача интегратора #5, 2026-10-05)
+# Ожидание окна доказывается файлом состояния вкладки плагина opencode-peers:
+# `$XDG_DATA_HOME/opencode/nova-peers/status/<OPENCODE_SESSION_ID>.json` и
+# `watches/*.json`. Корень данных — шов через XDG_DATA_HOME, машинных путей нет.
+# Клетки идут парами: живое ожидание пропускается, пустое — блокируется.
+
+PEERS_SID = u"ses_TESTSID"
+PEERS_OTHER = u"ses_OTHERSID"
+PEERS_EMPTY = {"session": PEERS_SID, "state": "idle",
+               "watches": [], "asked": [], "tasks": []}
+
+
+def _peers(xdg, status=None, watches=()):
+    u"""Дерево данных плагина: status — словарь файла вкладки или None (файла нет),
+    watches — пары (имя файла, тело)."""
+    base = os.path.join(xdg, "opencode", "nova-peers")
+    os.makedirs(os.path.join(base, "status"), exist_ok=True)
+    os.makedirs(os.path.join(base, "watches"), exist_ok=True)
+    if status is not None:
+        with io.open(os.path.join(base, "status", PEERS_SID + ".json"), "w",
+                     encoding="utf-8") as fh:
+            fh.write(json.dumps(status, ensure_ascii=False))
+    for name, body in watches:
+        with io.open(os.path.join(base, "watches", name), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(body, ensure_ascii=False))
+    return base
+
+
+def _wait(tmp, status=None, watches=(), arg=u"peer_watch гейта", sid=PEERS_SID,
+          drop_sid=False):
+    xdg = tempfile.mkdtemp(prefix="stopwait-")
+    try:
+        _peers(xdg, status, watches)
+        env = {"XDG_DATA_HOME": xdg}
+        if sid:
+            env["OPENCODE_SESSION_ID"] = sid
+        text = u"Жду своё.\n\nСТОП: жду" + (u" " + arg if arg else u"")
+        return run(tmp, [(text, 0)], env_extra=env,
+                   env_drop=[] if sid and not drop_sid else ["OPENCODE_SESSION_ID"])
+    finally:
+        shutil.rmtree(xdg, ignore_errors=True)
+
+
+def c_wait_live_watch(tmp):
+    st = dict(PEERS_EMPTY, watches=[{"id": "w1", "note": "гейт", "minutes": 60}])
+    return _wait(tmp, st), False
+
+
+def c_wait_req_file_before_status(tmp):
+    u"""Только что поставленный peer_watch: в status его ещё нет, есть задание."""
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-x.req.json", {"session": PEERS_SID, "command": "gate"})]), False
+
+
+def c_wait_running_watch_file(tmp):
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-y.json", {"session": PEERS_SID, "status": "running"})]), False
+
+
+def c_wait_done_watch_blocks(tmp):
+    u"""Контроль к предыдущей: завершённое наблюдение ожиданием не является."""
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-z.json", {"session": PEERS_SID, "status": "done"})]), True
+
+
+def c_wait_other_session_watch_blocks(tmp):
+    return _wait(tmp, PEERS_EMPTY,
+                 [("1791-o.json", {"session": PEERS_OTHER, "status": "running"})]), True
+
+
+def c_wait_asked_passes(tmp):
+    st = dict(PEERS_EMPTY, asked=[{"qid": "qabc", "to": "nova.integrator", "at": 1}])
+    return _wait(tmp, st, arg=u"ответа qabc"), False
+
+
+def c_wait_tasks_passes(tmp):
+    st = dict(PEERS_EMPTY, tasks=[{"n": 5, "status": "running", "priority": "P1",
+                                   "title": "t"}])
+    return _wait(tmp, st, arg=u"своих задач"), False
+
+
+def c_wait_acceptance_passes(tmp):
+    st = dict(PEERS_EMPTY, task={"n": 1, "status": "reviewing", "as": "executor",
+                                 "title": "t"})
+    return _wait(tmp, st, arg=u"приёмки #1"), False
+
+
+def c_wait_rework_passes(tmp):
+    st = dict(PEERS_EMPTY, task={"n": 1, "status": "rework", "as": "executor",
+                                 "title": "t"})
+    return _wait(tmp, st, arg=u"доработки #1"), False
+
+
+def c_wait_own_running_task_blocks(tmp):
+    u"""Своя задача в работе — не ожидание: окно её делает сейчас, не ждёт."""
+    st = dict(PEERS_EMPTY, task={"n": 1, "status": "running", "as": "executor",
+                                 "title": "t"})
+    return _wait(tmp, st, arg=u"чего-то"), True
+
+
+def c_wait_empty_blocks(tmp):
+    return _wait(tmp, PEERS_EMPTY), True
+
+
+def c_wait_no_subject_blocks(tmp):
+    st = dict(PEERS_EMPTY, watches=[{"id": "w1", "note": "гейт", "minutes": 60}])
+    return _wait(tmp, st, arg=u""), True
+
+
+def c_wait_no_session_env_blocks(tmp):
+    st = dict(PEERS_EMPTY, watches=[{"id": "w1", "note": "гейт", "minutes": 60}])
+    return _wait(tmp, st, sid=None), True
+
+
+def c_wait_no_status_file_blocks(tmp):
+    return _wait(tmp, None,
+                 [("1791-x.req.json", {"session": PEERS_SID})]), True
+
+
 for n, f in [
     (u"нет кода остановки", c_no_code),
     (u"помощник: «смена» без записки — отказ", c_assistant_shift_blocked),
@@ -357,6 +479,20 @@ for n, f in [
     (u"снимок битый JSON — блок", c_queue_broken_json),
     (u"кириллический путь и cp1251 — хук говорит", c_cyrillic_path_cp1251),
     (u"третья блокировка подряд пропускается", c_escape_after_two),
+    (u"жду: живое наблюдение в status — пропуск", c_wait_live_watch),
+    (u"жду: req-файл наблюдения до status — пропуск", c_wait_req_file_before_status),
+    (u"жду: идущее наблюдение в watches/ — пропуск", c_wait_running_watch_file),
+    (u"жду: завершённое наблюдение — блок", c_wait_done_watch_blocks),
+    (u"жду: наблюдение ЧУЖОЙ сессии — блок", c_wait_other_session_watch_blocks),
+    (u"жду: непустой asked — пропуск", c_wait_asked_passes),
+    (u"жду: непустой tasks — пропуск", c_wait_tasks_passes),
+    (u"жду: задача на приёмке — пропуск", c_wait_acceptance_passes),
+    (u"жду: задача на доработке — пропуск", c_wait_rework_passes),
+    (u"жду: своя задача в работе — блок", c_wait_own_running_task_blocks),
+    (u"жду: пустые списки — блок", c_wait_empty_blocks),
+    (u"жду без предмета — блок", c_wait_no_subject_blocks),
+    (u"жду без OPENCODE_SESSION_ID — блок", c_wait_no_session_env_blocks),
+    (u"жду: файла состояния нет — блок", c_wait_no_status_file_blocks),
 ]:
     case(n, f)
 

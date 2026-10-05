@@ -31,8 +31,18 @@ against мира. Нет строки — блокируем; код есть �
     СТОП: очередь-пуста
     СТОП: вопрос
     СТОП: неавторизовано <действие>
+    СТОП: жду <чего>
 
-Три кода — ровно три законные причины из `/flow`, других нет.
+Четыре кода — три законные причины из `/flow` и четвёртая: окно ЖДЁТ своё
+(владелец 2026-10-05, задача интегратора #5). Без неё окно, ждущее `peer_watch`
+или ответа соседа, было вынуждено писать «очередь-пуста», а это неправда.
+
+* `жду` — проверяется ЖИВЫМ ожиданием по файлу состояния вкладки плагина
+  `opencode-peers`: непуст `watches` / `asked` / `tasks` либо `task.status` —
+  сдана, на приёмке, на доработке; или есть живой файл в `watches/`
+  (`*.req.json` либо `*.json` со статусом не `done`) с session этой вкладки.
+  Код без предмета, без `OPENCODE_SESSION_ID` (окно не claude-code) или без
+  файла состояния не принимается.
 
 ЧТО ПРОВЕРЯЕТСЯ ПО КАЖДОМУ КОДУ.
 
@@ -71,7 +81,7 @@ against мира. Нет строки — блокируем; код есть �
 отменяют, и это НЕ недосмотр: ответ владельцу не опустошает очередь, а
 `/flow` прямо говорит, что доклад — запятая. Ответил и взял следующий пункт.
 
-ДВЕ ЗАКОННЫЕ КОНЦОВКИ СВЕРХ ТРЁХ КОДОВ, обе машинно проверяемые:
+ДВЕ ЗАКОННЫЕ КОНЦОВКИ СВЕРХ ПЕРЕЧНЯ КОДОВ, обе машинно проверяемые:
 * прерывание владельцем (`[Request interrupted by user]`) — не остановка окна,
   а вмешательство; хук пропускает молча;
 * `СТОП: смена` — окно сдаёт смену командой `/stop`; проверяется НАЛИЧИЕМ И
@@ -141,7 +151,7 @@ def emit(obj):
 
 
 STOP_RE = re.compile(
-    u"^[\\s>*_-]*СТОП:\\s*(очередь-пуста|вопрос|неавторизовано|смена)\\b[ \\t]*(.*)$",
+    u"^[\\s>*_-]*СТОП:\\s*(очередь-пуста|вопрос|неавторизовано|смена|жду)\\b[ \\t]*(.*)$",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -174,6 +184,11 @@ IRREVERSIBLE = [u"пуш", u"push", u"тег", u"tag", u"удал", u"публи
 
 QUEUE_MAX_AGE_SEC = 30 * 60
 MAX_BLOCKS_IN_ROW = 2
+
+# task.status из файла состояния вкладки (плагин opencode-peers, index.ts):
+# сдана / на приёмке / на доработке. Значения взяты из живых файлов, README
+# плагина называет их иначе — см. отчёт, расхождение у интегратора.
+PEERS_WAIT_TASK = (u"submitted", u"reviewing", u"rework")
 
 
 def block(reason):
@@ -284,6 +299,72 @@ def note_block(st, tag):
     why.append(tag)
     st["why"] = why[-2:]
     return st
+
+
+def peers_root():
+    u"""Корень данных плагина: `$XDG_DATA_HOME/opencode/nova-peers`. Шов — переменная
+    окружения, поэтому в коде нет ни одного машинного пути."""
+    base = (os.environ.get("XDG_DATA_HOME") or u"").strip()
+    if not base:
+        base = os.path.join(os.path.expanduser(u"~"), u".local", u"share")
+    return os.path.join(base, u"opencode", u"nova-peers")
+
+
+def load_json(p):
+    try:
+        with io.open(p, encoding="utf-8", errors="replace") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def watch_file_live(root, sid):
+    u"""Живое наблюдение по каталогу `watches/`. Нужно для ТОЛЬКО что поставленного
+    peer_watch: вкладка появляется в `status/` не сразу (раз в 5 с). `*.req.json` —
+    задание ещё не взято плагином; `*.json` без `done` — идёт."""
+    d = os.path.join(root, u"watches")
+    try:
+        names = os.listdir(d)
+    except Exception:
+        return False
+    for n in names:
+        if not n.endswith(u".json"):
+            continue
+        w = load_json(os.path.join(d, n))
+        if not isinstance(w, dict) or w.get("session") != sid:
+            continue
+        if n.endswith(u".req.json") or w.get("status") != u"done":
+            return True
+    return False
+
+
+def wait_proof(sid, root):
+    u"""(ok, причина) для кода «жду». Ожидание доказывается ЖИВЫМ состоянием вкладки,
+    а не словом: непустые watches / asked / tasks, task.status на приёмке, либо
+    живой файл наблюдения. Пустые списки — блок: окно ничего не ждёт."""
+    if not sid:
+        return False, (
+            u"Код «жду» не принят: переменной OPENCODE_SESSION_ID нет. Её кладёт "
+            u"провайдер claude-code; окно, в котором её нет, не вкладка плагина, и "
+            u"ожидать ему нечем. Закончи ход другим кодом."
+        )
+    st = load_json(os.path.join(root, u"status", u"%s.json" % sid))
+    if not isinstance(st, dict):
+        return False, (
+            u"Код «жду» не принят: файла состояния вкладки %s нет или он не читается. "
+            u"Без него ожидание не доказано." % os.path.join(root, u"status", sid + u".json")
+        )
+    task = st.get(u"task") or {}
+    if (st.get(u"watches") or st.get(u"asked") or st.get(u"tasks")
+            or (task.get(u"status") or u"") in PEERS_WAIT_TASK):
+        return True, u""
+    if watch_file_live(root, sid):
+        return True, u""
+    return False, (
+        u"Код «жду» без живого ожидания: ни одного наблюдения (peer_watch), вопроса "
+        u"без ответа, открытой задачи, и задача не сдана, не на приёмке и не на "
+        u"доработке. Ждать нечего — бери следующий пункт в этом же ходе."
+    )
 
 
 def check_queue(cwd):
@@ -635,7 +716,8 @@ def main():
             u"строка доклада обязана нести код — «СТОП: очередь-пуста» (сверяется со "
             u"снимком `target/queue.json`), «СТОП: вопрос» (в абзаце есть вопрос), "
             u"«СТОП: неавторизовано <действие>» (пуш, тег, удаление, публикация) или "
-            u"«СТОП: смена» (сдача смены через `/stop`, записка обновлена). "
+            u"«СТОП: смена» (сдача смены через `/stop`, записка обновлена), «СТОП: жду "
+            u"<чего>» (живое ожидание вкладки). "
             u"Если причины нет — значит очередь не пуста: бери следующий пункт сейчас, "
             u"в этом же ходе."
         )
@@ -698,6 +780,16 @@ def main():
                 % (NOTE_FRESH_SEC // 60,
                    hp if hp else u"id сессии не отдан окружением")
             )
+
+    elif code == u"жду":
+        if not arg:
+            ok, reason = False, (
+                u"Код «жду» без предмета. Назови, чего ждёшь: «СТОП: жду peer_watch "
+                u"гейта», «СТОП: жду ответа qid…» или «СТОП: жду приёмки #N»."
+            )
+        else:
+            ok, reason = wait_proof(
+                (os.environ.get(u"OPENCODE_SESSION_ID") or u"").strip(), peers_root())
 
     elif code == u"неавторизовано":
         low = arg.lower()
