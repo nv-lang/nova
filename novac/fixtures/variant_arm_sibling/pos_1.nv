@@ -1,0 +1,41 @@
+module variant_arm_sibling.pos_1
+
+// A BARE `None` TAKES ITS SIBLING'S TYPE (D489, the paragraph on a `match` arm
+// and an `if` branch: with no written result type the arms are one type, and a
+// literal arm -- a variant is one -- takes the type of the arm that is a value).
+// The form of novac's own `@emit_store` (emit_place.nv): `ro built = match op {
+// Set => @build_value(..)  Update(_) => None }`. Until registry #1721 the `None`
+// was refused as having no type to take. The oracle compiles it; the `None` in
+// the FIRST branch of an `if` is pos_2 (the oracle miscompiles that one).
+type Op enum Set | Update(int)
+
+fn build(n int) -> Option[str] => if n > 0 { Some("v${n}") } else { None }
+
+fn show(o Option[str]) -> str => match o {
+    Some(t) => t
+    None => "-"
+}
+
+fn pick(op Op, n int) -> str {
+    ro built = match op {
+        Set => build(n)
+        Update(_) => None
+    }
+    ro first = match op {
+        Update(k) => {
+            println("update ${k}")
+            None
+        }
+        Set => Some(n * 2)
+    }
+    ro head = if n > 1 { Some(n) } else { None }
+    ro a = match first { Some(v) => v, None => -1 }
+    ro b = match head { Some(v) => v, None => -1 }
+    "${show(built)} ${a} ${b}"
+}
+
+fn main() {
+    println(pick(Op.Set, 1))
+    println(pick(Op.Update(1), 2))
+    println(pick(Op.Set, 0))
+}

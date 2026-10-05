@@ -170,8 +170,30 @@ fn Checker mut @type_if_value(n Node) -> () {
     } else {
         // At least one branch may fall through to a value.
     }
-    ro then_t = if then_terminates { no_ty() } else { @type_branch_value(kids[2]) }
-    ro else_t = if else_terminates { no_ty() } else { @type_branch_value(kids[4]) }
+    // A BARE VARIANT BRANCH TAKES ITS SIBLING'S TYPE when the position names
+    // none (D489, a `match` arm and an `if` branch; the match arm's door is
+    // `@type_match`): `if c { None } else { Some(3) }` is an `Option[int]`,
+    // so the bare branch is typed second, expecting the other's type.
+    ro saved_expect = @value_expect
+    ro waits = !is_ty(saved_expect)
+    ro then_waits = waits && !then_terminates && @branch_is_bare_variant(kids[2])
+    ro else_waits = waits && !else_terminates && @branch_is_bare_variant(kids[4])
+    mut then_t = no_ty()
+    mut else_t = no_ty()
+    if then_waits && !else_waits {
+        else_t = if else_terminates { no_ty() } else { @type_branch_value(kids[4]) }
+        @value_expect = @sibling_expect(if is_ty(else_t) { Some(else_t) } else { None })
+        then_t = @type_branch_value(kids[2])
+    } else {
+        then_t = if then_terminates { no_ty() } else { @type_branch_value(kids[2]) }
+        if else_waits && !then_waits {
+            @value_expect = @sibling_expect(if is_ty(then_t) { Some(then_t) } else { None })
+        } else {
+            // Both or neither wait: each branch has the position's expectation.
+        }
+        else_t = if else_terminates { no_ty() } else { @type_branch_value(kids[4]) }
+    }
+    @value_expect = saved_expect
     if then_terminates {
         if is_ty(else_t) {
             @record(n, else_t)
@@ -614,6 +636,12 @@ fn Checker mut @reject_return_self_in(n Node) -> () {
 /// Is `n` the receiver itself, written bare (`@`)? `@field` is a `SelfField`
 /// and `@m()` a `MethodCall`, so only the one-leaf `SelfExpr` answers yes.
 fn is_bare_self(n Node) -> bool => n.kind_of() == NodeKind.SelfExpr
+
+/// Is a branch of a value `if` a BARE VARIANT (`{ None }`) -- the arm's
+/// question (`@arm_is_bare_variant`) asked of a branch block's tail? An
+/// `else if` is no bare variant: it takes its expectation as a whole.
+fn Checker @branch_is_bare_variant(b Node) -> bool =>
+    b.kind_of() == NodeKind.Block && @is_deferred_variant(block_tail(b))
 
 /// The value-placing tail of a branch BLOCK, or the branch itself when it is
 /// not a block (an `else if`): what a literal branch is asked about.

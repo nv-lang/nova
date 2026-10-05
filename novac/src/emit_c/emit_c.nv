@@ -150,7 +150,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
                           // here would not be a compile error -- it would be an
                           // empty pool found at runtime or never. Measured on
                           // this very field the day the pool was added.
-                          pool: LitPool.new() }
+                          pool: LitPool.new(), blobs: []int.new() }
     e.emit_type_decls()
     // Module values (274.5 section 6): the cells before any function reads
     // them, the initializers after every function they may call, and the
@@ -175,8 +175,10 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     e.emit_spawn_fns()
     e.emit_module_value_inits()
     ro init = e.module_value_init_calls()
+    // The blobs `embed` named (D412), before every function that reads them.
+    ro blobs = blob_defs(e.ctx.embeds, e.blobs)
     ro (lits, code) = e.into_parts()
-    render(lits, code, init)
+    render(lits, "${blobs}${code}", init)
 }
 
 
@@ -236,10 +238,10 @@ fn Emitter mut @emit_fn(f Node) -> () {
     // overload's name and clang refused the unit (measured 2026-08-21). The
     // door exists for exactly this question, and the emitter now asks it -- the
     // same correction the CALL path took on 2026-08-19.
-    // The door answers with a bare row index (`Option[int]`) -- wrapping
-    // `decl_fn_row` is the next step of section 9.1g -- so the crossing into the
-    // row SPACE happens here, once, and named.
-    ro fn_row = FnRow(decl_fn_row(f, @ctx) ?? ice("emit: a declaration with no row in the callable table"))
+    // The door answers in the row SPACE already (`Option[FnRow]`, section 9.1g):
+    // wrapping its answer in `FnRow(..)` again is E_NEWTYPE_CTOR_SELF (D52
+    // amendment 2026-10-02).
+    ro fn_row = decl_fn_row(f, @ctx) ?? ice("emit: a declaration with no row in the callable table")
     // The TYPES come from the ROW, as a VIEW: the registry decided them while
     // collecting, and asking `defs` again was a second door to one decision
     // that answered DIFFERENTLY for `x T` (found 2026-08-20). `ret_id` is -1

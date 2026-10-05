@@ -14,3 +14,6 @@ iflet_else
 ctor_self_shorthand
 record_variant
 or_pattern_binder
+consume_field_move
+variant_arm_sibling
+embed

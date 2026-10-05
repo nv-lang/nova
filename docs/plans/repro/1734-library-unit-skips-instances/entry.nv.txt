@@ -1,0 +1,21 @@
+// Registry #1734, the ENTRY half: the same body as library.nv.txt, reached from
+// `main`. novac makes the instance of std `Vec[str] @pop`, types its body, and
+// refuses it: `@data.read_consume_at(@len)` is a pointer operation novac does not
+// compile -- "in the instance of `pop`: outside the subset: no such method in
+// the declarations handed to novac" (std/src/collections/vec/mutate.nv).
+//
+// Run from the root of the repository, the file copied to `<scratch>/entry.nv`:
+//   novac/target/novac check <scratch>/entry.nv   -> the refusal above, exit 1
+// Measured 2026-10-05 on branch t2-karina-mera-0-2-emit-c-emit-place-shell.
+module popprobe
+
+fn last_of() -> int {
+    mut v = []str.new()
+    v.push("a")
+    ro last = v.pop()
+    if last.is_some() { 1 } else { 0 }
+}
+
+fn main() {
+    println("${last_of()}")
+}

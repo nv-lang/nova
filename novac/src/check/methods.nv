@@ -51,7 +51,7 @@ fn Checker @method_call_key(kids []Node, recv_t TyId) -> []ArgSpec {
     // A receiver typed by a PROTOCOL looks its methods up on the implementor
     // (interop pair, 274.7 B1b-1): `f.write(b)` on `mut f Fmt` finds
     // `FmtCtx.write`. The door is the same one the C spellings ask.
-    typed_call_key(kids, 3, kids[0], impl_of_proto(@ctx, recv_t), @ctx, @scope, @chan)
+    typed_call_key(kids, 3, kids[0], impl_of_proto(@ctx, recv_t), @ctx, @scope, @chan, @fres)
 }
 
 /// The same key with the argument TYPES removed — the diagnostic's tool, not

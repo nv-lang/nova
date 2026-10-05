@@ -37,12 +37,20 @@ import ../sem.{c_instance_ctor, c_method_symbol, c_overload_symbol}
 import ../sem.{ty_source_name, variants_named, slice_shape_of, ctor_head_variant}
 import ../types.{TyId, no_ty, is_ty}
 
+/// A binding: typed by its initializer (below), and then the one question the
+/// binding's MODE asks of a typed initializer -- an `embed` under `mut` or
+/// `consume` copies its blob into the heap (D412, check/embed_call.nv).
+fn Checker mut @type_bind(st Node) -> () {
+    @type_bind_by_init(st)
+    @note_embed_copy(st)
+}
+
 /// A binding. The initializer's type is decided BEFORE the initializer's own
 /// binders exist -- the emitter's order, kept because changing it would change
 /// which programs compile (a match whose first arm uses its binders is
 /// refused today, and that refusal is a fact of the subset, not an accident
 /// of this walk).
-fn Checker mut @type_bind(st Node) -> () {
+fn Checker mut @type_bind_by_init(st Node) -> () {
     ro kids = branch_children(st)
     if kids.len() < 2 {
         @report_first_leaf_of(kids, "outside the subset: a binding needs a name and an initializer (274.5 P3)")

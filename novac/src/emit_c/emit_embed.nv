@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: C23 `#embed` -- the file's bytes become the initializer of a
+// `static const` array in read-only data; the `[]u8` over it is the D262 view
+// model the runtime already spells: `nova_blob_view` (the zero-copy view of a
+// `ro` binding) or `nova_blob_copy` (a `mut`/`consume` binding's heap copy),
+// nova_rt/array.h. NOT taken: `#embed` itself (not every toolchain novac drives
+// has it) and content-hash symbol names -- the row of the door's table is
+// already a stable, distinct name.
+// Role: print an `embed("path")` call the checker noted (`CheckOut.embed_row_at`)
+//   and the static arrays of the blobs the emission used.
+// Used by: emit_c/emit_expr.nv (the call), emit_c/emit_c.nv (`emit`: the arrays
+//   go before the code that reads them).
+// Guarded by: check-novac-differential.sh over novac/fixtures/embed, and
+//   scripts/tools/novac-e1-smoke.sh on embed/pos_1 (byte-for-byte with the oracle).
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../sem.{c_type, EmbedTable}
+
+/// `embed("path")` as a `[]u8` value: a view of the static blob, or a copy of it
+/// at a `mut`/`consume` binding. An empty file has no array to point at.
+fn Emitter mut @emit_embed(e Node) -> () {
+    ro row = @out.embed_row_at(e.id_of())
+    ro n = @ctx.embeds.len_at(row)
+    ro ct = c_type(@ctx, @out.type_of(e.id_of()))
+    ro make = if @out.embed_copies(e.id_of()) { "nova_blob_copy" } else { "nova_blob_view" }
+    if n == 0 {
+        @body.append("((${ct})${make}((const uint8_t*)0, 0))")
+        return
+    }
+    @note_blob(row)
+    @body.append("((${ct})${make}(_novac_blob_${row}, ${n}))")
+}
+
+/// Remember that row `row`'s array is printed, once.
+fn Emitter mut @note_blob(row int) -> () {
+    for r in @blobs {
+        if r == row { return }
+    }
+    @blobs.push(row)
+}
+
+/// The static arrays of the blobs in `rows`, one per row: the bytes in decimal,
+/// sixteen to a line.
+fn blob_defs(embeds EmbedTable, rows []int) -> str {
+    consume out = StringBuilder.new()
+    for row in rows {
+        ro n = embeds.len_at(row)
+        out.append("static const uint8_t _novac_blob_${row}[${n}] = {")
+        for k in 0..n {
+            if k % 16 == 0 { out.append("\n    ") } else { out.append(" ") }
+            ro b = embeds.byte_at(row, k) as int
+            out.append("${b},")
+        }
+        out.append("\n};\n")
+    }
+    out
+}

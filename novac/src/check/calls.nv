@@ -35,14 +35,14 @@ import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
 import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
-import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN, RECV_BINDING}
+import ../builtins.{TypeKind, RECV_BINDING}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
 import ../sem.{ArgClass, ParamMode, ParamDef, mode_admits, call_arg_at}
 import ../sem.{shape_of, call_callee_text}
 import ../types.{TyId, no_ty, is_ty}
-import ../resolve.{FnLookup, missing_sig_of}
+import ../resolve.{FnLookup, FieldIndex, missing_sig_of}
 // Came with the call arms lifted out of `@type_expr` (2026-09-15): imports are
 // per FILE in Nova, so a body that moves between files of ONE module still has to
 // bring the names it uses. Computed from what the moved text actually mentions,
@@ -60,8 +60,8 @@ fn free_call_key(kids []Node, scope Scope) -> []ArgSpec {
 }
 
 /// The TYPED key of a free call: one slot per argument, each its own type.
-fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut) -> []ArgSpec {
-    typed_args(kids, 1, ctx, scope, chan)
+fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> []ArgSpec {
+    typed_args(kids, 1, ctx, scope, chan, fres)
 }
 
 /// Name a free call's refusal precisely: unknown name, wrong arity, or a type
@@ -835,27 +835,10 @@ fn Checker mut @type_free_call(e Node) -> () {
     } else {
         // Not a variant: a callable of the name table, below.
     }
-    // `size_of[T]()` (274.11 E.10 step 4c-2: std's `alloc_buf[T]`): the
-    // language's own intrinsic -- no row of anyone's. Its type argument is
-    // recorded; its value is an `int`.
-    if cname == SIZE_OF_FN && @ctx.defs.def_of(cname).is_none() {
-        @type_size_of(e, kids)
-        // SILENT-OK: the intrinsic's own door recorded its type or refused it by name.
-        return
-    } else {
-        // An ordinary free call.
-    }
-    // `assert(cond[, msg])` (D81): the prelude declares it `extern "nova"`, so
-    // no row of anyone's has a body -- the intrinsic door types it and notes
-    // the condition's text and line for the emitter. A program's own `assert`
-    // outranks it, the same rule `size_of` keeps.
-    if cname == ASSERT_FN && @ctx.defs.def_of(cname).is_none() {
-        @type_assert(e, kids)
-        // SILENT-OK: the intrinsic's own door recorded the call or refused it by name.
-        return
-    } else {
-        // Not the intrinsic: the name table below.
-    }
+    // The language's INTRINSICS by bare name -- `embed`, `size_of`, `assert`:
+    // no row of anyone's, each its own door (check/embed_call.nv).
+    // SILENT-OK: the intrinsic's own door recorded its type or refused it by name.
+    if @typed_as_intrinsic(e, kids, cname) { return }
     ro found = @ctx.defs.def_of(cname)
     // FIRST FLOOR, found by probing the guards above (2026-08-16): a
     // trailing `1 +` or `!` swallows the NEXT statement as its operand,
@@ -940,7 +923,7 @@ fn Checker mut @type_free_call(e Node) -> () {
             // query, and `byte_len("abc")` reached `str @byte_len()` by
             // arity alone -- accepted here, refused by the oracle, and
             // emitted as one string argument to a two-parameter function.
-            ro key = typed_free_key(kids, @ctx, @scope, @chan)
+            ro key = typed_free_key(kids, @ctx, @scope, @chan, @fres)
             match @lookup_call(cname, key, CallForm.FreeCall) {
                 FnFound(row) => {
                     ro rmark = @out.len()
