@@ -135,10 +135,28 @@ case "$n" in ""|*[!0-9]*) echo "novac-fuzz: генератор не назвал
 # здесь значило бы вернуть детерминированный порядок и обнулить смысл зерна.
 [ -s "$T/list" ] || { echo "novac-fuzz: генератор не написал список случаев" >&2; exit 2; }
 
+# ---- 2a. ОДНА ДВЕРЬ ДЛЯ ВСЕХ ЗАПУСКОВ КОМПИЛЯТОРА: время И память --------
+# Задача #6 (2026-10-05, реестр 221.1 №1731). Здесь стояли голые `timeout N`, то
+# есть предел только по времени. Замер CI (run 37340303025): на мутации
+# `match_demo-26-closer7d-241` (лишняя `}` в шаблоне ветки, зерно fac09cb9e)
+# `novac check` пачки не кончается и на Linux растёт ~70 МБ/с — 15 ГБ RSS за
+# ~210 с при 16 ГБ у раннера. `timeout 300` до предела не дожил: раньше
+# кончилась машина, раннер снял весь шаг кодом 143, и находку фаззера никто
+# не назвал. Теперь каждый запуск идёт через with-deadline.sh с пределом
+# памяти на дерево: раздувшийся процесс снимается кодом 124, как зависший, и
+# бисекция ниже называет случай. Число — законный пик с запасом: пачка из 40
+# мутаций в `novac check` — 612 МБ (замер Windows, та же пачка). Тесный
+# предел здесь ещё и скорость: бисекция повторяет виновника ~6 раз, и каждый
+# повтор живёт, пока не упрётся.
+FUZZ_MEM_MB="${NOVAC_FUZZ_MEM_MB:-2048}"
+bounded() {   # <секунды> <команда...>
+    NOVA_MEM_CAP_MB="$FUZZ_MEM_MB" bash "$ROOT/scripts/tools/with-deadline.sh" "$@"
+}
+
 # ---- 2. batched check; a panic/hang/crash of a process is red ------------
 judge() {   # $1 = list file; 0 = green, 1 = something died
     # shellcheck disable=SC2046
-    ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 300 "$NOVAC" check $(cat "$1") ) \
+    ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" bounded 300 "$NOVAC" check $(cat "$1") ) \
         > "$T/out" 2> "$T/err"
     rc=$?
     if novac_is_panic_rc "$rc" || grep -qi "panic" "$T/err"; then
@@ -214,7 +232,7 @@ judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
         _ei=$((_ei + 1))
         printf "%s" "$case_nv" > "$_ed/$_ei.name"
         (
-            cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
+            cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" bounded 60 \
                 "$NOVAC" emit "$case_nv" > /dev/null 2> "$_ed/$_ei.err"
             rc=$?
             # ТРЕТЬЕ СЛОВО СТОИТ РЯДОМ С ВЫЗОВОМ, а не через тридцать строк:
@@ -222,7 +240,7 @@ judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
             # от настоящего отказа». Разбор ниже остаётся — он собирает исходы
             # со всех потоков; здесь же исход НАЗЫВАЕТСЯ в тот момент, когда
             # случился.
-            [ "$rc" -eq 124 ] && echo "СНЯТ ПРЕДЕЛОМ 60с: вердикта нет" >> "$_ed/$_ei.err"
+            [ "$rc" -eq 124 ] && echo "СНЯТ ПРЕДЕЛОМ (60с или память ${FUZZ_MEM_MB}МБ — см. строку with-deadline): вердикта нет" >> "$_ed/$_ei.err"
             echo "$rc" > "$_ed/$_ei.rc"
         ) &
         _erun=$((_erun + 1))
@@ -243,7 +261,7 @@ judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
             echo "novac-fuzz: EMIT не оставил кода возврата на $case_nv: вердикта нет" >&2
             emit_red="$emit_red $case_nv"
         elif [ "$erc" -eq 124 ]; then
-            echo "novac-fuzz: EMIT СНЯТ ПРЕДЕЛОМ 60с на $case_nv: вердикта нет, это зависание" >&2
+            echo "novac-fuzz: EMIT СНЯТ ПРЕДЕЛОМ (60с или память ${FUZZ_MEM_MB}МБ) на $case_nv: вердикта нет, это зависание" >&2
             emit_red="$emit_red $case_nv"
         elif novac_is_panic_rc "$erc" || grep -qi "panic" "$_ed/$_ek.err"; then
             emit_red="$emit_red $case_nv"
@@ -256,7 +274,7 @@ judge_emit() {   # $1 = list file; 0 = zelyono, 1 = chto-to umerlo pri emissii
 
 # Klassifikaciya vinovnika: dva lishnih zapuska TOL'KO dlya krasnogo sluchaya.
 classify_emit_red() {   # $1 = imya sluchaya; pechataet imya korziny
-    ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" timeout 60 \
+    ( cd "$T/cases" && NOVA_STD_PATH="$ROOT/std/src" bounded 60 \
         "$NOVAC" check "$1" ) > /dev/null 2> "$T/cerr"
     crc=$?
     # То же третье слово: снятый по времени `check` не говорит о случае НИЧЕГО,
@@ -273,7 +291,7 @@ classify_emit_red() {   # $1 = imya sluchaya; pechataet imya korziny
     if [ ! -x "$ORACLE" ]; then
         echo "ORACLE-ABSENT"; return     # NE "zelyono": sluchay ne razobran
     fi
-    ( cd "$T/cases" && timeout 300 "$ORACLE" build "$1" -o "$T/oracle.out" ) \
+    ( cd "$T/cases" && bounded 300 "$ORACLE" build "$1" -o "$T/oracle.out" ) \
         > /dev/null 2>&1
     orc=$?
     # ТРЕТЬЕ СЛОВО (Г16): снятый по времени оракул НЕ СКАЗАЛ, законна ли форма.
@@ -352,7 +370,9 @@ bisect() {   # $1 = list file
         cid=$(cat "$1")
         bad=$((bad+1))
         echo "novac-fuzz: PANIC/CRASH/HANG на случае ${cid%.nv}" >&2
-        head -2 "$T/err" | sed 's/^/    /' >&2
+        # Снятие обёрткой называет СЕБЯ (время или память) — эта строка
+        # важнее первых строк диагностики, которые до неё успел напечатать novac.
+        { grep "^with-deadline:" "$T/err" || head -2 "$T/err"; } | sed 's/^/    /' >&2
         cp "$T/cases/$cid" "$T/keep.$cid"
         return
     fi
