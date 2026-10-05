@@ -54,5 +54,24 @@ grep -q 'фикстур без итога: .*пул потерял' "$TMP/pool.o
 check "красный назван «пул потерял», с адресом строки, а не паникой novac" "$?" "0"
 rm -f "$FIX"/novac/fixtures/pos_n*.nv
 
+echo "== кэш прогона гейта (№1717): итог того же бинаря и того же пути — и только он =="
+# Кэш снят бинарём, который отвечал 0; потом тот же путь бинаря начинает паниковать.
+# Страж, читающий кэш, зелёный — это доказывает, что кэш читается. Чужой путь в
+# записи или другой бинарь — кэш не годится, страж зовёт novac сам и краснеет.
+mkbin 'exit 0'
+CC="$TMP/cc"
+sh "$ROOT/scripts/tools/novac-check-cache.sh" "$FIX" "$CC" "$TMP/bin.sh" > "$TMP/cc.out" 2>&1
+grep -q 'фикстур 1, записей 1' "$TMP/cc.out"
+check "инструмент кэша записал итог на каждую фикстуру" "$?" "0"
+mkbin 'exit 139'
+NOVAC_CHECK_CACHE="$CC" sh "$G" "$FIX" "$TMP/bin.sh" >/dev/null 2>&1
+check "итог из кэша того же бинаря читается (новый ответ бинаря не виден)" "$?" "0"
+cp "$TMP/bin.sh" "$TMP/bin2.sh"
+NOVAC_CHECK_CACHE="$CC" sh "$G" "$FIX" "$TMP/bin2.sh" >/dev/null 2>&1
+check "кэш другого бинаря не годится — страж судит сам, красный" "$?" "1"
+for p in "$CC"/*.path; do echo "/elsewhere/pos_probe.nv" > "$p"; done
+NOVAC_CHECK_CACHE="$CC" sh "$G" "$FIX" "$TMP/bin.sh" >/dev/null 2>&1
+check "запись с чужим путём (совпал только ключ) — промах, страж судит сам, красный" "$?" "1"
+
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

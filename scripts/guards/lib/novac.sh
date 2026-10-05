@@ -218,6 +218,41 @@ novac_pool_jobs() {
     printf '%s\n' "$_pj"
 }
 
+# novac_check BIN FILE OUT ERR — `BIN check FILE`: stdout в OUT, stderr в ERR, код
+# возврата — свой. Реестр 221.1 №1717, замер CI 2026-10-05 (run 37353522969): пять
+# стражей корпуса (no-panic, diag-schema, no-cascade, fixture-expect, этап 1
+# дифференциала) звали `novac check` по ОДНИМ И ТЕМ ЖЕ фикстурам — ~1200 запусков
+# там, где нужно ~390, — и на четырёх ядрах трое из них снимались пределом 600с.
+# Гейт теперь прогоняет корпус ОДИН раз (scripts/tools/novac-check-cache.sh) в
+# каталог NOVAC_CHECK_CACHE, и дверь отдаёт записанный итог, если он снят ТЕМ ЖЕ
+# бинарём (файл `bin` каталога) для ТОГО ЖЕ пути (файл `.path` записи: ключ —
+# cksum пути, и совпадение ключа без совпадения пути — промах, а не чужой итог).
+# Нет каталога, другой бинарь, нет записи — дверь зовёт novac сама, как раньше.
+novac_check() {
+    _nc_bin="$1"; _nc_f="$2"; _nc_out="$3"; _nc_err="$4"
+    if [ -n "${NOVAC_CHECK_CACHE:-}" ] && [ -f "$NOVAC_CHECK_CACHE/bin" ]; then
+        read -r _nc_cb < "$NOVAC_CHECK_CACHE/bin"
+        if [ "$_nc_cb" = "$_nc_bin" ]; then
+            _nc_e="$NOVAC_CHECK_CACHE/$(novac_check_key "$_nc_f")"
+            _nc_rc=""; _nc_p=""
+            [ -f "$_nc_e.rc" ] && read -r _nc_rc < "$_nc_e.rc"
+            [ -f "$_nc_e.path" ] && read -r _nc_p < "$_nc_e.path"
+            case "$_nc_rc" in
+                ''|*[!0-9]*) ;;
+                *)  if [ "$_nc_p" = "$_nc_f" ]; then
+                        cp "$_nc_e.out" "$_nc_out" && cp "$_nc_e.err" "$_nc_err" && return "$_nc_rc"
+                    fi ;;
+            esac
+        fi
+    fi
+    "$_nc_bin" check "$_nc_f" > "$_nc_out" 2> "$_nc_err" </dev/null
+}
+
+# novac_check_key FILE — имя записи кэша для пути (cksum пути и его длина).
+novac_check_key() {
+    printf '%s' "$1" | cksum | tr ' ' '-'
+}
+
 # novac_bin_out ROOT — куда СОБИРАТЬ Карину: `novac.exe` на Windows, `novac` иначе
 # (так её собирает CI, .github/workflows/nova-gate.yml). Пара к novac_bin.
 novac_bin_out() {

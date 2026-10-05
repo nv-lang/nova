@@ -590,6 +590,17 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     # (№1442, замер в шапке пола выше и в самом страже). Экспорт только на блок:
     # самотесты, которые гейт зовёт позже, зовут стража без яруса — всеми тремя.
     export NOVAC_DIFF_TIER="$NOVAC_TIER"
+    # ОДИН `novac check` НА ФИКСТУРУ ЗА ПРОГОН (реестр 221.1 №1717). Замер CI
+    # 2026-10-05 (run 37353522969): no-panic, diag-schema, no-cascade, fixture-expect
+    # и этап 1 дифференциала гоняли novac по одним и тем же фикстурам — ~1200
+    # запусков вместо ~390, — и на четырёх ядрах diag-schema, no-cascade и
+    # fixture-expect снимались пределом 600с. Корпус прогоняется здесь один раз,
+    # стражи читают итог дверью novac_check; оборванный прогон кэша никого не
+    # делает зелёным — записи нет, страж зовёт novac сам.
+    NOVAC_CHECK_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/novac-check-cache.XXXXXX")
+    export NOVAC_CHECK_CACHE
+    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 600 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
+        || echo "novac-check-cache: прогон не завершён — стражи досчитают недостающее сами"
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
     par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
     par_add "$ROOT/scripts/guards/check-novac-no-panic.sh" "паника/крэш novac на фикстурах (решение 11: ноль паник)"
@@ -612,6 +623,9 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-self-accepted.py" "$ROOT" || fail "самосборка отвергла файл вне базы (регресс меры 0.2, реестр №1665) — или база не сужена"
     par_run
     unset NOVAC_DIFF_TIER
+    # Кэш живёт ровно блок: самотесты ниже подают своих поддельных novac.
+    rm -rf "${NOVAC_CHECK_CACHE:?}"
+    unset NOVAC_CHECK_CACHE
 fi
 
 if [ "$NOVAC_TIER" != "loop" ]; then

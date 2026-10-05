@@ -111,7 +111,7 @@ for i, d in enumerate(data):
 bad=0
 while IFS= read -r f; do
     rel=${f#"$ROOT"/}
-    "$BIN" check "$f" > "$T/out" 2>/dev/null </dev/null
+    novac_check "$BIN" "$f" "$T/out" "$T/nc.err"   # the gate run cache, #1717
     if ! "$PYBIN" -c "$PY" "$T/out" 2> "$T/pyerr"; then
         printf '  %s: %s\n' "$rel" "$(tr -d '\r' < "$T/pyerr")" >> "$T/bad"
         bad=$((bad+1))

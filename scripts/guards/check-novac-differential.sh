@@ -133,7 +133,7 @@ J=$(novac_pool_jobs)
 mkdir -p "$T/r"
 # Исход фикстуры: $T/r/<номер>.v = «<novac> <оракул>», слова «принял»/«отверг».
 one_verdict() {
-    if "$BIN" check "$2" >/dev/null 2>&1 </dev/null; then _b="принял"; else _b="отверг"; fi
+    if novac_check "$BIN" "$2" "$T/r/$1.nco" "$T/r/$1.nce"; then _b="принял"; else _b="отверг"; fi
     if "$ORACLE" check "$2" >/dev/null 2>&1 </dev/null; then _o="принял"; else _o="отверг"; fi
     printf '%s %s\n' "$_b" "$_o" > "$T/r/$1.v"
 }

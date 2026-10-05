@@ -80,7 +80,7 @@ print("%d %d" % (len(errs), len(ices)))
 bad=0
 while IFS= read -r f; do
     rel=${f#"$ROOT"/}
-    "$BIN" check "$f" > "$T/out" 2>/dev/null </dev/null
+    novac_check "$BIN" "$f" "$T/out" "$T/nc.err"   # the gate run cache, #1717
     n=$("$PYBIN" -c "$PY" "$T/out" 2> "$T/pyerr")
     rc=$?
     n=$(printf '%s' "$n" | tr -d '\r\n')

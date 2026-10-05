@@ -62,7 +62,7 @@ fi
 # строки; сводка ниже идёт по списку и требует итог у КАЖДОЙ строки.
 mkdir -p "$T/r"
 one_check() {
-    "$BIN" check "$2" > "$T/r/$1.out" 2> "$T/r/$1.err" </dev/null
+    novac_check "$BIN" "$2" "$T/r/$1.out" "$T/r/$1.err"
     echo "$?" > "$T/r/$1.rc"
 }
 J=$(novac_pool_jobs)

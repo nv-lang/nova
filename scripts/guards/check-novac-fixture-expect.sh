@@ -127,7 +127,7 @@ bad=0
 while IFS="$(printf '\t')" read -r f want; do
     [ -n "$f" ] || continue
     rel=${f#"$ROOT"/}
-    "$BIN" check "$f" > "$T/out" 2>/dev/null </dev/null
+    novac_check "$BIN" "$f" "$T/out" "$T/nc.err"   # the gate run cache, #1717
     "$PYBIN" -c "$PY" "$T/out" "$want" > "$T/verdict" 2> "$T/pyerr"
     rc=$?
     head=$(head -1 "$T/verdict" | tr -d '\r')
