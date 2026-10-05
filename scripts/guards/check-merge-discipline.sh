@@ -93,6 +93,29 @@ if [ "${NOVA_MERGE_ALLOW_RED:-0}" = "1" ]; then
     exit 0
 fi
 
+# ── КАНДИДАТ СЛИЯНИЯ — 2026-10-05, решение владельца «в main вливает приёмщик задачи» ──
+# Приёмщик гоняет гейт в ДЕРЕВЕ ЗАДАЧИ после того, как влил main в её ветку, —
+# то есть на вершине, которая уже СОДЕРЖИТ HEAD main. Слияние `--no-ff` такой
+# вершины даёт ровно то дерево, которое судил гейт, и вердикт на ней доказывает
+# результат слияния. Вердикт на старом HEAD main приёмщику взять неоткуда, а
+# требовать его значило бы гнать второй гейт на дереве, которого ещё нет.
+# Вершина, НЕ содержащая HEAD, кандидатом не считается: результат её слияния —
+# другое дерево, и тогда действует прежнее правило (вердикт на HEAD).
+CAND=""
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    _CAND_TIP=$(git rev-parse MERGE_HEAD 2>/dev/null)
+else
+    _CAND_TIP=$(env | sed -n 's/^GITHEAD_\([0-9a-f]\{40\}\)=.*/\1/p' | sort -u | head -1)
+fi
+if [ -n "${_CAND_TIP:-}" ] && git merge-base --is-ancestor HEAD "$_CAND_TIP" 2>/dev/null; then
+    CAND="$_CAND_TIP"
+fi
+V_HASH_EARLY=$(sed -n 's/.*HASH=\([0-9a-f][0-9a-f]*\).*/\1/p' "$VERDICT" 2>/dev/null | head -1)
+ON_CAND=0
+if [ -n "$CAND" ] && [ -n "${V_HASH_EARLY:-}" ]; then
+    case "$CAND" in "$V_HASH_EARLY"*) ON_CAND=1 ;; esac
+fi
+
 fail() {
     echo "check-merge-discipline: ОТКАЗ — $1" >&2
     echo "    В main вливается только то, что прошло гейт. Пока гейт красный," >&2
@@ -130,6 +153,10 @@ CADENCE_MIN_MINUTES="${NOVA_MERGE_CADENCE_MIN_MINUTES:-20}"
 CADENCE_MIN_COMMITS="${NOVA_MERGE_CADENCE_MIN_COMMITS:-5}"
 if [ -n "${NOVA_MERGE_URGENT:-}" ]; then
     echo "check-merge-discipline: ритм слияний пропущен — NOVA_MERGE_URGENT='$NOVA_MERGE_URGENT'" >&2
+elif [ "$ON_CAND" -eq 1 ]; then
+    # Ритм бережёт гейт на main; при вердикте на кандидате гейт уже прошёл в
+    # дереве задачи, и второго прогона слияние не требует — беречь нечего.
+    echo "check-merge-discipline: ритм слияний не судится — вердикт на кандидате слияния ($CAND)"
 else
     _CAD_HEAD_TS=$(git log -1 --format=%ct HEAD 2>/dev/null)
     _CAD_NOW=$(date +%s)
@@ -164,10 +191,16 @@ RC=$(sed -n 's/^RC=\([0-9][0-9]*\).*/\1/p' "$VERDICT" | head -1)
 [ -n "${RC:-}" ] || fail "вердикт нечитаем ($VERDICT)"
 [ "$RC" -eq 0 ] || fail "последний гейт КРАСНЫЙ (RC=$RC)"
 
-# Свежесть: вердикт обязан быть НЕ СТАРШЕ последнего коммита в главной ветке.
+# Свежесть: вердикт обязан быть НЕ СТАРШЕ последнего коммита в главной ветке —
+# а вердикт на кандидате слияния НЕ СТАРШЕ самого кандидата.
 V_TS=$(stat -c %Y "$VERDICT" 2>/dev/null)
 H_TS=$(git log -1 --format=%ct HEAD 2>/dev/null)
-if [ -n "${V_TS:-}" ] && [ -n "${H_TS:-}" ] && [ "$V_TS" -lt "$H_TS" ]; then
+if [ "$ON_CAND" -eq 1 ]; then
+    C_TS=$(git log -1 --format=%ct "$CAND" 2>/dev/null)
+    if [ -n "${V_TS:-}" ] && [ -n "${C_TS:-}" ] && [ "$V_TS" -lt "$C_TS" ]; then
+        fail "вердикт СТАРШЕ кандидата слияния $CAND — он судил другое дерево"
+    fi
+elif [ -n "${V_TS:-}" ] && [ -n "${H_TS:-}" ] && [ "$V_TS" -lt "$H_TS" ]; then
     fail "вердикт СТАРШЕ HEAD — он относится к другому дереву и ничего не доказывает"
 fi
 
@@ -192,8 +225,10 @@ esac
 
 V_HASH=$(sed -n 's/.*HASH=\([0-9a-f][0-9a-f]*\).*/\1/p' "$VERDICT" | head -1)
 H_HASH=$(git rev-parse HEAD 2>/dev/null)
-if [ -n "${V_HASH:-}" ] && [ -n "${H_HASH:-}" ] && [ "$V_HASH" != "$H_HASH" ]; then
-    fail "вердикт судил дерево $V_HASH, а HEAD сейчас $H_HASH — это ДРУГОЕ дерево"
+if [ "$ON_CAND" -eq 1 ]; then
+    echo "check-merge-discipline: вердикт судил кандидата слияния $CAND (вершина содержит HEAD — дерево результата то же)"
+elif [ -n "${V_HASH:-}" ] && [ -n "${H_HASH:-}" ] && [ "$V_HASH" != "$H_HASH" ]; then
+    fail "вердикт судил дерево $V_HASH, а HEAD сейчас $H_HASH — это ДРУГОЕ дерево (вердикт на вершине вливаемой ветки годится, только если она уже содержит HEAD main)"
 fi
 
 # ── Ярус novac: нужен, если слияние приносит его пути (№988) ───────────────

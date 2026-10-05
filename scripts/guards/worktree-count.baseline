@@ -128,7 +128,10 @@
 #   5 = main + worktrees/nova-carina (branch p274-carina-coalesce, kept by the owner's word) + 3 task
 #   trees. A task's tree is removed when the task is accepted (`peer_task cleaned`), and the base
 #   goes down with the last one.
-worktrees=5
+# 2026-10-05 (integrator, OpenCode): 5 -> 7. Two more task trees by the owner's word of 17:50:
+#   tasks #4 (acceptor merges into main) and #5 (Stop hook code "wait") -- rules and a hook, not the
+#   compiler, so they run beside the three Carina tasks. Goes down as tasks are accepted and cleaned.
+worktrees=7
 
 # БАМП 2026-08-29: 19 -> 20. Причина: открыто компилятор-окно p790
 # (`nova-p790`, ветка p790-fiber-cancel) под два К1-блокера тега №790/№791 —
