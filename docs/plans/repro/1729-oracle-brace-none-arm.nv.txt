@@ -1,0 +1,40 @@
+// Registry #1729 (oracle, K2): a match arm `Update(_) => { None }` where the
+// arms' type is Option[str]. `nova check` accepts the program; `nova build`
+// fails in codegen with "anonymous record literal without spread not supported
+// in codegen" -- the checker and the code generator read the same form two
+// ways. Which reading is right (a block whose tail is the variant, D19/D40, or
+// an anonymous record with the shorthand field `None`, D52) is a spec question
+// carried to the owner; the disagreement inside one compiler is a defect under
+// either reading.
+//
+// Reproduce from the root of the repository: copy this file to `<scratch>/p.nv`
+// (your session's scratch directory), then
+//   NOVA_STD_PATH=std nova-cli/target/release/nova.exe check <scratch>/p.nv   -> ok
+//   sh scripts/tools/novac-e1-smoke.sh <scratch>/p.nv   (the smoke's oracle build)
+//     -> codegen error: anonymous record literal without spread not supported in codegen
+// novac (Carina) reads the arm as a block: `novac check` accepts it, and the
+// value is None of Option[str] (D489: the bare variant takes its sibling's type).
+// Measured 2026-10-05 on the oracle at main 7018d685b.
+module brace_none
+
+type Op enum Set | Update(int)
+
+fn build(n int) -> Option[str] => if n > 0 { Some("v${n}") } else { None }
+
+fn show(o Option[str]) -> str => match o {
+    Some(t) => t
+    None => "-"
+}
+
+fn pick(op Op, n int) -> str {
+    ro built = match op {
+        Set => build(n)
+        Update(_) => { None }
+    }
+    show(built)
+}
+
+fn main() {
+    println(pick(Op.Set, 1))
+    println(pick(Op.Update(1), 2))
+}
