@@ -432,7 +432,11 @@ fn field_part_consumed_msg(path str, gone str, maybe bool) -> str {
 
 /// The `consume` fields of `t` (`FieldDef.owned`) under the path `prefix` (`@`,
 /// `@.inner`): each an owned entry named by its path, and its own `consume` fields
-/// after it (D133 "Nested field paths": `@.inner.tx`). A record holds itself only
+/// after it (D133 "Nested field paths": `@.inner.tx`). A field is owned by its TYPE
+/// being must-consume, not by its marker alone: a marker on a type that carries
+/// nothing is refused once by `@check_field_markers` (D133-marker-on-non-consume),
+/// and an obligation seeded from it would be judged again at every exit -- a second
+/// refusal for one cause (`must_consume/neg_25`). A record holds itself only
 /// through an indirection, which owns nothing here; the depth bound keeps a
 /// malformed table from walking forever.
 fn Checker mut @flow_own_fields(mut fl ConsumeFlow, prefix str, t TyId, at Node, depth int) -> () {
@@ -444,7 +448,7 @@ fn Checker mut @flow_own_fields(mut fl ConsumeFlow, prefix str, t TyId, at Node,
     }
     for j in 0..range.1 {
         ro fd = @ctx.fields.rows[raw_frow(range.0) + j]
-        if !fd.owned { continue }
+        if !fd.owned || !@is_owned_kind(fl.kinds, fd.type_id) { continue }
         ro path = "${prefix}.${fd.name}"
         flow_own(fl, path, fd.type_id, at)
         @flow_own_fields(fl, path, fd.type_id, at, depth + 1)
