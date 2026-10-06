@@ -4,7 +4,7 @@ module consume_any_module.neg_9
 // consumed value is not used again; D133 "Field-aware flow"): `@body` goes to
 // `into_str`, and `@body.byte_len()` then reads a field that is no longer in the
 // record. Found by the acceptor of task #16. The ORACLE accepts it -- it refuses a
-// second MOVE of the field (neg_3), not a READ after one (registry 221.1 No.TBD, oracle).
+// second MOVE of the field (neg_3), not a READ after one (registry 221.1 #1748, oracle).
 
 // NOVAC_EXPECT the field `@.body` is used after it was consumed
 
