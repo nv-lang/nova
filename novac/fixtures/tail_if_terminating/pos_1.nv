@@ -1,0 +1,45 @@
+module tail_if_terminating.pos_1
+
+// A body's TAIL `if` whose branch leaves through `return` is still TYPED: the
+// branch asks for no value, but every expression in it is the program's. Until
+// 2026-10-06 such a branch was never walked by the checker -- the inner `if`
+// below had no type and emission died on "no type recorded" (task #23:
+// check/consume_shapes.nv's `field_path_of` stopped whole-program emission of
+// novac so). Both branches leaving, then one, then the other.
+fn join(base str, t str) -> str {
+    if t == "" {
+        return ""
+    } else {
+        ro r = if base == "" { "" } else { "${base}.${t}" }
+        return r
+    }
+}
+
+fn pick(n int) -> int {
+    if n > 10 {
+        ro big = if n > 100 { 3 } else { 2 }
+        return big
+    } else {
+        n
+    }
+}
+
+fn sign(n int) -> int {
+    if n >= 0 {
+        1
+    } else {
+        return if n < -100 { -2 } else { -1 }
+    }
+}
+
+fn main() {
+    println(join("a", "b"))
+    println(join("", "b"))
+    println(join("a", ""))
+    println(pick(500))
+    println(pick(50))
+    println(pick(5))
+    println(sign(3))
+    println(sign(-3))
+    println(sign(-300))
+}

@@ -160,6 +160,24 @@ fn Checker mut @type_if_value(n Node) -> () {
     @type_expr(kids[1])
     ro then_terminates = block_terminates(kids[2])
     ro else_terminates = block_terminates(kids[4])
+    // A TERMINATING BRANCH IS STILL TYPED -- as statements, through the doors an
+    // `if` statement's branches take (`@type_stmt`): it asks for no value, but
+    // every expression in it is the program's. Until 2026-10-06 such a branch was
+    // never walked at all: `if t == "" { return "" } else { ro r = if .. ; return r }`
+    // as a body's tail left the inner `if`'s nodes without a type, and emission
+    // died on "no type recorded" (task #23: check/consume_shapes.nv's
+    // `field_path_of` stopped whole-program emission of novac so) -- and a type
+    // error inside such a branch was never reported.
+    if then_terminates {
+        @type_then_branch(kids[1], kids[2])
+    } else {
+        // Typed below as the value it falls through to.
+    }
+    if else_terminates {
+        @type_body(kids[4])
+    } else {
+        // Typed below as the value it falls through to.
+    }
     if then_terminates && else_terminates {
         // Neither branch falls through: the whole tail `if` produces no
         // value, and none is needed -- the function ends by `return`, not

@@ -1,0 +1,18 @@
+module tail_if_terminating.neg_1
+
+// ONE seeded cause, inside a branch that leaves through `return` of a body's
+// tail `if`: a `str` bound as `int`. Until 2026-10-06 the checker never walked
+// such a branch and novac said ok; the oracle refuses it (E7301).
+// NOVAC_EXPECT a value of type `str` stands in this binding (written `int`)
+fn join(base str, t str) -> str {
+    if t == "" {
+        return ""
+    } else {
+        ro r int = "oops"
+        return base
+    }
+}
+
+fn main() {
+    println(join("a", "b"))
+}
