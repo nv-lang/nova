@@ -1,0 +1,39 @@
+module shell_namesake.pos_4
+
+// THE OTHER SHAPES of a shell namesake (wave 274.5 pre68): a VALUE record
+// (`Duration`, the shell's `struct NovaValue_Duration`), the PARENTHESISED
+// record form (`Permissions`, the shell's `struct NovaValue_Permissions`) and a
+// NEWTYPE (`FileType`, the shell's `struct NovaValue_FileType`). The oracle's
+// D381 qualifies only plain sums and heap records; novac qualifies every shape
+// through the one door (`type_base`), because the name collides whatever the
+// shape is -- and a newtype has no C name of its own at all (its
+// representation's).
+//
+// None of the three std types is in the ORACLE's unit here, so the oracle keeps
+// the bare names and compiles; the same lines from both compilers. The shapes
+// beside the std type of the same name are pos_6 and pos_7 (twins: the oracle
+// fails those in clang).
+type Duration value {
+    secs int
+    label str
+}
+
+type Permissions(read bool, mode int)
+
+type FileType int
+
+fn longer(d Duration, by int) -> Duration => { secs: d.secs + by, label: d.label }
+
+fn describe(p Permissions) -> str => if p.read { "r ${p.mode}" } else { "- ${p.mode}" }
+
+fn kind_code(t FileType) -> int => t as int
+
+fn main() {
+    ro d = Duration { secs: 5, label: "five" }
+    ro e = longer(d, 2)
+    println("${e.label} ${e.secs}")
+    println(d.secs)
+    println(describe(Permissions(true, 644)))
+    println(describe(Permissions(false, 0)))
+    println(kind_code(FileType(3)) + 1)
+}
