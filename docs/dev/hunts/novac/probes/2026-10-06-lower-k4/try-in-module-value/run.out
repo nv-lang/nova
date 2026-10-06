@@ -1,0 +1,28 @@
+=== PROGRAM
+     1	fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+     2	
+     3	fn use_k() -> Result[int, int] {
+     4	    Ok(K + 1)
+     5	}
+     6	
+     7	ro K = get(5)?
+     8	
+     9	fn main() {
+    10	    match use_k() {
+    11	        Ok(v) => println("ok ${v}")
+    12	        Err(e) => println("err ${e}")
+    13	    }
+    14	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"<tmp>/prog.nv","start":131,"end":134},"message":"`?` is allowed only in a fn returning `Result[T, E]` / `Option[T]` -- it propagates by value, return-only (D85, E_TRY_IN_FAIL_FN); in a `Fail` fn propagate with `!!` or `throw`","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":111,"end":113},"message":"outside the subset: the type argument of this sum cannot be inferred from the payload -- its type is not decided here (E2-b3)","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+ok 6
