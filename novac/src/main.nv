@@ -96,6 +96,7 @@ fn emit_program(entry str, paths []str, texts []str, decls []Node, interop Inter
                 // elements and not others.
                 // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
                 gp.push(paths[j])
+                // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
                 gt.push(texts[j])
                 used[j] = true
             } else {

@@ -157,7 +157,9 @@ fn reach_from(file Node, ctx Ctx, out CheckOut, in_program bool, wanted CNames) 
         // the emitter is asked anything. A module of a PROGRAM has no entry
         // point and is reached from the others: its walk goes on.
         None => {
-            if !in_program { return Reach { seen, inst, subst, ptypes } } else {
+            if !in_program {
+                return Reach { seen, inst, subst, ptypes }
+            } else {
                 // Rooted above, by what the other units call.
             }
         }

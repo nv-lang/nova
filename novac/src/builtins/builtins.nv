@@ -209,8 +209,8 @@ export const PTR_WRITE_CONSUME_AT = "write_consume_at"
 /// coincidence (std has `File @read_at`, `ZonedDateTime @offset`) while
 /// refusing `write_at` -- unseen while an instance skipped that walk.
 export fn is_ptr_method(name str) -> bool =>
-    name == PTR_READ_AT || name == PTR_READ_CONSUME_AT || name == PTR_WRITE_AT || name == PTR_WRITE_CONSUME_AT || name == PTR_OFFSET ||
-        name == PTR_DIST
+    name == PTR_READ_AT || name == PTR_READ_CONSUME_AT || name == PTR_WRITE_AT || name == PTR_WRITE_CONSUME_AT ||
+        name == PTR_OFFSET || name == PTR_DIST
 
 /// `size_of[T]()`: the byte size of `T`'s value, an `int` -- the language's intrinsic (D216).
 export const SIZE_OF_FN = "size_of"

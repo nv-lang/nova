@@ -235,7 +235,7 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
     ro infos = type_info_defs(e.ctx, e.infos, tag, tid_base)
     ro ninfos = e.infos.len()
     ro (lits, code, made) = e.into_unit_parts()
-    UnitC { lits: strlit_defs(lits, tag), types: "${blobs}${infos}${code[0..at_protos]}",
+    UnitC { lits: strlit_defs(lits, tag), types: "${blobs}${infos}${code[..at_protos]}",
             protos: code[at_protos..at_bodies], bodies: code[at_bodies..], init, made, infos: ninfos }
 }
 
@@ -299,6 +299,8 @@ fn Emitter mut @close_once() -> () {
     }
 }
 
+/// Is this the program's first copy of `name` -- not printed by an earlier
+/// unit (`@skip`)? A first copy is recorded as made; a unit alone always prints.
 fn Emitter mut @first_in_program(name str) -> bool {
     if !@program { return true }
     if @skip.has(name) { return false }

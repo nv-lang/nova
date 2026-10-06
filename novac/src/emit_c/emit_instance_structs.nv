@@ -99,7 +99,7 @@ fn Emitter mut @instance_forward_of(t TyId, mut done []str) -> () {
     if !is_ty(t) || @ctx.tys.kind_of(t) != TypeKind.TkApp { return }
     // An instance over a parameter of the declaration has no struct of its own:
     // only a substitution makes one.
-    if !@ground(t) { return }
+    if !@ctx.tys.is_concrete(t) { return }
     ro td = decl_of_ty(@ctx, t)
     if td.kind != TypeKind.TkRecord { return }
     ro sn = instance_struct_c(@ctx, t)
@@ -111,14 +111,3 @@ fn Emitter mut @instance_forward_of(t TyId, mut done []str) -> () {
     @body.append("typedef struct ${sn} ${sn};\n")
 }
 
-/// Does `t` name no type parameter and no inference variable, down its arguments?
-fn Emitter @ground(t TyId) -> bool {
-    if !is_ty(t) { return false }
-    ro k = @ctx.tys.kind_of(t)
-    if k == TypeKind.TkParam || k == TypeKind.TkInfer { return false }
-    if k != TypeKind.TkApp && k != TypeKind.TkTuple { return true }
-    for i in 0..@ctx.tys.arg_count(t) {
-        if !@ground(@ctx.tys.arg(t, i)) { return false }
-    }
-    true
-}

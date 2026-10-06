@@ -49,17 +49,17 @@ export type InteropTable {
 /// carries it" and "the program printed it" are different facts.
 export type CNames {
     names NameTable /// identifier -> insertion index; presence is the fact (NsInterop namespace)
-    cnt int /// how many identifiers were added
+    name_cnt int /// how many identifiers were added
 }
 
 /// An empty set.
-export fn CNames.new() -> CNames => { names: NameTable.new(NamespaceId.NsInterop), cnt: 0 }
+export fn CNames.new() -> CNames => { names: NameTable.new(NamespaceId.NsInterop), name_cnt: 0 }
 
 /// Add one identifier; answers whether it was new.
 export fn CNames mut @add(name str) -> bool {
     if @names.find(name) >= 0 { return false }
-    @names.put(name, @cnt)
-    @cnt += 1
+    @names.put(name, @name_cnt)
+    @name_cnt += 1
     true
 }
 

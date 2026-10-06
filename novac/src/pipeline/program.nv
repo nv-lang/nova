@@ -9,9 +9,9 @@
 // Guarded by: check-novac-differential.sh (fixture `multi_module/pos_1`, behaviour byte for byte with the
 // oracle), check-novac-deps.py (edges only from the section 3 table).
 //
-// THE PROGRAM IS CHECKED BY UNITS AND EMITTED AS ONE (274.11 E.10, "Механизм"):
+// THE PROGRAM IS CHECKED UNIT BY UNIT AND EMITTED AS ONE (274.11 E.10, "Mechanism"):
 // a module is checked as today -- a call into another module of the program is
-// judged by the owner's signature (step 2a) -- and only the emission is joined.
+// typed against the owner's signature (step 2a) -- and only the emission is joined.
 // Each unit is emitted in PARTS (`emit_c.UnitC`), and the C file takes every
 // unit's types, then every unit's prototypes, then every unit's bodies -- so no
 // order between the modules is relied on but the import order of their types.
@@ -167,11 +167,12 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
     if diags.len() > 0 { return (diags, "") }
     // A unit the entry's imports never reach is not walked at all; one that is
     // reached and still holds a wanted name unanswered would be a link error --
-    // the walk above refuses it by name when the order is broken.
+    // the walk above stops at an `ice(` naming it when the order is broken.
     mut ordered = []UnitC.new()
     mut j = rev.len()
     while j > 0 {
         j -= 1
+        // nova:allow W_MANUAL_SLICE_COPY -- the reversed order, no slice expresses it
         ordered.push(rev[j])
     }
     (diags, render_program(ordered))
@@ -221,7 +222,7 @@ fn unit_dir(u Unit) -> str {
     ro p = u.files[0].path.replace("\\", "/")
     ro cut = last_sep(p)
     if cut < 0 { return "" }
-    norm_dir(p[0..cut])
+    norm_dir(p[..cut])
 }
 
 /// A directory with its empty and `.` segments dropped and every `..` applied
@@ -266,7 +267,14 @@ fn import_dirs(tree Node, dir str) -> []str {
 /// One import: its path read off the leaves up to the brace list, kept when
 /// it is relative.
 fn note_import(imp Node, dir str, mut out []str) -> () {
-    mut path = ""
+    ro path = import_path_text(imp)
+    if !path.starts_with("./") && !path.starts_with("../") { return }
+    out.push(norm_dir("${dir}/${relative_head(path)}"))
+}
+
+/// The path of an import as written, its leaves joined up to the brace list.
+fn import_path_text(imp Node) -> str {
+    consume pb = StringBuilder.new()
     mut first = true
     for l in branch_children(imp) {
         if first {
@@ -279,28 +287,32 @@ fn note_import(imp Node, dir str, mut out []str) -> () {
         if l.kind_of() != NodeKind.LeafNode { break }
         ro k = leaf_kind(l)
         if k == TokenKind.Ident || k == TokenKind.Dot || k == TokenKind.DotDot || k == TokenKind.Slash {
-            path = "${path}${leaf_text(l)}"
+            pb.append(leaf_text(l))
         } else {
             break
         }
     }
-    if !path.starts_with("./") && !path.starts_with("../") { return }
-    // The relative prefix walks directories; the module is the directory the
-    // rest names up to its first dot -- what follows the dot names items.
+    pb
+}
+
+/// The directory a relative import path names: its `./` and `../` prefix walks
+/// directories, and the module is what the rest names up to its first dot --
+/// what follows the dot names items.
+fn relative_head(path str) -> str {
     mut rest = path
-    mut head = ""
+    consume hb = StringBuilder.new()
     while rest.starts_with("./") || rest.starts_with("../") {
         if rest.starts_with("./") {
-            head = "${head}./"
+            hb.append("./")
             rest = rest[2..]
         } else {
-            head = "${head}../"
+            hb.append("../")
             rest = rest[3..]
         }
     }
     for part in rest.split(".") {
-        head = "${head}${part}"
+        hb.append(part)
         break
     }
-    out.push(norm_dir("${dir}/${head}"))
+    hb
 }

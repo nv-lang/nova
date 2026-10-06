@@ -221,7 +221,7 @@ fn render(lits []str, body str, init str) -> str => render_spelled(strlit_defs(l
 fn strlit_defs(lits []str, tag str) -> str {
     consume out = StringBuilder.new()
     emit_strlit_defs(out, lits, tag)
-    out.into_str()
+    out
 }
 
 /// The same splice with the literal definitions already spelled: a PROGRAM
