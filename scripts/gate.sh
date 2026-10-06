@@ -185,8 +185,12 @@ case "$NOVA_GATE_PART" in
        exit 1 ;;
 esac
 GATE_PART_STEPS_N=0
+# `all` — шаг, без которого тяжёлые части не работают: сборка компилятора. Первый
+# прогон частей на CI (a10127f4c) это и показал: mega-CU и conformance-full без
+# сборки упали за 80 секунд с exit=127, потому что сборка ушла в часть `rest`.
 gate_part_of() {
     case "$1" in
+        "cargo build --release") echo all ;;
         "conformance-full "*) echo conformance ;;
         "mega-CU "*) echo mega ;;
         "crate-tests "*) echo crates ;;
@@ -358,7 +362,8 @@ step() {
            exit 1 ;;
     esac
     if tier_at_least "$_step_tier"; then
-        if [ -n "$NOVA_GATE_PART" ] && [ "$(gate_part_of "$1")" != "$NOVA_GATE_PART" ]; then
+        if [ -n "$NOVA_GATE_PART" ] && [ "$(gate_part_of "$1")" != all ] \
+           && [ "$(gate_part_of "$1")" != "$NOVA_GATE_PART" ]; then
             STEP_ACTIVE=0
             printf '[%5ds] -- gate: в другой части (%s) : %s\n' \
                 "$(( $(date +%s) - GATE_T0 ))" "$(gate_part_of "$1")" "$1"
@@ -366,7 +371,8 @@ step() {
         fi
         # Счёт ДО пропуска по диффу: шаг своей части, пропущенный потому, что дифф
         # его не трогает, — законно пропущен, а не потерян.
-        GATE_PART_STEPS_N=$((GATE_PART_STEPS_N + 1))
+        # Общий шаг (`all`) не в счёт: часть из одной сборки — та же пустота.
+        [ "$(gate_part_of "$1")" = all ] || GATE_PART_STEPS_N=$((GATE_PART_STEPS_N + 1))
         # ТРЕТИЙ АРГУМЕНТ (необязательный) — области, от которых шаг зависит
         # (275 Ф.10). Нет аргумента = шаг исполняется всегда; это умолчание
         # выбрано так, чтобы забывчивость включала работу, а не выключала.
