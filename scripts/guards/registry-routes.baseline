@@ -1529,7 +1529,8 @@ no_caveat=0
 # ro-launder `nova test` refuses, K2, blocks the tag: the build path ships the violation), routed 274.10.
 # 2026-10-06, integrator (candidate of task #2 on main 7992b1846 + p-integ-mechanics): 99 (main) + 4 (#2: 1723, 1724, 1727, 1735) = 103.
 # 2026-10-06, task #15: 103 -> 104, row 1747 (oracle: the implicit upcast to `any` in `Failure(e)` crashes the binary, K1, blocks the tag), routed 274.10; row 1746 does not block.
-blockers=104
+# 2026-10-06, task #15 round 3: 104 -> 105, row 1756 (Carina: a nested `|` under an Option in a pattern is left untested, a wrong answer printed silently; K1, routed 274; found by the novac hunt 2026-10-06-lower-k4).
+blockers=105
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
