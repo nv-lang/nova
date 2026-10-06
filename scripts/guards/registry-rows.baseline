@@ -1606,8 +1606,10 @@
 # 2026-10-06, task #17, merge of origin/main f2b6517c7 (task #14 in): rows 1699 (main) + 1 (#17: 1762) = 1700,
 # max stays 1763; 1762 arrives with this branch and leaves gaps= by this merge.
 # 2026-10-06, task #18, merge of origin/main 412499bcf (task #17 in): rows 1700 (main) + 4 (#18: 1764-1767) = 1704, max 1763 -> 1767; the D78 row stays TBD until numbered.
-rows=1704
-max=1767
+# 2026-10-06, task #18 (number from the integrator): the D78 row is 1771 -- rows 1704 -> 1705, max 1767 -> 1771;
+#   1768-1770 are numbers of other branches and stand in gaps= until their rows arrive.
+rows=1705
+max=1771
 rows=1611
 max=1693
 rows=1590
@@ -2372,7 +2374,7 @@ stale_gaps=0
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35): 1738-1739, 1752 (#10) and 1740-1742, 1751 (#14) all carry rows -- none in gaps=.
 # 2026-10-06, integrator (row 1763): 1758-1762 issued to other branches (1758-1761 #14, 1762 #17); removal: drop from gaps= by the merge that brings their rows.
 # 2026-10-06, acceptor of task #14 (candidate on main 7ba6979fd): 1740-1742, 1751, 1758-1761 carry #14's rows -- out of gaps=; 1762 (task #17) stays.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1768-1770
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
