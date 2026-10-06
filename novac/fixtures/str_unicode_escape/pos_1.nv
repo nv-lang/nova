@@ -1,0 +1,31 @@
+module str_unicode_escape.pos_1
+
+// The `\u{H…}` string escape (D467 section 2): a codepoint in hex, one or more
+// digits of either case, held by the `str` as its UTF-8 bytes. novac refused
+// it as outside the subset, and its own lex_test.nv carries one (task #10,
+// measure 0.2). Every UTF-8 width (1..4 bytes), the bound U+10FFFF, leading
+// zeros, both cases, a hex-looking letter right after the escape (C's `\x`
+// would swallow it), an escaped backslash before `u{` (no escape at all), an
+// interpolated fragment (its own byte count) and a match arm. Byte for byte
+// with the oracle.
+fn main() {
+    ro a = "\u{41}\u{000042}c"
+    println(a)
+    println(a.byte_len())
+    ro cyr = "\u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}"
+    println(cyr)
+    println(cyr.byte_len())
+    ro wide = "\u{20AC}\u{1F600}\u{10ffff}"
+    println(wide.byte_len())
+    println("\u{43F}abc")
+    println("\\u{41}")
+    println("\u{0}x".byte_len())
+    ro n = 7
+    ro mixed = "\u{43f}=${n}\u{20ac}"
+    println(mixed)
+    println(mixed.byte_len())
+    match cyr {
+        "\u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}" => println("arm")
+        _ => println("miss")
+    }
+}

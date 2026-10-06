@@ -24,7 +24,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../sem.{leaf_kind, leaf_text, interp_slices}
+import ../sem.{leaf_kind, leaf_text, interp_slices, unicode_escape_end}
 
 /// The escapes the subset knows. Everything else is REFUSED rather than
 /// copied into the C.
@@ -88,6 +88,23 @@ fn Checker mut @report_if_bad_escape(kids []Node) -> () {
             } else {
                 // Not a CRLF continuation: the ordinary two-byte escape below.
             }
+            // `\u{H…}` (D467 section 2): a codepoint in hex, and a LANGUAGE
+            // rule, not a subset one -- a surrogate, a value past U+10FFFF, a
+            // missing brace or no digits is wrong Nova, a permanent refusal
+            // and not subset debt (fixtures str_unicode_escape/neg_1..3).
+            // The emitter spells the codepoint's UTF-8 bytes
+            // (`literal_as_c_text`); the same door reads the escape there.
+            if e == LOWER_U {
+                ro close = unicode_escape_end(b, i + 1)
+                if close < 0 {
+                    @reject_first_leaf_of(kids, UNICODE_ESCAPE_MSG)
+                    return
+                }
+                i = close + 1
+                continue
+            } else {
+                // Not a unicode escape: the two-byte set below.
+            }
             ro known = e == QUOTE || e == BACKSLASH || e == LOWER_N ||
                 e == LOWER_T || e == LOWER_R || e == DOLLAR || e == NEWLINE
             if !known {
@@ -115,8 +132,13 @@ const DOLLAR u8 = 0x24     // $
 const NEWLINE u8 = 0x0A    // the newline a line continuation swallows
 const CR u8 = 0x0D         // the carriage return a CRLF file puts before it
 
+const LOWER_U u8 = 0x75    // u
+
 /// One text for the rule above.
-const ESCAPE_MSG = "outside the subset: this string escape is not compiled yet (the subset knows only \\\" \\\\ \\n \\t \\r)"
+const ESCAPE_MSG = "outside the subset: this string escape is not compiled yet (the subset knows only \\\" \\\\ \\n \\t \\r \\u{...})"
+
+/// The language rule of `\u{H…}`, one text for its four ways to be wrong.
+const UNICODE_ESCAPE_MSG = "a `\\u{...}` escape names a Unicode scalar value: one or more hex digits in braces, at most 10FFFF and not a surrogate D800..DFFF (D467)"
 
 /// Does this literal carry an interpolation? `${` is the marker, and it is
 /// looked for in the literal's own text because the lexer -- rightly -- keeps a
