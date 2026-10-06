@@ -42,7 +42,13 @@ export LC_ALL=C
 # корень файловой системы, а это хуже исходной болезни.
 ROOT="${1:-$(dirname "$0")/../..}"
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
-NOVA="${2:-$ROOT/nova-cli/target/release/nova}"
+# Оракул без второго аргумента — дверью novac_find_oracle (№1750): в дереве задачи
+# своего бинаря нет, и страж краснел «бинарь не найден» на здоровом коде.
+if [ -z "${2:-}" ] && [ -f "$ROOT/scripts/guards/lib/novac.sh" ]; then
+    . "$ROOT/scripts/guards/lib/novac.sh"
+    NOVA="$(novac_find_oracle "$ROOT" 2>/dev/null || true)"
+fi
+NOVA="${2:-${NOVA:-$ROOT/nova-cli/target/release/nova}}"
 NAME=check-novac-lint
 
 if [ ! -x "$NOVA" ] && [ ! -f "$NOVA" ]; then

@@ -64,5 +64,33 @@ OUT=$(bash "$G" "$R" "$B" 2>&1); RC=$?
 check "сужение без опускания базы — красный" "$RC" "1"
 has "сказал, что база выше факта" "$OUT" "МЕНЬШЕ"
 
+echo "== №1750: копия под другим именем; дерево задачи судит свою ветку =="
+printf '0\n' > "$B"
+git -C "$R" update-ref -d refs/remotes/origin/work
+# кандидат ушёл на origin как integrate/<задача> — копия есть, хоть имя другое
+git -C "$R" update-ref refs/remotes/origin/integrate/t1 refs/heads/work
+OUT=$(bash "$G" "$R" "$B" 2>&1); RC=$?
+check "копия под другим именем (integrate/*) — зелёный" "$RC" "0"
+git -C "$R" update-ref -d refs/remotes/origin/integrate/t1
+
+# связанное дерево: в главной копии ветка 'work' без копии (красный), а дерево
+# задачи на своей ветке 'mine' судит только её
+git -C "$R" branch mine main >/dev/null 2>&1
+WT="$TMP/wt"
+git -C "$R" worktree add -q "$WT" mine >/dev/null 2>&1
+printf 'z\n' > "$WT/h.txt"
+git -C "$WT" add h.txt >/dev/null 2>&1
+git -C "$WT" commit -qm mine >/dev/null 2>&1
+git -C "$R" update-ref refs/remotes/origin/mine refs/heads/mine
+OUT=$(bash "$G" "$WT" "$B" 2>&1); RC=$?
+check "дерево задачи: своя ветка скопирована, чужая 'work' не судится — зелёный" "$RC" "0"
+has "назвал область суда" "$OUT" "ветка этого дерева"
+OUT=$(bash "$G" "$R" "$B" 2>&1); RC=$?
+check "главная копия по-прежнему судит все ветки ('work' без копии) — красный" "$RC" "1"
+git -C "$R" update-ref -d refs/remotes/origin/mine
+OUT=$(bash "$G" "$WT" "$B" 2>&1); RC=$?
+check "дерево задачи: своя ветка без копии — красный" "$RC" "1"
+git -C "$R" worktree remove --force "$WT" >/dev/null 2>&1
+
 echo "самотест check-novac-local-only-work: PASS $PASS FAIL $FAIL"
 [ "$FAIL" -eq 0 ]
