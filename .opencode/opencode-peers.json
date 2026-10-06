@@ -79,5 +79,6 @@
   "spawn_limits": {
     "worker": 5,
     "reviewer": 4
-  }
+  },
+  "machine_slots": 2
 }
