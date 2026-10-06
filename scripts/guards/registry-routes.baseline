@@ -1529,7 +1529,8 @@ no_caveat=0
 # ro-launder `nova test` refuses, K2, blocks the tag: the build path ships the violation), routed 274.10.
 # 2026-10-06, integrator (candidate of task #2 on main 7992b1846 + p-integ-mechanics): 99 (main) + 4 (#2: 1723, 1724, 1727, 1735) = 103.
 # 2026-10-06, task #10 (t10-karina-mera-0-2-binds-nv-i-lex-test-nv-p): 103 -> 104 (merged with main ee6d2ae4f), row 1738 filed OPEN, BLOKIRUET TEG: DA (oracle accepts a direct `mut` method call on `@` from a method without `mut`; the write is silently lost on a value record). Row 1739 (K2) holds no tag.
-blockers=104
+# 2026-10-06, task #10: 104 -> 105, row 1752 filed OPEN, BLOKIRUET TEG: DA (Carina: an interpolation fragment's length counted on the unspliced text, wrong bytes in the output), route plan 274.
+blockers=105
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

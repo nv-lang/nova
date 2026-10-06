@@ -1,0 +1,12 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	fn main() Io -> () {
+     4	    ro c = '\u{41}'
+     5	    println(c)
+     6	}
+=== SUBJECT: novac check (NOVAC_UNIT=1)
+novac rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"prog.nv","start":45,"end":53},"message":"outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself","poisoned_by":null}
+=== ORACLE: nova check
+ok: prog.nv
