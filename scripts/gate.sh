@@ -169,6 +169,31 @@ echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_
 # не прогнав.
 NOVA_GATE_DRYRUN="${NOVA_GATE_DRYRUN:-0}"
 
+# ЧАСТЬ ГЕЙТА ДЛЯ ПАРАЛЛЕЛЬНЫХ РАБОТ CI (2026-10-06, вопрос владельца «все ждут
+# CI»). Замер job `gate.sh tier push` на 915f8996b: 31,5 минуты, из них три шага
+# — conformance-full 552 с, mega-CU 536 с, crate-tests 409 с — почти две трети.
+# Шаги независимы, поэтому CI гонит ярус ЧЕТЫРЬМЯ работами: каждая исполняет шаги
+# своей части (`gate_part_of` ниже), заголовки чужих печатает как «в другой части».
+# Пусто (умолчание, локальный гейт) — всё, как прежде.
+# КЛАСС №445/№519: часть, не нашедшая ни одного своего шага (шаг переименован),
+# была бы зелёной пустотой — поэтому такая часть КРАСНЕЕТ в итоге, а строка
+# вердикта называет часть, чтобы её не прочли как вердикт всего яруса.
+NOVA_GATE_PART="${NOVA_GATE_PART:-}"
+case "$NOVA_GATE_PART" in
+    ''|conformance|mega|crates|rest) ;;
+    *) echo "GATE FATAL: NOVA_GATE_PART=$NOVA_GATE_PART — части: conformance, mega, crates, rest (пусто — все)" >&2
+       exit 1 ;;
+esac
+GATE_PART_STEPS_N=0
+gate_part_of() {
+    case "$1" in
+        "conformance-full "*) echo conformance ;;
+        "mega-CU "*) echo mega ;;
+        "crate-tests "*) echo crates ;;
+        *) echo rest ;;
+    esac
+}
+
 # ОДИН ГЕЙТ НА ДЕРЕВО (реестр №1389) — до суточного предела, иначе отказанный
 # второй прогон успел бы сжечь отметку. Сухой ход дерево не трогает и не судится.
 if [ "$NOVA_GATE_DRYRUN" != "1" ]; then
@@ -333,6 +358,15 @@ step() {
            exit 1 ;;
     esac
     if tier_at_least "$_step_tier"; then
+        if [ -n "$NOVA_GATE_PART" ] && [ "$(gate_part_of "$1")" != "$NOVA_GATE_PART" ]; then
+            STEP_ACTIVE=0
+            printf '[%5ds] -- gate: в другой части (%s) : %s\n' \
+                "$(( $(date +%s) - GATE_T0 ))" "$(gate_part_of "$1")" "$1"
+            return 0
+        fi
+        # Счёт ДО пропуска по диффу: шаг своей части, пропущенный потому, что дифф
+        # его не трогает, — законно пропущен, а не потерян.
+        GATE_PART_STEPS_N=$((GATE_PART_STEPS_N + 1))
         # ТРЕТИЙ АРГУМЕНТ (необязательный) — области, от которых шаг зависит
         # (275 Ф.10). Нет аргумента = шаг исполняется всегда; это умолчание
         # выбрано так, чтобы забывчивость включала работу, а не выключала.
@@ -2415,10 +2449,17 @@ else
 fi
 echo "gate :: профиль шагов — bash scripts/tools/gate-profile.sh <лог этого прогона>"
 
+PART_TAIL=""
+if [ -n "$NOVA_GATE_PART" ]; then
+    PART_TAIL=" [ЧАСТЬ $NOVA_GATE_PART: шаги прочих частей судят соседние работы CI]"
+    [ "$GATE_PART_STEPS_N" -gt 0 ] \
+        || fail "часть гейта $NOVA_GATE_PART не нашла на ярусе $NOVA_GATE_TIER ни одного своего шага — шаг переименован, а gate_part_of ждёт старое имя; пустая часть зелёной не бывает (класс №445)"
+fi
+
 gate_barrier
 
 if [ -n "$OVERRIDE_FILES" ] && [ "$GATE_TIER_N" -ge 2 ]; then
     print_override_warning
 else
-    echo "GATE OK (final)$TREE_TAIL$CI_TAIL$TIER_TAIL"
+    echo "GATE OK (final)$TREE_TAIL$CI_TAIL$TIER_TAIL$PART_TAIL"
 fi
