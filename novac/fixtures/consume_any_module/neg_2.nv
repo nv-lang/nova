@@ -1,0 +1,18 @@
+module consume_any_module.neg_2
+
+// A `consume` PARAMETER OF ANOTHER MODULE'S MUST-CONSUME TYPE (registry 221.1 #1723;
+// D131): the parameter owns std's `StringBuilder` from the start, and the second
+// `into_str` uses a value the first one took. Before #1723 a parameter of a type the
+// file did not declare was not owned at all.
+
+// NOVAC_EXPECT `sb` is used after it was consumed
+
+fn finish(consume sb StringBuilder) -> str {
+    ro head = sb.into_str()
+    ro tail = sb.into_str() // the one refusal: line 12
+    "${head}${tail}"
+}
+
+fn main() {
+    println(finish(StringBuilder.new(cap: 4)))
+}

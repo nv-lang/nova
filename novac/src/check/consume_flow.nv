@@ -6,8 +6,10 @@
 //   NOT taken: the dataflow over a control-flow graph -- the tree is walked, a branch
 //   is the only join, and a loop or an early exit is refused by name.
 // Role: the CONSUMPTION OBLIGATION of a must-consume type (D133), steps 1-4 of the
-//   track (the integrator's word 2026-10-02): a file's own `type X consume`, its
-//   `consume` bindings and `consume` parameters -- consumed by a `consume` method, a
+//   track (the integrator's word 2026-10-02): a `type X consume` of any module
+//   (registry #1723), its `consume` bindings and `consume` parameters, and the
+//   `consume` fields of a `consume` receiver by path (`@.f1.f2`, D133 "Field-aware
+//   flow") -- consumed by a `consume` method, a
 //   `consume` parameter, a `return` or the tail, a `consume y = x` transfer; used
 //   after that is D131's error, still owned at an exit is `D133-not-consumed`, and a
 //   fresh one handed to a view is the same error (D476 s4). The paths -- branches,
@@ -34,7 +36,7 @@ import ../types.{TyId, no_ty, is_ty}
 /// of one this body owns, by name -- `names` maps a name to its LATEST entry, so a
 /// re-binding shadows.
 type ConsumeFlow {
-    kinds []TyId /// the file's own must-consume types
+    kinds []TyId /// every must-consume type the file can name, its own and other modules' (registry #1723)
     names NameTable /// a name -> its latest entry below
     nm []str /// per entry: the name it was bound under
     owned_ty []TyId /// per entry: the value's type
@@ -43,6 +45,7 @@ type ConsumeFlow {
     loose []bool /// per entry: bound by a pattern WITHOUT `consume` -- its one use must move it on (plan 293)
     auto_at []int /// per entry: its type's index in `autos` when the entry is cleaned where it is left (D432: a `consume x = e` binding or a `consume` parameter of an affine type), -1 = strictly linear
     origin []Node /// per entry: what bound it -- the `consume x = e` statement, the function for a parameter -- the key an exit's cleanup names it by
+    fields int /// how many LEADING entries are field paths of a `consume` receiver (`@.f1.f2`, D133 "Field-aware flow"): judged at each use, never at an exit (see `@flow_own_fields`)
     autos AutoCleanups /// the file's affine types (D432)
     fn_effects []str /// the effects the walked function declares -- an auto-cleanup's must be among them in an exported one (D432 s1 amendment)
     fn_export bool /// the walked function is written under `export`: its effects are declared, never inferred (D28/D62)
@@ -107,11 +110,12 @@ fn cleanup_effect_msg(name str, eff str) -> str {
 fn untracked_consume_msg(where str) -> str =>
     "outside the subset: a value of a must-consume type ${where} is not tracked yet, so its obligation would go unchecked (274.7 B13)"
 
-/// The file's own `type X consume` declarations: their types, and each one's refusal
-/// when it declares no `consume` method (D133-empty-consume). Then every function
-/// body of the file is walked. A file that declares none has nothing to do here.
+/// The file's own `type X consume` declarations: each one's refusal when it
+/// declares no `consume` method (D133-empty-consume). Then every function body of
+/// the file is walked, over the must-consume types of every module. A file that can
+/// name none has nothing to do here.
 fn Checker mut @check_consume_flow(file Node) -> () {
-    ro kinds = @consume_kinds_of(file)
+    ro kinds = @must_consume_kinds()
     // The field markers first: a marker on a field that carries nothing is wrong
     // in a file with no must-consume type at all.
     @check_field_markers(file, kinds)
@@ -139,21 +143,29 @@ fn Checker mut @check_consume_flow(file Node) -> () {
 /// file pass skips a generic declaration, whose types exist only per instance --
 /// this is where they do. `body_file` declares the must-consume types it may meet.
 fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
-    ro kinds = @consume_kinds_of(body_file)
+    // SILENT-OK: a deliberate NARROWING, [M-novac-flow-handed-generic-instances] (docs/dev/simplifications.md):
+    // an instance of a body handed from outside the program is not walked. Until
+    // #1723 such a body was walked only when its own file declared a `type X consume`
+    // -- never for std's `Vec[T] @push`, but yes for io/buffered.nv (`BufWriter`) and
+    // runtime/sync.nv; the set of every module made each one walkable, and they move
+    // values through raw memory (`write_consume`, D216), which the flow does not
+    // follow, so `Vec[Tx] @push` was refused. Those bodies are std's, judged by the
+    // oracle when std is built; the program's own bodies are walked as before.
+    if !@ctx.in_program(@inst_row) { return }
+    ro kinds = @must_consume_kinds()
     if kinds.len() == 0 { return }
     @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds), node_among(file_exported_fns(body_file), decl))
 }
 
-/// The file's own `type X consume` declarations, as types.
-fn Checker @consume_kinds_of(file Node) -> []TyId {
+/// Every `type X consume` the file can name, as types: its own, and those of every
+/// module it is handed (`TypeDef.must_consume`, filled per row by collect, so one
+/// table answers for both). Until
+/// registry #1723 only the file's own were read, and the flow did not see std's
+/// `StringBuilder` or a sibling file's type at all -- a second `sb.into_str()` passed.
+fn Checker @must_consume_kinds() -> []TyId {
     mut kinds = []TyId.new()
-    for d in file_decls(file) {
-        if d.kind_of() != NodeKind.TypeDecl || !decl_marked_consume(d) { continue }
-        ro dk = branch_children(d)
-        if dk.len() < 2 || dk[1].kind_of() != NodeKind.LeafNode { continue }
-        ro t = @ctx.ty_of_name(leaf_text(dk[1])) ?? no_ty()
-        if !is_ty(t) { continue }
-        kinds.push(t)
+    for td in @ctx.types {
+        if td.must_consume && is_ty(td.ty_id) { kinds.push(td.ty_id) } else { continue }
     }
     kinds
 }
@@ -212,7 +224,15 @@ fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups, exported bool)
                            fn_export: exported,
                            depth: 0, nest: 0, dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
                            cont: []VarState.new(), cont_paths: 0, forced: false, scope_call: f,
-                           scope_ok: false, stopped: false }
+                           scope_ok: false, stopped: false, fields: 0 }
+    // The receiver of a `consume` method owns its `consume` fields: their paths are
+    // the first entries, before any parameter (D133 "Field-aware flow").
+    if fd.has_recv && fd.param_cnt > 0 && @ctx.fns.params[fd.param_off].mode == ParamMode.ModeConsume {
+        @flow_own_fields(fl, "@", @concrete(@ctx.fns.params[fd.param_off].type_id), fk[0], 0)
+    } else {
+        // A view or a `mut` receiver: moving its field out is P14's to refuse.
+    }
+    fl.fields = fl.owned_ty.len()
     ro first = if fd.has_recv { 1 } else { 0 }
     for p in first..fd.param_cnt {
         ro pd = @ctx.fns.params[fd.param_off + p]
@@ -267,7 +287,7 @@ fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups, exported bool)
 /// is cleaned there (D432, `@flow_settle_auto`). An error stops tracking (a loop's
 /// next pass would say it again).
 fn Checker mut @flow_scope_end(mut fl ConsumeFlow, mark int, site Node) -> () {
-    for i in mark..fl.owned_ty.len() {
+    for i in past_fields(fl, mark)..fl.owned_ty.len() {
         ro t = fl.owned_ty[i]
         if fl.auto_at[i] >= 0 {
             @flow_settle_auto(fl, i)
@@ -455,11 +475,15 @@ fn Checker mut @flow_child(c Node, mut fl ConsumeFlow) -> () {
 /// Is any tracked value still owned, on some path? An early exit then skips its
 /// obligation.
 fn flow_any_live(fl ConsumeFlow) -> bool {
-    for c in fl.state {
-        if c != VarState.VsConsumed { return true }
+    for i in fl.fields..fl.state.len() {
+        if fl.state[i] != VarState.VsConsumed { return true }
     }
     false
 }
+
+/// Where an exit's judgement from `mark` starts: past the field paths, which an
+/// exit does not judge (`ConsumeFlow.fields`).
+fn past_fields(fl ConsumeFlow, mark int) -> int => mark.max(fl.fields)
 
 /// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an
 /// exit (`return`, `break`, `continue`, a diverging call) judges what is owned and
@@ -471,7 +495,7 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     ro k = st.kind_of()
     ro diverges = is_node(st.id_of()) && is_never_ty(@ctx.tys, @chan.type_if_known(st.id_of()))
     ro leaves = k == NodeKind.RetStmt || k == NodeKind.LoopCtl || diverges
-    if leaves && fl.depth > 0 && fl.owned_ty.len() > 0 {
+    if leaves && fl.depth > 0 && fl.owned_ty.len() > fl.fields {
         @flow_stop(st, "left early from a `with`, a `spawn` or a handler body while one is tracked", fl)
         return
     } else {
@@ -609,7 +633,7 @@ fn Checker mut @flow_destructure(st Node, mut fl ConsumeFlow) -> () {
     } else if fl.depth > 0 {
         @flow_stop(st, "bound inside a `with`, a `spawn`, a handler or an assignment", fl)
         return
-    } else if is_kind_of(fl.kinds, it) {
+    } else if is_kind_of(fl.kinds, it) || @is_consume_decl(it) {
         @flow_stop(st, "taken apart by a destructuring pattern (a `consume` record)", fl)
         return
     } else {
@@ -647,10 +671,28 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
     } else {
         // Not a plain name: its parts below.
     }
+    if fl.fields > 0 && (k == NodeKind.SelfField || k == NodeKind.FieldAccess) {
+        // A field path the `consume` receiver owns (`@body`, `@inner.body`) is
+        // judged by its own entry; any other field is a place, below.
+        ro slot = field_slot_of(e, fl)
+        if slot >= 0 {
+            @flow_field_use(e, slot, moved, fl)
+            return
+        } else {
+            // Not an owned field path.
+        }
+    } else {
+        // No receiver fields are tracked, or not a field.
+    }
     ro t = if is_node(e.id_of()) { @chan.type_if_known(e.id_of()) } else { no_ty() }
     ro owned = @is_owned_kind(fl.kinds, t)
     // A call of a `-> @` method (D409) answers its RECEIVER: a place, not a fresh value.
-    ro place = is_place_kind(k) || @answers_receiver(e)
+    // A `-> @` call that MOVES continues its receiver's value (D409): the value moves
+    // through the chain to its first link, judged there (`@flow_call`'s `chain`) --
+    // `StringBuilder.new().append(s).into_str()`, `sb.append(s).into_str()`. Only
+    // when it is used in place is it the place its receiver was.
+    ro chain = moved && @answers_receiver(e)
+    ro place = is_place_kind(k) || (@answers_receiver(e) && !chain)
     if owned && place && moved {
         // `consume_it(@)`, `eat(b.tx)`: moving out of a view or of a place.
         @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
@@ -664,7 +706,7 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         // No must-consume value, a view used in place, or a value that moves.
     }
     if (k == NodeKind.Call || k == NodeKind.MethodCall) && @chan.has_callee(e.id_of()) {
-        @flow_call(e, fl)
+        @flow_call(e, fl, chain)
     } else if is_branch_kind(k) {
         @flow_branch(e, fl, moved)
     } else if is_short_circuit(e) {
@@ -763,8 +805,9 @@ fn Checker mut @flow_take(e Node, i int, moved bool, forced bool, mut fl Consume
 
 /// A call with a recorded callable: each argument goes where its parameter's MODE
 /// says -- a `consume` slot moves it, any other slot only uses it. The receiver of a
-/// method is slot zero (plan 273).
-fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
+/// method is slot zero (plan 273). `chain`: the call answers its receiver (`-> @`)
+/// and its value moves, so the receiver moves with it.
+fn Checker mut @flow_call(e Node, mut fl ConsumeFlow, chain bool) -> () {
     ro kids = branch_children(e)
     ro is_method = e.kind_of() == NodeKind.MethodCall
     ro from = if is_method { 3 } else { 1 }
@@ -790,7 +833,10 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
         ro written = if is_method { at - 1 } else { at }
         ro arg = if is_method && at == 0 { kids[0] } else { call_arg_at(kids, from, written) }
         ro mode = if s < fd.param_cnt { @ctx.fns.params[fd.param_off + s].mode } else { ParamMode.ModeRo }
-        if mode != ParamMode.ModeConsume && @is_fresh_owned(arg, fl) {
+        if chain && is_method && at == 0 {
+            // The receiver of a `-> @` call whose value moves: it moves with it.
+            @flow_expr(arg, fl, true)
+        } else if mode != ParamMode.ModeConsume && @is_fresh_owned(arg, fl) {
             @flow_fresh_in_view(arg, e, fl)
         } else {
             @flow_expr(arg, fl, mode == ParamMode.ModeConsume)

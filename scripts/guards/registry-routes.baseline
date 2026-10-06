@@ -1530,7 +1530,16 @@ no_caveat=0
 # 2026-10-06, integrator (candidate of task #2 on main 7992b1846 + p-integ-mechanics): 99 (main) + 4 (#2: 1723, 1724, 1727, 1735) = 103.
 # 2026-10-06, task #15: 103 -> 104, row 1747 (oracle: the implicit upcast to `any` in `Failure(e)` crashes the binary, K1, blocks the tag), routed 274.10; row 1746 does not block.
 # 2026-10-06, task #15 round 3: 104 -> 105, row 1756 (Carina: a nested `|` under an Option in a pattern is left untested, a wrong answer printed silently; K1, routed 274; found by the novac hunt 2026-10-06-lower-k4).
-blockers=105
+# 2026-10-06, task #16 (t16-karina-1723-k1-potok-consume-vidit-must): 103 -> 102, row 1723 closed (the consume
+# flow reads every module's must-consume types and the receiver's field paths). Three rows filed with it and
+# numbered by the integrator: 1743 (the mut-method rotation carrier, K2, no), 1744 (the oracle's field state that
+# neither forks nor nests, K1, blocks the tag: it accepts a double consumption), 1745 (a consume method leaving
+# its consume field accepted by both compilers, K1, blocks the tag); both verdicts the integrator's, 2026-10-06:
+# 102 -> 104, measured. Task #10 moves the same count (#1738): at the merge with main it is re-measured, not added.
+# 2026-10-06, task #16: row 1748 (the oracle reads a consume field after its move, K1, blocks the tag: the
+# integrator's verdict, precedent #1726): 104 -> 105, measured.
+# 2026-10-06, task #15, merge of origin/main a1c48f6ed: main 105 (with #16) + 2 of this branch (1747, 1756) = 107.
+blockers=107
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

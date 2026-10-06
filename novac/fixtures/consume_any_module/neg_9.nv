@@ -1,0 +1,25 @@
+module consume_any_module.neg_9
+
+// A `consume` FIELD READ AFTER IT WAS MOVED OUT (registry 221.1 #1723; D131: a
+// consumed value is not used again; D133 "Field-aware flow"): `@body` goes to
+// `into_str`, and `@body.byte_len()` then reads a field that is no longer in the
+// record. Found by the acceptor of task #16. The ORACLE accepts it -- it refuses a
+// second MOVE of the field (neg_3), not a READ after one (registry 221.1 #1748, oracle).
+
+// NOVAC_EXPECT the field `@.body` is used after it was consumed
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @finish() -> str {
+    ro s = @body.into_str()
+    ro k = @body.byte_len() // the one refusal: line 18
+    "${s}${k}"
+}
+
+fn main() {
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    println(p.finish())
+}
