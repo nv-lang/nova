@@ -483,7 +483,7 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
 
 /// Where an exit's judgement from `mark` starts: past the field paths, which an
 /// exit does not judge (`ConsumeFlow.fields`).
-fn past_fields(fl ConsumeFlow, mark int) -> int => if mark > fl.fields { mark } else { fl.fields }
+fn past_fields(fl ConsumeFlow, mark int) -> int => mark.max(fl.fields)
 
 /// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an
 /// exit (`return`, `break`, `continue`, a diverging call) judges what is owned and
