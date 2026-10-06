@@ -1,0 +1,53 @@
+module serde_encode.pos_3
+
+// NESTED GENERIC STD BODIES (E2-b3 step 6): `[]T @serialize` over a vector of
+// options, `Option[T] @serialize` over a vector and over a sum, and the scalar
+// bodies at their edges -- `false`, a negative and a zero, a float with a
+// fraction and a whole one, the empty string and a string that needs every
+// short escape JSON has. Each instance is std's body monomorphized over the
+// program's types; the output is the oracle's byte for byte. A vector of
+// vectors is pos_5: the oracle does not build it (registry 221.1, plan 274.12).
+import std.encoding.serde.{Serialize, json_encode}
+
+#impl(Serialize)
+type Mode enum
+    | Off
+    | Level(int)
+
+#impl(Serialize)
+type Grid {
+    marks []Option[int]
+    mode Option[Mode]
+    names Option[[]str]
+    flag bool
+    neg int
+    zero int
+    half f64
+    whole f64
+    blank str
+    esc str
+}
+
+/// A typed absent mark: a bare `None` inside an array literal has no type to
+/// take in novac's subset yet.
+fn no_mark() -> Option[int] => None
+
+fn main() {
+    // The vectors are bound first: an array literal inside `Some(..)` in a field
+    // of a record literal is an ice of novac's emitter (registry 221.1, the B8/B13
+    // hoisting rows).
+    ro m1 = [Some(4), no_mark()]
+    ro n1 = ["a", "b"]
+    ro g = Grid { marks: m1, mode: Some(Mode.Level(2)), names: Some(n1), flag: false,
+                  neg: -12, zero: 0, half: -2.25, whole: 3.0, blank: "", esc: "q\"b\\n\nt\tr\r" }
+    println(json_encode(g) ?? "fail")
+    ro m2 = [Some(0)]
+    ro h = Grid { marks: m2, mode: Some(Mode.Off), names: None, flag: true, neg: 0, zero: 0,
+                  half: 0.5, whole: 1.0e3, blank: "x", esc: "" }
+    println(json_encode(h) ?? "fail")
+    ro m3 = [no_mark()]
+    ro n3 = []str.new()
+    ro z = Grid { marks: m3, mode: None, names: Some(n3), flag: true, neg: 1, zero: 0,
+                  half: 0.125, whole: -0.0, blank: "y", esc: "/" }
+    println(json_encode(z) ?? "fail")
+}
