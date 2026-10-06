@@ -1,0 +1,56 @@
+// EXPECT_STDOUT reads ok 200
+// ENV GC_USE_GETWRITEWATCH=0
+//
+// Registry 221.1 #1461, second half: the runtime must take libgc's OWN answer
+// to "will incremental mode protect heap pages?", not a guess about it. The
+// first fix guessed from the kernel (soft-dirty probe on Linux, "always" on
+// Windows), but libgc picks its write-tracking means from its build (SOFT_VDB
+// exists only for glibc; NO_SOFT_VDB, GC_PREFER_MPROTECT_VDB) and from the
+// environment: GC_USE_GETWRITEWATCH=0 makes it skip GetWriteWatch / soft-dirty
+// bits and protect pages instead. Measured before this fix with the variable
+// above: the self-hosted compiler crashed (SIGSEGV) 5 runs of 5 on Windows;
+// with a libgc built -DNO_SOFT_VDB on a soft-dirty Linux kernel it answered
+// wrongly 11 runs of 20. With the fix incremental mode stays off whenever libgc
+// would protect pages, so the kernel never writes into a protected page.
+//
+// Same body as p1461_read_into_heap_after_collect: one multi-page file read
+// 200 times between collections and heap churn; every read must be whole.
+module standalone.p1461_incremental_asks_libgc
+
+import std.fs
+import std.runtime.gc
+
+fn main() Io -> () {
+    with Fs = fs.real_fs() {
+        supervised {
+            spawn {
+                ro dir = "p1461_asks_libgc_scratch".to_path()
+                ro _ = fs.remove_dir_all(dir)
+                match fs.create_dir(dir) { Ok(()) => {}, Err(_) => { println("create_dir failed") } }
+                ro f = dir.join("big.txt")
+                mut text = ""
+                for i in 0..2000 {
+                    text = "${text}line ${i} of the p1461 read probe\n"
+                }
+                match fs.write(f, text) { Ok(()) => {}, Err(_) => { println("write failed") } }
+                mut ok = 0
+                for round in 0..200 {
+                    mut churn = []str.new()
+                    for i in 0..300 {
+                        churn.push("c-${round}-${i}")
+                    }
+                    if round % 4 == 0 {
+                        gc.collect()
+                    }
+                    match fs.read_text(f) {
+                        Ok(s) => { if s == text { ok += 1 } }
+                        Err(_) => { println("read failed") }
+                    }
+                }
+                ro _ = fs.remove_file(f)
+                ro _ = fs.remove_dir(dir)
+                println("reads ok ${ok}")
+            }
+        }
+    }
+}
