@@ -54,7 +54,7 @@ module novac.sem
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
 import ../builtins.{TypeKind, COERCE_ATTR, UNIT_TYPE_NAME, HANDLER_CTOR}
 import ../types.{Interner, TyId, no_ty, is_ty}
@@ -469,7 +469,9 @@ export fn Ctx @ty_of_name(name str) -> Option[TyId] {
 /// The TOTAL half: a name in type position that the registry MUST know. The
 /// refusal names what it found instead -- no silent int default (#652 class).
 export fn Ctx @ty_of_name_or_ice(name str) -> TyId =>
-    @ty_of_name(name) ?? ice("sem: a name in TYPE position that the registry does not hold (#652 class)")
+    @ty_of_name(name) ?? ice_at(
+        "novac/src/sem/sem.nv:472",
+        "sem: a name in TYPE position that the registry does not hold (#652 class)")
 
 /// A NAME in type position -> its type, or `no_ty()` when the registry does not
 /// know it. Two steps, and they are the donors' two steps: the name resolves to

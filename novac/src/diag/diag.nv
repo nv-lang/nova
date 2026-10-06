@@ -81,7 +81,7 @@ export fn to_json(d Diagnostic, id int, file str) -> str {
         message: d.message,
         poisoned_by: None,
     }
-    json_encode(dto) ?? ice("diag: to_json could not encode the flat Serialize DTO")
+    json_encode(dto) ?? ice_at("novac/src/diag/diag.nv:84", "diag: to_json could not encode the flat Serialize DTO")
 }
 
 /// The ONE internal-invariant door (novac conventions P12, D416 context).
@@ -123,12 +123,19 @@ export fn json_escape(s str) -> str {
 
 
 /// The hand-built section 7 line for an ice; see the note above on why it
-/// does not go through `json_encode`.
-fn ice_json(msg str) -> str {
-    "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error (novac bug, not yours): ${json_escape(msg)}\",\"poisoned_by\":null}"
+/// does not go through `json_encode`. `site` is the place of the broken
+/// invariant IN NOVAC'S SOURCE, so the line names the file and line that
+/// died (registry 221.1 №1782): the primary span stays `"file":""` because
+/// the input node's span is not carried through the position-free tree.
+fn ice_json(site str, msg str) -> str {
+    "{\"id\":\"ice\",\"code\":\"E_NOVAC_ICE\",\"severity\":\"error\",\"primary\":{\"file\":\"\",\"start\":0,\"end\":0},\"message\":\"internal compiler error at ${json_escape(site)} (novac bug, not yours): ${json_escape(msg)}\",\"poisoned_by\":null}"
 }
 
 /// The ONE internal-error door: print a §7 E_NOVAC_ICE line, then die (P12).
-export fn ice(msg str) -> never {
-    panic(ice_json(msg))
+/// `site` is "<path from the repository root>:<line>" of THIS call. User code
+/// has no `__FILE__`/`__LINE__` (D-block 08-runtime, owner 2026-09-02: an
+/// implicit call-site channel was rejected), so the place is written by hand
+/// and `check-novac-ice-messages` holds it to the real line of the call.
+export fn ice_at(site str, msg str) -> never {
+    panic(ice_json(site, msg))
 }

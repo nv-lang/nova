@@ -37,7 +37,7 @@ module novac.sem
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../types.{TyId}
 
 /// The BODY of a match arm, or None when the arm carries nothing but
@@ -186,7 +186,7 @@ export fn call_arg_at(kids []Node, from int, i int) -> ro Node {
         }
         at += 1
     }
-    ice("sem: a call was asked for an argument it does not write")
+    ice_at("novac/src/sem/slots.nv:189", "sem: a call was asked for an argument it does not write")
 }
 
 /// The EXPRESSION an argument carries: itself when positional, and the value
@@ -443,7 +443,7 @@ fn type_slot_after(pk []Node, n int) -> Option[int] {
 /// docs/plans/274.12-novac-divergences.md), so the signature has to say it.
 export fn branch_children(n Node) -> ro []Node {
     match n {
-        Leaf(_) => ice("sem: expected a branch node")
+        Leaf(_) => ice_at("novac/src/sem/slots.nv:446", "sem: expected a branch node")
         Branch { children, .. } => children
     }
 }
@@ -452,7 +452,7 @@ export fn branch_children(n Node) -> ro []Node {
 export fn leaf_text(n Node) -> str {
     match n {
         Leaf(t) => t.text
-        Branch { .. } => ice("sem: leaf_text on a branch node")
+        Branch { .. } => ice_at("novac/src/sem/slots.nv:455", "sem: leaf_text on a branch node")
     }
 }
 
@@ -460,7 +460,7 @@ export fn leaf_text(n Node) -> str {
 export fn leaf_kind(n Node) -> TokenKind {
     match n {
         Leaf(t) => t.kind
-        Branch { .. } => ice("sem: leaf_kind on a branch node")
+        Branch { .. } => ice_at("novac/src/sem/slots.nv:463", "sem: leaf_kind on a branch node")
     }
 }
 
@@ -483,7 +483,7 @@ export fn literal_prim_of(lk TokenKind, ctx Ctx) -> TyId {
         FloatLit => ctx.prims.f64_id
         IntLit => ctx.prims.int_id
         CharLit => ctx.prims.char_id
-        _ => ice("sem: literal token kind without a type rule (#652 class)")
+        _ => ice_at("novac/src/sem/slots.nv:486", "sem: literal token kind without a type rule (#652 class)")
     }
 }
 

@@ -47,7 +47,7 @@ module novac.check
 import ../source.{SourceText}
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, bin_op_of, un_op_of}
-import ../diag.{Diagnostic, ice}
+import ../diag.{Diagnostic, ice_at}
 import ../sem.{Ctx, CheckOut, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind}
 import ../sem.{expr_leaf_name, is_value_record}
 import ../sem.{file_decls, sole_expr_of_unsafe}

@@ -27,7 +27,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../names.{NameTable, NamespaceId}
 // A variant belongs to a DECLARATION, not to a type id (the applied-sum fix).
 import ../names.{DeclId, is_decl, no_decl, raw_decl}

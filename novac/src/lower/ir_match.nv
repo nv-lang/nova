@@ -16,7 +16,7 @@
 module novac.lower
 import ../tree.{Node}
 import ../sem.{VariantRow}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// What an arm of a `match` tests at its ROOT (wave M2b-1d): a literal, a
 /// variant head (with the other heads of a disjunction `A | B`), a plain
@@ -75,7 +75,7 @@ export type PatTest value {
 /// the innermost branch, where the body runs and the first-match flag is set.
 export fn FnBuilder mut @note_arm_heads(heads []BlockId) -> () {
     if @open_arms.len() == 0 {
-        ice("lower: note_arm_heads outside of an arm")
+        ice_at("novac/src/lower/ir_match.nv:78", "lower: note_arm_heads outside of an arm")
     }
     ro i = @open_arms.len() - 1
     ro a = @open_arms[i]

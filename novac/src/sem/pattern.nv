@@ -25,7 +25,7 @@
 module novac.sem
 
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../lex.{TokenKind}
 import ../builtins.{is_bool_literal}
 
@@ -269,7 +269,9 @@ export fn pattern_name_node(pat Node) -> Node {
     for c in branch_children(pat) {
         if c.kind_of() == NodeKind.Name { return c }
     }
-    ice("sem: a Bind-shape pattern without a Name node -- the parser wraps every binder")
+    ice_at(
+        "novac/src/sem/pattern.nv:272",
+        "sem: a Bind-shape pattern without a Name node -- the parser wraps every binder")
 }
 
 /// The NAME node of a shorthand pattern field (`{ x }`); renamed fields
@@ -278,5 +280,7 @@ export fn patfield_name_node(f Node) -> Node {
     for c in branch_children(f) {
         if c.kind_of() == NodeKind.Name { return c }
     }
-    ice("sem: a shorthand pattern field without a Name node -- the parser wraps every binder")
+    ice_at(
+        "novac/src/sem/pattern.nv:283",
+        "sem: a shorthand pattern field without a Name node -- the parser wraps every binder")
 }

@@ -18,7 +18,7 @@ import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
 import ../sem.{branch_children, leaf_text, is_value_record, shape_of, InteropTable, decl_fn_row}
 import ../source.{SourceText}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../check.{check_instance}
 import ../types.{TyId, no_ty}
 
@@ -114,7 +114,7 @@ fn generic_decl_of(tree Node, want str) -> Node {
         if kids[1].kind_of() != NodeKind.LeafNode { continue }
         if leaf_text(kids[1]) == want { return c }
     }
-    ice("pipeline_test: the fixture lost its declaration")
+    ice_at("novac/src/pipeline/pipeline_test.nv:117", "pipeline_test: the fixture lost its declaration")
 }
 
 test "an instance types its body under the substitution, in its own channel (E2-b2)" {
@@ -126,7 +126,7 @@ test "an instance types its body under the substitution, in its own channel (E2-
     ro tree = parse(tokens_of(src))
     ro ctx = context(tree, parse_decls(std_decls()), InteropTable.new())
     ro decl = generic_decl_of(tree, "twice")
-    ro row = decl_fn_row(decl, ctx) ?? ice("test: `twice` owns no row")
+    ro row = decl_fn_row(decl, ctx) ?? ice_at("novac/src/pipeline/pipeline_test.nv:129", "test: `twice` owns no row")
     ro (diags, chan) = check_instance(decl, SourceText { text: src }, ctx, row,
         []TyId.of(ctx.prims.int_id), raw_node(tree.id_of()) + 1, tree, "")
     assert(diags.len() == 0)

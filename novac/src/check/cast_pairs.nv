@@ -27,7 +27,7 @@ import ../builtins.{BuiltinType, PrimFamily}
 import ../sem.{branch_children, leaf_kind, leaf_text, prim_row_of, char_literal_code}
 import ../lex.{TokenKind}
 import ../types.{TyId}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// WHAT D54 SAYS about one pair -- decided in ONE function, acted on in one
 /// door. A legal pair is recorded, a forbidden one is a language error naming
@@ -44,8 +44,12 @@ type CastVerdict enum
 /// helper is a choice over the PAIR (`is_expr.nv` records its operand the same
 /// way).
 fn Checker mut @type_prim_cast(e Node, kids []Node, from TyId, target TyId) -> () {
-    ro fr = prim_row_of(@ctx.tys, from) ?? ice("check: a primitive cast whose source has no row")
-    ro tr = prim_row_of(@ctx.tys, target) ?? ice("check: a primitive cast whose target has no row")
+    ro fr = prim_row_of(@ctx.tys, from) ?? ice_at(
+        "novac/src/check/cast_pairs.nv:47",
+        "check: a primitive cast whose source has no row")
+    ro tr = prim_row_of(@ctx.tys, target) ?? ice_at(
+        "novac/src/check/cast_pairs.nv:50",
+        "check: a primitive cast whose target has no row")
     ro verdict = prim_cast_verdict(kids[0], fr, tr, @unsafe_depth > 0)
     match verdict {
         CvLegal => {

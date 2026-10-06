@@ -40,7 +40,7 @@
 
 module novac.types
 
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{TypeKind, TYPE_KIND_COUNT}
 import ../names.{DeclId, raw_decl}
 
@@ -286,11 +286,19 @@ export fn Interner @prim_ordinal_of(t TyId) -> int
         // TkEffect: the term reuses the Record interning (E4 wave), so its head
         // is a declaration too -- the nominal refusal is the honest one.
         TkRecord | TkSum | TkApp | TkNewtype | TkEffect =>
-            ice("types: the prim ordinal of a NOMINAL term -- its head is a declaration")
-        TkParam => ice("types: the prim ordinal of a type PARAMETER -- its head is a slot index")
-        TkInfer => ice("types: the prim ordinal of an inference variable -- its head is a vid")
-        TkTuple => ice("types: the prim ordinal of a TUPLE -- its head is an arity")
-        TkPtr => ice("types: the prim ordinal of a POINTER -- its head is a mutability")
+            ice_at(
+                "novac/src/types/types.nv:289",
+                "types: the prim ordinal of a NOMINAL term -- its head is a declaration")
+        TkParam => ice_at(
+            "novac/src/types/types.nv:292",
+            "types: the prim ordinal of a type PARAMETER -- its head is a slot index")
+        TkInfer => ice_at(
+            "novac/src/types/types.nv:295",
+            "types: the prim ordinal of an inference variable -- its head is a vid")
+        TkTuple => ice_at("novac/src/types/types.nv:298", "types: the prim ordinal of a TUPLE -- its head is an arity")
+        TkPtr => ice_at(
+            "novac/src/types/types.nv:299",
+            "types: the prim ordinal of a POINTER -- its head is a mutability")
     }
 }
 
@@ -303,14 +311,24 @@ export fn Interner @param_slot_of(t TyId) -> int
     ro row = @rows[raw_ty(t)]
     match row.kind {
         TkParam => row.head_id
-        TkPrim => ice("types: the parameter slot of a PRIMITIVE -- its head is a universe ordinal")
+        TkPrim => ice_at(
+            "novac/src/types/types.nv:314",
+            "types: the parameter slot of a PRIMITIVE -- its head is a universe ordinal")
         // TkEffect: the term reuses the Record interning (E4 wave), so its head
         // is a declaration, not a slot index.
         TkRecord | TkSum | TkApp | TkNewtype | TkEffect =>
-            ice("types: the parameter slot of a NOMINAL term -- its head is a declaration")
-        TkInfer => ice("types: the parameter slot of an inference variable -- its head is a vid")
-        TkTuple => ice("types: the parameter slot of a TUPLE -- its head is an arity")
-        TkPtr => ice("types: the parameter slot of a POINTER -- its head is a mutability")
+            ice_at(
+                "novac/src/types/types.nv:320",
+                "types: the parameter slot of a NOMINAL term -- its head is a declaration")
+        TkInfer => ice_at(
+            "novac/src/types/types.nv:323",
+            "types: the parameter slot of an inference variable -- its head is a vid")
+        TkTuple => ice_at(
+            "novac/src/types/types.nv:326",
+            "types: the parameter slot of a structural term -- its head is an arity")
+        TkPtr => ice_at(
+            "novac/src/types/types.nv:329",
+            "types: the parameter slot of a POINTER -- its head is a mutability")
     }
 }
 
@@ -333,11 +351,19 @@ export fn Interner @decl_head_of(t TyId) -> DeclId
         TkRecord | TkSum | TkApp | TkNewtype | TkEffect => DeclId(row.head_id)
         // The other four are four DIFFERENT things, so they stay four arms:
         // the refusal names WHAT was found instead of a declaration.
-        TkPrim => ice("types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
-        TkTuple => ice("types: a TUPLE names no declaration -- its head is an arity")
-        TkParam => ice("types: a type PARAMETER names no declaration -- its head is a slot index")
-        TkInfer => ice("types: an inference variable names no declaration -- its head is a vid")
-        TkPtr => ice("types: a POINTER names no declaration -- its head is a mutability")
+        TkPrim => ice_at(
+            "novac/src/types/types.nv:354",
+            "types: a PRIMITIVE names no declaration -- its head is a universe ordinal")
+        TkTuple => ice_at("novac/src/types/types.nv:357", "types: a TUPLE names no declaration -- its head is an arity")
+        TkParam => ice_at(
+            "novac/src/types/types.nv:358",
+            "types: a type PARAMETER names no declaration -- its head is a slot index")
+        TkInfer => ice_at(
+            "novac/src/types/types.nv:361",
+            "types: an inference variable names no declaration -- its head is a vid")
+        TkPtr => ice_at(
+            "novac/src/types/types.nv:364",
+            "types: a POINTER names no declaration -- its head is a mutability")
     }
 }
 
@@ -465,7 +491,9 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
         TkEffect => { return t }
         TkParam => {
             if row.head_id < 0 || row.head_id >= args.len() {
-                ice("types: subst with a partial argument vector — a Param has no argument")
+                ice_at(
+                    "novac/src/types/types.nv:494",
+                    "types: subst with a partial argument vector — a Param has no argument")
             }
             return args[row.head_id]
         }
@@ -500,7 +528,9 @@ export fn Interner @subst_known(t TyId, args []TyId) -> TyId {
     ro row = @rows[raw_ty(t)]
     if row.kind == TypeKind.TkParam {
         if row.head_id < 0 || row.head_id >= args.len() {
-            ice("types: subst with a partial argument vector -- a Param has no argument")
+            ice_at(
+                "novac/src/types/types.nv:531",
+                "types: subst with a partial argument vector -- a Param has no argument")
         }
         return args[row.head_id]
     } else {

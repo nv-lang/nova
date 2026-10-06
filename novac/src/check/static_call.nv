@@ -23,7 +23,7 @@ import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, ty_of_decl
 import ../sem.{CalleeTarget, bind_slots, is_arg_value_kind, c_static_symbol}
 import ../sem.{ArgSpec, ty_source_name, mode_admits}
 import ../resolve.{args_misfit, ARGS_FIT, ARGS_UNBOUND}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../types.{TyId, no_ty, is_ty}
 import ../names.{raw_decl}
 
@@ -313,7 +313,9 @@ fn Checker mut @static_args_fit(kids []Node, row FnRow, key []ArgSpec) -> bool {
         // The binding's own words, the door every call form asks (D102).
         match @binding_refusal(row, key) {
             Some(m) => @reject_first_leaf_of(kids, m)
-            None => ice("check: a static call's arguments do not bind, and the binding names no fault")
+            None => ice_at(
+                "novac/src/check/static_call.nv:316",
+                "check: a static call's arguments do not bind, and the binding names no fault")
         }
         return false
     } else {

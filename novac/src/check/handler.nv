@@ -34,7 +34,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{TypeKind, HANDLER_CTOR}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text, param_name_at, param_mode_at, ty_source_name}
@@ -102,7 +102,9 @@ fn Checker mut @type_handler_lit(e Node) -> () {
 /// schema is asked and every op is judged against it. Split from the
 /// resolving door so that door stays the with-arm's statement-match shape.
 fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclId) -> () {
-    ro schema = @ctx.effects.def_of(name) ?? ice("check: an effect declaration with no op schema reached the handler-literal typist")
+    ro schema = @ctx.effects.def_of(name) ?? ice_at(
+        "novac/src/check/handler.nv:105",
+        "check: an effect declaration with no op schema reached the handler-literal typist")
     ro before = @out.len()
     // THE CAPTURE MARK (E.9 step 3): every binding that exists now is
     // outside this literal, so a read of one from an op body is a capture
@@ -137,7 +139,9 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     // handed on by `return` or as an argument was refused against the
     // declared `Effect[Fs]` with that malformed name in the sentence. The
     // with slot never noticed: its rule admits every application kind.
-    ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice("check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
+    ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice_at(
+        "novac/src/check/handler.nv:142",
+        "check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
     @record(e, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
 }
 

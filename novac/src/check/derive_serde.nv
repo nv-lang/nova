@@ -21,7 +21,7 @@ module novac.check
 import ../builtins.{TypeKind, SERIALIZE_PROTO, SERIALIZE_METHOD, SLICE_HEAD, BYTE_TYPE}
 import ../builtins.{is_serde_seq_head, is_serde_map_head, serde_scalar_wire, serde_scalar_widen, is_serde_nested_scalar}
 import ../types.{TyId, is_ty, no_ty}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{Ctx, TypeDef, VariantDef, decl_of_ty, field_range_of, variant_range_of, gate_names}
 import ../sem.{raw_frow, raw_vrow, no_vrow, prim_row_of, shape_of, RecordShape}
 import ../resolve.{FnIndex, missing_sig_of}
@@ -137,7 +137,7 @@ fn Checker @lacking_named(td TypeDef, j int) -> (str, TyId) {
             }
         }
     }
-    ice("check: the lacking field of a Serialize type names no row of it")
+    ice_at("novac/src/check/derive_serde.nv:140", "check: the lacking field of a Serialize type names no row of it")
 }
 
 /// Where the refusal of the `j`-th field stands: that field's node in a

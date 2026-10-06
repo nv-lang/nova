@@ -14,7 +14,7 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeId}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{call_arg_at, raw_row, slot_default_of, no_row, c_callable, row_recv_by_pointer}
 import ../lower.{no_local}
 
@@ -86,14 +86,16 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
 /// anything at all would invent a value. So it ices.
 fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
     if raw_row(row) < 0 {
-        ice("emit_c: a call with no callable row left a slot to a default")
+        ice_at("novac/src/emit_c/emit_args.nv:89", "emit_c: a call with no callable row left a slot to a default")
     } else {
         // A callable row: its declaration is what says the value.
     }
     ro fd = @ctx.fns.rows[raw_row(row)]
     match slot_default_of(@ctx.fns.params, fd.param_off, s) {
         Some(d) => @emit_expr(d)
-        None => ice("emit_c: a call left a slot to a default its declaration does not write")
+        None => ice_at(
+            "novac/src/emit_c/emit_args.nv:96",
+            "emit_c: a call left a slot to a default its declaration does not write")
     }
 }
 

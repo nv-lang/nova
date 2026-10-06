@@ -22,7 +22,7 @@ module novac.check
 
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{ENTRY_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_LEN_METHOD, EMPTY_CTOR, vec_op_method, vec_op_is_overload}
 import ../names.{NameTable, NamespaceId}

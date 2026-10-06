@@ -21,7 +21,7 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{branch_children, leaf_text, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty}
 import ../sem.{effect_vtable_c, CaptureRow, EffectDef}
 import ../types.{TyId}
@@ -61,7 +61,9 @@ fn Emitter @lit_number(lit Node) -> int {
     for i in 0..@hlits.len() {
         if @hlits[i].id_of() == lit.id_of() { return i }
     }
-    ice("emit: a handler literal outside the reached functions reached the emitter")
+    ice_at(
+        "novac/src/emit_c/emit_handler.nv:64",
+        "emit: a handler literal outside the reached functions reached the emitter")
 }
 
 /// The effect a literal handles (its second child, after `effect`).
@@ -102,7 +104,9 @@ fn Emitter @op_sig_at(schema EffectDef, op Node) -> int {
 
 /// The schema of the effect a literal handles.
 fn Emitter @lit_schema(lit Node) -> EffectDef =>
-    @ctx.effects.def_of(lit_effect(lit)) ?? ice("emit: a handler literal of an effect with no schema")
+    @ctx.effects.def_of(lit_effect(lit)) ?? ice_at(
+        "novac/src/emit_c/emit_handler.nv:107",
+        "emit: a handler literal of an effect with no schema")
 
 /// The C signature of one operation function, without the trailing `;`/`{`.
 fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
@@ -113,7 +117,9 @@ fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
     for p in branch_children(op) {
         if p.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(p)
-        ro pname = leaf_text(pk[param_name_at(pk) ?? ice("emit: a handler op parameter without a name")])
+        ro pname = leaf_text(pk[param_name_at(pk) ?? ice_at(
+            "novac/src/emit_c/emit_handler.nv:120",
+            "emit: a handler op parameter without a name")])
         s.append(", ${c_type(@ctx, @ctx.effects.op_params[sig.param_off + j])} ${pname}")
         j += 1
     }

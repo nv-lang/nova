@@ -12,7 +12,7 @@
 module novac.lower
 
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// The ELSE of a value `if` / `if let`, written into `t`: a block's tail, or
 /// a whole `else if` chain's value. Until part 5 the checker refused the chain
@@ -27,5 +27,7 @@ fn Lowerer mut @lower_else_value(b Node, t Local) -> () {
         return
     }
     // Check refuses every other else by name (check/tail_rules.nv).
-    ice("lower: the else of a value `if` is neither a block nor an `else if` -- check refuses that")
+    ice_at(
+        "novac/src/lower/lower_branch.nv:30",
+        "lower: the else of a value `if` is neither a block nor an `else if` -- check refuses that")
 }

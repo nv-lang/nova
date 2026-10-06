@@ -27,7 +27,7 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, expr_leaf_name, is_arg_value_kind}
 import ../sem.{VariantRow, variants_named, variant_named_in, variant_range_of}
 import ../sem.{raw_vrow, no_vrow, is_vrow, raw_row}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{arg_expr_of, arg_count, CalleeTarget, CallForm}
 import ../sem.{identity_slots}
 import ../sem.{ty_of_decl}
@@ -216,7 +216,9 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
                         ro ct = @const_type_of(qname)
                         if is_ty(ct) {
                             @record(e, ct)
-                            ro crow = @const_seen(qname) ?? ice("check: a qualified constant lost its row")
+                            ro crow = @const_seen(qname) ?? ice_at(
+                                "novac/src/check/variant_rules.nv:219",
+                                "check: a qualified constant lost its row")
                             @chan.record_const(e.id_of(), crow)
                             return true
                         } else {
@@ -293,7 +295,9 @@ fn Checker mut @judge_type_head_variant(e Node, kids []Node, arg_from int) -> bo
             // last build had run BEFORE the edit, and I took it as evidence for
             // what came after. A check that does not measure its subject is worth
             // less than no check, because it also carries conviction.
-            ro vrange = variant_range_of(td) ?? ice("check: a sum with no variant rows")
+            ro vrange = variant_range_of(td) ?? ice_at(
+                "novac/src/check/variant_rules.nv:298",
+                "check: a sum with no variant rows")
             ro first = raw_vrow(vrange.0)
             for j in first..first + vrange.1 {
                 ro vd = @ctx.variant_rows[j]

@@ -21,7 +21,7 @@ import ../lower.{no_local}
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_node, no_node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
@@ -107,7 +107,9 @@ fn c_binary_form(op BinOp, row BuiltinType) -> str {
         BitXor => "^"
         ShiftLeft => "<<"
         ShiftRight => ">>"
-        Range => ice("emit_c: a range reached expression emission -- for-heads consume it")
+        Range => ice_at(
+            "novac/src/emit_c/emit_expr.nv:110",
+            "emit_c: a range reached expression emission -- for-heads consume it")
     }
 }
 
@@ -126,7 +128,9 @@ fn is_float_row(r BuiltinType) -> bool {
 /// checker refuses arithmetic on records and sums at the operator, so here it
 /// is a broken invariant, not a shape to guess about.
 fn Emitter @arith_row(t TyId) -> BuiltinType =>
-    prim_row_of(@ctx.tys, carrier_of(@ctx, t)) ?? ice("emit_c: arith_row on a carrier that is no primitive")
+    prim_row_of(@ctx.tys, carrier_of(@ctx, t)) ?? ice_at(
+        "novac/src/emit_c/emit_expr.nv:131",
+        "emit_c: arith_row on a carrier that is no primitive")
 
 /// The runtime PRINTER of a carrier type -- the oracle prints each argument of
 /// `println` with its own printer, one per family and width (measured off its
@@ -141,7 +145,9 @@ fn Emitter @arith_row(t TyId) -> BuiltinType =>
 fn Emitter @printer_of(t TyId) -> str {
     if t == @ctx.prims.str_id { return "nova_print_str" }
     if t == @ctx.prims.bool_id { return "nova_print_bool" }
-    ro row = prim_row_of(@ctx.tys, t) ?? ice("emit_c: printer_of on a carrier that is no primitive row")
+    ro row = prim_row_of(@ctx.tys, t) ?? ice_at(
+        "novac/src/emit_c/emit_expr.nv:148",
+        "emit_c: printer_of on a carrier that is no primitive row")
     match row.family {
         PfFloat => {
             if row.bits == 32 { return "nova_print_f32" }
@@ -154,7 +160,9 @@ fn Emitter @printer_of(t TyId) -> str {
         PfChar => { return "nova_print_char" }
         PfStr | PfBool | PfUnit | PfAny | PfNever => {}
     }
-    ice("emit_c: printer_of reached a primitive family without a printer (unit; str, bool and char are answered above)")
+    ice_at(
+        "novac/src/emit_c/emit_expr.nv:163",
+        "emit_c: printer_of reached a primitive family without a printer (unit; str, bool and char are answered above)")
 }
 
 /// Does this operator emit as a C INFIX operator inside a truth-value cast?
@@ -184,7 +192,9 @@ fn is_call_form(op BinOp, is_float bool) -> bool {
         Modulo => true
         Less | LessEq | Greater | GreaterEq | Equal | NotEqual | AndAlso | OrElse => false
         BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => false
-        Range => ice("emit_c: a range has no binary form -- for-heads consume it")
+        Range => ice_at(
+            "novac/src/emit_c/emit_expr.nv:195",
+            "emit_c: a range has no binary form -- for-heads consume it")
     }
 }
 
@@ -303,7 +313,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 // The checker types every interpolation it accepts, and the
                 // hoist walks every statement -- a miss here is a hole, not
                 // a shape to print from the pool.
-                ice("emit_c: an interpolated literal the hoist never built (I1)")
+                ice_at(
+                    "novac/src/emit_c/emit_expr.nv:316",
+                    "emit_c: an interpolated literal the hoist never built (I1)")
             } else {
                 // A plain literal: the pool owns it, below.
             }
@@ -313,7 +325,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ro idx = @pool.slot(leaf_text(t))
             @body.append("_novac_strlit_${idx}")
         } else {
-            ice("emit_c: literal kind outside the subset")
+            ice_at("novac/src/emit_c/emit_expr.nv:328", "emit_c: literal kind outside the subset")
         }
     } else if k == NodeKind.ArrayLit {
         // Printed as the TEMPORARY its hoist built (wave B8): the literal is
@@ -322,7 +334,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // hole in that contract, not a user mistake.
         ro tmp = @lit_tmp[raw_node(e.id_of())]
         if tmp == "" {
-            ice("emit: an array literal in expression position was never hoisted (wave B8)")
+            ice_at(
+                "novac/src/emit_c/emit_expr.nv:337",
+                "emit: an array literal in expression position was never hoisted (wave B8)")
         } else {
             // Hoisted: the temporary carries the built vector.
         }
@@ -333,7 +347,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // temporary its hoist filled.
         ro ttmp = @lit_tmp[raw_node(e.id_of())]
         if ttmp == "" {
-            ice("emit: a tuple literal in expression position was never hoisted (B15 step 4a)")
+            ice_at(
+                "novac/src/emit_c/emit_expr.nv:350",
+                "emit: a tuple literal in expression position was never hoisted (B15 step 4a)")
         } else {
             // Hoisted: the temporary carries the built pair.
         }
@@ -344,7 +360,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // so what stands in the expression is the temporary the hoist filled.
         ro rtmp = @lit_tmp[raw_node(e.id_of())]
         if rtmp == "" {
-            ice("emit: a record constructor in expression position was never hoisted (wave B13)")
+            ice_at(
+                "novac/src/emit_c/emit_expr.nv:363",
+                "emit: a record constructor in expression position was never hoisted (wave B13)")
         } else {
             // Hoisted: the temporary carries the built record.
         }
@@ -359,7 +377,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 @body.append(bool_c_literal(is_true_literal(bname)))
                 return
             }
-            ice("emit_c: a name without an identity that is no bool literal (a handed default)")
+            ice_at(
+                "novac/src/emit_c/emit_expr.nv:380",
+                "emit_c: a name without an identity that is no bool literal (a handed default)")
         } else {
             // A name of this file's tree: the channel answers below.
         }
@@ -398,7 +418,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                             }
                         }
                         CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
-                            ice("emit: a bare name resolved to a non-variant callee")
+                            ice_at(
+                                "novac/src/emit_c/emit_expr.nv:421",
+                                "emit: a bare name resolved to a non-variant callee")
                     }
                 } else {
                     // Not a constant: an ordinary name, and `nova_bool` IS C
@@ -411,7 +433,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
     } else if k == NodeKind.InterpStr {
         ro itmp2 = @lit_tmp[raw_node(e.id_of())]
         if itmp2 == "" {
-            ice("emit_c: an interpolated string the hoist never built (I2)")
+            ice_at("novac/src/emit_c/emit_expr.nv:436", "emit_c: an interpolated string the hoist never built (I2)")
         }
         @body.append(itmp2)
     } else if k == NodeKind.Coalesce || k == NodeKind.Try {
@@ -420,7 +442,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // IS that name.
         ro qtmp = @lit_tmp[raw_node(e.id_of())]
         if qtmp == "" {
-            ice("emit_c: a `??` the hoist never built (coalesce wave)")
+            ice_at("novac/src/emit_c/emit_expr.nv:445", "emit_c: a `??` the hoist never built (coalesce wave)")
         }
         @body.append(qtmp)
     } else if k == NodeKind.SelfExpr {
@@ -463,7 +485,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     return
                 }
                 CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
-                    ice("emit: a field access resolved to a non-variant callee")
+                    ice_at("novac/src/emit_c/emit_expr.nv:488", "emit: a field access resolved to a non-variant callee")
             }
         } else {
             // An ordinary field access: the shapes below own it.
@@ -539,7 +561,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
             CalleeFn(_) | CalleeCtor(_) => {
                 // An ordinary method call: the row below is the decision.
             }
-            CalleeSynthDisplay(_) => ice("emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
+            CalleeSynthDisplay(_) => ice_at(
+                "novac/src/emit_c/emit_expr.nv:564",
+                "emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
             CalleeEffectOp(op) => {
                 // `Os.arg_count()` (E.9 step 2): the shell's dispatcher, which
                 // runs the installed handler or the effect's default one --
@@ -639,8 +663,12 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // literal on the stack (`((NovaTuple_Pair){1LL, 2LL})`, read off
             // its C 2026-09-03), never a call to a C function that exists
             // nowhere. One expression, so nothing is hoisted (274.6 V2b).
-            CalleeSynthDisplay(_) => ice("emit: a call hoist for a synthesized display -- the synthesis is a slot, not a written call")
-            CalleeEffectOp(_) => ice("emit: a call hoist for an effect operation -- an operation call is a method-call form, printed by its own arm")
+            CalleeSynthDisplay(_) => ice_at(
+                "novac/src/emit_c/emit_expr.nv:666",
+                "emit: a call hoist for a synthesized display -- the synthesis is a slot, not a written call")
+            CalleeEffectOp(_) => ice_at(
+                "novac/src/emit_c/emit_expr.nv:669",
+                "emit: a call hoist for an effect operation -- an operation call is a method-call form, printed by its own arm")
             CalleeFn(row) => {
                 ro rt = @ctx.fns.rows[raw_row(row)].ret_id
                 // Same deferral as the checker's routing door: only the
@@ -721,7 +749,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // arm with one is a broken contract, not a program.
         ro kids = branch_children(e)
         if kids.len() < 3 {
-            ice("emit: an index with fewer than a receiver, `[` and an operand reached emission")
+            ice_at(
+                "novac/src/emit_c/emit_expr.nv:752",
+                "emit: an index with fewer than a receiver, `[` and an operand reached emission")
         } else {
             // The three children the checker judged.
         }
@@ -731,7 +761,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // A plain index: `xs.index(i)`, the receiver's instance spelling.
             ro rt = @out.type_if_known(kids[0].id_of())
             if !is_ty(rt) {
-                ice("emit: an index whose receiver type the checker did not record reached emission")
+                ice_at(
+                    "novac/src/emit_c/emit_expr.nv:764",
+                    "emit: an index whose receiver type the checker did not record reached emission")
             } else {
                 // The receiver's type decides the symbol, below.
             }
@@ -782,7 +814,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
             Not | BitNot => false
         }
         if neg_int && !@arith_row(carrier).signed {
-            ice("emit_c: unary minus on an unsigned operand passed the checker -- spec/conversions.md defines it for signed types only")
+            ice_at(
+                "novac/src/emit_c/emit_expr.nv:817",
+                "emit_c: unary minus on an unsigned operand passed the checker -- spec/conversions.md defines it for signed types only")
         }
         if neg_int {
             @body.append("nova_${@arith_row(carrier).name}_checked_neg(")
@@ -907,7 +941,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(")")
         }
     } else {
-        ice("emit: expression kind outside the subset")
+        ice_at("novac/src/emit_c/emit_expr.nv:944", "emit: expression kind outside the subset")
     }
 }
 
@@ -932,7 +966,9 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
         // what refused with `lower: a block sealed twice (it already returns)` under the walk
         // of step 3b. A dead printer that restores retired behaviour is worse than none -- it
         // turns a hole into a silent divergence.
-        ice("emit_c: a println reached the call-statement door -- it is lowered, not printed (M3a)")
+        ice_at(
+            "novac/src/emit_c/emit_expr.nv:969",
+            "emit_c: a println reached the call-statement door -- it is lowered, not printed (M3a)")
     } else {
         // An ordinary call: the lines below own it.
     }

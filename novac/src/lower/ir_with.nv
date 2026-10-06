@@ -13,7 +13,7 @@
 //   exit), check-novac-differential.sh over the with_* fixtures.
 
 module novac.lower
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../tree.{Node, NodeId}
 
 /// One handler a `with` installs (E.9 step 2, 274.11): the effect whose thread
@@ -68,7 +68,7 @@ export fn FnBuilder mut @begin_with(swaps []HandlerSwap) -> WithCtx {
 export fn FnBuilder mut @end_with(c WithCtx) -> () {
     @end_if(c.cond)
     if @scopes.len() - 1 != c.scope {
-        ice("lower: a with scope closed out of order")
+        ice_at("novac/src/lower/ir_with.nv:71", "lower: a with scope closed out of order")
     }
     @leave_scope(c.scope)
     ro _ = @scopes.pop()

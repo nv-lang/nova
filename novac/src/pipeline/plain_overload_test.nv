@@ -13,7 +13,7 @@ module novac.pipeline
 import ../sem.{FnRow, c_overload_symbol, c_static_symbol}
 import ../parse.{parse}
 import ../types.{TyId}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// The rows named `want` of handed module `from`, in reading order.
 fn rows_named(prog str, std []str, from str, want str) -> []FnRow {
@@ -29,7 +29,9 @@ fn rows_named(prog str, std []str, from str, want str) -> []FnRow {
 fn symbol_of(prog str, std []str, from str, want str, ty str, at int) -> str {
     ro ctx = context(parse(tokens_of(prog)), parse_decls(std), InteropTable.new())
     ro rows = rows_named(prog, std, from, want)
-    ro t = ctx.ty_of_name(ty) ?? ice("test: the handed type is not in the registry")
+    ro t = ctx.ty_of_name(ty) ?? ice_at(
+        "novac/src/pipeline/plain_overload_test.nv:32",
+        "test: the handed type is not in the registry")
     c_overload_symbol(ctx, rows[at], t, []TyId.new())
 }
 

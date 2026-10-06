@@ -20,7 +20,7 @@ import ../tree.{Node, raw_node}
 import ../source.{SourceText}
 import ../check.{check_instance}
 import ../types.{TyId, no_ty, is_ty}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../parse.{parse}
 
 test "a handed free function: resolved, judged like the file's own, spelled as the shell's symbol (W6)" {
@@ -115,7 +115,9 @@ test "a NEWTYPE of a handed module is a newtype here: laid out as its representa
     ro (d0, _) = compile_to_c_with(prog, decls, InteropTable.new())
     assert(d0.len() == 0, messages(d0))
     ro ctx = context(parse(tokens_of(prog)), decls, InteropTable.new())
-    ro row = ctx.ty_of_name("Row") ?? ice("test: the handed `Row` is not in the registry")
+    ro row = ctx.ty_of_name("Row") ?? ice_at(
+        "novac/src/pipeline/handed_free_test.nv:118",
+        "test: the handed `Row` is not in the registry")
     // A newtype term carries its representation as its one argument; the record
     // it used to be registered as carried none (asked without importing the
     // kind sum: `pipeline` has no edge to `builtins`, architecture s3).
@@ -139,7 +141,9 @@ test "a HANDED callable knows where its body lives: the declaration tree and its
         ro row = FnRow(i)
         if ctx.fns.rows[i].name == "get" && ctx.fns.rows[i].handed_from == "std.boxm" {
             handed_get += 1
-            ro body = ctx.handed.decl_of(row) ?? ice("test: the handed `get` has no body noted")
+            ro body = ctx.handed.decl_of(row) ?? ice_at(
+                "novac/src/pipeline/handed_free_test.nv:144",
+                "test: the handed `get` has no body noted")
             assert(body.kind_of() == NodeKind.FnDecl, "the noted node is not a declaration")
             assert(ctx.handed.tree_of(row) == texts.len() - 1, "the noted tree is not the file it came from")
         } else if ctx.fns.rows[i].name == "own" {
@@ -207,9 +211,13 @@ test "a HANDED generic method is typed as an instance over a type of the file (2
             // Another row: not this test's subject.
         }
     }
-    ro decl = ctx.handed.decl_of(row) ?? ice("test: the handed `get` has no body noted")
+    ro decl = ctx.handed.decl_of(row) ?? ice_at(
+        "novac/src/pipeline/handed_free_test.nv:214",
+        "test: the handed `get` has no body noted")
     ro tree = decls[ctx.handed.tree_of(row)]
-    ro pt = ctx.ty_of_name("Pt") ?? ice("test: the file's `Pt` is not in the registry")
+    ro pt = ctx.ty_of_name("Pt") ?? ice_at(
+        "novac/src/pipeline/handed_free_test.nv:218",
+        "test: the file's `Pt` is not in the registry")
     assert(ctx.instantiates(row, []TyId.of(pt)), "an instance the shell does not carry is not made by the unit")
     // The ORIGINAL text: a position is a slice's distance from its buffer.
     ro (d, chan) = check_instance(decl, SourceText { text: texts[ctx.handed.tree_of(row)] }, ctx, row,

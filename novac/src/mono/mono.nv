@@ -19,7 +19,7 @@ import ../tree.{Node, NodeKind, is_node}
 import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, file_decls}
 import ../sem.{CalleeRef, let_decl_of}
 import ../types.{TyId}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// ONE instance of a generic callable: which row, under which substitution.
 ///
@@ -148,7 +148,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
                 // The registry knows the entry point but the flag vector is
                 // shorter than its row: a broken invariant, not a program
                 // shape.
-                ice("mono: the entry row is outside the callable table")
+                ice_at("novac/src/mono/mono.nv:151", "mono: the entry row is outside the callable table")
             }
         }
     }
@@ -163,7 +163,7 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
         if raw_row(r.row) < seen.len() {
             seen[raw_row(r.row)] = true
         } else {
-            ice("mono: an auto-cleanup names a row outside the callable table")
+            ice_at("novac/src/mono/mono.nv:166", "mono: an auto-cleanup names a row outside the callable table")
         }
     }
     // Hoisted out of the fixpoint on purpose: the door builds a vector, and the

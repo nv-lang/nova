@@ -16,7 +16,7 @@ import ../tree.{Node, NodeKind, raw_node}
 import ../parse.{parse}
 import ../sem.{branch_children, leaf_text, is_value_record, InteropTable}
 import ../source.{SourceText}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../check.{check_instance}
 import ../types.{TyId, no_ty}
 

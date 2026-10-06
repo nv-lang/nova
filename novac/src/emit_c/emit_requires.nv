@@ -23,7 +23,7 @@
 module novac.emit_c
 
 import ../sem.{branch_children, literal_as_c_text}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 
@@ -46,7 +46,9 @@ fn Emitter mut @emit_requires_prologue(kids []Node, name str) -> () {
                 @body.append(c_literal_escaped(note.display))
                 @body.append("\", \"${@src_name}\", ${note.src_line}, ")
             }
-            None => ice("emit_c: a requires clause the checker left without its note (#871)")
+            None => ice_at(
+                "novac/src/emit_c/emit_requires.nv:49",
+                "emit_c: a requires clause the checker left without its note (#871)")
         }
         @body.append(contract_msg_c(rk))
         @body.append(");\n")

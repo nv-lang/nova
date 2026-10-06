@@ -19,7 +19,7 @@
 module novac.emit_c
 
 import ../sem.{c_type, module_value_c_name, module_value_init_c_name, ConstRow, raw_crow, ConstDef}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../lower.{FnBuilder}
 
 /// THE read of a module-level constant or value, bare (`K`) or qualified
@@ -33,7 +33,7 @@ fn Emitter mut @emit_const_read(row ConstRow) -> () {
     } else if cd.init.len() > 0 {
         @emit_expr(cd.init[0])
     } else {
-        ice("emit: a constant recorded with no initializer")
+        ice_at("novac/src/emit_c/emit_module_values.nv:36", "emit: a constant recorded with no initializer")
     }
 }
 
