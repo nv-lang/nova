@@ -1,0 +1,22 @@
+module consume_diverging_call.neg_8
+
+// A DIVERGING CALL AS A PART OF A LARGER EXPRESSION (registry 221.1 #1762, the class): the
+// slot of an interpolated string. The slot is evaluated before the string is built, and it
+// never returns: `b` is still owned where the path leaves.
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is still owned when this diverging call leaves its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work() -> str {
+    consume b = StringBuilder.new(cap: 8)
+    ro s = "text: ${boom("no text")}" // the one refusal: line 16
+    "${s}${b.into_str()}"
+}
+
+fn main() {
+    println(work())
+}

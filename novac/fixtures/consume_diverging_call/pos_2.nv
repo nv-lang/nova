@@ -1,0 +1,28 @@
+module consume_diverging_call.pos_2
+
+// AN ARM THAT DIVERGES TAKES NO PART IN THE JOIN (registry 221.1 #1762; D133: a branch
+// join is "Live join Consumed = MaybeConsumed", and an arm that never comes out reaches no join). The `if`
+// arm consumes `b` and then never returns: the only path that comes out of the `if` is the
+// one where `b` is still owned, so `b.into_str()` after it is its one consumption. Before
+// #1762 the arm went into the join, and `b` was refused as possibly consumed. The oracle
+// still does so (its part of #1762): the run is compared against the twin pos_4.
+
+// NOVAC_TWIN pos_4.nv
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work(n int) -> str {
+    consume b = StringBuilder.new(cap: 8)
+    if n < 0 {
+        println(b.into_str())
+        boom("negative")
+    }
+    b.into_str()
+}
+
+fn main() {
+    println("[${work(3)}]")
+}

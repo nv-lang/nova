@@ -1,0 +1,23 @@
+module consume_diverging_call.neg_6
+
+// A DIVERGING CALL AS THE ARGUMENT OF ANOTHER CALL (registry 221.1 #1762, the class): here
+// a variant's payload. The argument is evaluated before `Some` is built, and it never
+// returns: `b` is still owned where the path leaves. (A `never` argument of a FUNCTION is
+// refused earlier, by the typist, as outside the subset -- registry 221.1 #TBD.)
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is still owned when this diverging call leaves its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work() -> str {
+    consume b = StringBuilder.new(cap: 8)
+    ro o = Some(boom("no text")) // the one refusal: line 17
+    "${o ?? 0}${b.into_str()}"
+}
+
+fn main() {
+    println(work())
+}
