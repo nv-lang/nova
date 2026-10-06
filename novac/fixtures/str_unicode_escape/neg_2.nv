@@ -1,0 +1,9 @@
+module str_unicode_escape.neg_2
+
+// NOVAC_EXPECT names a Unicode scalar value
+// ONE seeded cause: a codepoint PAST U+10FFFF, the other half of D467 section
+// 2's bound. The oracle refuses the same line ("invalid Unicode codepoint:
+// U+110000").
+fn main() {
+    println("a\u{110000}b")
+}

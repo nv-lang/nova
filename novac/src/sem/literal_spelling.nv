@@ -115,14 +115,147 @@ const DOLLAR_BYTE u8 = 0x24     // $
 
 /// A Nova string literal's text as C text -- the ONE door every literal takes
 /// into C. Nova's subset escape set (\" \\ \n \t \r) matches C's one for one
-/// -- check refuses everything else by name -- with two exceptions whose Nova
-/// spelling C does not share: the line continuation and `\$`. THREE readers
+/// -- check refuses everything else by name -- with three exceptions whose Nova
+/// spelling C does not share: the line continuation, `\u{H…}` and `\$`. THREE readers
 /// spell literals into C: the shell's literal pool, the contract prologue's
 /// message slot and an interpolated string's pieces -- the hunt (2026-09-02,
 /// its P1 contradiction) caught the pool claiming to be `the only place`
 /// while the prologue shipped the backslash through; one door ends that
 /// argument by construction.
-export fn literal_as_c_text(s str) -> str => unescape_dollar(splice_continuations(s))
+export fn literal_as_c_text(s str) -> str => unescape_dollar(spell_unicode_escapes(splice_continuations(s)))
+
+/// THE `\u{H…}` ESCAPE (D467 section 2) as the judge asks it: `at` is the
+/// index of the `u` in the literal's bytes; the answer is the index of the
+/// closing `}` when the escape is well formed AND names a Unicode scalar
+/// value, else -1. One door for the judge (check/strings.nv), the byte count
+/// (`escaped_byte_len`) and the C spelling below, so the three cannot read
+/// one escape three ways.
+export fn unicode_escape_end(b []u8, at int) -> int {
+    ro close = unicode_escape_close(b, at)
+    if close < 0 || unicode_escape_value(b, at, close) < 0 { -1 } else { close }
+}
+
+/// The SHAPE of the escape: one or more hex digits of either case between
+/// braces, no separator. The index of the closing `}`, or -1 when the brace
+/// or the digits are missing -- the oracle's lexer reads the same shape
+/// ("expected hex digits", "expected '}'").
+fn unicode_escape_close(b []u8, at int) -> int {
+    if at + 1 >= b.len() || b[at + 1] != UESC_LBRACE { return -1 }
+    mut i = at + 2
+    while i < b.len() && hex_digit_value(b[i]) >= 0 { i += 1 }
+    if i == at + 2 || i >= b.len() || b[i] != UESC_RBRACE { return -1 }
+    i
+}
+
+/// The codepoint the escape names, or -1 when it names no Unicode scalar
+/// value: D467 section 2 refuses a surrogate (U+D800..U+DFFF) and anything
+/// past U+10FFFF. `close` is `unicode_escape_close`'s answer. The sum stops
+/// growing once it is past the bound, so a run of digits longer than an int
+/// holds cannot wrap around into a valid value.
+fn unicode_escape_value(b []u8, at int, close int) -> int {
+    mut cp = 0
+    mut i = at + 2
+    while i < close {
+        if cp <= UESC_MAX { cp = cp * 16 + hex_digit_value(b[i]) }
+        i += 1
+    }
+    if cp > UESC_MAX || (cp >= UESC_SURROGATE_LO && cp <= UESC_SURROGATE_HI) { -1 } else { cp }
+}
+
+/// How many bytes UTF-8 spends on a codepoint -- what a `str` holds for it.
+fn utf8_width(cp int) -> int {
+    if cp < 0x80 { return 1 }
+    if cp < 0x800 { return 2 }
+    if cp < 0x10000 { return 3 }
+    4
+}
+
+/// The value of one hex digit byte, either case, or -1 for any other byte.
+fn hex_digit_value(c u8) -> int {
+    ro v = c as int
+    if v >= 0x30 && v <= 0x39 { return v - 0x30 }
+    if v >= 0x61 && v <= 0x66 { return v - 0x61 + 10 }
+    if v >= 0x41 && v <= 0x46 { return v - 0x41 + 10 }
+    -1
+}
+
+/// The `\u{H…}` third of the door: each escape becomes the C escapes of its
+/// UTF-8 bytes, `\u{43f}` -> `\320\277` -- the `str` holds the codepoint
+/// encoded, not the letters of its spelling. OCTAL and not `\x`: C's hex
+/// escape swallows EVERY hex digit after it, so `\u{43f}a` spelled
+/// `\xd0\xbfa` would read `\xbfa` as one escape; an octal escape stops at
+/// three digits by definition. A cursor over the BYTES, the precedent of
+/// `escaped_byte_len`; every other escape is stepped over whole, so `\\u{41}`
+/// stays a backslash and four letters. The judge refused every malformed or
+/// out-of-range escape, so one reaching here is an ice.
+fn spell_unicode_escapes(s str) -> str {
+    if !s.contains("\\u{") { return s }
+    ro b = s.bytes()
+    ro n = b.len()
+    consume out = StringBuilder.new(cap: n)
+    mut from = 0
+    mut i = 0
+    while i < n {
+        if b[i] != BACKSLASH_BYTE || i + 1 >= n {
+            i += 1
+            continue
+        }
+        if b[i + 1] != UESC_LOWER_U {
+            i += 2
+            continue
+        }
+        ro close = unicode_escape_close(b, i + 1)
+        ro cp = if close < 0 { -1 } else { unicode_escape_value(b, i + 1, close) }
+        if cp < 0 { ice("mangle: a unicode escape the judge let through") }
+        out.append(s[from..i])
+        append_utf8_octal(out, cp)
+        i = close + 1
+        from = i
+    }
+    out.append(s[from..])
+    out
+}
+
+/// Append one codepoint as the octal C escapes of its UTF-8 bytes: the head
+/// byte announces the length and carries the high bits, each continuation
+/// byte carries six more (the inverse of `char_literal_code`'s decode).
+fn append_utf8_octal(mut out StringBuilder, cp int) -> () {
+    ro w = utf8_width(cp)
+    if w == 1 {
+        append_octal_byte(out, cp)
+        return
+    }
+    if w == 2 {
+        append_octal_byte(out, 192 + cp / 64)
+    } else if w == 3 {
+        append_octal_byte(out, 224 + cp / 4096)
+        append_octal_byte(out, 128 + cp / 64 % 64)
+    } else {
+        append_octal_byte(out, 240 + cp / 262144)
+        append_octal_byte(out, 128 + cp / 4096 % 64)
+        append_octal_byte(out, 128 + cp / 64 % 64)
+    }
+    append_octal_byte(out, 128 + cp % 64)
+}
+
+/// One byte as a three-digit C octal escape (`\320`): always three digits,
+/// so a digit that follows in the literal is never read into the escape.
+fn append_octal_byte(mut out StringBuilder, v int) -> () {
+    out.append("\\")
+    out.append("${v / 64}${v / 8 % 8}${v % 8}")
+}
+
+/// The bytes and bounds the unicode escape reads. The `UESC_` prefix is not
+/// decoration: `check/cast_pairs.nv` owns a `SURROGATE_LO` of its own, and a
+/// same-named constant of another module made the oracle's C for check name
+/// `Nova_const_novac_sem_SURROGATE_LO` without declaring it (measured on this
+/// change; the class strings.nv's NEWLINE note records, registry 1158).
+const UESC_LOWER_U u8 = 0x75  // u
+const UESC_LBRACE u8 = 0x7B   // {
+const UESC_RBRACE u8 = 0x7D   // }
+const UESC_MAX = 0x10FFFF
+const UESC_SURROGATE_LO = 0xD800
+const UESC_SURROGATE_HI = 0xDFFF
 
 /// D467 section 3: `\` right before a line break eats the break AND the
 /// leading spaces and tabs of the next line (the oracle's lexer, the same

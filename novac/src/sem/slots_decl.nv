@@ -39,6 +39,7 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, EFFECT_MARKER, is_field_visibility_word}
 import ../names.{DeclId, no_decl, is_decl}
+import ../diag.{ice}
 
 /// What the TAIL of a type declaration says, when it is a type reference:
 /// which type, and whether the declaration is an ALIAS of it or a NEWTYPE over
@@ -486,6 +487,15 @@ export fn escaped_byte_len(piece str) -> int {
             // fragment's `.len` ran a byte past its text -- the printed string
             // carried the C terminator.
             i += if b[i + 1] == INTERP_CR && i + 2 < b.len() && b[i + 2] == INTERP_LF { 3 } else { 2 }
+        } else if b[i] == INTERP_BSLASH && i + 1 < b.len() && b[i + 1] == INTERP_LOWER_U {
+            // `\u{H…}` (D467 s2) is the UTF-8 bytes of its codepoint, one to
+            // four -- the C text gets exactly those (`literal_as_c_text`).
+            // Counted as one, a Cyrillic letter's fragment ran a byte short.
+            ro close = unicode_escape_close(b, i + 1)
+            ro cp = if close < 0 { -1 } else { unicode_escape_value(b, i + 1, close) }
+            if cp < 0 { ice("slots: a unicode escape the judge let through") }
+            len += utf8_width(cp)
+            i = close + 1
         } else {
             if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
             len += 1
@@ -494,11 +504,12 @@ export fn escaped_byte_len(piece str) -> int {
     len
 }
 
-/// The four bytes the slicer reads.
+/// The bytes the slicer reads.
 const INTERP_BSLASH u8 = 0x5C  // backslash
 const INTERP_LF u8 = 0x0A  // line feed: a continuation's break
 const INTERP_CR u8 = 0x0D  // carriage return: the first byte of a CRLF break
 const INTERP_DOLLAR u8 = 0x24  // $
+const INTERP_LOWER_U u8 = 0x75  // u: the unicode escape's letter
 const INTERP_LBRACE u8 = 0x7B  // {
 const INTERP_RBRACE u8 = 0x7D  // }
 
