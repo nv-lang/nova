@@ -52,7 +52,7 @@ fn Emitter mut @hoist_assert_message(kids []Node) -> () {
     @emit_expr(msg)
     @body.append(";\n")
     @body.append("    char* ${cs} = (char*)nova_alloc(${sv}.len + 1);\n")
-    @body.append("    if (${sv}.len) memcpy(${cs}, ${sv}.ptr, ${sv}.len);\n")
+    @body.append("    (${sv}.len ? memcpy(${cs}, ${sv}.ptr, ${sv}.len) : NULL);\n")
     @body.append("    ${cs}[${sv}.len] = '\\0';\n")
     @lit_tmp[raw_node(msg.id_of())] = cs
 }
