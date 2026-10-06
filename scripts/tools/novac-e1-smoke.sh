@@ -143,13 +143,31 @@ done < "$T/embed.paths"
 # Имя файла — тоже вход: оракул собирает копию с `module`, переписанным по имени
 # (шаг ниже), и тот же текст под другим именем — другая программа.
 _STEMK=${FILE##*/}
-KEY=$( { cat "$FILE"; while IFS= read -r rel; do cat "$FDIR/$rel"; done < "$T/embed.files"; } \
+# ВХОД ПРОГРАММЫ (274.11 E.10 шаг 2б, задача #23): строка `// NOVAC_PROGRAM` — модули
+# фикстуры лежат в подкаталогах её каталога. Тогда novac печатает C ВСЕЙ программы
+# (`NOVAC_SELF_PATH=<каталог> novac emit <вход>`), оракул собирает вход НА МЕСТЕ —
+# копия pkgless унесла бы один файл, а пакет `novac_fixtures` даёт модулям их пути
+# (D78 «каталог/файл»), — и ключ кэша знает текст и путь КАЖДОГО модуля.
+novac_program_root "$FILE"
+PROG_ROOT="$NOVAC_PROG_ROOT"
+if [ -n "$PROG_ROOT" ]; then
+    find "$PROG_ROOT" -type f -name '*.nv' | sort > "$T/prog.files"
+fi
+KEY=$( { cat "$FILE"; while IFS= read -r rel; do cat "$FDIR/$rel"; done < "$T/embed.files"
+         [ -n "$PROG_ROOT" ] && while IFS= read -r pf; do printf '%s\n' "$pf"; cat "$pf"; done < "$T/prog.files"; } \
        | sha256sum | cut -c1-16)-${_STEMK%.nv}-$NOVAC_SMOKE_ORACLE_KEY
 ORACLE_EXE="$EXE_CACHE/oracle-$KEY.exe"
 LINKCMD="$CACHE/link-$FLAGKEY.argv"
 CFLAGS="$CACHE/cflags-$FLAGKEY.argv"
 PCH="$CACHE/prelude-$FLAGKEY.pch"
 EXE_FROM="из кэша"
+if [ "$PREPARE" = 0 ] && [ ! -f "$ORACLE_EXE" ] && [ -n "$PROG_ROOT" ]; then
+    EXE_FROM="собран"
+    "$ORACLE" build "$FILE" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
+        || fail "оракул не собрал программу $FILE: $(tail -3 "$T/oracle.out")"
+    cp "$T/oracle.exe" "$ORACLE_EXE.$$" && { mv -f "$ORACLE_EXE.$$" "$ORACLE_EXE" 2>/dev/null || rm -f "$ORACLE_EXE.$$"; }
+    [ -f "$ORACLE_EXE" ] || fail "бинарь оракула не лёг в кэш: $ORACLE_EXE"
+fi
 if [ "$PREPARE" = 0 ] && [ ! -f "$ORACLE_EXE" ]; then
     EXE_FROM="собран"
     STEM=$(basename "$FILE" .nv)
@@ -252,7 +270,10 @@ fi
 # отказов `E_NOVAC_SUBSET` дым сказал «novac emit упал:» и НИЧЕГО после
 # двоеточия. Отказ без слов — тот же класс, что «молчание читается как успех»:
 # по нему идут искать крах компилятора, а был обычный отказ по подмножеству.
-"$NOVAC" emit "$NFILE" > "$T/novac.c" 2>"$T/emit.err" \
+novac_emit() {
+    if [ -n "$PROG_ROOT" ]; then NOVAC_SELF_PATH="$PROG_ROOT" "$NOVAC" emit "$1"; else "$NOVAC" emit "$1"; fi
+}
+novac_emit "$NFILE" > "$T/novac.c" 2>"$T/emit.err" \
     || fail "novac emit упал: stderr «$(cat "$T/emit.err")»; диагностики из stdout ($(grep -c '"code"' "$T/novac.c") шт.): $(grep -o '"message":"[^"]*"' "$T/novac.c" | head -3 | tr '\n' ' ' | cut -c1-400)"
 # the emission's first include IS the PCH prelude; drop that one line
 sed '0,/^#include "nova_rt\/nova_rt.h"$/{//d}' "$T/novac.c" > "$T/body.c"

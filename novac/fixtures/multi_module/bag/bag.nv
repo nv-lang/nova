@@ -1,0 +1,33 @@
+module multi_module.bag
+
+// A MODULE OF THE PROGRAM over another one (`../geo`): it imports a type and
+// functions, makes std's `Vec[Pt]` instances of its own (the entry makes the
+// same ones -- the program holds each once), and instantiates `geo.dbl` over
+// `int`, as the entry does too.
+
+import ../geo.{Pt, shift, sum_x, dbl}
+
+/// A bag of points.
+export type Bag {
+    items []Pt
+}
+
+/// `n` points `(i + 1, 1)`, built with `Vec[Pt]` `new` and `push`.
+export fn fill(n int) -> Bag {
+    mut xs = []Pt.new()
+    for i in 0..n {
+        ro p = Pt { x: i, y: 0 }
+        xs.push(shift(p, 1))
+    }
+    ro b = Bag { items: xs }
+    b
+}
+
+/// The last element of any vector: an instance per element type.
+export fn last[T](xs []T) -> T => xs[xs.len() - 1]
+
+/// What the bag's points sum to along x, through the function of `geo`.
+export fn total(b Bag) -> int => sum_x(b.items)
+
+/// Twice `n`, through `geo.dbl[int]`.
+export fn twice(n int) -> int => dbl[int](n)

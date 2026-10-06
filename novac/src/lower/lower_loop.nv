@@ -18,10 +18,10 @@ import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
 /// One `while`: the header block carries the loop, the body jumps back.
 fn Lowerer mut @lower_while(st Node) -> () {
     ro kids = branch_children(st)
-    if contains_block_form(kids[1]) {
-        // A condition with a block form is re-evaluated each turn, so it cannot be
-        // laid down before the loop: `loop { <blocks>; if (c) {} else { break; } ... }`
-        // (registry 1619).
+    if cond_needs_place(kids[1]) {
+        // A condition with a block form -- or a construction the printer builds
+        // (task #23) -- is re-evaluated each turn, so it cannot be laid down before
+        // the loop: `loop { <blocks>; if (c) {} else { break; } ... }` (registry 1619).
         ro fc = @ir.begin_loop(LoopHead.Forever)
         @hoist_operand(kids[1])
         ro t = @ir.begin_if(Cond.Expr(kids[1]), ElseShape.Braced)

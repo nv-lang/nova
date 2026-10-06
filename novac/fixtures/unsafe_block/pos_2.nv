@@ -1,0 +1,19 @@
+module unsafe_block.pos_2
+
+// `p.read_consume_at(i)` is the read that TAKES the element out (D216, the
+// amendment of 2026-09-25); for an ordinary `T` it is the copy `read_at`
+// makes. std's `Vec[T] @pop` reads its last element so -- the first stop of
+// novac's whole-program emission over its own source (task #23).
+fn last_byte(s str) -> u8 => unsafe { s.ptr().read_consume_at(s.byte_len() - 1) }
+
+fn main() {
+    println(last_byte("xyz"))
+    mut v = []int.new()
+    v.push(3)
+    v.push(4)
+    match v.pop() {
+        Some(x) => println(x)
+        None => println(-1)
+    }
+    println(v.len())
+}

@@ -26,7 +26,7 @@ module novac.emit_c
 import ../lex.{is_ident_start, is_ident_byte, is_space}
 import ../sem.{LitPool}
 import ../sem.{literal_as_c_text}
-import ../sem.{InteropTable}
+import ../sem.{InteropTable, CNames}
 import ../diag.{ice}
 import ../lower.{FnBuilder, Lowerer}
 
@@ -203,13 +203,30 @@ type Emitter consume {
     cur_lit int /// the C number of the literal whose op function is being emitted, -1 outside one: a literal built there reads its outer captures through that op's context
     mut blobs []int /// the rows of `Ctx.embeds` whose static arrays the emission printed a reference to (D412, emit_embed.nv): their arrays go before the code
     mut infos []TyId /// the types a value was boxed into `any` through (`Failure(e)` of `x?`, emit_flow.nv): `NOVAC_TYPEINFO_<index>`, defined before the code
+    tag str /// the mark in every name this emission NUMBERS itself (`_novac_strlit_<tag><i>`, the blobs, type infos, handler and spawn functions): "" for a unit alone, the unit's own in a program, where every unit numbers from zero into ONE C file (274.11 E.10 step 2b)
+    program bool /// the unit is one module of a PROGRAM (274.11 E.10 step 2b): its functions get prototypes, and what an earlier unit printed (`skip`) is not printed again
+    skip CNames /// C names of the instances, instance structs and option typedefs earlier units of the program printed (C identifiers, NsInterop's kind of name); empty for a unit alone
+    mut made []str /// the C names of that kind THIS unit printed, handed back for the units after it
+    tid_base int /// how many type-info ids earlier units of the program numbered: this unit's start after them, so an id stays distinct per type in the program
 }
 
 /// Splice string literals, the emitted body and the module values'
 /// initialization into the shell's three slots. The INIT slot is the last
 /// line of the shell's `nova_consts_init()`, which `main` runs before the
 /// program (scripts/tools/novac-regen-shell.sh stamps it).
-fn render(lits []str, body str, init str) -> str {
+fn render(lits []str, body str, init str) -> str => render_spelled(strlit_defs(lits, ""), body, init)
+
+/// The literal pool of one emission as its C definitions, the names marked
+/// with `tag` (`Emitter.tag`).
+fn strlit_defs(lits []str, tag str) -> str {
+    consume out = StringBuilder.new()
+    emit_strlit_defs(out, lits, tag)
+    out.into_str()
+}
+
+/// The same splice with the literal definitions already spelled: a PROGRAM
+/// hands in every unit's pool, each under its own mark (274.11 E.10 step 2b).
+fn render_spelled(lit_defs str, body str, init str) -> str {
     ro tpl_bytes = shell_template()
     ro tpl = tpl_bytes.to_str() ?? ice("emit: shell.tpl.c is not UTF-8")
     consume out = StringBuilder.new()
@@ -218,7 +235,7 @@ fn render(lits []str, body str, init str) -> str {
     mut emitted_init = false
     for line in tpl.lines() {
         if line.contains("__NOVAC_STRLITS__") {
-            emit_strlit_defs(out, lits)
+            out.append(lit_defs)
             emitted_lits = true
         } else if line.contains("__NOVAC_BODY__") {
             out.append(body)
@@ -242,7 +259,7 @@ fn render(lits []str, body str, init str) -> str {
 /// One of TWO places a Nova literal becomes C text (the other is the
 /// contract prologue's message slot) -- both go through the one
 /// literal_as_c_text door in sem/mangle (hunt 2026-09-02, P1).
-fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
+fn emit_strlit_defs(mut out StringBuilder, lits []str, tag str) -> () {
     mut i = 0
     for raw in lits {
         // raw is the token text INCLUDING quotes. Nova's subset escape set
@@ -252,10 +269,10 @@ fn emit_strlit_defs(mut out StringBuilder, lits []str) -> () {
         // interpolation; C has no such escape) and the line continuation (D467
         // section 3 eats the next line's indentation, which C's splice keeps).
         // The rest of the text is passed through untouched.
-        out.append("static const uint8_t _novac_strlit_${i}_buf[] = ")
+        out.append("static const uint8_t _novac_strlit_${tag}${i}_buf[] = ")
         out.append(literal_as_c_text(raw))
         out.append(";\n")
-        out.append("static const nova_str _novac_strlit_${i} = { .ptr = _novac_strlit_${i}_buf, .len = sizeof(_novac_strlit_${i}_buf) - 1 };\n")
+        out.append("static const nova_str _novac_strlit_${tag}${i} = { .ptr = _novac_strlit_${tag}${i}_buf, .len = sizeof(_novac_strlit_${tag}${i}_buf) - 1 };\n")
         i += 1
     }
 }

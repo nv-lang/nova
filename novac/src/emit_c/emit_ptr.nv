@@ -47,7 +47,7 @@ fn Emitter mut @emit_ptr_op(kids []Node) -> () {
         @body.append(")))")
         return
     } else {
-        // `read_at` / `write_at`: the element.
+        // `read_at` / `read_consume_at` / `write_at`: the element.
     }
     @body.append(if writes { "((*((" } else { "(*((" })
     @emit_expr(kids[0])

@@ -30,7 +30,8 @@ fi
 one() {
     _e="$DIR/$(novac_check_key "$2")"
     printf '%s\n' "$2" > "$_e.path"
-    "$BIN" check "$2" > "$_e.out" 2> "$_e.err" </dev/null
+    # Через дверь вызова: вход программы (`// NOVAC_PROGRAM`) судится с корнем.
+    novac_run_check "$BIN" "$2" "$_e.out" "$_e.err"
     echo "$?" > "$_e.rc"
 }
 J=$(novac_pool_jobs)

@@ -17,7 +17,7 @@ module novac.mono
 
 import ../tree.{Node, NodeKind, is_node}
 import ../sem.{decl_fn_row, subst_type, Ctx, CheckOut, ParamDef, FnRow, raw_row, branch_children, file_decls}
-import ../sem.{CalleeRef, let_decl_of}
+import ../sem.{CalleeRef, let_decl_of, CNames, c_callable}
 import ../types.{TyId}
 import ../diag.{ice}
 
@@ -115,7 +115,20 @@ export fn Reach @has(row FnRow) -> bool {
 /// checks. A pass that repeats until nothing changes needs no such assumption.
 /// The cost is passes x declarations, and both are file-sized; when files grow
 /// enough for that to matter, the fix is a real row->node index, not a guess.
-export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
+export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach => reach_from(file, ctx, out, false, CNames.new())
+
+/// The same walk for one MODULE of a program (274.11 E.10 step 2b): a module
+/// without `main` is reached from the other modules, so its roots are its own
+/// non-generic callables whose C names `wanted` holds -- the calls the other
+/// units' reached bodies print by this module's name (the name belongs to the
+/// row's module, E.10 step 1) -- beside the roots any unit has: `main` when it
+/// is here, module values, auto-cleanups, the implicit vector operations.
+export fn reachable_in_program(file Node, ctx Ctx, out CheckOut, wanted CNames) -> Reach =>
+    reach_from(file, ctx, out, true, wanted)
+
+/// The walk behind both doors: `in_program` decides whether a unit without an
+/// entry point has roots at all.
+fn reach_from(file Node, ctx Ctx, out CheckOut, in_program bool, wanted CNames) -> Reach {
     mut seen = []bool.new()
     // One flag per callable row: the COUNT is the whole loop, so the cursor
     // was carrying no information (owner 2026-08-22).
@@ -126,11 +139,28 @@ export fn reachable(file Node, ctx Ctx, out CheckOut) -> Reach {
     mut subst = []TyId.new()
     mut ptypes = []ParamDef.new()
 
+    if in_program {
+        // The rows other modules call: own, non-generic (a generic one is
+        // instantiated by its caller), asked by the C name the caller printed.
+        for r in 0..ctx.fns.rows.len() {
+            ro row = FnRow(r)
+            if !ctx.fns.compiles_body(row) || is_generic(ctx, row) { continue }
+            if wanted.has(c_callable(ctx, row, []TyId.new())) { seen[r] = true } else { continue }
+        }
+    } else {
+        // A unit alone is reached from its `main` only.
+    }
+
     match out.entry_of() {
         // No entry point in this file: nothing is reachable, and that is an
         // ANSWER, not a hole -- check refuses such a file by name long before
-        // the emitter is asked anything.
-        None => { return Reach { seen, inst, subst, ptypes } }
+        // the emitter is asked anything. A module of a PROGRAM has no entry
+        // point and is reached from the others: its walk goes on.
+        None => {
+            if !in_program { return Reach { seen, inst, subst, ptypes } } else {
+                // Rooted above, by what the other units call.
+            }
+        }
         Some(root) => {
             // THE ROW IS UNWRAPPED BEFORE IT INDEXES, like every other site in
             // this file (lines below use `raw_row(...)` too). Until 2026-09-05

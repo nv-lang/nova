@@ -545,7 +545,7 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
     if tk == NodeKind.Block {
         @ir.begin_else(c)
         @lower_block_stmts_fn(tail, false)
-    } else if tk == NodeKind.IfStmt && contains_block_form(branch_children(tail)[1]) {
+    } else if tk == NodeKind.IfStmt && cond_needs_place(branch_children(tail)[1]) {
         // The braced shape `else_shape` chose: the `if` stands alone in the else block.
         @ir.begin_else(c)
         @lower_if(tail, None)
@@ -903,9 +903,10 @@ fn else_shape(kids []Node, tail_at int) -> ElseShape {
     // (`E_RECV_METHOD_MISMATCH` on `Vec`), and binding it also names the thing.
     ro tail = kids[tail_at]
     ro k = tail.kind_of()
-    // An `else if` whose condition holds a block form cannot chain: its condition's
-    // blocks need a place to stand, and `} else if (` has none (registry 1619).
-    ro braced_if = k == NodeKind.IfStmt && contains_block_form(branch_children(tail)[1])
+    // An `else if` whose condition holds a block form -- or a construction the
+    // printer builds (task #23) -- cannot chain: its condition's statements need a
+    // place to stand, and `} else if (` has none (registry 1619).
+    ro braced_if = k == NodeKind.IfStmt && cond_needs_place(branch_children(tail)[1])
     if k == NodeKind.Block || k == NodeKind.IfLet || braced_if {
         ElseShape.Braced
     } else {

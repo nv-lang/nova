@@ -61,6 +61,14 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
                 // An empty fragment appends nothing.
             }
         } else if is_expr_kind(ck) {
+            // THE SLOT'S OWN CONSTRUCTIONS FIRST: the hoist walk stops at this
+            // literal (H2), so what a slot builds -- `[]T.new()`, `[a, b]`, a
+            // record, `??` -- is this emitter's to hoist, slot by slot in
+            // source order, the line `@emit_array_lit` carries for its
+            // elements. Missing until 2026-10-06 (task #23): novac's own
+            // `"${c_callable(@ctx, c.row, []TyId.new())}"` (emit_flow.nv) died
+            // as "an array literal ... never hoisted" in whole-program emission.
+            @hoist_array_lits(c)
             // ONE DOOR PER SLOT, keyed by the universe row of the slot's carrier
             // (wave B1a, 274.7): the runtime's `*_display_spec` family has an
             // entry per primitive family, and the checker admitted only what

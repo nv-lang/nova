@@ -1,0 +1,42 @@
+module multi_module.geo
+
+// A MODULE OF THE PROGRAM, not a fixture of its own: `pos_1.nv` one directory up
+// is the entry, and this file is compiled into the same C file (274.11 E.10 step
+// 2b). Its type is used by both other modules, one of its functions is reached
+// ONLY through a call from another module, and its generic is instantiated by
+// its callers -- each over the type argument the caller knows.
+
+/// A point of the plane, declared here and used by every module of the program.
+export type Pt {
+    x int
+    y int
+}
+
+/// `p` moved by `d` along both axes.
+export fn shift(p Pt, d int) -> Pt {
+    ro q = Pt { x: p.x + d, y: p.y + d }
+    q
+}
+
+/// The taxicab length of `p`.
+export fn norm1(p Pt) -> int => abs_of(p.x) + abs_of(p.y)
+
+/// Private to the module: reached only from `norm1`, which another module calls.
+fn abs_of(v int) -> int => if v < 0 { 0 - v } else { v }
+
+/// Twice `x`, for any type with `+`: an instance per substitution, made by the
+/// module that calls it.
+export fn dbl[T](x T) -> T => x + x
+
+/// How many elements `xs` holds, whatever their type: instantiated over this
+/// module's `Pt` and over `int` by the entry.
+export fn count[T](xs []T) -> int => xs.len()
+
+/// The x coordinates of `ps`, summed: a std instance over this module's type.
+export fn sum_x(ps []Pt) -> int {
+    mut s = 0
+    for p in ps {
+        s += p.x
+    }
+    s
+}

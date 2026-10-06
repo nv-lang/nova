@@ -245,7 +245,40 @@ novac_check() {
             esac
         fi
     fi
-    "$_nc_bin" check "$_nc_f" > "$_nc_out" 2> "$_nc_err" </dev/null
+    novac_run_check "$_nc_bin" "$_nc_f" "$_nc_out" "$_nc_err"
+}
+
+# novac_program_root FILE — ВХОД ПРОГРАММЫ ли файл (274.11 E.10 шаг 2б, задача #23):
+# строка `// NOVAC_PROGRAM` среди первых 30 — фикстура, чьи модули лежат в
+# подкаталогах её каталога (novac/fixtures/multi_module/). Ответ — в переменной
+# NOVAC_PROG_ROOT: каталог входа или пусто. Переменная, а не вывод: подстановка
+# `$(...)` — лишний процесс на каждую фикстуру корпуса, а дверь горячая (№1717).
+# Чтение — встроенным `read`, без head/grep; `*` в образце съедает CR рабочей копии.
+novac_program_root() {
+    NOVAC_PROG_ROOT=""
+    _np_n=0
+    while [ "$_np_n" -lt 30 ] && IFS= read -r _np_l; do
+        _np_n=$((_np_n + 1))
+        case "$_np_l" in
+            "// NOVAC_PROGRAM"*)
+                case "$1" in */*) NOVAC_PROG_ROOT="${1%/*}" ;; *) NOVAC_PROG_ROOT="." ;; esac
+                return 0 ;;
+        esac
+    done < "$1"
+    return 0
+}
+
+# novac_run_check BIN FILE OUT ERR — сам вызов `BIN check FILE`. Вход программы
+# судится как программа: novac идёт с NOVAC_SELF_PATH=<каталог входа>, и вызов в
+# модуль-соседа судится по сигнатуре владельца (шаг 2а); без переменной такой вход
+# отвергался бы как «необъявленный тип» — отказ раннера, а не компилятора.
+novac_run_check() {
+    novac_program_root "$2"
+    if [ -n "$NOVAC_PROG_ROOT" ]; then
+        NOVAC_SELF_PATH="$NOVAC_PROG_ROOT" "$1" check "$2" > "$3" 2> "$4" </dev/null
+    else
+        "$1" check "$2" > "$3" 2> "$4" </dev/null
+    fi
 }
 
 # novac_check_key FILE — имя записи кэша для пути (cksum пути и его длина).

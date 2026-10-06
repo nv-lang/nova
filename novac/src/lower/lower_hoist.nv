@@ -72,6 +72,38 @@ fn contains_block_form(e Node) -> bool {
     }
 }
 
+/// Does this expression hold a CONSTRUCTION the printer builds in statements of its
+/// own -- an array literal (`[]T.new()` included), a record or positional constructor,
+/// an interpolated string (`@hoist_array_lits`, emit_c.nv)? Such a form needs a place
+/// to stand before the line that reads it, exactly like a block form: a `while`
+/// condition re-builds it each turn, and `} else if (` has no room for it (task #23:
+/// `} else if !@ctx.instantiates(row, []TyId.new()) {` in check/calls.nv died as
+/// "an array literal ... never hoisted"). The search stops where `contains_block_form`
+/// stops: those forms lower their own insides.
+fn contains_construction(e Node) -> bool {
+    match e {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.ArrayLit || kind == NodeKind.RecordCtor || kind == NodeKind.TupleExpr ||
+               kind == NodeKind.InterpStr {
+                return true
+            }
+            if kind == NodeKind.IfExpr || kind == NodeKind.MatchExpr || kind == NodeKind.Unsafe ||
+               kind == NodeKind.HandlerLit || kind == NodeKind.Block {
+                return false
+            }
+            for c in children {
+                if contains_construction(c) { return true }
+            }
+            false
+        }
+    }
+}
+
+/// Does a CONDITION need a place to stand before its test -- a block form the lowering
+/// lays down, or a construction the printer builds (`contains_construction`)?
+fn cond_needs_place(e Node) -> bool => contains_block_form(e) || contains_construction(e)
+
 /// Does this NODE itself need the lowering (rather than a walk of its insides)?
 /// A block form, or a short-circuit whose right side holds one.
 fn needs_own_lowering(e Node) -> bool {

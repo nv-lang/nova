@@ -68,7 +68,7 @@ import ../diag.{ice}
 import ../mono.{Reach}
 import ../sem.{is_unit_ty, returns_receiver}
 import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_at, c_callable, Ctx}
-import ../sem.{carrier_of}
+import ../sem.{carrier_of, CNames}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
 import ../sem.{interp_slices, ctor_field_name}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow}
@@ -101,7 +101,10 @@ fn no_subst() -> []TyId => []TyId.new()
 /// the C backend evaluating arguments RIGHT-TO-LEFT despite the spec calling
 /// left-to-right normative (reported to the compiler window). One move, one
 /// result: no aliasing question and no order to depend on.
-fn Emitter consume @into_parts() -> ([]str, str) => (@pool.texts, @body.into_str())
+///
+/// The C names a program unit printed ride the same move (274.11 E.10 step 2b):
+/// they are the third thing the finished emission hands back.
+fn Emitter consume @into_unit_parts() -> ([]str, str, []str) => (@pool.texts, @body.into_str(), @made)
 
 /// One instance of a generic callable, already decided and already typed:
 /// what mono chose, the body to walk, and the channel that body's types live
@@ -132,6 +135,32 @@ export type Instantiation {
 /// than rendering (274 §6 -- pass order lives in the pipeline alone).
 export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiation,
                src_name str = "") -> str {
+    // A unit alone: no mark, no program, nothing printed before it -- and its
+    // four parts in their order are the text this door printed before programs
+    // existed, byte for byte.
+    ro u = emit_unit(file, ctx, out, reach, insts, src_name, "", false, CNames.new(), 0)
+    render_spelled(u.lits, "${u.types}${u.protos}${u.bodies}", u.init)
+}
+
+/// One unit's C, cut where a PROGRAM interleaves its units (274.11 E.10 step
+/// 2b): every unit's types come before any unit's prototypes, and every
+/// prototype before any body, so the program relies on no order between its
+/// modules but the import order of its types.
+export type UnitC {
+    lits str /// the literal pool, spelled; its names carry the unit's mark
+    types str /// the blobs and type infos, the type declarations, the module value cells
+    protos str /// handler and spawn prototypes, instance structs and prototypes -- in a program also the unit's own function prototypes
+    bodies str /// the functions, the instances, handler operations, spawn functions, module value initializers
+    init str /// the unit's lines of the shell's INIT slot
+    made []str /// the C names of the instances, instance structs and option typedefs printed here: a later unit of the program does not print them again
+    infos int /// how many type-info ids it numbered
+}
+
+/// Emit one unit, in parts. `tag` marks the names the unit numbers itself,
+/// `program` says it is one module of a program, `skip` holds what earlier
+/// units printed, `tid_base` how many type-info ids they numbered.
+export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiation,
+                    src_name str, tag str, program bool, skip CNames, tid_base int) -> UnitC {
     // The hoist map is sized by the file's node space, like every other
     // by-node table: "" answers "not hoisted" without a second lookup.
     mut lt = []str.new()
@@ -150,12 +179,21 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
                           // here would not be a compile error -- it would be an
                           // empty pool found at runtime or never. Measured on
                           // this very field the day the pool was added.
-                          pool: LitPool.new(), blobs: []int.new(), infos: []TyId.new() }
+                          pool: LitPool.new(), blobs: []int.new(), infos: []TyId.new(),
+                          tag, program, skip, made: []str.new(), tid_base }
     e.emit_type_decls()
     // Module values (274.5 section 6): the cells before any function reads
     // them, the initializers after every function they may call, and the
     // lines that run them before `main` into the shell's INIT slot.
     e.emit_module_value_cells()
+    if program {
+        // In a program the instance structs are TYPES of the types phase: a
+        // prototype of a unit printed before this one may name them.
+        e.emit_instance_structs(insts)
+    } else {
+        // A unit alone keeps them beside its instances (below).
+    }
+    ro at_protos = e.body.byte_len()
     // Handler literals (E.9 step 3): their context types and operation
     // prototypes before the functions that build them, the operation
     // bodies after every function they may call.
@@ -165,22 +203,102 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     e.emit_spawn_protos()
     // The structs of the generic records the unit's own instances use
     // (274.11 E.10 step 4d), before any prototype names them.
-    e.emit_instance_structs(insts)
-    e.emit_instance_protos(insts)
+    if !program {
+        e.emit_instance_structs(insts)
+    } else {
+        // In a program they were printed with the types, above.
+    }
+    // Which instances are this unit's to print: in a program, one another
+    // unit printed is the program's already (one body per instance).
+    ro ours = e.instances_ours(insts)
+    e.emit_instance_protos(insts, ours)
+    if program {
+        // A function of one module is called from another's bodies, and the
+        // bodies of all modules follow all prototypes.
+        e.emit_file_protos(file)
+    } else {
+        // A unit alone keeps its shape: definitions in source order (the
+        // forward call this leaves unanswered is registry №TBD).
+    }
+    ro at_bodies = e.body.byte_len()
     e.emit_file(file)
-    for inst in insts {
-        e.emit_instance(inst)
+    for k in 0..insts.len() {
+        if ours[k] { e.emit_instance(insts[k]) } else { continue }
     }
     e.emit_handler_ops()
     e.emit_spawn_fns()
     e.emit_module_value_inits()
     ro init = e.module_value_init_calls()
     // The blobs `embed` named (D412), before every function that reads them.
-    ro blobs = blob_defs(e.ctx.embeds, e.blobs)
+    ro blobs = blob_defs(e.ctx.embeds, e.blobs, tag)
     // The type infos a boxing named, the same way (`Failure(e)` of `x?`, D314).
-    ro infos = type_info_defs(e.ctx, e.infos)
-    ro (lits, code) = e.into_parts()
-    render(lits, "${blobs}${infos}${code}", init)
+    ro infos = type_info_defs(e.ctx, e.infos, tag, tid_base)
+    ro ninfos = e.infos.len()
+    ro (lits, code, made) = e.into_unit_parts()
+    UnitC { lits: strlit_defs(lits, tag), types: "${blobs}${infos}${code[0..at_protos]}",
+            protos: code[at_protos..at_bodies], bodies: code[at_bodies..], init, made, infos: ninfos }
+}
+
+/// The C file of a PROGRAM (274.11 E.10 step 2b): the shell once, every unit's
+/// literals, then the units' types, prototypes and bodies, each phase in the
+/// order handed -- the import order, a module after the modules it imports --
+/// and their INIT lines in the same order.
+export fn render_program(units []UnitC) -> str {
+    consume lits = StringBuilder.new()
+    consume code = StringBuilder.new()
+    consume init = StringBuilder.new()
+    for u in units {
+        lits.append(u.lits)
+        code.append(u.types)
+        init.append(u.init)
+    }
+    for u in units {
+        code.append(u.protos)
+    }
+    for u in units {
+        code.append(u.bodies)
+    }
+    render_spelled(lits.into_str(), code.into_str(), init.into_str())
+}
+
+/// Which of the unit's instances it prints: all of them alone; in a program,
+/// those no earlier unit printed.
+fn Emitter mut @instances_ours(insts []Instantiation) -> []bool {
+    mut ours = []bool.new()
+    for inst in insts {
+        ours.push(@first_in_program(c_callable(@ctx, inst.row, inst.subst)))
+    }
+    ours
+}
+
+/// Is this C name -- an instance, an instance struct, an option typedef --
+/// this unit's to print? Always alone; in a program, unless an earlier unit
+/// printed it, and then it is recorded as printed here.
+fn Emitter mut @first_in_program(name str) -> bool {
+    if !@program { return true }
+    if @skip.has(name) { return false }
+    @made.push(name)
+    true
+}
+
+/// A prototype per reached function of the file (a program only): the bodies
+/// of every unit follow every prototype, so a call into another module -- or
+/// down the file -- names a declared function.
+fn Emitter mut @emit_file_protos(file Node) -> () {
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        match decl_fn_row(c, @ctx) {
+            // Not a callable of the file: nothing to declare.
+            None => continue
+            Some(row) => {
+                if !@reach.has(row) { continue }
+                ro fd = @ctx.fns.rows[raw_row(row)]
+                @emit_signature(c, decl_name(c), row, no_subst(),
+                    @ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt], fd.ret_id)
+                @body.append(";\n")
+            }
+        }
+    }
 }
 
 
@@ -297,8 +415,10 @@ fn Emitter mut @emit_instance(inst Instantiation) -> () {
 /// ordinary functions keep the oracle's shape -- definitions in source order,
 /// no prototypes -- so a file without generics emits exactly what it emitted
 /// before this door existed.
-fn Emitter mut @emit_instance_protos(insts []Instantiation) -> () {
-    for inst in insts {
+fn Emitter mut @emit_instance_protos(insts []Instantiation, ours []bool) -> () {
+    for k in 0..insts.len() {
+        if !ours[k] { continue }
+        ro inst = insts[k]
         @emit_signature(inst.decl, decl_name(inst.decl), inst.row, inst.subst, inst.ptypes, inst.ret_id)
         @body.append(";\n")
     }
@@ -545,7 +665,13 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
             // A NODE THE LOWERING ALREADY LAID DOWN (registry 1619) is read from its
             // temporary by `@emit_expr`: building anything inside it again here would
             // run its effects twice, and a `??` in it would lower after the seal.
-            if @lo.ir.local_of_node(e.id_of()) != no_local() { return }
+            // EXCEPT THE VALUE THAT DEFINES IT (`@hoist_root`, the exemption
+            // `@emit_expr` makes): its assignment prints it from the tree, so
+            // its constructions are hoisted here. Without the exemption the
+            // walk stopped at its own root -- `println(f([]T.new()) + 1)`, a
+            // `while` or `if` condition with `[]T.new()` died as "never
+            // hoisted" (task #23, whole-program emission of novac).
+            if e.id_of() != @hoist_root && @lo.ir.local_of_node(e.id_of()) != no_local() { return }
             if kind == NodeKind.ArrayLit {
                 @lit_tmp[raw_node(e.id_of())] = @emit_array_lit(e, @out.type_of(e.id_of()))
                 return

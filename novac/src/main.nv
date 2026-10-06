@@ -30,8 +30,9 @@ import ./sem.{InteropTable}
 import ./sem.{EmbedTable, embed_literals, embed_lit_path, embed_dir_of, embed_join, embed_normalize}
 import ./sem.{embed_inside, embed_is_absolute, EMBED_READ, EMBED_NOT_FOUND, EMBED_IS_A_DIR, EMBED_OUTSIDE}
 import ./pipeline.{compile_with_embeds, compile_to_c_with_embeds, parse_decls, interop_surface, mark_program}
-import ./pipeline.{Unit, unit_of, file_of_offset, offset_in_file, same_dir, path_base}
-import ./diag.{to_json, json_escape, Diagnostic}
+import ./pipeline.{Unit, unit_of, same_dir, path_base}
+import ./pipeline.{compile_program_to_c, named_by_file}
+import ./diag.{to_json, json_escape}
 import std.fs.{read, read_dir, real_fs, canonicalize}
 import std.os.{args, env, exit_process, real_os}
 
@@ -72,6 +73,78 @@ fn emit_one(text str, file str, decls []Node, interop InteropTable, embeds Embed
     Verdict.Clean
 }
 
+/// Emit the PROGRAM whose entry is `entry` (274.11 E.10 step 2b): the files of
+/// the program's root, grouped into modules -- a directory's files are one unit,
+/// as `check` groups them -- and handed to the pipeline with the entry's unit
+/// named. One C file on stdout, or every unit's diagnostics, each named by its
+/// file. An entry outside the root is a unit of its own.
+fn emit_program(entry str, paths []str, texts []str, decls []Node, interop InteropTable,
+                mut embeds EmbedTable) Fs -> Verdict {
+    mut units = []Unit.new()
+    mut at = 0 - 1
+    mut used = []bool.new()
+    for _ in 0..paths.len() {
+        used.push(false)
+    }
+    for i in 0..paths.len() {
+        if used[i] { continue }
+        mut gp = []str.new()
+        mut gt = []str.new()
+        for j in i..paths.len() {
+            if !used[j] && same_dir(paths[i], paths[j]) {
+                // Not a copy: the push is CONDITIONAL, and no slice picks some
+                // elements and not others.
+                // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
+                gp.push(paths[j])
+                gt.push(texts[j])
+                used[j] = true
+            } else {
+                // Another directory's file, or one taken already.
+            }
+        }
+        if same_dir(paths[i], entry) {
+            at = units.len()
+        } else {
+            // A module beside the entry's.
+        }
+        units.push(unit_of(gp, gt))
+    }
+    if at < 0 {
+        // The entry lies outside the root: it is read as a unit of its own.
+        match read(entry.to_path()) {
+            Ok(bytes) => {
+                match bytes.to_str() {
+                    Ok(text) => {
+                        at = units.len()
+                        units.push(unit_of([]str.of(entry), []str.of(text)))
+                    }
+                    Err(_) => {
+                        println("novac: not UTF-8: ", entry)
+                        return Verdict.DoorError
+                    }
+                }
+            }
+            Err(_) => {
+                println("novac: cannot read ", entry)
+                return Verdict.DoorError
+            }
+        }
+    } else {
+        // The entry is a file of the root: its directory's unit is the entry's.
+    }
+    ro (diags, c_text) = compile_program_to_c(units, at, decls, interop, embeds)
+    if diags.len() > 0 {
+        mut i = 0
+        for d in diags {
+            println(to_json(d, i, d.file))
+            i += 1
+        }
+        return Verdict.Refused
+    }
+    println(c_text)
+    Verdict.Clean
+}
+
 /// Check one file: print §7 diagnostics one per line, one JSON per line.
 fn compile_one(text str, file str, decls []Node, interop InteropTable, embeds EmbedTable) -> Verdict {
     ro diags = compile_with_embeds(text, decls, interop, embeds)
@@ -100,22 +173,13 @@ fn compile_unit(u Unit, decls []Node, interop InteropTable, embeds EmbedTable) -
     ro diags = compile_with_embeds(u.text, decls, interop, embeds)
     mut i = 0
     for d in diags {
-        ro fi = file_of_offset(u.files, d.lo)
-        // A table that covers every byte answers for every span; the branch
-        // below exists for an EMPTY unit, where there is nothing to name. A span
-        // that already names its file (a handed body's, #1521) is not an offset
-        // into the unit and is printed as it came.
-        if d.file != "" {
-            println(to_json(d, i, d.file))
-        } else if fi < 0 {
-            println(to_json(d, i, "<unit>"))
-        } else {
-            ro f = u.files[fi]
-            ro lo = offset_in_file(f, d.lo)
-            ro hi = offset_in_file(f, d.hi)
-            ro local = Diagnostic { code: d.code, severity: d.severity, lo, hi, message: d.message, file: "" }
-            println(to_json(local, i, f.path))
-        }
+        // A table that covers every byte answers for every span; `<unit>` is for
+        // an EMPTY unit, where there is nothing to name. A span that already
+        // names its file (a handed body's, #1521) is not an offset into the unit
+        // and is printed as it came. One door for the translation: the program's
+        // diagnostics take it too (pipeline `named_by_file`).
+        ro nd = named_by_file(u, d)
+        println(to_json(nd, i, nd.file))
         i += 1
     }
     if diags.len() > 0 { Verdict.Refused } else { Verdict.Clean }
@@ -492,12 +556,19 @@ fn run(a []str) -> int {
         // The interop surface, lifted from the embedded shell ONCE -- the second
         // input of every compile beside the declarations (sub-plan L).
         mut interop = interop_surface()
+        // The program's own files, path and text, kept for `emit`: under
+        // NOVAC_SELF_PATH it prints the whole program (274.11 E.10 step 2b).
+        mut self_paths = []str.new()
+        mut self_texts = []str.new()
+        mut in_program = false
         match env("NOVAC_SELF_PATH") {
             Some(self_dir) => {
                 // THE PROGRAM's modules are marked on the link surface: their
                 // bodies are the program's, so a call into one is judged by its
                 // signature and named by its owner (274.11 E.10 step 2a).
-                ro self_texts = read_decls(self_dir, decl_names)
+                in_program = true
+                self_texts = read_decls(self_dir, self_paths)
+                decl_names.append(self_paths)
                 ro self_decls = parse_decls(self_texts)
                 decl_texts.append(self_texts)
                 mark_program(interop, self_decls)
@@ -596,6 +667,13 @@ fn run(a []str) -> int {
             }
         }
         ro path = a[argi]
+        if in_program {
+            // THE PROGRAM, not the file (274.11 E.10 step 2b): `nova build <entry>`
+            // builds what the entry's imports reach, and so does this door.
+            return emit_program(path, self_paths, self_texts, decls, interop, embeds).code()
+        } else {
+            // One unit: the file alone, as before programs existed.
+        }
         match read(path.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {

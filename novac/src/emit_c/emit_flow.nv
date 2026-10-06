@@ -63,6 +63,19 @@ fn chained_of(outer Option[IfCtx]) -> bool {
 /// A chained branch carries no indent of its own: it continues the `} else ` its caller
 /// printed (M2b-2-0).
 fn Emitter mut @print_if_head(cond Cond, chained bool) -> () {
+    // A CONSTRUCTION in the condition (`f([]T.new())`) is built before the head, as
+    // every value position builds it (task #23). A chained head has no room for it --
+    // `else_shape` braces such an `else if`, so a chained one holds none -- and a
+    // `while` with one is lowered as `loop { if (c) {} else { break; } }`, so the
+    // build runs every turn.
+    if !chained {
+        match cond {
+            Expr(e) => @hoist_array_lits(e)
+            IsSome(_) | NotSome(_) | FrameEntered(_) | Holds(_) | Flag(_) => {}
+        }
+    } else {
+        // `} else if (`: braced by the lowering whenever its condition builds.
+    }
     if chained {
         @body.append("if (")
     } else {
@@ -502,10 +515,10 @@ fn Emitter mut @any_box_of(t TyId, name str) -> str =>
 /// so the shell's `NOVA_TYPEINFO_nova_str` is never defined twice.
 fn Emitter mut @type_info_of(t TyId) -> str {
     for k in 0..@infos.len() {
-        if @infos[k] == t { return "NOVAC_TYPEINFO_${k}" }
+        if @infos[k] == t { return "NOVAC_TYPEINFO_${@tag}${k}" }
     }
     @infos.push(t)
-    "NOVAC_TYPEINFO_${@infos.len() - 1}"
+    "NOVAC_TYPEINFO_${@tag}${@infos.len() - 1}"
 }
 
 /// The definitions `@type_info_of` named: `{ <id>, "<name>" }`, the oracle's own shape for
@@ -515,15 +528,15 @@ fn Emitter mut @type_info_of(t TyId) -> str {
 /// own from `NOVAC_TID_BASE` -- a range no oracle unit reaches, distinct per type within
 /// this program. Only the id's equality is read (`nova_any_is`); `is` on such a type is
 /// refused by the checker (check/is_expr.nv), so no reader compares it with the oracle's.
-fn type_info_defs(ctx Ctx, tys []TyId) -> str {
+fn type_info_defs(ctx Ctx, tys []TyId, tag str, tid_base int) -> str {
     consume out = StringBuilder.new()
     mut k = 0
     for t in tys {
         ro (tid, name) = match any_tid_c(ctx, t) {
             Some(fixed) => (fixed, c_type(ctx, t))
-            None => ("((NovaTypeId)${NOVAC_TID_BASE + k}u)", ty_source_name(ctx, t))
+            None => ("((NovaTypeId)${NOVAC_TID_BASE + tid_base + k}u)", ty_source_name(ctx, t))
         }
-        out.append("static const NovaTypeInfo NOVAC_TYPEINFO_${k} = { ${tid}, \"${name}\" };\n")
+        out.append("static const NovaTypeInfo NOVAC_TYPEINFO_${tag}${k} = { ${tid}, \"${name}\" };\n")
         k += 1
     }
     out

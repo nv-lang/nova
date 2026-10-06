@@ -181,6 +181,11 @@ export fn vec_op_method(op str) -> str => if vec_op_is_overload(op) { VEC_INDEX_
 /// reads its elements so (`unsafe { @data.read_at(i) }`, 274.11 E.10 step 3c).
 export const PTR_READ_AT = "read_at"
 
+/// `p.read_consume_at(i) -> T` (D216, the amendment of 2026-09-25): the read
+/// that TAKES the element out -- for an ordinary `T` it is the copy `read_at`
+/// makes, the same bits in C. std's `Vec[T] @pop` reads its last element so.
+const PTR_READ_CONSUME_AT = "read_consume_at"
+
 /// `p.offset(n) -> *T` (D216): the pointer `n` elements on, of the same type --
 /// std's `Vec[T] @index(r Range)` builds its view's data with it (registry 1557).
 export const PTR_OFFSET = "offset"
@@ -196,15 +201,15 @@ export const PTR_WRITE_AT = "write_at"
 /// `p.write_consume_at(i, v)`: `write_at` that MOVES `v` in -- the consuming store (D216, D156); the same bits in C.
 export const PTR_WRITE_CONSUME_AT = "write_consume_at"
 
-/// Is `name` one of the raw-pointer methods of D216 -- `read_at`, `write_at`,
-/// `write_consume_at`, `offset`, `dist`? ONE answer for the two walks that ask it
+/// Is `name` one of the raw-pointer methods of D216 -- `read_at`,
+/// `read_consume_at`, `write_at`, `write_consume_at`, `offset`, `dist`? ONE answer for the two walks that ask it
 /// (registry 221.1 #1539): the typing of a pointer's method (check/unsafe.nv)
 /// and the subset walk's "is this a method novac knows" (check/rules.nv). The
 /// second knew only the names std DECLARES, and passed `read_at`/`offset` by
 /// coincidence (std has `File @read_at`, `ZonedDateTime @offset`) while
 /// refusing `write_at` -- unseen while an instance skipped that walk.
 export fn is_ptr_method(name str) -> bool =>
-    name == PTR_READ_AT || name == PTR_WRITE_AT || name == PTR_WRITE_CONSUME_AT || name == PTR_OFFSET ||
+    name == PTR_READ_AT || name == PTR_READ_CONSUME_AT || name == PTR_WRITE_AT || name == PTR_WRITE_CONSUME_AT || name == PTR_OFFSET ||
         name == PTR_DIST
 
 /// `size_of[T]()`: the byte size of `T`'s value, an `int` -- the language's intrinsic (D216).

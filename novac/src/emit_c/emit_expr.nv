@@ -311,7 +311,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // argument): registered like a println literal, referenced by
             // its C name — the oracle emits the same shape.
             ro idx = @pool.slot(leaf_text(t))
-            @body.append("_novac_strlit_${idx}")
+            @body.append("_novac_strlit_${@tag}${idx}")
         } else {
             ice("emit_c: literal kind outside the subset")
         }

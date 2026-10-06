@@ -369,7 +369,10 @@ diag 6
 # emit_c 2 -> 3 (2026-08-26, подплан Л, сантехника): `shell_surface` — поверхность
 # интеропа, снятая с встроенной оболочки; читает её ТОТ, у кого оболочка лежит,
 # а `pipeline` зовёт один раз на процесс.
-emit_c 3
+# 2026-10-06, task #23 (274.11 E.10 step 2b): emit_c 3 -> 6: `UnitC`, `emit_unit`, `render_program` --
+#   the PIPELINE strings a program's units together (pass order lives there), so the parts of one
+#   unit's C cross to it as data and come back to the module that owns the shell to be rendered once.
+emit_c 6
 # lex 4 -> 6 (2026-08-18): paren_delta и bracket_delta — таблица глубины
 # скобок вышла наружу как ОДНА дверь вместо трёх if-цепочек в парсере
 # (владелец: «в match»). Наружу они обязаны выйти потому, что TokenKind
@@ -480,7 +483,9 @@ main 0
 # своего читателя, чего никто не заметил. Пятый носитель П35 за сессию; шестым
 # был `DefTable.type_decl_of`, и с них двоих правило получило стража.
 # 2026-10-01, Carina window (274.11 E.10 step 4c): mono 7 -> 8: `Reach @grow` -- the pipeline grows the reachable set by the callees of a std body the unit instantiates, typed only after the walk found it.
-mono 8
+# 2026-10-06, task #23 (274.11 E.10 step 2b): mono 8 -> 9: `reachable_in_program` -- a module without
+#   `main` is reached from the other units; the pipeline hands it the C names they call.
+mono 9
 # names 6 -> 10 (2026-08-22, волна В8): здесь ЖИВЁТ пространство `DeclId` —
 # «какое объявление», плюс его двери `raw_decl`/`no_decl`/`is_decl`. Пятой была
 # `same_decl` — обход дефекта ro-launder по образцу `types.same_ty`, — и она
@@ -552,7 +557,10 @@ parse 1
 #   -- the door (main.nv) hands in what it read for the text's `embed` calls, beside the declarations
 #   and the interop surface; the old entries delegate to them with an empty table (a default value
 #   of a record type is not in the subset, so a second name and not a parameter default).
-pipeline 16
+# 2026-10-06, task #23 (274.11 E.10 step 2b): pipeline 16 -> 18: `compile_program_to_c` (the program
+#   to one C file, called by the door) and `named_by_file` (a unit's diagnostic named by its file:
+#   the door's `compile_unit` and the program take the one translation).
+pipeline 18
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -1220,7 +1228,10 @@ resolve 27
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): sem 390 (main) + 1 (#14:
 #   `ProtoTable @requires_method`) = 391, equal to the guard's measure.
-sem 391
+# 2026-10-06, task #23 (274.11 E.10 step 2b): sem 391 -> 395: `CNames`, `CNames.new`, `@add`, `@has` --
+#   a set of OUR C identifiers (what one unit wants another to print, what an earlier unit printed),
+#   asked by mono, the emitter and the pipeline; beside InteropTable and kept apart from it.
+sem 395
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

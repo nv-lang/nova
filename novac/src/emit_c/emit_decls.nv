@@ -159,6 +159,8 @@ fn Emitter mut @emit_type_decls() -> () {
         // match, two behaviours; nothing decides the kind twice.
         @emit_decl_kind(t, true)
     }
+    // And the instance structs those declarations name, which come later.
+    @emit_instance_forwards()
     // PASS 2 -- the bodies, each AFTER every type it embeds by value.
     //
     // A pointer was satisfied by pass 1; a field embedded BY VALUE needs the
@@ -327,6 +329,9 @@ fn Emitter mut @emit_option_typedefs() -> () {
     for rid in ids {
         ro t = TyId(rid)
         ro name = c_type(@ctx, t)
+        // One typedef per PROGRAM (274.11 E.10 step 2b): an option over an
+        // instance is any unit's, and another one may have printed it.
+        if !@first_in_program(name) { continue }
         ro pc = c_type(@ctx, @ctx.tys.arg(t, 0))
         if @option_payload_is_pointer(t) {
             @body.append("typedef struct ${name} { ${pc} value; } ${name};\n")

@@ -30,7 +30,7 @@ fn Emitter mut @emit_embed(e Node) -> () {
         return
     }
     @note_blob(row)
-    @body.append("((${ct})${make}(_novac_blob_${row}, ${n}))")
+    @body.append("((${ct})${make}(_novac_blob_${@tag}${row}, ${n}))")
 }
 
 /// Remember that row `row`'s array is printed, once.
@@ -43,11 +43,11 @@ fn Emitter mut @note_blob(row int) -> () {
 
 /// The static arrays of the blobs in `rows`, one per row: the bytes in decimal,
 /// sixteen to a line.
-fn blob_defs(embeds EmbedTable, rows []int) -> str {
+fn blob_defs(embeds EmbedTable, rows []int, tag str) -> str {
     consume out = StringBuilder.new()
     for row in rows {
         ro n = embeds.len_at(row)
-        out.append("static const uint8_t _novac_blob_${row}[${n}] = {")
+        out.append("static const uint8_t _novac_blob_${tag}${row}[${n}] = {")
         for k in 0..n {
             if k % 16 == 0 { out.append("\n    ") } else { out.append(" ") }
             ro b = embeds.byte_at(row, k) as int

@@ -1,0 +1,40 @@
+module multi_module.pos_1
+
+// NOVAC_PROGRAM
+// A PROGRAM OF THREE MODULES IN ONE C FILE (274.11 E.10 step 2b): this entry and
+// the modules `geo/` and `bag/` beside it. The marker above tells the
+// differential and the smoke that the modules lie under this file's directory:
+// novac is run with `NOVAC_SELF_PATH=<this directory>`, the oracle builds a copy
+// of the whole tree. What has to hold in the one file: a type of `geo` used by
+// all three modules, a function of `geo` reached only through another module
+// (`norm1` -> its private `abs_of`), `geo.dbl` instantiated over `int` by two
+// modules and over `f64` by this one, `geo.count` over `Pt` and `int`,
+// `bag.last` over `Pt` and `int`, and std's `Vec[Pt]` instances made by two
+// modules -- each instance once in the program.
+
+import ./geo.{Pt, shift, norm1, dbl, count}
+import ./bag.{fill, last, total, twice}
+
+fn main() {
+    ro p = Pt { x: 0 - 3, y: 4 }
+    println(norm1(p))
+    println(norm1(shift(p, 1)))
+    println(dbl[int](21))
+    println(dbl[f64](1.5))
+    println(twice(6))
+    ro b = fill(4)
+    println(total(b))
+    println(last[Pt](b.items).x)
+    println(count[Pt](b.items))
+    mut ns = []int.new()
+    ns.push(10)
+    ns.push(20)
+    println(last[int](ns))
+    println(count[int](ns))
+    ro o = Pt { x: 9, y: 9 }
+    mut more = []Pt.new()
+    more.push(o)
+    more.push(p)
+    println(more.len())
+    println(last[Pt](more).y)
+}

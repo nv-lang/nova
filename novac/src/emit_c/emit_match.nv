@@ -111,7 +111,7 @@ fn Emitter mut @emit_text_lit_test(n Node, scr Local) -> () {
     match leaf_kind(n) {
         StrLit => {
             ro idx = @pool.slot(leaf_text(n))
-            @body.append("nova_str_eq(${scr_c}, _novac_strlit_${idx})")
+            @body.append("nova_str_eq(${scr_c}, _novac_strlit_${@tag}${idx})")
         }
         CharLit => @body.append("(${scr_c} == ((nova_char)${char_literal_code(leaf_text(n))}U))")
         _ => ice("emit_c: a text literal arm whose token is neither a string nor a char")

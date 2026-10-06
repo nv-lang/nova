@@ -1,0 +1,44 @@
+module cond_construction.pos_1
+
+// A CONSTRUCTION in a condition -- `[]T.new()`, `[a]`, `[]T.of(..)` -- is built
+// before the test, like a block form (registry 1619): a `while` re-builds it
+// every turn (the `[v.len()]` below is read fresh each time, or the loop would
+// never end), an `else if` with one is braced, a guard and an if-value build it
+// before their head. Until 2026-10-06 every one of these died as "an array
+// literal ... never hoisted" (task #23: check/calls.nv's
+// `} else if !@ctx.instantiates(row, []TyId.new())` stopped whole-program
+// emission of novac so).
+fn count(xs []int) -> int => xs.len()
+
+fn first_of(xs []int) -> int => xs[0]
+
+fn kind(n int) -> int {
+    if n == 0 {
+        0
+    } else if count([]int.of(n, n)) == 2 && n > 5 {
+        2
+    } else {
+        1
+    }
+}
+
+fn main() {
+    mut v = []int.new()
+    while first_of([v.len()]) < 3 {
+        v.push(1)
+    }
+    println(v.len())
+    if count([]int.new()) == 0 {
+        println("empty")
+    }
+    println(kind(0))
+    println(kind(3))
+    println(kind(9))
+    ro c = 4
+    match c {
+        x if count([x, x]) == 2 => println(x)
+        _ => println(0)
+    }
+    println(if count([1, 2]) == 2 { 20 } else { 30 })
+    println(count([]int.new()) + count([7]))
+}

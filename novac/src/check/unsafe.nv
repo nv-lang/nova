@@ -74,7 +74,7 @@ fn Checker mut @type_ptr_method(e Node, kids []Node, recv_t TyId) -> () {
         @report_first_leaf_of(kids, PTR_METHOD_MSG)
         return
     } else {
-        // `read_at` or `write_at`: judged below.
+        // `read_at`, `read_consume_at` or a write: judged below.
     }
     if writes && !@ctx.tys.ptr_is_mut(recv_t) {
         @reject_first_leaf_of(kids, PTR_WRITE_RO_MSG)

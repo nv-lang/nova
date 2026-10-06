@@ -1,0 +1,18 @@
+module interp_slot_build.pos_1
+
+// What an interpolation SLOT builds is hoisted by the literal's own emitter,
+// slot by slot in source order: the hoist walk stops at the literal (H2), and
+// until 2026-10-06 nothing entered its slots -- `"${f([]T.new())}"` died as
+// "an array literal ... never hoisted" (task #23: novac's own emit_flow.nv
+// stopped whole-program emission so). Typed empty, typed `of`, bare literal,
+// `??` in a slot, and two builds in one literal, in order.
+fn count(xs []int) -> int => xs.len()
+
+fn first_or(xs []int, d int) -> int => xs.get(0) ?? d
+
+fn main() {
+    println("n=${count([]int.new())} m=${count([1, 2, 3])}")
+    println("k=${count([]int.of(4, 5))}")
+    ro o = Some(7)
+    println("c=${o ?? 0} f=${first_or([]int.new(), 9)} g=${first_or([5], 9)}")
+}

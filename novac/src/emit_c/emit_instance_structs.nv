@@ -17,6 +17,7 @@
 module novac.emit_c
 
 import ../sem.{decl_of_ty, field_range_of, no_frow, raw_frow, c_type, subst_type, instance_struct_c}
+import ../sem.{variant_range_of, raw_vrow, no_vrow}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
 
@@ -44,6 +45,9 @@ fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
         if d == t { return }
     }
     done.push(t)
+    // One struct per PROGRAM: another unit of it may have printed this one
+    // (274.11 E.10 step 2b).
+    if !@first_in_program(sn) { return }
     mut args = []TyId.new()
     for i in 0..@ctx.tys.arg_count(t) {
         args.push(@ctx.tys.arg(t, i))
@@ -56,4 +60,64 @@ fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
         @body.append("    ${c_type(@ctx, subst_type(@ctx, fd.type_id, args))} ${fd.name};\n")
     }
     @body.append("};\n\n")
+}
+
+/// A FORWARD NAME for every instance struct the file's own declarations name --
+/// in a field, a variant payload or a module value's cell (registry №TBD): the
+/// struct's body comes after the declarations (above, beside the instances that
+/// use it, or in another unit of the program), and C wants the name before a
+/// field or a cell may hold a pointer to it. Measured: `type Bag { items []Pt }`
+/// beside `type Pt` was "unknown type name 'Nova_Vec____Nova_Pt_p'" at clang,
+/// alone and in a program alike. A typedef repeats legally (C11), so the one
+/// written here and the one written with the body agree.
+fn Emitter mut @emit_instance_forwards() -> () {
+    mut done = []str.new()
+    for t in @ctx.foreign_types_cnt..@ctx.types.len() {
+        ro td = @ctx.types[t]
+        ro frange = field_range_of(td) ?? (no_frow(), 0)
+        for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+            @instance_forward_of(@ctx.fields.rows[j].type_id, done)
+        }
+        ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+        for v in raw_vrow(vrange.0)..raw_vrow(vrange.0) + vrange.1 {
+            ro vd = @ctx.variant_rows[v]
+            for k in 0..vd.payload_cnt {
+                @instance_forward_of(@ctx.payload_types[vd.payload_off + k], done)
+            }
+        }
+    }
+    for cd in @ctx.consts.rows {
+        if !is_own_module_value(cd) { continue }
+        @instance_forward_of(@out.type_of(cd.init[0].id_of()), done)
+    }
+}
+
+/// The forward name of `t`'s struct, when `t` is a concrete instance of a
+/// generic record the shell does not define -- once each.
+fn Emitter mut @instance_forward_of(t TyId, mut done []str) -> () {
+    if !is_ty(t) || @ctx.tys.kind_of(t) != TypeKind.TkApp { return }
+    // An instance over a parameter of the declaration has no struct of its own:
+    // only a substitution makes one.
+    if !@ground(t) { return }
+    ro td = decl_of_ty(@ctx, t)
+    if td.kind != TypeKind.TkRecord { return }
+    ro sn = instance_struct_c(@ctx, t)
+    if @ctx.interop.has_body(sn) { return }
+    for d in done {
+        if d == sn { return }
+    }
+    done.push(sn)
+    @body.append("typedef struct ${sn} ${sn};\n")
+}
+
+/// Does `t` name no type parameter and no inference variable, down its arguments?
+fn Emitter @ground(t TyId) -> bool {
+    if !is_ty(t) { return false }
+    ro k = @ctx.tys.kind_of(t)
+    if k == TypeKind.TkParam || k == TypeKind.TkInfer { return false }
+    if k != TypeKind.TkApp && k != TypeKind.TkTuple { return true }
+    for i in 0..@ctx.tys.arg_count(t) {
+        if !@ground(@ctx.tys.arg(t, i)) { return false }
+    }
+    true
 }

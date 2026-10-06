@@ -1,0 +1,306 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `collect_crate_mono_items` -- reachability over the WHOLE program,
+// seeded with what other crates use, before code is generated; Go's linker for
+// "one output from many packages, each compiled with what the others call".
+// NOT taken: separate objects per unit (each unit carries the whole shell, its
+// `main` and the runtime's globals -- they would collide at the link, 274.11).
+// Role: layer glue -- the pass order of a PROGRAM: units checked one by one, emitted into ONE C file.
+// Used by: main (`NOVAC_SELF_PATH=<root> novac emit <entry>`, 274.11 E.10 step 2b); the double build after it.
+// Guarded by: check-novac-differential.sh (fixture `multi_module/pos_1`, behaviour byte for byte with the
+// oracle), check-novac-deps.py (edges only from the section 3 table).
+//
+// THE PROGRAM IS CHECKED BY UNITS AND EMITTED AS ONE (274.11 E.10, "Механизм"):
+// a module is checked as today -- a call into another module of the program is
+// judged by the owner's signature (step 2a) -- and only the emission is joined.
+// Each unit is emitted in PARTS (`emit_c.UnitC`), and the C file takes every
+// unit's types, then every unit's prototypes, then every unit's bodies -- so no
+// order between the modules is relied on but the import order of their types.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+import ../parse.{parse}
+import ../check.{check}
+import ../diag.{Diagnostic, ice}
+import ../emit_c.{emit_unit, render_program, UnitC}
+import ../mono.{reachable_in_program}
+import ../sem.{branch_children, leaf_kind, leaf_text, module_dotted, InteropTable, EmbedTable, embed_dir_of}
+import ../sem.{CNames, c_callable, FnRow}
+import ../types.{TyId}
+
+/// A diagnostic of a unit, named by the FILE its span lies in and re-based to
+/// an offset of that file -- the translation the unit's table makes (274.7 M).
+/// A span that already names its file (a handed body's, #1521; a derived
+/// method's) is returned as it came; a span in no run is the unit's own.
+export fn named_by_file(u Unit, d Diagnostic) -> Diagnostic {
+    // A copy, not `d` itself: the parameter is `ro`, and handing it out through a
+    // result the caller may bind `mut` would write what it froze (D246).
+    if d.file != "" {
+        ro named = Diagnostic { code: d.code, severity: d.severity, lo: d.lo, hi: d.hi, message: d.message,
+                                file: d.file }
+        return named
+    } else {
+        // An offset into the unit: the table below names its file.
+    }
+    ro fi = file_of_offset(u.files, d.lo)
+    if fi < 0 {
+        ro whole = Diagnostic { code: d.code, severity: d.severity, lo: d.lo, hi: d.hi, message: d.message,
+                                file: "<unit>" }
+        return whole
+    } else {
+        // The span lies in a run of the unit: that run's file names it.
+    }
+    ro f = u.files[fi]
+    ro local = Diagnostic { code: d.code, severity: d.severity, lo: offset_in_file(f, d.lo),
+                            hi: offset_in_file(f, d.hi), message: d.message, file: f.path }
+    local
+}
+
+/// Compile a PROGRAM to one C file (274.11 E.10 step 2b). `units` are its
+/// modules, each as one unit (a directory's files), `entry` the index of the
+/// unit holding `main`. A refusal in any unit refuses the program: the
+/// diagnostics come back, each named by its file, and no C.
+///
+/// THE ORDER IS THE IMPORTS': a unit is checked and emitted only after every
+/// unit that imports it, so the calls it receives from them are known when its
+/// roots are taken -- a module without `main` is reached from the others, and
+/// its roots are the C names their reached bodies print by its name. The C
+/// file then lists the units the other way round, a module after what it
+/// imports. The program is the entry and what its imports reach.
+export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop InteropTable,
+                               mut embeds EmbedTable) -> ([]Diagnostic, str) {
+    mut dirs = []str.new()
+    mut mods = []str.new()
+    mut efrom = []int.new()
+    mut eto = []int.new()
+    for k in 0..units.len() {
+        dirs.push(unit_dir(units[k]))
+    }
+    for k in 0..units.len() {
+        ro tree = parse_unit(units[k].text)
+        mods.push(module_dotted(tree))
+        for d in import_dirs(tree, dirs[k]) {
+            ro t = index_of(dirs, d)
+            if t >= 0 && t != k {
+                efrom.push(k)
+                eto.push(t)
+            } else {
+                // A directory that is no unit of the program: std, or an import
+                // of the module's own directory -- not an edge between units.
+            }
+        }
+    }
+    mut state = []int.new()
+    for _ in 0..units.len() {
+        state.push(0)
+    }
+    mut topo = []int.new()
+    visit_unit(entry, efrom, eto, state, topo)
+    // `topo` lists a unit after everything it imports; the walk below goes from
+    // its end -- the entry first.
+    mut wanted = CNames.new()
+    mut made = CNames.new()
+    mut done = []bool.new()
+    for _ in 0..units.len() {
+        done.push(false)
+    }
+    mut diags = []Diagnostic.new()
+    mut rev = []UnitC.new()
+    mut tid_base = 0
+    mut i = topo.len()
+    while i > 0 {
+        i -= 1
+        ro k = topo[i]
+        ro u = units[k]
+        // A unit's `embed`s were read against its own directory (main.nv): it is
+        // typed under that key, as `check_unit` types it.
+        embeds.home = if u.files.len() > 0 { embed_dir_of(u.files[0].path) } else { "" }
+        ro fr = front(u.text, decls, interop, embeds)
+        ro { src, tree, ctx, .. } = fr
+        ro (cdiags, chan) = check(tree, src, ctx)
+        done[k] = true
+        if cdiags.len() > 0 {
+            for d in derived_named(cdiags, fr) {
+                diags.push(named_by_file(u, d))
+            }
+            continue
+        } else {
+            // Accepted: its reachable set and instances follow.
+        }
+        mut reach = reachable_in_program(tree, ctx, chan, wanted)
+        ro (idiags, insts) = instances_of(tree, src, ctx, reach, decls)
+        if idiags.len() > 0 {
+            for d in derived_named(idiags, fr) {
+                diags.push(named_by_file(u, d))
+            }
+            continue
+        } else {
+            // Its instances are typed: what it calls elsewhere is known.
+        }
+        // What this unit's reached bodies call in OTHER modules of the program:
+        // each such row is printed by its owner's name (E.10 step 1), so the
+        // name is what the owner is asked for.
+        for r in 0..ctx.fns.rows.len() {
+            ro row = FnRow(r)
+            if !reach.has(row) || ctx.fns.compiles_body(row) || !ctx.in_program(row) { continue }
+            ro owner = index_of(mods, ctx.fns.rows[r].handed_from)
+            // The unit's OWN module handed back to it (its file among the
+            // program's declarations): its own row answers the call.
+            if owner == k { continue }
+            ro nm = c_callable(ctx, row, []TyId.new())
+            if owner < 0 || state[owner] != 2 {
+                ice("pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
+            } else if wanted.add(nm) && done[owner] {
+                ice("pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
+            } else {
+                // Recorded for its owner, which is still to come.
+            }
+        }
+        ro c = emit_unit(tree, ctx, chan, reach, insts, unit_src_name(u), "u${k}_", true, made, tid_base)
+        for nm in c.made {
+            ro _ = made.add(nm)
+        }
+        tid_base += c.infos
+        rev.push(c)
+    }
+    if diags.len() > 0 { return (diags, "") }
+    // A unit the entry's imports never reach is not walked at all; one that is
+    // reached and still holds a wanted name unanswered would be a link error --
+    // the walk above refuses it by name when the order is broken.
+    mut ordered = []UnitC.new()
+    mut j = rev.len()
+    while j > 0 {
+        j -= 1
+        ordered.push(rev[j])
+    }
+    (diags, render_program(ordered))
+}
+
+/// The tree of a unit's text, for its module line and its imports.
+fn parse_unit(text str) -> Node => parse(tokens_of(text))
+
+/// Depth first from `k` over the import edges: a unit goes into `topo` after
+/// every unit it imports. The graph of a program is acyclic (the language
+/// refuses an import cycle; novac's own is held by check-novac-deps.py), and a
+/// cycle met here is said by name rather than walked forever.
+fn visit_unit(k int, efrom []int, eto []int, mut state []int, mut topo []int) -> () {
+    state[k] = 1
+    for e in 0..efrom.len() {
+        if efrom[e] != k { continue }
+        ro t = eto[e]
+        if state[t] == 0 {
+            visit_unit(t, efrom, eto, state, topo)
+        } else if state[t] == 1 {
+            ice("pipeline: an import cycle between the program's modules")
+        } else {
+            // Already placed: an import of a module reached before.
+        }
+    }
+    state[k] = 2
+    topo.push(k)
+}
+
+/// The position of `s` in `xs`, or -1. A program has tens of modules, so a
+/// walk is the honest form.
+fn index_of(xs []str, s str) -> int {
+    for k in 0..xs.len() {
+        if xs[k] == s { return k }
+    }
+    0 - 1
+}
+
+/// The base name a unit's contracts print: its first file's (a unit of one
+/// file -- the entry -- names exactly that file).
+fn unit_src_name(u Unit) -> str => if u.files.len() > 0 { path_base(u.files[0].path) } else { "" }
+
+/// A unit's directory, `/`-separated and without empty or `.` segments: the
+/// key its imports are matched against.
+fn unit_dir(u Unit) -> str {
+    if u.files.len() == 0 { return "" }
+    ro p = u.files[0].path.replace("\\", "/")
+    ro cut = last_sep(p)
+    if cut < 0 { return "" }
+    norm_dir(p[0..cut])
+}
+
+/// A directory with its empty and `.` segments dropped and every `..` applied
+/// to the segment before it; a leading `/` is kept.
+fn norm_dir(p str) -> str {
+    mut segs = []str.new()
+    for s in p.split("/") {
+        if s == "" || s == "." { continue }
+        if s == ".." && segs.len() > 0 && segs[segs.len() - 1] != ".." {
+            ro _ = segs.pop()
+        } else {
+            segs.push(s)
+        }
+    }
+    mut out = if p.starts_with("/") { "/" } else { "" }
+    for k in 0..segs.len() {
+        out = if k == 0 { "${out}${segs[k]}" } else { "${out}/${segs[k]}" }
+    }
+    out
+}
+
+/// The directories the unit's RELATIVE imports name (`./geo` beside it,
+/// `../source` beside its directory), joined to the unit's own directory.
+/// An import of std names no directory of the program and is skipped.
+fn import_dirs(tree Node, dir str) -> []str {
+    mut out = []str.new()
+    for c in branch_children(tree) {
+        if c.kind_of() == NodeKind.ImportDecl {
+            note_import(c, dir, out)
+        } else if c.kind_of() == NodeKind.ExportDecl {
+            // `export import ./x.{..}`: the import sits inside its wrapper.
+            for w in branch_children(c) {
+                if w.kind_of() == NodeKind.ImportDecl { note_import(w, dir, out) } else { continue }
+            }
+        } else {
+            // A declaration: no import.
+        }
+    }
+    out
+}
+
+/// One import: its path read off the leaves up to the brace list, kept when
+/// it is relative.
+fn note_import(imp Node, dir str, mut out []str) -> () {
+    mut path = ""
+    mut first = true
+    for l in branch_children(imp) {
+        if first {
+            // The keyword.
+            first = false
+            continue
+        } else {
+            // A leaf of the path, or the brace list that ends it.
+        }
+        if l.kind_of() != NodeKind.LeafNode { break }
+        ro k = leaf_kind(l)
+        if k == TokenKind.Ident || k == TokenKind.Dot || k == TokenKind.DotDot || k == TokenKind.Slash {
+            path = "${path}${leaf_text(l)}"
+        } else {
+            break
+        }
+    }
+    if !path.starts_with("./") && !path.starts_with("../") { return }
+    // The relative prefix walks directories; the module is the directory the
+    // rest names up to its first dot -- what follows the dot names items.
+    mut rest = path
+    mut head = ""
+    while rest.starts_with("./") || rest.starts_with("../") {
+        if rest.starts_with("./") {
+            head = "${head}./"
+            rest = rest[2..]
+        } else {
+            head = "${head}../"
+            rest = rest[3..]
+        }
+    }
+    for part in rest.split(".") {
+        head = "${head}${part}"
+        break
+    }
+    out.push(norm_dir("${dir}/${head}"))
+}

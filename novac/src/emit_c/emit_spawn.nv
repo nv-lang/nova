@@ -75,9 +75,9 @@ fn Emitter mut @emit_spawn_protos() -> () {
             ro star = if c.by_ref { "*" } else { "" }
             @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
         }
-        @body.append("    NovaFiberQueue* _nova_captured_scope_q;\n} novac_sctx_${n};\n")
-        @body.append("static nova_unit novac_spawnbody_${n}(novac_sctx_${n}* _novac_cap);\n")
-        @body.append("static void novac_spawn_${n}(mco_coro* _co);\n")
+        @body.append("    NovaFiberQueue* _nova_captured_scope_q;\n} novac_sctx_${@tag}${n};\n")
+        @body.append("static nova_unit novac_spawnbody_${@tag}${n}(novac_sctx_${@tag}${n}* _novac_cap);\n")
+        @body.append("static void novac_spawn_${@tag}${n}(mco_coro* _co);\n")
     }
 }
 
@@ -97,7 +97,7 @@ fn Emitter mut @emit_spawn_body(n int) -> () {
     ro body = kids[kids.len() - 1]
     assert(body.kind_of() == NodeKind.Block, "emit: a spawn without its body block reached the emitter")
     ro unit = @ctx.prims.unit_id
-    @body.append("static nova_unit novac_spawnbody_${n}(novac_sctx_${n}* _novac_cap) {\n    (void)_novac_cap;\n")
+    @body.append("static nova_unit novac_spawnbody_${@tag}${n}(novac_sctx_${@tag}${n}* _novac_cap) {\n    (void)_novac_cap;\n")
     @lo.ir = FnBuilder.new(unit)
     @cur_spawn = n
     @lo.lower_block_stmts_fn(body, false)
@@ -114,8 +114,8 @@ fn Emitter mut @emit_spawn_body(n int) -> () {
 /// that frees the slot and wakes the scope's driver.
 fn Emitter mut @emit_spawn_entry(n int) -> () {
     ro b = "_c->_nova_base."
-    @body.append("static void novac_spawn_${n}(mco_coro* _co) {\n")
-    @body.append("    novac_sctx_${n}* _c = (novac_sctx_${n}*)mco_get_user_data(_co);\n")
+    @body.append("static void novac_spawn_${@tag}${n}(mco_coro* _co) {\n")
+    @body.append("    novac_sctx_${@tag}${n}* _c = (novac_sctx_${@tag}${n}*)mco_get_user_data(_co);\n")
     @body.append("    NovaFiberAnchor _nv_anchor;\n    ${b}_nova_fiber_anchor = &_nv_anchor;\n")
     @body.append("    if (setjmp(_nv_anchor.jmp) == 0) {\n        nova_preempt_check();\n")
     @body.append("        if (${b}_nova_parent_scope) {\n")
@@ -127,7 +127,7 @@ fn Emitter mut @emit_spawn_entry(n int) -> () {
     @body.append("                ${b}_nova_init_snapshot = NULL;\n            }\n")
     @body.append("        } else {\n            ${b}_nova_worker_slot = -1;\n        }\n")
     @body.append("        NovaFailFrame _ff;\n        nova_fail_push(&_ff);\n")
-    @body.append("        if (setjmp(_ff.jmp) == 0) {\n            (void)novac_spawnbody_${n}(_c);\n            nova_fail_pop();\n")
+    @body.append("        if (setjmp(_ff.jmp) == 0) {\n            (void)novac_spawnbody_${@tag}${n}(_c);\n            nova_fail_pop();\n")
     @body.append("        } else {\n            nova_fail_pop();\n")
     @body.append("            if (_ff.error_msg.ptr && _ff.error_msg.len == 18 && memcmp(_ff.error_msg.ptr, \"__nova_interrupt__\", 18) == 0) {\n")
     @body.append("                /* an interrupt: the scope already knows, the fiber dies cleanly */\n")
@@ -181,7 +181,7 @@ fn Emitter @spawn_queue(s SpawnSite) -> str {
 fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
     ro n = @spawn_number(s.node)
     ro v = "_novac_sp${@fresh_uniq()}"
-    ro cx = "novac_sctx_${n}"
+    ro cx = "novac_sctx_${@tag}${n}"
     ro qe = @spawn_queue(s)
     @body.append("    nova_bool ${v}_init = nova_runtime_is_initialized();\n")
     @body.append("    ${cx}* ${v} = (${cx}*)(${v}_init ? nova_spawn_pool_acquire(sizeof(${cx})) : nova_alloc(sizeof(${cx})));\n")
@@ -193,8 +193,8 @@ fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
     @body.append("    if (${v}_init) {\n        ${v}->_nova_base._nova_parent_scope = ${qe};\n")
     @body.append("        ${v}->_nova_base._nova_init_snapshot = (NovaEffectSnapshot*)nova_alloc(sizeof(NovaEffectSnapshot));\n")
     @body.append("        nova_effect_snapshot_save(${v}->_nova_base._nova_init_snapshot);\n")
-    @body.append("        nova_runtime_spawn_into(${qe}, novac_spawn_${n}, ${v});\n")
+    @body.append("        nova_runtime_spawn_into(${qe}, novac_spawn_${@tag}${n}, ${v});\n")
     @body.append("    } else {\n        ${v}->_nova_base._nova_parent_scope = NULL;\n")
     @body.append("        ${v}->_nova_base._nova_init_snapshot = NULL;\n")
-    @body.append("        nova_fiber_spawn_into(${qe}, novac_spawn_${n}, ${v});\n    }\n")
+    @body.append("        nova_fiber_spawn_into(${qe}, novac_spawn_${@tag}${n}, ${v});\n    }\n")
 }

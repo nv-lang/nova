@@ -108,7 +108,7 @@ fn Emitter @lit_schema(lit Node) -> EffectDef =>
 fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
     ro sig = @ctx.effects.ops[sig_at]
     consume s = StringBuilder.new()
-    s.append("static ${c_type(@ctx, sig.ret_id)} novac_hop_${n}_${sig.name}(void* _novac_ctx")
+    s.append("static ${c_type(@ctx, sig.ret_id)} novac_hop_${@tag}${n}_${sig.name}(void* _novac_ctx")
     mut j = 0
     for p in branch_children(op) {
         if p.kind_of() != NodeKind.Param { continue }
@@ -134,7 +134,7 @@ fn Emitter mut @emit_handler_protos() -> () {
                 ro star = if c.by_ref { "*" } else { "" }
                 @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
             }
-            @body.append("} novac_hctx_${n};\n")
+            @body.append("} novac_hctx_${@tag}${n};\n")
         } else {
             // No captures: no context type -- D474 case 2, `ctx` is NULL.
         }
@@ -164,7 +164,7 @@ fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
     ro ret = @ctx.effects.ops[sig_at].ret_id
     @body.append("${@op_signature(n, op, sig_at)} {\n")
     if has_caps {
-        @body.append("    novac_hctx_${n}* _novac_cap = (novac_hctx_${n}*)_novac_ctx;\n")
+        @body.append("    novac_hctx_${@tag}${n}* _novac_cap = (novac_hctx_${@tag}${n}*)_novac_ctx;\n")
     } else {
         @body.append("    (void)_novac_ctx;\n")
     }
@@ -207,7 +207,7 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
         @body.append("    ${v}->ctx = NULL;\n")
     } else {
         // D474 case 3: ONE block, the context at the aligned end of the table.
-        ro cx = "novac_hctx_${n}"
+        ro cx = "novac_hctx_${@tag}${n}"
         @body.append("    size_t ${v}_off = (sizeof(${vt}) + _Alignof(${cx}) - 1) / _Alignof(${cx}) * _Alignof(${cx});\n")
         @body.append("    char* ${v}_blk = (char*)nova_alloc(${v}_off + sizeof(${cx}));\n")
         @body.append("    ${vt}* ${v} = (${vt}*)${v}_blk;\n")
@@ -221,7 +221,7 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
     // zeroed by the allocator, and the effect's dispatcher never reaches it.
     for op in lit_ops(lit) {
         ro opn = op_name_of(op)
-        @body.append("    ${v}->${opn} = novac_hop_${n}_${opn};\n")
+        @body.append("    ${v}->${opn} = novac_hop_${@tag}${n}_${opn};\n")
     }
     v
 }
