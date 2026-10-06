@@ -1,0 +1,171 @@
+module disj_in_option.pos_2
+
+// THE TWIN OF pos_1, WRITTEN OUT: every nested `|` of pos_1 as the arms it
+// stands for, one per alternative, in the same order (a `|` held by one
+// alternative IS the arm of that alternative -- D486 s2). The oracle does not
+// parse a nested `|` (plan 274.12), so it builds this form, and its output is
+// the output novac gives pos_1. The `|` at the ROOT the oracle parses, and it
+// stays. Itself byte-for-byte with the oracle (novac-e1-smoke).
+
+import std.fs.{read, real_fs}
+
+type Mk enum
+    | Nn
+    | Ss(int)
+
+type Pr {
+    o Option[int]
+    n int
+}
+
+type Box enum
+    | Bx(Mk)
+    | Ee
+
+fn o1(k int) -> Option[int] {
+    if k == 1 {
+        return None
+    }
+    Some(k)
+}
+
+fn o2(k int) -> Option[Option[int]] {
+    if k == 0 {
+        return None
+    }
+    Some(o1(k))
+}
+
+fn o3(k int) -> Option[Option[Option[int]]] {
+    if k == -1 {
+        return None
+    }
+    Some(o2(k))
+}
+
+fn om(k int) -> Option[Mk] {
+    if k == 0 {
+        return None
+    }
+    if k == 1 {
+        return Some(Nn)
+    }
+    Some(Ss(k))
+}
+
+fn bx(k int) -> Box {
+    if k == 0 {
+        return Ee
+    }
+    if k == 1 {
+        return Bx(Nn)
+    }
+    Bx(Ss(k))
+}
+
+fn pr(k int, n int) -> Pr {
+    ro r = Pr { o: o1(k), n }
+    r
+}
+
+// Depth 1: the hunt's probe.
+fn d1(x Option[Option[int]]) -> str => match x {
+    Some(None) => "a"
+    Some(Some(2)) => "a"
+    Some(Some(_)) => "b"
+    None => "c"
+}
+
+// Depth 2: the `|` two Option doors down.
+fn d2(x Option[Option[Option[int]]]) -> str => match x {
+    Some(Some(None)) => "a"
+    Some(Some(Some(2))) => "a"
+    Some(Some(Some(_))) => "b"
+    Some(None) => "c"
+    None => "d"
+}
+
+// The alternatives in the other order, a payload-less one last.
+fn d1r(x Option[Option[int]]) -> str => match x {
+    Some(Some(2)) => "a"
+    Some(None) => "a"
+    _ => "b"
+}
+
+// Below Option inside a tuple at the root.
+fn dt(o Option[int], n int) -> str => match (o, n) {
+    (None, _) => "a"
+    (Some(2), _) => "a"
+    (Some(_), 5) => "b"
+    _ => "c"
+}
+
+// Below Option in a record's field -- spelled through the field itself: the
+// oracle does not test a variant below a record pattern's field at all
+// (`Pr { o: None, .. }` takes `Some(5)`, registry row of this wave), so the
+// record-pattern spelling would compare novac with the oracle's own defect.
+fn dp(x Pr) -> str => match x.o {
+    None => "a"
+    Some(2) => "a"
+    Some(_) => if x.n == 5 { "b" } else { "c" }
+}
+
+// A guard over the arm: the `|` decides first, the guard after it.
+fn dg(x Option[Option[int]], on bool) -> str => match x {
+    Some(None) if on => "a"
+    Some(Some(2)) if on => "a"
+    Some(_) => "b"
+    None => "c"
+}
+
+// Option over a novac sum, a `|` of its variants below `Some`.
+fn dm(x Option[Mk]) -> str => match x {
+    Some(Nn) => "a"
+    Some(Ss(2)) => "a"
+    Some(Ss(_)) => "b"
+    None => "c"
+}
+
+// The `|` at the root over Option (right before this wave).
+fn root(x Option[int]) -> str => match x {
+    None | Some(2) => "a"
+    Some(_) => "b"
+}
+
+// The `|` at the root over Result, as a std call hands it back.
+fn dr(p str) Fs -> str => match read(p.to_path()) {
+    Err(_) | Ok([]) => "a"
+    Ok(_) => "b"
+}
+
+// The control: the same form over a novac sum.
+fn du(x Box) -> str => match x {
+    Bx(Nn) => "a"
+    Bx(Ss(2)) => "a"
+    Bx(Ss(_)) => "b"
+    _ => "c"
+}
+
+fn main() {
+    println("d1 ${d1(o2(1))} ${d1(o2(2))} ${d1(o2(5))} ${d1(o2(0))}")
+    println("d2 ${d2(o3(1))} ${d2(o3(2))} ${d2(o3(5))} ${d2(o3(0))} ${d2(o3(-1))}")
+    println("d1r ${d1r(o2(1))} ${d1r(o2(2))} ${d1r(o2(5))} ${d1r(o2(0))}")
+    println("dt ${dt(o1(1), 5)} ${dt(o1(2), 5)} ${dt(o1(5), 5)} ${dt(o1(7), 0)}")
+    println("dp ${dp(pr(1, 0))} ${dp(pr(2, 0))} ${dp(pr(5, 5))} ${dp(pr(5, 0))}")
+    println("dg ${dg(o2(2), true)} ${dg(o2(2), false)} ${dg(o2(5), true)} ${dg(o2(0), true)}")
+    println("dm ${dm(om(1))} ${dm(om(2))} ${dm(om(5))} ${dm(om(0))}")
+    println("root ${root(o1(1))} ${root(o1(2))} ${root(o1(5))}")
+    println("du ${du(bx(1))} ${du(bx(2))} ${du(bx(5))} ${du(bx(0))}")
+    // A statement position: the arms run for effect.
+    for k in [1, 2, 5, 0] {
+        match o2(k) {
+            Some(None) => println("stmt a")
+            Some(Some(2)) => println("stmt a")
+            Some(Some(_)) => println("stmt b")
+            None => println("stmt c")
+        }
+    }
+    with Fs = real_fs() {
+        println("dr ${dr("novac/fixtures/disj_in_option/pos_1.nv")} ${dr("novac/fixtures/disj_in_option/no_such_file.nv")}")
+    }
+}
