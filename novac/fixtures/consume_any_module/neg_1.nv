@@ -1,0 +1,17 @@
+module consume_any_module.neg_1
+
+// A MUST-CONSUME TYPE OF ANOTHER MODULE IS TRACKED LIKE THE FILE'S OWN (registry
+// 221.1 #1723; D131): std's `StringBuilder consume` bound here and consumed twice.
+// Until #1723 the flow read only the file's own `type X consume` declarations, and
+// the second `into_str` passed; the oracle refuses it (use of the consumed `sb`).
+
+// NOVAC_EXPECT `sb` is used after it was consumed
+
+fn main() {
+    consume sb = StringBuilder.new(cap: 8)
+    sb.append("ab")
+    ro a = sb.into_str()
+    ro b = sb.into_str() // the one refusal: line 14
+    println(a)
+    println(b)
+}
