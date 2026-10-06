@@ -183,38 +183,61 @@ void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* 
  * облачных ядер собрана без него), libgc < 8.2 (Ubuntu 22.04 — 8.0), macOS
  * (mach-исключения поверх mprotect). Там включать инкрементальный режим
  * НЕЛЬЗЯ, а выключить его после `GC_enable_incremental` Boehm не умеет —
- * поэтому решение принимается ДО вызова, своей пробой ядра (та же, что
- * `detect_soft_dirty_supported` в libgc: очистить биты через clear_refs,
- * записать страницу, прочитать бит 55 в pagemap).
+ * поэтому решение принимается ДО вызова.
+ *
+ * Задача #21 (2026-10-06): решение принимает САМА libgc, а не наша догадка о
+ * ней. Первый фикс угадывал её выбор пробой ядра (clear_refs + бит 55
+ * pagemap), но способ слежения выбирает не ядро, а libgc, и её выбор зависит
+ * ещё от СБОРКИ (gcconfig.h включает SOFT_VDB только при glibc — под musl,
+ * то есть Alpine, его нет; NO_SOFT_VDB, GC_PREFER_MPROTECT_VDB) и от
+ * окружения (`GC_USE_GETWRITEWATCH=0`). Замер (WSL, ядро 6.6 С soft-dirty,
+ * libgc 8.2.8, собранная с -DNO_SOFT_VDB): проба ядра говорила «да», libgc
+ * брала mprotect, и `novac check display_generic/pos_1.nv` под `setarch -R`
+ * был верен 9 раз из 20. Поэтому на Linux вопрос задаётся libgc в
+ * дочернем процессе: fork, там `GC_enable_incremental` при выключенной сборке
+ * (`GC_disable` — ни одного марка, только выбор способа) и ответ
+ * `GC_incremental_protection_needs()`; родитель включает режим, только если
+ * ребёнок сказал GC_PROTECTS_NONE. На старте процесс однопоточный (марк-
+ * потоки libgc спят), ребёнок выходит через `_exit` и снимается `alarm`,
+ * если зависнет; любой сбой пробы — полный сборщик.
+ *
+ * Windows: libgc наша (nova_rt/gc, GWW_VDB + MPROTECT_VDB, без
+ * GC_PREFER_MPROTECT_VDB), значит выбор зависит только от
+ * `GC_USE_GETWRITEWATCH` — его и читаем, как читает libgc.
  *
  * `NOVA_GC_INCREMENTAL=0` — выключить всегда (как раньше); `=1` — включить
  * БЕЗУСЛОВНО, в том числе поверх защиты страниц: это ключ пробы в обе
  * стороны на одном бинаре, не режим для работы. */
 #if defined(__linux__)
-#  include <fcntl.h>
+#  include <signal.h>
 #  include <unistd.h>
-#  include <sys/mman.h>
-static int _nova_kernel_soft_dirty_works(void) {
+#  include <sys/wait.h>
+#  include <errno.h>
+static int _nova_gc_incremental_needs_no_protection(void) {
+    /* Унаследованный SIG_IGN для SIGCHLD заставил бы ядро само убрать
+     * ребёнка, и waitpid не узнал бы ответа — на время пробы SIG_DFL. */
+    struct sigaction dfl, old_chld;
+    memset(&dfl, 0, sizeof dfl);
+    dfl.sa_handler = SIG_DFL;
+    sigemptyset(&dfl.sa_mask);
+    sigaction(SIGCHLD, &dfl, &old_chld);
     int ok = 0;
-    long pg = sysconf(_SC_PAGESIZE);
-    if (pg <= 0) return 0;
-    volatile char* page = (volatile char*)mmap(NULL, (size_t)pg, PROT_READ | PROT_WRITE,
-                                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (page == (volatile char*)MAP_FAILED) return 0;
-    page[0] = 1;  /* страница присутствует */
-    int cfd = open("/proc/self/clear_refs", O_WRONLY | O_CLOEXEC);
-    int pfd = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
-    if (cfd >= 0 && pfd >= 0 && write(cfd, "4", 1) == 1) {
-        uint64_t e = 0;
-        off_t off = (off_t)(((uintptr_t)page / (uintptr_t)pg) * sizeof e);
-        int clean = pread(pfd, &e, sizeof e, off) == (ssize_t)sizeof e && !((e >> 55) & 1);
-        page[0] = 2;
-        e = 0;
-        ok = clean && pread(pfd, &e, sizeof e, off) == (ssize_t)sizeof e && ((e >> 55) & 1);
+    pid_t pid = fork();
+    if (pid == 0) {
+        sigaction(SIGALRM, &dfl, NULL);
+        alarm(5);
+        GC_disable();
+        GC_enable_incremental();
+        _exit(!GC_is_incremental_mode() ? 2
+              : GC_incremental_protection_needs() == GC_PROTECTS_NONE ? 0 : 1);
     }
-    if (cfd >= 0) close(cfd);
-    if (pfd >= 0) close(pfd);
-    munmap((void*)page, (size_t)pg);
+    if (pid > 0) {
+        int st = 0;
+        pid_t r;
+        while ((r = waitpid(pid, &st, 0)) < 0 && errno == EINTR) {}
+        ok = r == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0;
+    }
+    sigaction(SIGCHLD, &old_chld, NULL);
     return ok;
 }
 #endif
@@ -224,10 +247,12 @@ static int _nova_gc_incremental_wanted(void) {
     if (e && strcmp(e, "0") == 0) return 0;
     if (e && strcmp(e, "1") == 0) return 1;
 #if defined(_WIN32)
-    return 1;   /* GWW_VDB: ядро ведёт журнал записи, страницы не защищаются */
+    /* GWW_VDB: ядро ведёт журнал записи, страницы не защищаются — если libgc
+     * не велели обойтись без него (тот же ключ, что она читает сама). */
+    const char* g = getenv("GC_USE_GETWRITEWATCH");
+    return !(g && strcmp(g, "0") == 0);
 #elif defined(__linux__)
-    /* SOFT_VDB появился в libgc 8.2; старее — только защита страниц. */
-    return GC_get_version() >= ((8u << 16) | (2u << 8)) && _nova_kernel_soft_dirty_works();
+    return _nova_gc_incremental_needs_no_protection();
 #else
     return 0;   /* macOS и прочие: только защита страниц */
 #endif
