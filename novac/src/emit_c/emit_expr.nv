@@ -587,6 +587,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // A static method takes no receiver: its slots are its written arguments.
         @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
         @body.append(if deref { "))" } else { ")" })
+    } else if k == NodeKind.Call && @out.embed_row_at(e.id_of()) >= 0 {
+        // `embed("path")` (D412): the checker noted the door's row; the blob is printed.
+        @emit_embed(e)
     } else if k == NodeKind.Call && @out.contract_of(e.id_of()).is_some() {
         // `assert(..)` (D81) or `panic(..)` (D13): the checker typed the
         // intrinsic and noted its line.

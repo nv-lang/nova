@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/sem/embeds.nv -- what the door read for each `embed("path")` (D412):
+// the bytes of the file a literal path names, or why there are none.
+//
+// Donor: rustc `include_bytes!` (`rustc_builtin_macros::source_util::expand_include_bytes`)
+// -- the path is resolved against the file the call stands in, before type
+// checking, and the bytes become a constant; NOT taken: expanding the call into
+// a literal in the tree -- novac's tree is the parser's and nobody rewrites it,
+// so the answer is a TABLE beside it, handed in like the declarations and the
+// interop surface (architecture section 1: the compiler reads nothing itself).
+// Role: layer 3 -- the door's findings, keyed by the DIRECTORY of the file a
+//   call is written in and the path literal's source text, read by check
+//   (`check/embed_call.nv`: the type and the D412 refusals) and by emit_c (the
+//   blob it prints).
+// Used by: main.nv (the door fills it), pipeline.nv (hands it to `collect`),
+//   check/embed_call.nv, emit_c/emit_embed.nv.
+// Guarded by: novac/fixtures/embed (pos byte-for-byte with the oracle, neg for
+//   the refusals), check-novac-differential.sh.
+//
+// WHY THE DIRECTORY AND THE LITERAL ARE THE KEY (D412: the path is resolved
+// relative to the file the call stands in). What a literal names depends on
+// that file's directory and on nothing else -- the project root is found from
+// the same directory -- so one (directory, literal) pair has exactly one
+// answer, and the same literal in two directories is two rows. The checker
+// knows the directory of every body it types: the compiled unit's is `home`
+// (a unit is the files of ONE directory, main.nv `same_dir`), a handed body's
+// is its declaration file's (`Checker @embed_home`).
+
+module novac.sem
+
+import ../lex.{lex, TokenKind}
+import ../builtins.{EMBED_FN}
+
+/// The file was read: its bytes are the row's.
+export const EMBED_READ = 0
+/// No file at the path (D412: E_EMBED_NOT_FOUND).
+export const EMBED_NOT_FOUND = 1
+/// The path names a directory (D412 amendment: E_EMBED_IS_A_DIR).
+export const EMBED_IS_A_DIR = 2
+/// The path leaves the package root (D412: `..` above the root, E_EMBED_OUTSIDE_PROJECT).
+export const EMBED_OUTSIDE = 3
+
+/// The door's findings, one row per (directory, path literal). The rows are
+/// parallel vectors of carried element types: the content of every row lives
+/// in ONE byte vector, addressed by `off`/`len`.
+export type EmbedTable {
+    home str /// the directory of the compiled file(s), as the door wrote it: the key directory of the unit's own calls
+    dirs []str /// per row: the directory of the file the literal was written in -- half of the key
+    lits []str /// per row: the literal's source text, quotes included -- the other half
+    codes []int /// per row: one of the EMBED_* answers above
+    paths []str /// per row: the path as the door resolved it, for the messages
+    off []int /// per row: where its bytes begin in `data`
+    len []int /// per row: how many bytes it has (0 unless EMBED_READ)
+    data []u8 /// every row's bytes, back to back
+}
+
+/// No literal seen yet.
+export fn EmbedTable.new() -> EmbedTable =>
+    { home: "", dirs: []str.new(), lits: []str.new(), codes: []int.new(), paths: []str.new(),
+      off: []int.new(), len: []int.new(), data: []u8.new() }
+
+/// The row of a path literal written in a file of directory `dir`, or -1.
+#realtime nogc
+export fn EmbedTable @find(dir str, lit str) -> int {
+    for i in 0..@lits.len() {
+        if @lits[i] == lit && @dirs[i] == dir { return i }
+    }
+    0 - 1
+}
+
+/// The answer of row `i` (an EMBED_* constant).
+#realtime nogc
+export fn EmbedTable @code_at(i int) -> int => @codes[i]
+
+/// The resolved path of row `i`.
+#realtime nogc
+export fn EmbedTable @path_at(i int) -> str => @paths[i]
+
+/// The byte count of row `i`.
+#realtime nogc
+export fn EmbedTable @len_at(i int) -> int => @len[i]
+
+/// Byte `k` of row `i`.
+#realtime nogc
+export fn EmbedTable @byte_at(i int, k int) -> u8 => @data[@off[i] + k]
+
+/// Note what the door found for `lit` in a file of directory `dir`. A pair seen
+/// before keeps its row: the same directory and the same literal name the same
+/// file (see the header), so a second finding can only repeat the first.
+export fn EmbedTable mut @note(dir str, lit str, code int, path str, bytes []u8) -> () {
+    if @find(dir, lit) >= 0 { return }
+    @dirs.push(dir)
+    @lits.push(lit)
+    @codes.push(code)
+    @paths.push(path)
+    @off.push(@data.len())
+    @len.push(bytes.len())
+    @data.append(bytes)
+}
+
+/// The path literals of a text's `embed("...")` calls, by their tokens: the
+/// name `embed` (not after a `.`), `(`, one string literal, `)`. Any other
+/// spelling is no plain literal, and the checker judges it
+/// (E_EMBED_ARG_NOT_STR_LITERAL). Whether the name IS the intrinsic -- a
+/// program may declare its own `embed` -- is the checker's question too: a
+/// literal read for nobody is harmless. Asked by the door (main.nv), which
+/// reads the files; this half reads nothing.
+export fn embed_literals(text str) -> []str {
+    mut out = []str.new()
+    // Most texts name no `embed`: the tokens are not even made for them.
+    if !text.contains(EMBED_FN) { return out }
+    ro toks = lex(text)
+    for k in 0..toks.len() {
+        if k + 3 >= toks.len() { break }
+        if toks[k].kind != TokenKind.Ident || toks[k].text != EMBED_FN { continue }
+        if k > 0 && toks[k - 1].kind == TokenKind.Dot { continue }
+        if toks[k + 1].kind != TokenKind.LParen || toks[k + 2].kind != TokenKind.StrLit ||
+           toks[k + 3].kind != TokenKind.RParen {
+            continue
+        }
+        out.push(toks[k + 2].text)
+    }
+    out
+}
+
+/// The directory a path names its file in, up to its last `/` or `\`; "." for
+/// a bare file name, "/" for a file at the root.
+export fn embed_dir_of(path str) -> str {
+    ro b = path.bytes()
+    mut cut = 0 - 1
+    for k in 0..b.len() {
+        if b[k] == 0x2F || b[k] == 0x5C {
+            cut = k
+        } else {
+            // Not a separator: the last one seen stays the cut.
+        }
+    }
+    if cut < 0 { return "." }
+    if cut == 0 { return "/" }
+    path[..cut]
+}
+
+/// A path with `.` and `..` resolved by its TEXT (D412 speaks of `..` above the
+/// root, a fact of the path as written): separators made `/`, empty and `.`
+/// parts dropped, a `..` taking the part before it. A `..` with nothing before
+/// it stays (the path climbs above where it started). "" for an empty result.
+export fn embed_normalize(path str) -> str {
+    ro p = path.replace("\\", "/")
+    ro absolute = p.starts_with("/")
+    mut parts = []str.new()
+    for part in p.split("/") {
+        if part == "" || part == "." { continue }
+        if part == ".." && parts.len() > 0 && parts[parts.len() - 1] != ".." {
+            ro _ = parts.pop()
+            continue
+        } else {
+            // A name, or a `..` with nothing left to take.
+        }
+        parts.push(part)
+    }
+    mut out = if absolute { "/" } else { "" }
+    mut first = true
+    for part in parts {
+        out = if first { "${out}${part}" } else { "${out}/${part}" }
+        first = false
+    }
+    out
+}
+
+/// The path `rel` names when written in a file of directory `dir`.
+export fn embed_join(dir str, rel str) -> str => embed_normalize("${dir}/${rel}")
+
+/// Is `full` inside the package root `root` (both normalized)? An empty root is
+/// the starting directory itself: then a path is inside unless it climbs out
+/// (`..` first) or is absolute.
+export fn embed_inside(full str, root str) -> bool {
+    if root == "" { return !full.starts_with("..") && !full.starts_with("/") && !embed_has_drive(full) }
+    full.starts_with("${root}/")
+}
+
+/// Is the path absolute -- rooted at `/`, or at a drive (`D:`)?
+export fn embed_is_absolute(p str) -> bool => p.starts_with("/") || embed_has_drive(p)
+
+/// Does the path begin with a drive (`D:`)? Absolute on Windows.
+fn embed_has_drive(p str) -> bool {
+    ro b = p.bytes()
+    b.len() >= 2 && b[1] == 0x3A
+}
+
+/// The text a path literal names: the quotes taken off. `""` when the literal is
+/// no plain one -- an escape or an interpolation -- which the checker judges
+/// (a backslash is E_EMBED_PATH_BACKSLASH; an interpolation is no literal).
+export fn embed_lit_path(lit str) -> str {
+    ro n = lit.byte_len()
+    if n < 2 || lit.contains("\\") || embed_has_interp(lit) { return "" }
+    lit[1..n - 1]
+}
+
+/// Does a literal's text open an interpolation (a `$` right before a `{`)?
+fn embed_has_interp(lit str) -> bool {
+    ro b = lit.bytes()
+    for k in 1..b.len() {
+        if b[k - 1] == 0x24 && b[k] == 0x7B { return true }
+    }
+    false
+}

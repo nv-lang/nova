@@ -49,6 +49,7 @@ import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation, shell_surface}
 import ../mono.{Reach, reachable}
 import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable, module_dotted, raw_row}
+import ../sem.{EmbedTable}
 import ../types.{TyId}
 
 /// A file's semantic context: the file's types + method signatures, READ
@@ -57,6 +58,15 @@ import ../types.{TyId}
 /// it declaration texts, the way a driver hands a real compiler the std
 /// interface.
 fn context(tree Node, decls []Node, interop InteropTable) -> Ctx => collect(tree, decls, interop)
+
+/// The same, with what the door read for the text's `embed` calls (D412).
+fn context_with_embeds(tree Node, decls []Node, interop InteropTable, embeds EmbedTable) -> Ctx {
+    mut ctx = collect(tree, decls, interop)
+    // The door's `embed` findings (D412) are HANDED, like the interop surface:
+    // the collector reads no file (sem/embeds.nv).
+    ctx.embeds = embeds
+    ctx
+}
 
 /// The interop surface, read from the embedded shell ONCE per process -- the
 /// driver calls this beside `parse_decls` and hands both down; a test that wants
@@ -549,10 +559,14 @@ const UNIT_LF u8 = 0x0A
 /// The handing-in is what makes the pipeline testable without a filesystem,
 /// and it is also how the unit wave feeds novac several files at once: the
 /// text is a unit, the declarations are its peers'.
-export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagnostic {
+export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagnostic =>
+    compile_with_embeds(text, decls, interop, EmbedTable.new())
+
+/// The same, with what the door read for the text's `embed` calls (D412).
+export fn compile_with_embeds(text str, decls []Node, interop InteropTable, embeds EmbedTable) -> []Diagnostic {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro ctx = context(tree, decls, interop)
+    ro ctx = context_with_embeds(tree, decls, interop, embeds)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 { return diags }
     // A generic body's mistakes exist only once an INSTANCE does, so `check`
@@ -694,10 +708,15 @@ export fn compile_to_c(text str, decl_texts []str) -> ([]Diagnostic, str) =>
 
 /// The same, given declarations ALREADY parsed.
 export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
-                            src_name str = "") -> ([]Diagnostic, str) {
+                            src_name str = "") -> ([]Diagnostic, str) =>
+    compile_to_c_with_embeds(text, decls, interop, src_name, EmbedTable.new())
+
+/// The same, with what the door read for the text's `embed` calls (D412).
+export fn compile_to_c_with_embeds(text str, decls []Node, interop InteropTable, src_name str,
+                                   embeds EmbedTable) -> ([]Diagnostic, str) {
     ro src = SourceText { text }
     ro tree = parse(tokens_of(text))
-    ro ctx = context(tree, decls, interop)
+    ro ctx = context_with_embeds(tree, decls, interop, embeds)
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 {
         return (diags, "")

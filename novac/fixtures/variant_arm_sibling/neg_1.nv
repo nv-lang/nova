@@ -1,0 +1,20 @@
+module variant_arm_sibling.neg_1
+
+// NOVAC_EXPECT has no type to take
+// ONE seeded cause: the only arm with a value is a bare `None` and the binding
+// names no type -- the other arm leaves (`never`, D26) and names nothing, so no
+// sibling says which Option this is (D489 needs an arm that is a value; D55's
+// amendment of 2026-10-01: a constructor with no source of a type is refused).
+type Op enum Set | Update(int)
+
+fn pick(op Op) -> int {
+    ro built = match op {
+        Set => None // the one refusal: line 12
+        Update(_) => { return 0 }
+    }
+    1
+}
+
+fn main() {
+    println(pick(Op.Set))
+}

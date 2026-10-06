@@ -1,0 +1,27 @@
+module consume_field_move.pos_1
+
+// A `consume` METHOD MOVES ITS RECORD'S `consume` FIELD OUT (D133, "Field-aware
+// flow"; 02-types.md: at the exit of `fn X consume @m()` every `consume` field is
+// Consumed). `@body.into_str()` hands the field's obligation to the consuming
+// call -- the form of novac's own `Emitter @into_parts` (emit_c.nv). Until
+// registry #1719 the field answered as a `mut` place and P14 refused it ("needs
+// ownership"). The oracle compiles it.
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad mut @add(s str) -> () {
+    @body.append(s)
+    @n += 1
+}
+
+fn Pad consume @finish() -> (str, int) => (@body.into_str(), @n)
+
+fn main() {
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    p.add("ab")
+    p.add("c")
+    ro (s, n) = p.finish()
+    println("${s} ${n}")
+}

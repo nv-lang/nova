@@ -1,0 +1,9 @@
+module embed.neg_2
+
+// NOVAC_EXPECT E_EMBED_IS_A_DIR
+// ONE seeded cause: the path names this directory itself -- a folder is `embed_dir`'s (D412 amendment).
+fn data() -> []u8 => embed(".") // the one refusal: line 5
+
+fn main() {
+    println(data().len())
+}

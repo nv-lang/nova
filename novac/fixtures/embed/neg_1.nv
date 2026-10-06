@@ -1,0 +1,9 @@
+module embed.neg_1
+
+// NOVAC_EXPECT E_EMBED_NOT_FOUND
+// ONE seeded cause: the path names no file beside this one (D412: "file not found = a compile error").
+fn data() -> []u8 => embed("no_such_file.bin") // the one refusal: line 5
+
+fn main() {
+    println(data().len())
+}

@@ -1,0 +1,23 @@
+module variant_arm_sibling.pos_3
+
+// THE TWIN OF pos_2, WRITTEN OUT: the same program with the type of the value
+// `if` written on its binding (`ro tail Option[str] = ..`), so the bare `None`
+// has a type to take from the binding and not from its sibling branch. The
+// oracle builds this form, and its output is the output novac gives pos_2 --
+// the behavioural proof of D489 while the oracle types a value `if` by its
+// first branch and miscompiles pos_2 (registry 221.1 No.1724; plan 274.12).
+// Itself byte-for-byte with the oracle (novac-e1-smoke).
+fn show(o Option[str]) -> str => match o {
+    Some(t) => t
+    None => "-"
+}
+
+fn tail_of(n int) -> str {
+    ro tail Option[str] = if n > 1 { None } else { Some("one") }
+    show(tail)
+}
+
+fn main() {
+    println(tail_of(1))
+    println(tail_of(2))
+}

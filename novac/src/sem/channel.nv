@@ -257,6 +257,7 @@ export type CheckOut {
     vec_ops NameTable /// implicit vector operation NAME (`new`, `push`, `len`, `index`) -> the row of std's `Vec[T]` declaration it calls, recorded by the checker where it decided an instance novac makes, read by the emitter to name it (274.11 E.10 step 4c-2) (NsCallables)
     cleanups []CleanupRow /// the auto-`@cleanup` calls (D432) the flow decided: one row per (exit site, value), a site's rows contiguous, innermost value first. One writer: check (`@flow_record_cleanups`).
     cleanup_at []int /// NodeId of an exit site -- a `return`, `break` or `continue`, or the block whose end it is -> its first row of `cleanups`, -1 = none. One writer: check.
+    embed_at []int /// NodeId of an `embed("path")` call (D412) -> its row in `Ctx.embeds` times two, plus one when a `mut`/`consume` binding takes it (a COPY into the heap, D412 "materialisation"); -1 = none. One writer: check (check/embed_call.nv).
     gone_at []int /// NodeId of a MOVE of an affine binding -- the use that consumes it -> the raw NodeId of that binding, whose drop flag the move sets (D432 s5), -1 = none. One writer: check (`@flow_take`).
     wanted []CalleeRef /// instances the LANGUAGE calls with no call written -- a vector literal's `new` and `push`, `xs[i]`'s `index`, a `for`'s `len` and `index` over a vector whose instance novac makes itself (274.11 E.10 step 4c-2). A flat list, not by node: no node holds a call for them, and mono reads them all. One writer: check.
 }
@@ -294,6 +295,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     mut coerce_at = []int.new()
     mut cleanup_at = []int.new()
     mut gone_at = []int.new()
+    mut embed_at = []int.new()
     for _ in 0..node_count {
         types.push(no_ty())
         res.push(Resolution.Unresolved)
@@ -302,10 +304,12 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         coerce_at.push(0 - 1)
         cleanup_at.push(0 - 1)
         gone_at.push(0 - 1)
+        embed_at.push(0 - 1)
     }
     CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
                captures: []CaptureRow.new(), cap_at, coerce_at, cleanups: []CleanupRow.new(), cleanup_at, gone_at,
+               embed_at,
                wanted: []CalleeRef.new(),
                vec_ops: NameTable.new(NamespaceId.NsCallables) }
 }
@@ -439,6 +443,34 @@ export fn CheckOut mut @record_coercion(id NodeId, via FnRow) -> ()
     requires is_node(id) && raw_node(id) < @coerce_at.len(), "sem: channel coercion write outside this file's id space"
 {
     @coerce_at[raw_node(id)] = raw_row(via)
+}
+
+/// `embed("path")` at `id` is row `row` of the door's table (D412).
+export fn CheckOut mut @record_embed(id NodeId, row int) -> ()
+    requires is_node(id) && raw_node(id) < @embed_at.len(), "sem: channel embed write outside this file's id space"
+{
+    @embed_at[raw_node(id)] = row * 2
+}
+
+/// The `embed` at `id` is the initializer of a `mut` or `consume` binding: its
+/// blob is COPIED into the heap there, never handed out as a view of the static
+/// bytes (D412: writes to the read-only blob are not expressible).
+export fn CheckOut mut @record_embed_copy(id NodeId) -> ()
+    requires @embed_row_at(id) >= 0, "sem: channel embed copy on a node that is no embed"
+{
+    @embed_at[raw_node(id)] = (@embed_at[raw_node(id)] / 2) * 2 + 1
+}
+
+/// The table row of the `embed` at `id`, or -1 when the node is none.
+export fn CheckOut @embed_row_at(id NodeId) -> int {
+    if !is_node(id) || raw_node(id) >= @embed_at.len() || @embed_at[raw_node(id)] < 0 { return 0 - 1 }
+    @embed_at[raw_node(id)] / 2
+}
+
+/// Does the `embed` at `id` COPY its blob (a `mut`/`consume` binding's)?
+export fn CheckOut @embed_copies(id NodeId) -> bool {
+    if !is_node(id) || raw_node(id) >= @embed_at.len() || @embed_at[raw_node(id)] < 0 { return false }
+    @embed_at[raw_node(id)] % 2 == 1
 }
 
 /// The `#coerce` row the return door inserted at this node, or `no_row()`.

@@ -12,8 +12,8 @@
 // contract note on the CALL node for the emitter (emit_c/emit_assert.nv).
 // Its sibling `panic(msg)` (D13, `extern "nova" ... -> never`) takes the same
 // door shape: the message typed `str`, the call `never`, the callee's line noted.
-// Used by: check/calls.nv (`@type_free_call` hands `assert` and `panic` here when
-//   no declaration of the program takes the name).
+// Used by: check/embed_call.nv (`@typed_as_intrinsic`, the one door of the
+//   bare-name intrinsics, hands `assert` and `panic` here).
 // Guarded by: novac/fixtures/assert_stmt (pos byte-for-byte with the oracle,
 //   neg for the arity), check-novac-differential.sh.
 
@@ -22,28 +22,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../sem.{is_arg_node, call_arg_at}
 import ../source.{Span}
-import ../builtins.{SIZE_OF_FN, ASSERT_FN, PANIC_FN}
 import ../diag.{ice}
-
-/// THE INTRINSIC DISPATCH: a free call by one of the language's intrinsic
-/// names -- `size_of[T]()` (D216), `assert(..)` (D81), `panic(..)` (D13) -- that
-/// no declaration of the program takes, typed by its own door. Answers whether
-/// the call was one (and then it is recorded or refused by name).
-fn Checker mut @type_intrinsic_call(e Node, kids []Node, cname str) -> bool {
-    // SILENT-OK: the program declares this name itself, and the name table types its call.
-    if @ctx.defs.def_of(cname).is_some() { return false }
-    if cname == SIZE_OF_FN {
-        @type_size_of(e, kids)
-    } else if cname == ASSERT_FN {
-        @type_assert(e, kids)
-    } else if cname == PANIC_FN {
-        @type_panic_call(e, kids)
-    } else {
-        // SILENT-OK: not an intrinsic name, so the ordinary free call types it.
-        return false
-    }
-    true
-}
 
 /// `assert(cond)` and `assert(cond, msg)`: the arity, the two types, and the
 /// note the emitter spells. A message that is not a string LITERAL is typed and

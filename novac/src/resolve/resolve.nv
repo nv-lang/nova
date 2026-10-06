@@ -397,6 +397,21 @@ export fn FieldIndex @field_is_ro(fields FieldTable, owner_id TyId, fname str) -
     false
 }
 
+/// Is `owner_id`.`fname` declared `consume` (`consume f T`, D133) -- the record
+/// holds the field's obligation? Tolerant like `field_is_ro`: an unknown field
+/// answers false, and the field door names it. Asked by the P14 class door
+/// (check/type_of.nv) for a field of an owned receiver.
+#realtime nogc
+export fn FieldIndex @field_is_owned(fields FieldTable, owner_id TyId, fname str) -> bool {
+    mut r = FieldRow(@names.find(fname))
+    while is_frow(r) {
+        ro fd = fields.rows[raw_frow(r)]
+        if fd.owner_id == owner_id { return fd.owned }
+        r = @next[raw_frow(r)]
+    }
+    false
+}
+
 /// Type id of `owner_id`.`fname` — an unknown field past check is an ice.
 #realtime nogc
 export fn FieldIndex @field_type(fields FieldTable, owner_id TyId, fname str) -> TyId {

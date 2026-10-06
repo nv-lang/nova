@@ -122,10 +122,29 @@ if [ -z "${NOVAC_SMOKE_ORACLE_KEY:-}" ]; then
 fi
 EXE_CACHE="${NOVAC_SMOKE_EXE_CACHE:-$CACHE}"
 mkdir -p "$EXE_CACHE"
+# ФАЙЛЫ, КОТОРЫЕ ФИКСТУРА ВСТРАИВАЕТ (D412, 2026-10-06, приёмка задачи #2, круг 4).
+# Оракул собирает КОПИЮ фикстуры в pkgless, а `embed("путь")` разрешается от файла
+# вызова: копия без файла данных давала E_EMBED_NOT_FOUND на CI (embed/pos_1), а
+# локально это прятал близнец. Поэтому каждый файл, названный литералом `embed`,
+# едет в pkgless тем же относительным путём. Путь выше каталога фикстуры (`..`) или
+# абсолютный копия унести не может — это отказ по имени, а не тихая подмена.
+# Файлы данных входят и в КЛЮЧ кэша: правка данных при той же фикстуре давала бы
+# прежний бинарь оракула.
+FDIR=$(dirname "$FILE")
+grep -o 'embed("[^"\\]*")' "$FILE" | sed 's/^embed("//; s/")$//' | sort -u > "$T/embed.paths"
+: > "$T/embed.files"
+while IFS= read -r rel; do
+    case "$rel" in
+        /*|[A-Za-z]:*|..|../*|*/../*|*/..)
+            fail "фикстура $FILE встраивает \`$rel\` вне своего каталога: копия pkgless его не унесёт" ;;
+        *) [ -f "$FDIR/$rel" ] && printf '%s\n' "$rel" >> "$T/embed.files" ;;
+    esac
+done < "$T/embed.paths"
 # Имя файла — тоже вход: оракул собирает копию с `module`, переписанным по имени
 # (шаг ниже), и тот же текст под другим именем — другая программа.
 _STEMK=${FILE##*/}
-KEY=$(sha256sum < "$FILE" | cut -c1-16)-${_STEMK%.nv}-$NOVAC_SMOKE_ORACLE_KEY
+KEY=$( { cat "$FILE"; while IFS= read -r rel; do cat "$FDIR/$rel"; done < "$T/embed.files"; } \
+       | sha256sum | cut -c1-16)-${_STEMK%.nv}-$NOVAC_SMOKE_ORACLE_KEY
 ORACLE_EXE="$EXE_CACHE/oracle-$KEY.exe"
 LINKCMD="$CACHE/link-$FLAGKEY.argv"
 CFLAGS="$CACHE/cflags-$FLAGKEY.argv"
@@ -136,6 +155,18 @@ if [ "$PREPARE" = 0 ] && [ ! -f "$ORACLE_EXE" ]; then
     STEM=$(basename "$FILE" .nv)
     mkdir -p "$T/pkgless"
     sed "s/^module [a-zA-Z_.]*${STEM}\$/module ${STEM}/" "$FILE" > "$T/pkgless/$STEM.nv"
+    while IFS= read -r rel; do
+        mkdir -p "$T/pkgless/$(dirname "$rel")"
+        cp "$FDIR/$rel" "$T/pkgless/$rel"
+    done < "$T/embed.files"
+    # Копия лежит ВНЕ дерева проекта (оракул идёт из cwd = $ROOT), и граница embed для
+    # такого файла сужается до ближайшего nova.toml над ним (compiler-codegen
+    # embed_resolve.rs `per_file_embed_root`); без манифеста оракул отвечал
+    # E_EMBED_OUTSIDE_PROJECT. Манифест пишется ТОЛЬКО фикстуре с данными: прочие
+    # собираются ровно как прежде.
+    if [ -s "$T/embed.files" ]; then
+        printf '[package]\nname = "%s"\nversion = "0.0.0"\n' "$STEM" > "$T/pkgless/nova.toml"
+    fi
     "$ORACLE" build "$T/pkgless/$STEM.nv" -o "$T/oracle.exe" >"$T/oracle.out" 2>&1 \
         || fail "оракул не собрал $FILE: $(tail -3 "$T/oracle.out")"
     # Публикация атомарна: соседний смоук пула видит либо целый бинарь, либо ничего.
@@ -183,7 +214,13 @@ if [ ! -f "$LINKCMD" ]; then
     # ВХОД, а не флаг, и clang отвечал «cannot specify -o when generating
     # multiple output files». Отказ выглядел как поломка перехвата, хотя
     # перехват работал: он честно записал argv, а фильтр вырезал не всё.
-    grep -vE '\.lib$|\.a$|\.so$|^-l|^-L$|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' "$LINKCMD" > "$CFLAGS"
+    # АРГУМЕНТ `-L` УХОДИТ ВМЕСТЕ С ФЛАГОМ (реестр 221.1 №1737, 2026-10-06). Фильтр
+    # снимал `-L` отдельной строкой, а его каталог узнавал по хвосту `/lib`; оракул с
+    # вендорной GC кладёт её в `target/gc-cache`, каталог оставался в CFLAGS входом —
+    # и тот же отказ «cannot specify -o». Парный флаг судится парой, не по имени пути.
+    awk 'skip { skip = 0; next } /^-L$/ { skip = 1; next }
+         /\.lib$|\.a$|\.so$|^-l|^-L|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld/ { next }
+         { print }' "$LINKCMD" > "$CFLAGS"
     grep -q -- "-DNOVA_MAX_EFFECT_STORAGES=$EFFN" "$CFLAGS" \
         || fail "флаги пробы шелла не несут -DNOVA_MAX_EFFECT_STORAGES=$EFFN (маркер шелла): шелл устарел относительно пробы -- sh scripts/tools/novac-regen-shell.sh"
 fi

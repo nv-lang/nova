@@ -24,6 +24,7 @@ import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, file_decls, ty_source_name, binder_text}
 import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow, pattern_mode_word}
+import ../sem.{decl_index_of_ty}
 import ../sem.{FnRow, ParamMode, decl_fn_row, raw_row, no_row}
 import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind, CLEANUP_METHOD, SCOPE_OUTCOME_TYPE}
@@ -90,6 +91,21 @@ fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     false
 }
 
+/// Is `t` must-consume by its DECLARATION, in any module (`type X consume`,
+/// `TypeDef.must_consume`) -- itself, or through the arguments it holds, as
+/// `@is_owned_kind` reads them (an application, a newtype's representation;
+/// a raw pointer owns nothing)?
+fn Checker @is_declared_must_consume(t TyId) -> bool {
+    if !is_ty(t) { return false }
+    if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return false }
+    ro d = decl_index_of_ty(@ctx, t)
+    if d >= 0 && @ctx.types[d].must_consume { return true }
+    for i in 0..@ctx.tys.arg_count(t) {
+        if @is_declared_must_consume(@ctx.tys.arg(t, i)) { return true }
+    }
+    false
+}
+
 /// HOW a must-consume value of `t` is consumed, for the messages: its `consume`
 /// methods, or -- a container with none -- a `consume` pattern that takes it apart.
 fn Checker @ways_out(t TyId) -> str {
@@ -143,7 +159,12 @@ fn Checker mut @judge_field_marker(f Node, fty TyId, type_name str, type_marked 
             Branch { .. } => {}
         }
     }
-    ro owned = @is_owned_kind(kinds, fty)
+    // A MUST-CONSUME TYPE OF ANOTHER MODULE is one too (D133: `StringBuilder
+    // consume` of std is the canonical opaque resource): `kinds` holds the file's
+    // own only -- the types whose values the flow tracks -- and the marker rule
+    // is about the field's TYPE wherever it was declared. Until registry #1720
+    // `consume body StringBuilder` was refused as a marker on nothing.
+    ro owned = @is_owned_kind(kinds, fty) || @is_declared_must_consume(fty)
     if owned && !marked {
         @reject_first_leaf_of([]Node.of(f), field_marker_missing_msg(name, ty_source_name(@ctx, fty)))
     } else if marked && !owned {
