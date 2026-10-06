@@ -48,7 +48,7 @@ import ../types.{Interner}
 /// The FIRST handed declaration of a name owns its row (harvest's own rule), so
 /// only that declaration fills it; a row the file itself declares shadows the
 /// handed one and is left to the file's own pass.
-fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []TypeDef, defs DefTable,
+fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []TypeDef, mut defs DefTable,
                       mut fields FieldTable, mut tys Interner) -> () {
     ro own_module = module_dotted(file)
     mut seen = []bool.new()
@@ -62,6 +62,10 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
         // the equality made `Vec`'s `priv` fields the moduleless file's own --
         // `v.len` compiled where the oracle says E_FIELD_MODULE_PRIVATE.
         ro same_module = own_module != "" && module_dotted(d) == own_module
+        // A record of ANOTHER module is found, and its field types read, as
+        // that module sees the names (registry #1764): a program type
+        // of the same name neither hides the record nor retypes its fields.
+        defs.read_as(if same_module { "" } else { module_dotted(d) })
         // The `file_decls` walk, keeping what it drops: whether the declaration
         // stood inside an `export` wrapper -- the other half of D281's rule.
         for w in branch_children(d) {
@@ -77,6 +81,7 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
             }
         }
     }
+    defs.read_as("")
 }
 
 /// One handed declaration of `fill_handed_fields`: a record whose row it owns,

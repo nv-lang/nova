@@ -81,6 +81,6 @@
     "reviewer": 4,
     "acceptor": 4
   },
-  "machine_slots": 3,
-  "inflight_limit": 8
+  "machine_slots": 1,
+  "inflight_limit": 5
 }
