@@ -20,11 +20,11 @@
 #   * не обходит CI: никаких NOVA_SKIP_CI_CHECK / NOVA_PUSH_UNPROVEN; main
 #     двигается только на хеш, который check-push-proven-by-ci признал, а pre-push
 #     судит его ещё раз.
-#   * не берёт замок вливания: его держит вызывающий (`peer_task merge {n}`) —
+#   * не берёт замок вливания: его держит вызывающий (`crew_task merge {n}`) —
 #     у скрипта нет доступа к плагину, и проверить замок он не может.
 #
-# ИСПОЛЬЗОВАНИЕ (из любого дерева этой репы; приёмщик — через peer_watch под
-# замком `peer_task merge`):
+# ИСПОЛЬЗОВАНИЕ (из любого дерева этой репы; приёмщик — через crew_watch под
+# замком `crew_task merge`):
 #   bash scripts/tools/land-task.sh <N> <хеш вершины ветки задачи>
 #   bash scripts/tools/land-task.sh --dry-run <N> <хеш>   # только проверки, без пушей
 #
@@ -52,36 +52,36 @@ case "$N" in ''|*[!0-9]*) die 2 "первый аргумент — номер з
 [ -n "$SHA_IN" ] || die 2 "второй аргумент — хеш вершины ветки задачи"
 
 # Шаг 0. КТО ВЛИВАЕТ (роль приёмщика, слово владельца 2026-10-06: «новая роль со своими
-# правами приёмщика, и пусть вливает»). peer_watch запускает команду в сервере OpenCode
-# мимо прав окна и с opencode-peers плана 013 кладёт в окружение, кто её поставил:
-# PEERS_ROLE, PEERS_REVIEW_N. Вливает приёмщик ЭТОЙ задачи (PEERS_REVIEW_N == N) или
-# интегратор; прочим — отказ, код 8. Вызов из вкладки OpenCode мимо peer_watch
-# (OPENCODE_SESSION_ID есть, PEERS_ROLE нет) — только пробный: роль там не видна.
+# правами приёмщика, и пусть вливает»). crew_watch запускает команду в сервере OpenCode
+# мимо прав окна и с crew-harness плана 013 кладёт в окружение, кто её поставил:
+# CREW_ROLE, CREW_REVIEW_N. Вливает приёмщик ЭТОЙ задачи (CREW_REVIEW_N == N) или
+# интегратор; прочим — отказ, код 8. Вызов из вкладки OpenCode мимо crew_watch
+# (OPENCODE_SESSION_ID есть, CREW_ROLE нет) — только пробный: роль там не видна.
 # Ни того ни другого — запуск человеком из своего терминала, роль не судится.
-if [ -n "${PEERS_ROLE:-}" ]; then
-    if [ "$PEERS_ROLE" = integrator ]; then
-        say "роль: интегратор (${PEERS_SESSION_ID:-?})"
-    elif [ "${PEERS_REVIEW_N:-}" = "$N" ]; then
-        say "роль: приёмщик задачи #$N ($PEERS_ROLE, ${PEERS_SESSION_ID:-?})"
+if [ -n "${CREW_ROLE:-}" ]; then
+    if [ "$CREW_ROLE" = integrator ]; then
+        say "роль: интегратор (${CREW_SESSION_ID:-?})"
+    elif [ "${CREW_REVIEW_N:-}" = "$N" ]; then
+        say "роль: приёмщик задачи #$N ($CREW_ROLE, ${CREW_SESSION_ID:-?})"
     else
-        die 8 "вливает приёмщик задачи #$N или интегратор; поставивший команду — роль $PEERS_ROLE, приёмка #${PEERS_REVIEW_N:-нет} (${PEERS_SESSION_ID:-?})"
+        die 8 "вливает приёмщик задачи #$N или интегратор; поставивший команду — роль $CREW_ROLE, приёмка #${CREW_REVIEW_N:-нет} (${CREW_SESSION_ID:-?})"
     fi
 elif [ -n "${OPENCODE_SESSION_ID:-}" ] && [ "$DRY" != 1 ]; then
-    die 8 "из вкладки OpenCode вливание идёт через peer_watch (там видна роль); здесь можно только --dry-run"
+    die 8 "из вкладки OpenCode вливание идёт через crew_watch (там видна роль); здесь можно только --dry-run"
 else
-    [ "$DRY" = 1 ] || say "роль не судится: запуск вне peer_watch и вне вкладки OpenCode (человек)"
+    [ "$DRY" = 1 ] || say "роль не судится: запуск вне crew_watch и вне вкладки OpenCode (человек)"
 fi
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die 2 "запускать из дерева репозитория nova"
 COMMON=$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)
 MAIN_COPY=$(dirname "$COMMON")
 # ПРИЁМЩИК ВЛИВАЕТ ИЗ ДЕРЕВА ЗАДАЧИ, а не из главной копии (2026-10-06, посадка #24):
-# peer_watch запускает команду в каталоге вкладки, у приёмщика это главная копия, где
+# crew_watch запускает команду в каталоге вкладки, у приёмщика это главная копия, где
 # живёт интегратор со своими незакоммиченными правками, — pre-push check-tree-matches-push
 # честно отказал, и обойти его было нечем, кроме запрещённого приёмщику флага. Дерево
 # задачи чистое и содержит кандидата; главную копию скрипт после пуша догоняет сам.
-if [ -n "${PEERS_REVIEW_N:-}" ] && [ "$(cd "$ROOT" && pwd -P)" = "$(cd "$MAIN_COPY" && pwd -P)" ]; then
-    die 2 "приёмщик вливает из дерева задачи: в команде peer_watch — cd <дерево задачи #$N> && bash scripts/tools/land-task.sh $N <хеш>"
+if [ -n "${CREW_REVIEW_N:-}" ] && [ "$(cd "$ROOT" && pwd -P)" = "$(cd "$MAIN_COPY" && pwd -P)" ]; then
+    die 2 "приёмщик вливает из дерева задачи: в команде crew_watch — cd <дерево задачи #$N> && bash scripts/tools/land-task.sh $N <хеш>"
 fi
 SHA=$(git -C "$ROOT" rev-parse --verify -q "$SHA_IN^{commit}") || die 2 "'$SHA_IN' — не коммит"
 SHA9=${SHA:0:9}
