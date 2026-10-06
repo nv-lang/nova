@@ -1,0 +1,32 @@
+module consume_method_exit.neg_9
+
+// A `consume` FIELD STILL OWNED AT A DIVERGING CALL (registry 221.1 #1745; D133's exit
+// points: "`panic` / `expr!!` / `expr?` / unwinding-paths"). The call never returns, so
+// it leaves the method with `@body` owned, as it would leave a strictly linear local
+// binding. A `-> never` function stands for `panic`, which novac's single-file check has
+// no row for yet (never_value/pos_1). The call is the TAIL of the body: standing as a
+// statement or as the value of a branch, a diverging call is not seen as an exit at all
+// yet, for a local binding as for a field (registry 221.1 #1762: a diverging call that
+// is not a tail is not an exit point; novac and the oracle).
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this diverging call leaves this `consume` method
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn Pad consume @take() -> str {
+    println("pad ${@n}")
+    boom("no text") // the one refusal: line 26
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.take())
+}

@@ -1,0 +1,27 @@
+module consume_method_exit.neg_5
+
+// A NESTED `consume` FIELD LEFT OWNED (registry 221.1 #1745; D133 "Nested field paths":
+// the state is kept per path `@f1.f2`, and a nested record is closed when every `consume`
+// field inside it is -- the "empty container"). `@close` consumes `@inner.a` and leaves
+// `@inner.b`: `@inner` is neither moved whole nor emptied.
+
+// NOVAC_EXPECT the field `@.inner.b` (type `StringBuilder`) is still owned when this `consume` method ends
+
+type Pair consume {
+    consume a StringBuilder
+    consume b StringBuilder
+}
+
+fn Pair consume @join() -> str => "${@a.into_str()}${@b.into_str()}"
+
+type Outer consume {
+    consume inner Pair
+    k int
+}
+
+fn Outer consume @close() -> str => @inner.a.into_str() // the one refusal: line 22
+
+fn main() {
+    consume o = Outer { inner: Pair { a: StringBuilder.new(cap: 4), b: StringBuilder.new(cap: 4) }, k: 1 }
+    println(o.close())
+}
