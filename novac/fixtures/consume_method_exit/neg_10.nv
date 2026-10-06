@@ -1,0 +1,30 @@
+module consume_method_exit.neg_10
+
+// A `consume` FIELD STILL OWNED AT `?` OVER A `Result` (registry 221.1 #1745; D133: `expr?`
+// is an exit point -- D85 makes it `return Err(e)` on the error path, an exit of the
+// method). `@body` is consumed after the `?`, so on the `Err` path the record leaves
+// unclosed. The cell neg_3 keeps for an `Option`; a `?` over a `Result` compiles in novac
+// since task #15.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this `?` leaves this `consume` method
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn Pad consume @take() -> Result[int, int] {
+    ro v = get(@n)? // the one refusal: line 19
+    ro s = @body.into_str()
+    Ok(v + s.byte_len())
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    match p.take() {
+        Ok(v) => println(v)
+        Err(e) => println("err ${e}")
+    }
+}

@@ -1,0 +1,44 @@
+module consume_method_exit.pos_2
+
+// A `consume` FIELD HANDED TO ANOTHER OWNER closes the record (registry 221.1 #1745;
+// D133 "What counts as consume"): a `consume` binding (`consume b = @body`), a `consume`
+// parameter, a record literal's `consume` field, and the method's own value going to its
+// caller. Each method leaves no field owned; the oracle compiles it, byte for byte.
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+type Box consume {
+    consume sb StringBuilder
+}
+
+fn Box consume @open() -> str => "box:${@sb.into_str()}"
+
+fn sink(consume sb StringBuilder) -> str => "sink:${sb.into_str()}"
+
+fn Pad consume @to_binding() -> str {
+    consume b = @body
+    b.append("+")
+    b.into_str()
+}
+
+fn Pad consume @to_param() -> str => sink(@body)
+
+fn Pad consume @to_record() -> Box => { sb: @body }
+
+fn Pad consume @to_caller() -> StringBuilder => @body
+
+fn mk(s str) -> Pad {
+    consume b = StringBuilder.new(cap: 8)
+    b.append(s)
+    Pad { n: 0, body: b }
+}
+
+fn main() {
+    println(mk("a").to_binding())
+    println(mk("b").to_param())
+    println(mk("c").to_record().open())
+    println(mk("d").to_caller().into_str())
+}

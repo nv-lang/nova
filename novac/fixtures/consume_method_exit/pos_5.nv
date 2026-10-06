@@ -1,0 +1,33 @@
+module consume_method_exit.pos_5
+
+// A `consume` FIELD CONSUMED BEFORE `?` OVER A `Result` (registry 221.1 #1745; D133, D85):
+// the record is closed on the `Err` path the `?` leaves by and on the path that goes on --
+// the twin of neg_10. Both paths are taken at run time. Byte for byte with the oracle
+// (novac-e1-smoke).
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn Pad consume @take() -> Result[int, int] {
+    @body.append("abc")
+    ro s = @body.into_str()
+    ro v = get(@n)?
+    Ok(v + s.byte_len())
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    match p.take() {
+        Ok(v) => println(v)
+        Err(e) => println("err ${e}")
+    }
+    consume q = Pad { n: -4, body: StringBuilder.new(cap: 8) }
+    match q.take() {
+        Ok(v) => println(v)
+        Err(e) => println("err ${e}")
+    }
+}
