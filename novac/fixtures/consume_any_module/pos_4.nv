@@ -1,0 +1,17 @@
+module consume_any_module.pos_4
+
+// A `-> @` CHAIN THAT ENDS IN A `consume` CALL (registry 221.1 #1723; D409: a `-> @`
+// call answers its receiver, so the chain is ONE value): from a `consume` binding,
+// `sb.append(..).into_str()` consumes `sb`; from a fresh root, the root's value is
+// consumed by the chain's last link. Once the flow saw std's `StringBuilder`, both
+// forms were refused as a move out of a place (the differential found
+// named_arg_value/pos_1); the oracle compiles them.
+
+fn pad(s str) -> str => StringBuilder.new(cap: 8).append_repeat(s, 2).append("|").into_str()
+
+fn main() {
+    consume sb = StringBuilder.new(cap: 8)
+    sb.append("ab")
+    println(sb.append("cd").append("!").into_str())
+    println(pad("x"))
+}

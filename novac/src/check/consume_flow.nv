@@ -143,6 +143,11 @@ fn Checker mut @check_consume_flow(file Node) -> () {
 /// file pass skips a generic declaration, whose types exist only per instance --
 /// this is where they do. `body_file` declares the must-consume types it may meet.
 fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
+    // SILENT-OK: a body handed from outside the program (std's `Vec[T] @push`) is not
+    // walked -- it moves its values through raw memory (`write_consume`, D216), which
+    // the flow does not follow; until #1723 the same bodies were skipped because their
+    // file declared no must-consume type of its own. The program's bodies are walked.
+    if !@ctx.in_program(@inst_row) { return }
     ro kinds = @must_consume_kinds()
     if kinds.len() == 0 { return }
     @flow_fn(decl, kinds, @auto_cleanups_of(body_file, kinds), node_among(file_exported_fns(body_file), decl))
@@ -678,7 +683,12 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
     ro t = if is_node(e.id_of()) { @chan.type_if_known(e.id_of()) } else { no_ty() }
     ro owned = @is_owned_kind(fl.kinds, t)
     // A call of a `-> @` method (D409) answers its RECEIVER: a place, not a fresh value.
-    ro place = is_place_kind(k) || @answers_receiver(e)
+    // A `-> @` call that MOVES continues its receiver's value (D409): the value moves
+    // through the chain to its first link, judged there (`@flow_call`'s `chain`) --
+    // `StringBuilder.new().append(s).into_str()`, `sb.append(s).into_str()`. Only
+    // when it is used in place is it the place its receiver was.
+    ro chain = moved && @answers_receiver(e)
+    ro place = is_place_kind(k) || (@answers_receiver(e) && !chain)
     if owned && place && moved {
         // `consume_it(@)`, `eat(b.tx)`: moving out of a view or of a place.
         @flow_stop(e, "moved out of a view or a place (`@`, a field, an element)", fl)
@@ -692,7 +702,7 @@ fn Checker mut @flow_expr(e Node, mut fl ConsumeFlow, moved bool) -> () {
         // No must-consume value, a view used in place, or a value that moves.
     }
     if (k == NodeKind.Call || k == NodeKind.MethodCall) && @chan.has_callee(e.id_of()) {
-        @flow_call(e, fl)
+        @flow_call(e, fl, chain)
     } else if is_branch_kind(k) {
         @flow_branch(e, fl, moved)
     } else if is_short_circuit(e) {
@@ -791,8 +801,9 @@ fn Checker mut @flow_take(e Node, i int, moved bool, forced bool, mut fl Consume
 
 /// A call with a recorded callable: each argument goes where its parameter's MODE
 /// says -- a `consume` slot moves it, any other slot only uses it. The receiver of a
-/// method is slot zero (plan 273).
-fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
+/// method is slot zero (plan 273). `chain`: the call answers its receiver (`-> @`)
+/// and its value moves, so the receiver moves with it.
+fn Checker mut @flow_call(e Node, mut fl ConsumeFlow, chain bool) -> () {
     ro kids = branch_children(e)
     ro is_method = e.kind_of() == NodeKind.MethodCall
     ro from = if is_method { 3 } else { 1 }
@@ -818,7 +829,10 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow) -> () {
         ro written = if is_method { at - 1 } else { at }
         ro arg = if is_method && at == 0 { kids[0] } else { call_arg_at(kids, from, written) }
         ro mode = if s < fd.param_cnt { @ctx.fns.params[fd.param_off + s].mode } else { ParamMode.ModeRo }
-        if mode != ParamMode.ModeConsume && @is_fresh_owned(arg, fl) {
+        if chain && is_method && at == 0 {
+            // The receiver of a `-> @` call whose value moves: it moves with it.
+            @flow_expr(arg, fl, true)
+        } else if mode != ParamMode.ModeConsume && @is_fresh_owned(arg, fl) {
             @flow_fresh_in_view(arg, e, fl)
         } else {
             @flow_expr(arg, fl, mode == ParamMode.ModeConsume)
