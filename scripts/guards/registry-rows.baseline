@@ -1576,8 +1576,8 @@
 # 2026-10-06, task #15, merge of origin/main a1c48f6ed: rows 1679 (main) + 7 (#15: 1746, 1747, 1753-1757) = 1686, max 1757.
 # 2026-10-06, integrator: rows -> 1680, max -> 1750 (row 1750 filed CLOSED -- building a candidate bypassed the merge guard's novac verdict; the guard now judges a merge on a branch standing on main, and gate-novac writes its verdict into its own tree).
 # 2026-10-06, task #15 round 4, merge of origin/main de53c3625: rows 1680 (main) + 7 (#15: 1746, 1747, 1753-1757) = 1687, max 1757; row 1750 arrives (the integrator) and leaves gaps= by this merge.
-rows=1687
-max=1757
+rows=1688
+max=1763
 rows=1611
 max=1693
 rows=1590
@@ -2336,7 +2336,7 @@ stale_gaps=0
 # 2026-10-06, task #15: 1738-1745 В `gaps` — РЕЗЕРВ интегратора (1738-1739 задача #10, 1740-1742 #14, 1743-1745 #16); строки едут в их ветках. Условие снятия: when the row reaches this branch.
 # 2026-10-06, task #15 round 3: 1748-1752 В `gaps` — номера других веток (1748-1749 уже в main, задача #16; 1750 интегратор, 1751 задача #14, 1752 задача #10). Условие снятия: тем же слиянием, что привозит строку, номер убирается из `gaps`.
 # 2026-10-06, task #15, merge of origin/main a1c48f6ed: 1743-1745 and 1748-1749 arrive (task #16), 1746-1747 are this branch's rows -- all out of gaps= by this merge; 1738-1742 and 1750-1752 stay holes (tasks #10, #14, the integrator).
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1738-1742,1751-1752
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1738-1742,1751-1752,1758-1762
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
