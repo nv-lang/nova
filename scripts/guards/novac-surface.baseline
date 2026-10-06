@@ -4,6 +4,11 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-06 (задача #23, №1791), sem 395 -> 396: `is_printer_build_kind` -- виды узлов, которые
+#   печатник строит своими операторами до строки, что их читает; наружу потому, что её спрашивает
+#   понижение (lower/lower_hoist.nv `contains_construction`), а в sem её зовёт `is_value_tail_kind`:
+#   у понижения был СВОЙ список, без литерала записи, и `} else if (x, 1).0 > 0 {` падал ICE.
+#
 #   2026-10-06 (задача #10 интегратора, мера 0.2 №1665; после слияния main ee6d2ae4f), sem 387 -> 388: `unicode_escape_end` --
 #   конец escape `\u{H…}` (D467 §2) или -1, если форма или кодпойнт неверны; наружу потому,
 #   что его спрашивает судья check/strings.nv, а длину фрагмента и C-текст той же дверью
@@ -1231,7 +1236,7 @@ resolve 27
 # 2026-10-06, task #23 (274.11 E.10 step 2b): sem 391 -> 395: `CNames`, `CNames.new`, `@add`, `@has` --
 #   a set of OUR C identifiers (what one unit wants another to print, what an earlier unit printed),
 #   asked by mono, the emitter and the pipeline; beside InteropTable and kept apart from it.
-sem 395
+sem 396
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
