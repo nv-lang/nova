@@ -1,4 +1,4 @@
-module pos_1
+module assert_msg.pos_1
 
 // The message of `assert` is an interpolated string (norm 08-runtime.md:146:
 // `<file>:<line>: assert failed: <msg> (<expr>)`). x = 0, so the assert FAILS
