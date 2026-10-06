@@ -106,6 +106,32 @@ static void f(void) {
 EOF
 check "тип ПОЛЬЗОВАТЕЛЯ (Nova_Point) объявлен в .nv — зелёный" "$(run)" "0"
 
+# D381 (план 274.5 §3-пред68): тёзка struct оболочки — Nova_<modpath>_<Name>,
+# modpath из строки `module` файла; тоже своё имя novac.
+printf 'module demo.basics\n\ntype Point {\n    x int\n}\nfn main() {}\n' > "$EX"
+mkemit <<'EOF'
+static void f(void) {
+    Nova_demo_basics_Point p;
+    Nova_demo_basics_Point_Tag t;
+}
+EOF
+check "D381-база своего типа (Nova_demo_basics_Point) — зелёный" "$(run)" "0"
+mkemit <<'EOF'
+static void f(void) {
+    Nova_other_mod_Point p;
+}
+EOF
+check "база ЧУЖОГО модуля (Nova_other_mod_Point) — красный" "$(run)" "1"
+has "$TMP/err" 'Nova_other_mod_Point' "чужая база названа поимённо"
+printf 'type Point {\n    x int\n}\nfn main() {}\n' > "$EX"
+mkemit <<'EOF'
+static void f(void) {
+    Nova__Point p;
+}
+EOF
+check "файл без module: база с пустым modpath (Nova__Point) — зелёный" "$(run)" "0"
+printf 'export type Point {\n    x int // coordinate\n}\nfn main() {}\n' > "$EX"
+
 mkrc 2
 check "эмиссия отказала (вне подмножества) — зелёный, не судится" "$(run)" "0"
 mkrc 0

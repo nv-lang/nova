@@ -29,10 +29,10 @@ fn main() {\n\
         assert(g.message.contains("closed type (D35)"))
     }
 
-    // Shadowing a handed-over name is LEGAL and spelled BARE, exactly as the
-    // oracle spells it (the mangle-fixed-point guard holds that): a foreign
-    // Widget is handed in by the test, the file's own Widget wins (D125) and
-    // its struct keeps the plain name.
+    // Shadowing a handed-over name is LEGAL (D125): a foreign Widget is handed
+    // in by the test, the file's own Widget wins. The shell defines no struct
+    // of that name, so nothing collides in the unit and D381 adds no module
+    // (it rejects always-qualify): the struct keeps the plain name.
     ro shadow_decls = []str.of("export type Widget { q int }\n\
 ")
     ro (d2, c2) = compile_to_c("module p\n\
@@ -45,19 +45,27 @@ fn main() {\n\
     assert(c2.contains("struct Nova_Widget"))
 
     // The one REAL collision: a name whose struct the SHELL TEMPLATE already
-    // declares (Vec) -- two definitions of one struct in one unit, refused by
-    // name. The fact comes from the interop table, which lifts the template's
-    // own identifiers -- so the full surface is used here, not the tiny
-    // std_decls.
-    ro (d2b, _) = compile_to_c_with("module p\n\
+    // declares (Vec). It used to be refused by name; D381 qualifies it by its
+    // module instead (wave 274.5 pre68, sem `decl_base`): the program's struct
+    // is `Nova_p_Vec`, the shell's `Nova_Vec` stays the only body of that name.
+    // The fact comes from the interop table, which lifts the template's own
+    // identifiers -- so the full surface is used here, not the tiny std_decls.
+    // The control is the same unit without the namesake: the count of bare
+    // `struct Nova_Vec {` bodies must not grow by the program's type.
+    ro (d2b, c2b) = compile_to_c_with("module p\n\
 type Vec { n int }\n\
 fn main() {\n\
- println(1)\n\
+ ro v = Vec { n: 7 }\n\
+ println(v.n)\n\
 }", []Node.new(), interop_surface())
-    assert(d2b.len() >= 1)
-    for g in d2b {
-        assert(g.message.contains("interop shell already declares"))
-    }
+    ro (d2c, c2c) = compile_to_c_with("module p\n\
+fn main() {\n\
+ println(7)\n\
+}", []Node.new(), interop_surface())
+    assert(d2b.len() == 0)
+    assert(d2c.len() == 0)
+    assert(c2b.contains("struct Nova_p_Vec {"))
+    assert(c2b.matches("struct Nova_Vec {").len() == c2c.matches("struct Nova_Vec {").len())
 
     // A name of one's own stays clean and unprefixed -- the mangle answers
     // the two owners, not every declaration.

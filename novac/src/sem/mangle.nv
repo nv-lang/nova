@@ -28,7 +28,7 @@
 module novac.sem
 
 import ../diag.{ice_at}
-import ../names.{raw_decl}
+import ../names.{raw_decl, DeclId, is_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
 import ../builtins.{PAREN_RECORD_C_PREFIX, HANDLER_CTOR, TypeKind, EMPTY_CTOR}
 import ../types.{TyId, is_ty}
@@ -196,8 +196,81 @@ fn instance_source_name(ctx Ctx, t TyId) -> str {
 /// C name of a sum's TAG ENUM: always `Nova_<X>_Tag`, whether the sum is a
 /// value or a pointer. The oracle names the tag enum off the TYPE's name even
 /// when the value struct is `NovaValue_<X>` -- measured in the fresh shell,
-/// `novac/src/emit_c/shell.tpl.c:56-58`.
-export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${decl_of_ty(ctx, t).name}_Tag"
+/// `novac/src/emit_c/shell.tpl.c:56-58`. `<X>` is the D381 base (`type_base`).
+export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${type_base(ctx, t)}_Tag"
+
+/// D381 -- THE BASE of a nominal type's C name: the declared name, or
+/// `<modpath>_<name>` when the name COLLIDES in the unit. The oracle's single
+/// point (`def_type_base`/`ref_type_base`, spec 08-runtime.md D381, its
+/// single-point paragraph): every spelling of a user struct, tag enum and
+/// in-name argument goes through it. A name that does not collide comes back
+/// unchanged, so a unit without a collision is byte-identical (D381 rejects
+/// always-qualify).
+fn type_base(ctx Ctx, t TyId) -> str => decl_base(ctx, ctx.tys.decl_head_of(t))
+
+/// D381 -- does the SHELL already define a struct BODY under one of this
+/// name's C spellings? The collision set of OUR unit: the shell is the
+/// oracle's emission of the probe, where std's types are spelled BARE, and it
+/// is glued into every unit we emit -- so a program type of that name is the
+/// second declaration of one simple name in the unit (what D381 calls colliding),
+/// and the std side cannot be renamed (interop). Both spellings, because a
+/// value record or a payload-free sum comes out as `NovaValue_`.
+fn shell_defines_struct(ctx Ctx, name str) -> bool =>
+    ctx.interop.has_body("Nova_${name}") || ctx.interop.has_body("NovaValue_${name}")
+
+/// D381 -- the C base of declaration `d`. Measured on the oracle 2026-10-06
+/// (plan 274.5 section pre68): a user `ErrorKind` beside std.io's in one unit
+/// is `Nova_p3_ErrorKind`, and `Nova_ErrorKind` when nothing collides.
+///
+/// COLLIDING is a NAME fact, as in D381 ("a simple name declared in two
+/// modules"): a type of the PROGRAM whose name the shell already spells. Every
+/// shape of it is qualified -- the oracle's D381 stops at plain-Sum and
+/// heap-Record and fails the rest in clang (value record, newtype, generic:
+/// registry 221.1 #1765), but a spelling is not a language rule, and a
+/// program D125 makes legal is compiled whatever its shape. A newtype has no C
+/// name of its own (its representation's), and a generic head is named by the
+/// mono path, which the subset does not compile yet (E2-b2).
+///
+/// THE DEF MODULE, not the module of the file asking (D381's module
+/// resolution): the file's own row takes the file's module, a handed row of a
+/// program module its home -- `novac.lex`'s `Token` is `Nova_novac_lex_Token`
+/// in every unit naming it -- and a handed row of std is the shell's and keeps
+/// the name. A file with NO module takes D381's formula with an empty modpath,
+/// `Nova__<Name>`: the oracle collapses that to the bare name, which in our
+/// unit IS the shell's struct, and a type name never starts with `_` (D30), so
+/// the doubled separator cannot meet a bare name.
+fn decl_base(ctx Ctx, d DeclId) -> str
+    requires is_decl(d) && raw_decl(d) < ctx.types.len(), "mangle: the C base of a declaration outside the registry"
+{
+    ro td = ctx.types[raw_decl(d)]
+    if !shell_defines_struct(ctx, td.name) { return td.name }
+    if raw_decl(d) >= ctx.foreign_types_cnt { return "${ctx.module_c}_${td.name}" }
+    match handed_type_home(ctx, d, td.name) {
+        Some(home) => if home != "" && ctx.interop.has_module(home) {
+            "${home.replace(".", "_")}_${td.name}"
+        } else {
+            td.name
+        }
+        // No row registers the declaration: nothing to qualify it by, the shell keeps it.
+        None => td.name
+    }
+}
+
+/// The module a HANDED type declaration came from: the `DefTable` home of the
+/// row registering it, found along the chain of same-named rows (#1521), None
+/// when no row names it.
+fn handed_type_home(ctx Ctx, d DeclId, name str) -> Option[str] {
+    mut i = ctx.defs.first_def(name)
+    while i >= 0 {
+        ro hit = match ctx.defs.def_at(i).target {
+            DefType(id) => id == d
+            DefFn(_) | DefConst(_) => false
+        }
+        if hit { return Some(ctx.defs.home_at(i)) }
+        i = ctx.defs.prev_def(i)
+    }
+    None
+}
 
 /// The module part of one of OUR names: the path plus a separator, or `""`.
 ///
@@ -307,15 +380,15 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
                 // pair, `impl_of_proto`): `mut f Fmt` is `Nova_FmtCtx* f`.
                 ro it = impl_of_proto(ctx, t)
                 return match shape_of(ctx, it) {
-                    Record => CLayout { base: "Nova_${decl_of_ty(ctx, it).name}", by_ptr: true }
-                    ValueRecord => CLayout { base: "NovaValue_${decl_of_ty(ctx, it).name}", by_ptr: false }
+                    Record => CLayout { base: "Nova_${type_base(ctx, it)}", by_ptr: true }
+                    ValueRecord => CLayout { base: "NovaValue_${type_base(ctx, it)}", by_ptr: false }
                     NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
-                        CLayout { base: "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, it).name}", by_ptr: false }
+                        CLayout { base: "${PAREN_RECORD_C_PREFIX}${type_base(ctx, it)}", by_ptr: false }
                 }
             }
             // A4: payload-less unfenced sums are VALUES, as the oracle emits them.
             TkSum => {
-                ro nm = decl_of_ty(ctx, t).name
+                ro nm = type_base(ctx, t)
                 if is_value_sum(ctx, t) { return CLayout { base: "NovaValue_${nm}", by_ptr: false } }
                 return CLayout { base: "Nova_${nm}", by_ptr: true }
             }
@@ -391,14 +464,14 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
         // `type Pair(x int, y int)`: `struct NovaTuple_Pair { nova_int x;
         // nova_int y; }` -- members BY FIELD NAME, no positional f0/f1).
         TkRecord => match shape_of(ctx, t) {
-            Record => "Nova_${decl_of_ty(ctx, t).name}"
-            ValueRecord => "NovaValue_${decl_of_ty(ctx, t).name}"
+            Record => "Nova_${type_base(ctx, t)}"
+            ValueRecord => "NovaValue_${type_base(ctx, t)}"
             NamedTuple | PositionalTuple | AnonNamedTuple | AnonPositionalTuple =>
-                "${PAREN_RECORD_C_PREFIX}${decl_of_ty(ctx, t).name}"
+                "${PAREN_RECORD_C_PREFIX}${type_base(ctx, t)}"
         }
         TkSum => {
-            if is_value_sum(ctx, t) { return "NovaValue_${decl_of_ty(ctx, t).name}" }
-            return "Nova_${decl_of_ty(ctx, t).name}"
+            if is_value_sum(ctx, t) { return "NovaValue_${type_base(ctx, t)}" }
+            return "Nova_${type_base(ctx, t)}"
         }
         // Same rule as `c_type`: the STRUCT of a newtype is the
         // representation's, because that is what it is laid out as.

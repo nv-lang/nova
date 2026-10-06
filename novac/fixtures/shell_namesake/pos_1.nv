@@ -1,0 +1,52 @@
+module shell_namesake.pos_1
+
+// A HEAP RECORD NAMED LIKE A STRUCT THE SHELL ALREADY DEFINES (D381, wave
+// 274.5 pre68). The shell -- the oracle's emission of the probe, glued into
+// every unit novac emits -- carries std's `struct Nova_DirEntry { ... }` (fs)
+// AND the vector instance over it, `Nova_Vec____Nova_DirEntry_p`. A program's
+// own `type DirEntry` is legal (D125: the user wins), and until this wave novac
+// refused it by name, because its C struct would have been a second
+// `struct Nova_DirEntry` in one unit and clang refuses that.
+//
+// D381 gives the colliding name a module-qualified base: novac spells this
+// type `Nova_shell_namesake_pos_1_DirEntry`. The oracle compiles the same file
+// with no std `DirEntry` in its unit, so it keeps the bare name -- the C differs,
+// the behaviour must not: the lines below, byte for byte.
+//
+// What is exercised: construction, a field read, a method, a value passed to a
+// function and returned from one, a vector of them. The vector is the sharp
+// edge: spelled with the bare name, `[]DirEntry` would be the SHELL's instance
+// over std's record -- a vector of somebody else's type that links fine. The
+// in-name spelling goes through the same base, so novac makes its own instance.
+//
+// Why not `Outcome` (also a shell struct): the ORACLE fails a user `Outcome`
+// beside `[]Outcome` -- std's prelude `Outcome[T]` is in its unit and the user
+// type takes its place (registry 221.1 #1545).
+type DirEntry {
+    code int
+    label str
+}
+
+fn DirEntry @doubled() -> int => @code * 2
+
+fn make(code int, label str) -> DirEntry => { code, label }
+
+fn bump(o DirEntry) -> DirEntry => { code: o.code + 1, label: o.label }
+
+fn describe(o DirEntry) -> str => "${o.label}=${o.code}"
+
+fn main() {
+    ro a = make(3, "x")
+    println(describe(a))
+    ro b = bump(a)
+    println(describe(b))
+    println(b.doubled())
+    mut all = []DirEntry.new()
+    all.push(a)
+    all.push(b)
+    mut sum = 0
+    for o in all {
+        sum += o.code
+    }
+    println(sum)
+}
