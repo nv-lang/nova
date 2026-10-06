@@ -320,7 +320,8 @@ fn Emitter mut @emit_structural_typedefs() -> () {
 /// of any expression -- the fields of the file's records and the payloads of
 /// its sums.
 fn Emitter @option_typedef_ids() -> []int {
-    mut cands = @out.types.collect()
+    mut cands = []TyId.new()
+    cands.append(@out.types)
     for d in @ctx.foreign_types_cnt..@ctx.types.len() {
         ro td = @ctx.types[d]
         ro frange = field_range_of(td) ?? (no_frow(), 0)
