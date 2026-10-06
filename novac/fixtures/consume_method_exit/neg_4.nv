@@ -1,0 +1,22 @@
+module consume_method_exit.neg_4
+
+// A `consume` FIELD STILL OWNED AT `?? return` (registry 221.1 #1745; D133, D86 amended
+// 2026-09-01: `X ?? return R` is a `return` on the `None` path). `@body` is consumed after
+// the `??`, so the fallback `return` leaves the record unclosed.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this `?? return` leaves this `consume` method
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(o Option[int]) -> str {
+    ro v = o ?? return "none" // the one refusal: line 15
+    "${v}:${@body.into_str()}"
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.take(Some(1)))
+}
