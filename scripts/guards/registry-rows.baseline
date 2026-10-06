@@ -1606,8 +1606,10 @@
 # 2026-10-06, task #20, merge of origin/main 412499bcf (task #17 in): rows 1700 (main) + 2 (#20: 1768, 1769) = 1702,
 # max 1763 -> 1769; 1764-1767 are numbers the integrator issued to other branches and stand in gaps= until their
 # rows arrive (then they leave gaps= by that merge).
-rows=1702
-max=1769
+# 2026-10-06 (task #21): rows 1702 -> 1703, max 1769 -> 1770 -- #1770, Windows: the libgc branch with page
+# protection crashes the program with SIGSEGV. gaps= untouched (1764-1767 are task #18's numbers).
+rows=1703
+max=1770
 rows=1611
 max=1693
 rows=1590
