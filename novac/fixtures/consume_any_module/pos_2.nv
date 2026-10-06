@@ -1,0 +1,39 @@
+module consume_any_module.pos_2
+
+// A `consume` FIELD CONSUMED IN EVERY ARM (registry 221.1 #1723; D133: the field's
+// slot joins as a value does -- `Consumed` on every path is `Consumed`): an `if` with
+// an `else` and a `match`, each arm moving `@body` out once. The ORACLE refuses both
+// forms as a second use of the field (registry 221.1 No.TBD, oracle: its field state
+// does not fork at a branch; listed in novac/divergences.allow, plan 274.12); its run
+// is compared against the twin pos_3, which moves the field once before the branch.
+
+// NOVAC_TWIN pos_3.nv
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(loud bool) -> str {
+    if loud { "!${@body.into_str()}" } else { @body.into_str() }
+}
+
+fn Pad consume @pick() -> str {
+    match @n {
+        0 => @body.into_str()
+        _ => "${@n}:${@body.into_str()}"
+    }
+}
+
+fn mk(n int, s str) -> Pad {
+    consume b = StringBuilder.new(cap: 8)
+    b.append(s)
+    Pad { n, body: b }
+}
+
+fn main() {
+    println(mk(0, "a").take(true))
+    println(mk(0, "b").take(false))
+    println(mk(0, "c").pick())
+    println(mk(3, "d").pick())
+}

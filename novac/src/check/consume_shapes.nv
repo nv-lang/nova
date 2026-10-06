@@ -4,10 +4,12 @@
 //   place that names it; NOT taken: partial moves out of a live aggregate -- a
 //   must-consume value leaves an aggregate only through a `consume` pattern.
 // Role: the SHAPES a must-consume value hides in (D133, step 4 of the track):
-//   which types are must-consume (the file's own `type X consume`, and every type
+//   which types are must-consume (a `type X consume` of any module, and every type
 //   applied to one -- D156: a `[T consume]` container inherits the obligation, as
 //   `Option[T consume]` and `Result[T consume, E consume]` do); the field markers
-//   of a record (D133, contagion through fields); a record literal moving a value
+//   of a record (D133, contagion through fields); the `consume` fields of a
+//   `consume` receiver, each a path the flow tracks (D133 "Field-aware flow",
+//   "Nested field paths", registry #1723); a record literal moving a value
 //   into a `consume` field (D133 amendment 2026-07-13); the binders of a pattern
 //   (`Some(consume t)` owns, a bare `Some(t)` may only move its value on once --
 //   E_CONSUME_PATTERN_REQUIRED, narrowed by plan 293); a fresh value handed to a
@@ -72,14 +74,15 @@ fn Checker mut @judge_wildcard(pat Node, ty TyId, ak []Node, pos PatPos) -> bool
     false
 }
 
-/// Is `t` MUST-CONSUME? One of the file's own `type X consume`, or a type applied to
-/// one or a tuple holding one: a `[T consume]` container inherits the obligation
-/// (D156, amendment 2026-08-04), and since plan 246 a plain `[T]` takes no
-/// must-consume argument at all, so an application holding one is always such a
-/// container.
+/// Is `t` MUST-CONSUME? A type declared `type X consume` in ANY module (registry
+/// #1723: until then only the file's own were, and a second `sb.into_str()` of std's
+/// `StringBuilder` passed), or a type applied to one or a tuple holding one: a `[T
+/// consume]` container inherits the obligation (D156, amendment 2026-08-04), and
+/// since plan 246 a plain `[T]` takes no must-consume argument at all, so an
+/// application holding one is always such a container.
 fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     if !is_ty(t) { return false }
-    if is_kind_of(kinds, t) { return true }
+    if is_kind_of(kinds, t) || @is_consume_decl(t) { return true }
     // A type with ARGUMENTS holds them -- an application, a structural record on the
     // stack, a newtype's representation -- except a raw pointer, which owns nothing.
     // A NEWTYPE over a must-consume type is must-consume itself -- D156, amendment
@@ -91,19 +94,13 @@ fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     false
 }
 
-/// Is `t` must-consume by its DECLARATION, in any module (`type X consume`,
-/// `TypeDef.must_consume`) -- itself, or through the arguments it holds, as
-/// `@is_owned_kind` reads them (an application, a newtype's representation;
-/// a raw pointer owns nothing)?
-fn Checker @is_declared_must_consume(t TyId) -> bool {
-    if !is_ty(t) { return false }
-    if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return false }
+/// Is the declaration `t` names written `type X consume`, in any module
+/// (`TypeDef.must_consume`, a field for the reason a handed declaration's node is
+/// gone after collect)? An application of a generic one (`BufWriter[W]`) names it
+/// too: its head is the declaration.
+fn Checker @is_consume_decl(t TyId) -> bool {
     ro d = decl_index_of_ty(@ctx, t)
-    if d >= 0 && @ctx.types[d].must_consume { return true }
-    for i in 0..@ctx.tys.arg_count(t) {
-        if @is_declared_must_consume(@ctx.tys.arg(t, i)) { return true }
-    }
-    false
+    d >= 0 && @ctx.types[d].must_consume
 }
 
 /// HOW a must-consume value of `t` is consumed, for the messages: its `consume`
@@ -160,11 +157,10 @@ fn Checker mut @judge_field_marker(f Node, fty TyId, type_name str, type_marked 
         }
     }
     // A MUST-CONSUME TYPE OF ANOTHER MODULE is one too (D133: `StringBuilder
-    // consume` of std is the canonical opaque resource): `kinds` holds the file's
-    // own only -- the types whose values the flow tracks -- and the marker rule
-    // is about the field's TYPE wherever it was declared. Until registry #1720
-    // `consume body StringBuilder` was refused as a marker on nothing.
-    ro owned = @is_owned_kind(kinds, fty) || @is_declared_must_consume(fty)
+    // consume` of std is the canonical opaque resource). Until registry #1720
+    // `consume body StringBuilder` was refused as a marker on nothing; since #1723
+    // the flow's own door answers for every module, and this judge asks it.
+    ro owned = @is_owned_kind(kinds, fty)
     if owned && !marked {
         @reject_first_leaf_of([]Node.of(f), field_marker_missing_msg(name, ty_source_name(@ctx, fty)))
     } else if marked && !owned {
@@ -324,31 +320,47 @@ type AutoCleanups {
     eff_names []str /// the effect names of every `@cleanup`, flat, by `eff_off`/`eff_cnt`
 }
 
-/// The affine types of `file` among `kinds`.
+/// The affine types among `kinds`: the `@cleanup`s `file` declares, then those of
+/// every other module, read from their handed declarations (registry #1723 -- std's
+/// `MutexGuard` is affine wherever it is used, not only in sync.nv).
 fn Checker @auto_cleanups_of(file Node, kinds []TyId) -> AutoCleanups {
     mut a = AutoCleanups { affine: []TyId.new(), rows: []FnRow.new(), eff: []bool.new(), eff_off: []int.new(),
                            eff_cnt: []int.new(), eff_names: []str.new() }
-    ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.FnDecl { continue }
         // No row: the subset walk refused the declaration already.
         ro row = decl_fn_row(d, @ctx) ?? no_row()
         if raw_row(row) < 0 { continue }
-        ro fd = @ctx.fns.rows[raw_row(row)]
-        if fd.name != CLEANUP_METHOD || !fd.has_recv || fd.param_cnt != 2 { continue }
-        ro recv = @ctx.fns.params[fd.param_off]
-        ro arg = @ctx.fns.params[fd.param_off + 1]
-        ro shaped = recv.mode == ParamMode.ModeConsume && is_kind_of(kinds, recv.type_id) && arg.type_id == outcome_t
-        if !shaped { continue }
-        ro names = effect_names_of(d)
-        a.affine.push(recv.type_id)
-        a.rows.push(row)
-        a.eff.push(names.len() > 0)
-        a.eff_off.push(a.eff_names.len())
-        a.eff_cnt.push(names.len())
-        a.eff_names.append(names)
+        @note_auto_cleanup(a, row, d, kinds)
+    }
+    for i in @ctx.fns.own_cnt..@ctx.fns.rows.len() {
+        match @ctx.handed.decl_of(FnRow(i)) {
+            Some(d) => @note_auto_cleanup(a, FnRow(i), d, kinds)
+            // SILENT-OK: a row read from nowhere (a constructor, a builtin) declares no `@cleanup`.
+            None => {}
+        }
     }
     a
+}
+
+/// One callable row, declared by `d`: when it is a must-consume type's
+/// `fn T consume @cleanup(o ScopeOutcome)`, the type is affine.
+fn Checker @note_auto_cleanup(mut a AutoCleanups, row FnRow, d Node, kinds []TyId) -> () {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    if fd.name != CLEANUP_METHOD || !fd.has_recv || fd.param_cnt != 2 { return }
+    ro recv = @ctx.fns.params[fd.param_off]
+    ro arg = @ctx.fns.params[fd.param_off + 1]
+    ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
+    ro declared = is_kind_of(kinds, recv.type_id) || @is_consume_decl(recv.type_id)
+    ro shaped = recv.mode == ParamMode.ModeConsume && declared && arg.type_id == outcome_t
+    if !shaped || auto_index_of(a, recv.type_id) >= 0 { return }
+    ro names = effect_names_of(d)
+    a.affine.push(recv.type_id)
+    a.rows.push(row)
+    a.eff.push(names.len() > 0)
+    a.eff_off.push(a.eff_names.len())
+    a.eff_cnt.push(names.len())
+    a.eff_names.append(names)
 }
 
 /// The effects a function declaration names, by the head of each (`Fail[E]` is
@@ -397,4 +409,104 @@ fn Checker @has_cleanup(t TyId) -> bool {
         if @ctx.fns.params[fd.param_off].type_id == t { return true }
     }
     false
+}
+
+/// D131 over a FIELD PATH of the receiver (D133 "Field-aware flow"): `gone` is the
+/// path itself or a field that holds it. Worded like the oracle's ("use of the
+/// consumed field `@.body`").
+fn field_used_after_consume_msg(path str, gone str, maybe bool) -> str {
+    ro how = if maybe { "possibly consumed -- on some of the paths that reach here" } else { "consumed" }
+    if path == gone {
+        "the field `${path}` is used after it was ${how}: its value went to a `consume` call and is no longer in the record (D131, D133)"
+    } else {
+        "the field `${path}` is used after `${gone}`, which holds it, was ${how} (D131, D133)"
+    }
+}
+
+/// D131 over a nested path (D133 "Nested field paths"): a field moved out whole
+/// after a field inside it was consumed is no longer a whole value.
+fn field_part_consumed_msg(path str, gone str, maybe bool) -> str {
+    ro how = if maybe { "possibly consumed" } else { "consumed" }
+    "the field `${path}` is moved out after `${gone}`, a field inside it, was ${how} -- what is left of it is not a whole value (D131, D133)"
+}
+
+/// The `consume` fields of `t` (`FieldDef.owned`) under the path `prefix` (`@`,
+/// `@.inner`): each an owned entry named by its path, and its own `consume` fields
+/// after it (D133 "Nested field paths": `@.inner.tx`). A record holds itself only
+/// through an indirection, which owns nothing here; the depth bound keeps a
+/// malformed table from walking forever.
+fn Checker mut @flow_own_fields(mut fl ConsumeFlow, prefix str, t TyId, at Node, depth int) -> () {
+    if depth >= 8 || decl_index_of_ty(@ctx, t) < 0 { return }
+    ro range = match field_range_of(decl_of_ty(@ctx, t)) {
+        Some(r) => r
+        // SILENT-OK: a sum or an opaque type has no fields to own.
+        None => return
+    }
+    for j in 0..range.1 {
+        ro fd = @ctx.fields.rows[raw_frow(range.0) + j]
+        if !fd.owned { continue }
+        ro path = "${prefix}.${fd.name}"
+        flow_own(fl, path, fd.type_id, at)
+        @flow_own_fields(fl, path, fd.type_id, at, depth + 1)
+    }
+}
+
+/// The entry of the receiver's field path `e` names (`@body`, `@inner.body`), or -1
+/// when `e` is no such path or the receiver does not own it.
+fn field_slot_of(e Node, fl ConsumeFlow) -> int {
+    ro path = field_path_of(e)
+    if path == "" { return 0 - 1 }
+    for i in 0..fl.fields {
+        if fl.nm[i] == path { return i }
+    }
+    0 - 1
+}
+
+/// The path a field place of `@` spells -- `@.body`, `@.inner.body` -- or "" when
+/// `e` is not one.
+fn field_path_of(e Node) -> str {
+    ro k = e.kind_of()
+    ro kids = branch_children(e)
+    if k == NodeKind.SelfField && kids.len() >= 2 && kids[1].kind_of() == NodeKind.LeafNode {
+        return "@.${leaf_text(kids[1])}"
+    } else if k == NodeKind.FieldAccess && kids.len() >= 3 && kids[2].kind_of() == NodeKind.LeafNode {
+        ro base = field_path_of(kids[0])
+        return if base == "" { "" } else { "${base}.${leaf_text(kids[2])}" }
+    } else if k == NodeKind.Paren && kids.len() >= 2 {
+        return field_path_of(kids[1])
+    } else {
+        return ""
+    }
+}
+
+/// Is path `p` the path `outer` or one inside it (`@.inner.tx` within `@.inner`)?
+fn path_within(p str, outer str) -> bool => p == outer || p.starts_with("${outer}.")
+
+/// One use of the receiver's field path, entry `slot`, at `e`. Gone already -- the
+/// path itself or a field that holds it -- is D131; MOVING it out is refused as well
+/// when a field inside it is gone. A move consumes the path; the paths below it
+/// are then read as gone through it (`path_within`).
+fn Checker mut @flow_field_use(e Node, slot int, moved bool, mut fl ConsumeFlow) -> () {
+    ro path = fl.nm[slot]
+    for j in 0..fl.fields {
+        if fl.state[j] == VarState.VsLive { continue }
+        ro other = fl.nm[j]
+        ro maybe = fl.state[j] == VarState.VsMaybe
+        if path_within(path, other) {
+            @flow_reject(e, field_used_after_consume_msg(path, other, maybe), fl)
+            return
+        } else if moved && path_within(other, path) {
+            @flow_reject(e, field_part_consumed_msg(path, other, maybe), fl)
+            return
+        } else {
+            // Another field: no bearing on this one.
+        }
+    }
+    if !moved {
+        // Read in place: still owned.
+    } else if fl.depth > 0 {
+        @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
+    } else {
+        fl.state[slot] = VarState.VsConsumed
+    }
 }

@@ -1,0 +1,52 @@
+module consume_any_module.pos_1
+
+// EACH FORM OF #1723, CONSUMED ONCE (registry 221.1 #1723; D131, D133): std's
+// `StringBuilder` as a `consume` binding, as a `consume` parameter, as a `consume`
+// field moved out by a `consume` method, and as a field two links deep (`@inner.body`,
+// D133 "Nested field paths"). A field read before it is moved, and a field that
+// carries no obligation read after it, are uses and not moves. The flow now tracks
+// all of them and finds every one consumed exactly once; the oracle compiles it.
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad mut @add(s str) -> () {
+    @body.append(s)
+    @n += 1
+}
+
+fn Pad consume @finish() -> str {
+    ro len = @body.byte_len()
+    ro s = @body.into_str()
+    "${s}/${len}/${@n}"
+}
+
+type Outer consume {
+    consume inner Pad
+    k int
+}
+
+fn Outer consume @close() -> str {
+    ro s = @inner.body.into_str()
+    "${s}:${@inner.n}:${@k}"
+}
+
+fn seal(consume sb StringBuilder) -> str {
+    sb.append("!")
+    sb.into_str()
+}
+
+fn main() {
+    consume sb = StringBuilder.new(cap: 8)
+    sb.append("ab")
+    println(sb.into_str())
+    println(seal(StringBuilder.new(cap: 4)))
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    p.add("x")
+    p.add("yz")
+    println(p.finish())
+    consume o = Outer { inner: Pad { n: 2, body: StringBuilder.new(cap: 8) }, k: 7 }
+    println(o.close())
+}

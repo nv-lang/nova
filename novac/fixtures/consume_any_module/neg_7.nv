@@ -1,0 +1,14 @@
+module consume_any_module.neg_7
+
+// ANOTHER MODULE'S MUST-CONSUME VALUE LEFT UNCONSUMED (registry 221.1 #1723; D133
+// "must-consume on every exit path"): std's `StringBuilder` has no `@cleanup`, so a
+// `consume` binding of it that nothing consumes is `D133-not-consumed` at the end of
+// its scope -- the obligation follows the type, not the file that declared it.
+
+// NOVAC_EXPECT `sb` (type `StringBuilder`) is not consumed before the end of its scope
+
+fn main() {
+    consume sb = StringBuilder.new(cap: 8) // the one refusal: line 11
+    sb.append("lost")
+    println("done")
+}

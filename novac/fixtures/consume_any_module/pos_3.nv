@@ -1,0 +1,37 @@
+module consume_any_module.pos_3
+
+// THE TWIN OF pos_2 (registry 221.1 #1723): the same program with the field moved
+// out ONCE, before the branch, so the oracle -- whose field state does not fork at a
+// branch (registry 221.1 No.TBD) -- compiles it. The smoke compares pos_2's run
+// against this one byte for byte; novac accepts both.
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(loud bool) -> str {
+    ro s = @body.into_str()
+    if loud { "!${s}" } else { s }
+}
+
+fn Pad consume @pick() -> str {
+    ro s = @body.into_str()
+    match @n {
+        0 => s
+        _ => "${@n}:${s}"
+    }
+}
+
+fn mk(n int, s str) -> Pad {
+    consume b = StringBuilder.new(cap: 8)
+    b.append(s)
+    Pad { n, body: b }
+}
+
+fn main() {
+    println(mk(0, "a").take(true))
+    println(mk(0, "b").take(false))
+    println(mk(0, "c").pick())
+    println(mk(3, "d").pick())
+}
