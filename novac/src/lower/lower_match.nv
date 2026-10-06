@@ -392,19 +392,25 @@ fn Lowerer @sub_has_test(sub Node, ty TyId) -> bool {
     }
     // A nested `|` tests its alternatives' heads (`X(P | Q)` took `X(R)` until
     // registry 1568's wave): `@pattern_of` spells them, as the arm head does at the
-    // root. Over a shell Option the heads are the Option door's, which a `|` does
-    // not reach -- unchanged there.
-    if sh == PatShape.Disj { return !is_ty(option_payload(@ctx, ty)) }
+    // root -- over ANY sum. Over a shell Option it once answered "no test", and
+    // `Some(None | Some(2))` took every `Some` (registry 1756): the Option door
+    // asks a head the `|` does not have, so `@open_sub_test` sends a `|` to the
+    // arm head's own test, whose printer spells Option tags through that door.
+    if sh == PatShape.Disj { return true }
     // `_`, a positional bracket: no head of their own.
     false
 }
 
 /// Opens the synthetic `If` of one subpattern's own test on the temporary `t`.
-/// A shell Option asks the ONE Option door (`IsSome` / `NotSome`, as the
+/// A shell Option HEAD asks the ONE Option door (`IsSome` / `NotSome`, as the
 /// if-let and the while-let do); every other head is the arm head's own test,
-/// `Pattern`, printed by the same printer (`Cond.Holds`).
+/// `Pattern`, printed by the same printer (`Cond.Holds`). A `|` over an Option
+/// has no head of its own to ask the door with: it is the arm head's test too,
+/// and `@emit_tag_test` spells an Option's tags through the same Option door
+/// (`@applied_sum_tag_after`) -- as it does for `None | Some(2)` at the root.
 fn Lowerer mut @open_sub_test(sub Node, ty TyId, t Local, mut opened []IfCtx) -> () {
-    ro cond = if is_ty(option_payload(@ctx, ty)) {
+    ro option_head = is_ty(option_payload(@ctx, ty)) && pattern_shape(sub) != PatShape.Disj
+    ro cond = if option_head {
         ro found = variant_in_sum(@ctx, ty, pattern_head_text(sub))
         ro vrow = found ?? ice("lower: an Option subpattern naming no variant of Option")
         if @ctx.variant_rows[raw_vrow(vrow)].payload_cnt > 0 { Cond.IsSome(t) } else { Cond.NotSome(t) }
