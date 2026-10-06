@@ -1531,9 +1531,10 @@ no_caveat=0
 # 2026-10-06, task #16 (t16-karina-1723-k1-potok-consume-vidit-must): 103 -> 102, row 1723 closed (the consume
 # flow reads every module's must-consume types and the receiver's field paths). Three rows filed with it and
 # numbered by the integrator: 1743 (the mut-method rotation carrier, K2, no), 1744 (the oracle's field state that
-# neither forks nor nests, K1, verdict pending with the integrator -- uncounted), 1745 (a consume method leaving
-# its consume field accepted by both compilers, K1, blocks the tag: the integrator's verdict 2026-10-06): 102 -> 103.
-blockers=103
+# neither forks nor nests, K1, blocks the tag: it accepts a double consumption), 1745 (a consume method leaving
+# its consume field accepted by both compilers, K1, blocks the tag); both verdicts the integrator's, 2026-10-06:
+# 102 -> 104, measured. Task #10 moves the same count (#1738): at the merge with main it is re-measured, not added.
+blockers=104
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
