@@ -303,7 +303,11 @@ fn DefTable @type_decl_seen_by(name str, home str) -> Option[DeclId] {
         }
         if Some(d) = decl {
             if !@is_own(i) && @homes[i] == home { return Some(d) }
-            if seen < 0 && !@is_own(i) && !@privs[i] { seen = i }
+            if seen < 0 && !@is_own(i) && !@privs[i] {
+                seen = i
+            } else {
+                // The compiled file's own row, a private one, or a later visible row: the first visible wins.
+            }
         } else {
             // Not a type row: the name's other owners do not answer here.
         }
@@ -325,6 +329,6 @@ fn DefTable @type_decl_seen_by(name str, home str) -> Option[DeclId] {
 /// Read the declarations handed from module `home` (dotted) from here on;
 /// "" returns to the compiled file's view. Set and cleared by the two
 /// collectors of handed declarations (`harvest_methods`, `fill_handed_fields`).
-export fn DefTable mut @read_as(home str) -> () {
+fn DefTable mut @read_as(home str) -> () {
     @asker = home
 }

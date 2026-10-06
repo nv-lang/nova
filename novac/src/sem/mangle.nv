@@ -204,13 +204,13 @@ export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${type_base(ctx, t)}_Tag"
 /// in-name argument goes through it. A name that does not collide comes back
 /// unchanged, so a unit without a collision is byte-identical (D381 rejects
 /// always-qualify).
-export fn type_base(ctx Ctx, t TyId) -> str => decl_base(ctx, ctx.tys.decl_head_of(t))
+fn type_base(ctx Ctx, t TyId) -> str => decl_base(ctx, ctx.tys.decl_head_of(t))
 
 /// D381 -- does the SHELL already define a struct BODY under one of this
 /// name's C spellings? The collision set of OUR unit: the shell is the
 /// oracle's emission of the probe, where std's types are spelled BARE, and it
 /// is glued into every unit we emit -- so a program type of that name is the
-/// second declaration of one simple name in the unit (D381's "colliding"),
+/// second declaration of one simple name in the unit (what D381 calls colliding),
 /// and the std side cannot be renamed (interop). Both spellings, because a
 /// value record or a payload-free sum comes out as `NovaValue_`.
 fn shell_defines_struct(ctx Ctx, name str) -> bool =>
@@ -237,31 +237,37 @@ fn shell_defines_struct(ctx Ctx, name str) -> bool =>
 /// `Nova__<Name>`: the oracle collapses that to the bare name, which in our
 /// unit IS the shell's struct, and a type name never starts with `_` (D30), so
 /// the doubled separator cannot meet a bare name.
-export fn decl_base(ctx Ctx, d DeclId) -> str
+fn decl_base(ctx Ctx, d DeclId) -> str
     requires is_decl(d) && raw_decl(d) < ctx.types.len(), "mangle: the C base of a declaration outside the registry"
 {
     ro td = ctx.types[raw_decl(d)]
     if !shell_defines_struct(ctx, td.name) { return td.name }
     if raw_decl(d) >= ctx.foreign_types_cnt { return "${ctx.module_c}_${td.name}" }
-    ro home = handed_type_home(ctx, d, td.name)
-    if home == "" || !ctx.interop.has_module(home) { return td.name }
-    "${home.replace(".", "_")}_${td.name}"
+    match handed_type_home(ctx, d, td.name) {
+        Some(home) => if home != "" && ctx.interop.has_module(home) {
+            "${home.replace(".", "_")}_${td.name}"
+        } else {
+            td.name
+        }
+        // No row registers the declaration: nothing to qualify it by, the shell keeps it.
+        None => td.name
+    }
 }
 
 /// The module a HANDED type declaration came from: the `DefTable` home of the
-/// row registering it, found along the chain of same-named rows (#1521), ""
+/// row registering it, found along the chain of same-named rows (#1521), None
 /// when no row names it.
-fn handed_type_home(ctx Ctx, d DeclId, name str) -> str {
+fn handed_type_home(ctx Ctx, d DeclId, name str) -> Option[str] {
     mut i = ctx.defs.first_def(name)
     while i >= 0 {
         ro hit = match ctx.defs.def_at(i).target {
-            DefType(id) => raw_decl(id) == raw_decl(d)
+            DefType(id) => id == d
             DefFn(_) | DefConst(_) => false
         }
-        if hit { return ctx.defs.home_at(i) }
+        if hit { return Some(ctx.defs.home_at(i)) }
         i = ctx.defs.prev_def(i)
     }
-    ""
+    None
 }
 
 /// The module part of one of OUR names: the path plus a separator, or `""`.
