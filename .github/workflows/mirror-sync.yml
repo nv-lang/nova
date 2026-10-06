@@ -1,0 +1,54 @@
+# mirror-sync — main goes to the two mirrors (GitVerse, SourceCraft) after it
+# moves on GitHub, the source of truth (owner 2026-10-06, merge queue: nobody
+# pushes main by hand any more, so nobody would carry it to the mirrors).
+#
+# The push URLs, token inside, live in repository secrets GITVERSE_PUSH_URL and
+# SOURCECRAFT_PUSH_URL. A missing secret is not silence: the step prints a
+# warning annotation naming it and the job ends without pushing that mirror.
+# A refused push is red.
+#
+# Only main, only fast-forward (no --force, AGENTS.md "Git"): a mirror that has
+# diverged refuses, and that is the signal to look, not to overwrite.
+
+name: mirror-sync
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: push main to ${{ matrix.mirror }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mirror: [gitverse, sourcecraft]
+    steps:
+      - name: Checkout nova (full history — the mirror may lack any of it)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Push main to the mirror (fast-forward only)
+        env:
+          PUSH_URL: ${{ matrix.mirror == 'gitverse' && secrets.GITVERSE_PUSH_URL || secrets.SOURCECRAFT_PUSH_URL }}
+          SECRET_NAME: ${{ matrix.mirror == 'gitverse' && 'GITVERSE_PUSH_URL' || 'SOURCECRAFT_PUSH_URL' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PUSH_URL:-}" ]; then
+            echo "::warning title=mirror-sync::secret ${SECRET_NAME} is not set; ${{ matrix.mirror }} NOT updated"
+            exit 0
+          fi
+          git push "$PUSH_URL" "${GITHUB_SHA}:refs/heads/main"
+          echo "mirror-sync ok: ${{ matrix.mirror }} main = ${GITHUB_SHA}"
