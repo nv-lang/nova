@@ -211,7 +211,7 @@ fn Emitter mut @emit_file(file Node) -> () {
 /// (`undefined symbol: novac_fn_helper__nova_int__to_nova_int`). One walk for
 /// the prototypes and the definitions, so the two never disagree on the set.
 fn Emitter @reached_fns(file Node) -> []Node {
-    mut fns = []Node.new()
+    mut reached = []Node.new()
     for c in file_decls(file) {
         if c.kind_of() != NodeKind.FnDecl { continue }
         // E2-b2: a callable NOT reached from a root is not emitted.
@@ -229,9 +229,9 @@ fn Emitter @reached_fns(file Node) -> []Node {
                 }
             }
         }
-        fns.push(c)
+        reached.push(c)
     }
-    fns
+    reached
 }
 
 /// A prototype per callable of the file, written before any definition.

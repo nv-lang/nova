@@ -685,7 +685,7 @@ fn Lowerer mut @lower_return(st Node) -> () {
 /// by one until M2b prints sealed blocks.
 fn Lowerer mut @lower_place(e Node, dest Local) -> () {
     // A `never` VALUE (D26: the bottom type, a subtype of every type) in a place of
-    // another type -- `o ?? ice("..")`, a `-> never` call as a branch's value -- has no
+    // another type -- `o ?? die("..")`, a `-> never` call as a branch's value -- has no
     // value to store: control does not come back. It is EVALUATED, and the place keeps
     // what it held. Assigning it put a `nova_int` into a `nova_str` local and clang
     // refused the unit (E2-b3 step 6, `diag.nv`'s `to_json` with a `main`).

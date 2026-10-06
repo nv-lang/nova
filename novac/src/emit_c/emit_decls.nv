@@ -171,7 +171,11 @@ fn Emitter mut @emit_type_decls() -> () {
     mut opt_out = []bool.new()
     for i in 0..opts.len() {
         ro pointer = @option_payload_is_pointer(TyId(opts[i]))
-        if pointer { @emit_option_typedef(TyId(opts[i])) }
+        if pointer {
+            @emit_option_typedef(TyId(opts[i]))
+        } else {
+            // value-shaped: written right after its payload's body, in pass 2
+        }
         opt_out.push(pointer)
     }
     // PASS 2 -- the bodies, each AFTER every type it embeds by value.
@@ -229,7 +233,11 @@ fn Emitter mut @emit_type_decls() -> () {
     // The options no body of pass 2 released (a payload of an instance of a
     // generic the shell lacks), where they all stood before.
     for i in 0..opts.len() {
-        if !opt_out[i] { @emit_option_typedef(TyId(opts[i])) }
+        if !opt_out[i] {
+            @emit_option_typedef(TyId(opts[i]))
+        } else {
+            // already written: after the names, or after its payload's body
+        }
     }
 }
 
@@ -312,10 +320,7 @@ fn Emitter mut @emit_structural_typedefs() -> () {
 /// of any expression -- the fields of the file's records and the payloads of
 /// its sums.
 fn Emitter @option_typedef_ids() -> []int {
-    mut cands = []TyId.new()
-    for t in @out.types {
-        cands.push(t)
-    }
+    mut cands = @out.types.collect()
     for d in @ctx.foreign_types_cnt..@ctx.types.len() {
         ro td = @ctx.types[d]
         ro frange = field_range_of(td) ?? (no_frow(), 0)

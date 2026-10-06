@@ -349,7 +349,11 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         // (measured 2026-10-06 on the kept C of `[]Option[int]`, E2-b3 step 6);
         // `c_in_name` adds the `_p` of a family behind a pointer (Result) and none
         // for Option. Asked of a record-shaped body, a sum was the ice below.
-        TkApp => if family_instance_name(ctx, a) != "" { c_in_name(ctx, a) } else { "${instance_struct_name(ctx, a)}_p" }
+        TkApp => if family_instance_name(ctx, a) != "" {
+            c_in_name(ctx, a)
+        } else {
+            "${instance_struct_name(ctx, a)}_p"
+        }
         TkSum => "Nova_${type_base(ctx, a)}_p"
         // A NEWTYPE inside an instance name is its REPRESENTATION (274.7 B7,
         // #940): `[Meters(1.0), Meters(2.0)]` with `type Meters f64` is
