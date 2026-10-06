@@ -1,0 +1,32 @@
+module consume_any_module.neg_4
+
+// A NESTED FIELD PATH MOVED OUT TWICE (registry 221.1 #1723; D133 "Nested field
+// paths": the state is kept per path `@f1.f2`). `@inner.body` goes to the first
+// `into_str`; the second takes it again. The ORACLE accepts this form -- it tracks
+// one level only (registry 221.1 #1744, oracle); D133 names the deep path in so
+// many words.
+
+// NOVAC_EXPECT the field `@.inner.body` is used after it was consumed
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @finish() -> str => @body.into_str()
+
+type Outer consume {
+    consume inner Pad
+    k int
+}
+
+fn Outer consume @close() -> str => @inner.finish()
+
+fn Outer consume @twice() -> (str, str) => (@inner.body.into_str(), @inner.body.into_str()) // the one refusal: line 25
+
+fn main() {
+    consume o = Outer { inner: Pad { n: 0, body: StringBuilder.new(cap: 8) }, k: 1 }
+    ro (a, b) = o.twice()
+    println(a)
+    println(b)
+}

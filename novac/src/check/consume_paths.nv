@@ -43,7 +43,7 @@ fn is_loop_kind(k NodeKind) -> bool =>
 /// on any path, is `D133-not-consumed` there. An error stops tracking: the rest of
 /// the body is drawn from a state the error already broke.
 fn Checker mut @flow_exit(mut fl ConsumeFlow, mark int, at Node, exit str) -> () {
-    for i in mark..fl.owned_ty.len() {
+    for i in past_fields(fl, mark)..fl.owned_ty.len() {
         if fl.state[i] == VarState.VsConsumed { continue }
         if fl.auto_at[i] >= 0 {
             // An affine value is cleaned at this exit (D432).

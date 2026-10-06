@@ -1,0 +1,25 @@
+module consume_any_module.neg_6
+
+// A FIELD CONSUMED ON SOME PATHS, THEN AGAIN (registry 221.1 #1723; D133: a branch
+// join `Live` with `Consumed` is `MaybeConsumed`, and D131 refuses its use): the
+// `if` without an `else` takes `@body` on one path only, and the tail takes it on
+// every path. The field's slot joins as any value does.
+
+// NOVAC_EXPECT the field `@.body` is used after it was possibly consumed
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @finish(early bool) -> str {
+    if early {
+        println(@body.into_str())
+    }
+    @body.into_str() // the one refusal: line 19
+}
+
+fn main() {
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    println(p.finish(false))
+}

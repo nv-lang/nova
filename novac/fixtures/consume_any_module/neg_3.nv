@@ -1,0 +1,23 @@
+module consume_any_module.neg_3
+
+// A `consume` FIELD OF THE RECEIVER MOVED OUT TWICE (registry 221.1 #1723; D133
+// "Field-aware flow": `@field` is a slot of its own): the measurement of #1723 word
+// for word. `@body` goes to the first `into_str`, and the second reads a field that
+// is no longer in the record; the oracle refuses it (use of the consumed field
+// `@.body`). Before #1723 the flow did not follow the field: both calls passed.
+
+// NOVAC_EXPECT the field `@.body` is used after it was consumed
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @twice() -> (str, str) => (@body.into_str(), @body.into_str()) // the one refusal: line 16
+
+fn main() {
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    ro (a, b) = p.twice()
+    println(a)
+    println(b)
+}

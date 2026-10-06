@@ -1,0 +1,14 @@
+module consume_any_module.neg_8
+
+// A BINDING CONSUMED THROUGH A `-> @` CHAIN, THEN USED (registry 221.1 #1723; D409,
+// D131): `sb.append("cd").into_str()` moves `sb` through the chain into `into_str`,
+// so the later `sb.byte_len()` reads a value that is gone. The chain is one value,
+// and its first link is the binding.
+
+// NOVAC_EXPECT `sb` is used after it was consumed
+
+fn main() {
+    consume sb = StringBuilder.new(cap: 8)
+    println(sb.append("cd").into_str())
+    println(sb.byte_len()) // the one refusal: line 13
+}
