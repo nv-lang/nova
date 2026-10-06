@@ -159,11 +159,14 @@ export fn print_call_ends_line(e Node) -> bool => call_callee_text(branch_childr
 /// same three layers already type, copy into the loop's temporary and index --
 /// the list, not the machinery, was what refused them (twice over novac's own
 /// source in the 0.2 measure).
+/// The bare receiver (`for v in @`, std's `[]T @serialize`) joined with E2-b3
+/// step 6 for the same reason: a vector-receiver method walks itself, and the
+/// receiver is a value the three layers already type and copy.
 export fn is_collection_head(n Node) -> bool {
     ro k = n.kind_of()
     k == NodeKind.Call || k == NodeKind.MethodCall || k == NodeKind.Name ||
         k == NodeKind.FieldAccess || k == NodeKind.Index || k == NodeKind.SelfField ||
-        k == NodeKind.ArrayLit
+        k == NodeKind.ArrayLit || k == NodeKind.SelfExpr
 }
 
 /// Whether a `LoopCtl` node is `break` rather than `continue` (274.7 wave B10). ONE door

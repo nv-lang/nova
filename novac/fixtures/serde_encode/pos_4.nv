@@ -1,0 +1,32 @@
+module serde_encode.pos_4
+
+// THE ERROR ARM of `Result[str, SerError]` (D325 R5): an integer of 2^53 or more is
+// not lossless on JSON's f64 wire, so `json_encode` hands back `Err` with
+// `SerLossyInteger`, and the program reads it through `SerError @to_str` --
+// the derived method's `?` carries the error out of the nested record
+// unchanged (E2-b3 steps 5-6).
+import std.encoding.serde.{Serialize, json_encode}
+
+#impl(Serialize)
+type Inner {
+    big int
+}
+
+#impl(Serialize)
+type Outer {
+    name str
+    inner Inner
+}
+
+fn main() {
+    ro ok = Outer { name: "fits", inner: Inner { big: 9007199254740991 } }
+    match json_encode(ok) {
+        Ok(s) => println("ok ${s}")
+        Err(e) => println("err ${e.to_str()}")
+    }
+    ro bad = Outer { name: "big", inner: Inner { big: 9007199254740993 } }
+    match json_encode(bad) {
+        Ok(s) => println("ok ${s}")
+        Err(e) => println("err ${e.to_str()}")
+    }
+}
