@@ -182,13 +182,14 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         res: FnIndex.build_for(ctx.fns, import_parts(body_file, false), import_parts(body_file, true),
                                asker, file_mod),
         fres: FieldIndex.build(ctx.fields),
-        // SILENT-OK: an instance never TELLS its gap, and that is not an
-        // omission. A gap is a syntax hole, and syntax was judged when the
-        // FILE was checked -- by the time an instance is typed the same hole
-        // has already been told there, or already suppressed there. Telling
-        // it again would report one hole once per instantiation. The field is
-        // still initialised so both entries share one shape; only
-        // `tell_gap_if_silent` belongs to the file alone.
+        // An instance of the FILE's own body never tells its gap: syntax was
+        // judged when the file was checked, and telling it again would report
+        // one hole once per instantiation. A HANDED body is the other case
+        // (below, after the walk): novac never compiles std's files as files of
+        // their own, so its hole was told nowhere, and typing it reached the lattice with a
+        // gap inside -- `Ok(())` in std's `JsonSerializer @begin_struct`, the
+        // unit value novac does not parse, iced "expression kind without a
+        // type rule" (task #14, 2026-10-06, registry 221.1 #1740).
         gap_at: -1,
         gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
@@ -237,6 +238,12 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
             // The name, the receiver, the parameters, the return type, a
             // contract: the declaration's, judged where it was written.
         }
+    }
+    if !ctx.fns.compiles_body(row) {
+        // A handed body's hole was told nowhere else (see `gap_at` above).
+        c.tell_gap_if_silent()
+    } else {
+        // The file's own body: its file pass told the gap already.
     }
     if c.out.len() == 0 {
         c.consume_kinds = c.consume_kinds_of(body_file)

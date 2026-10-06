@@ -283,3 +283,18 @@ test "a handed function's LITERAL default reaches the call as a literal of no tr
     assert(d3.len() == 0, messages(d3))
     assert(c3.contains("nova_fn_8encoding5utf165label(((nova_int)1LL), "), c3)
 }
+
+test "a HANDED body with a parse gap is refused by name in its instance, never iced (task #14)" {
+    // novac never compiles std's files as files of their own, so a hole in a
+    // handed body was told nowhere: the instance went straight to typing and the lattice iced
+    // ("expression kind without a type rule") on `()`, the unit value novac
+    // does not parse -- the carrier was `Ok(())` in std's `JsonSerializer
+    // @begin_struct`. The instance pass now tells the gap, in the body's file.
+    mut std = std_decls()
+    std.push("module encoding.utf16\nexport fn one() -> int {\n    ro u = ()\n    1\n}\n")
+    ro (d, _) = compile_to_c_with("import std.encoding.utf16.{one}\nfn main() {\n println(one())\n}",
+                                  parse_decls(std), described_bare(std))
+    assert(d.len() == 1, messages(d))
+    assert(messages(d).contains("did not parse"), messages(d))
+    assert(d[0].file != "", messages(d))
+}
