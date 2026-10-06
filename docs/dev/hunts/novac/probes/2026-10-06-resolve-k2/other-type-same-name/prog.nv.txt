@@ -1,0 +1,19 @@
+type Sizer protocol {
+    @size() -> int
+}
+
+type Bx {
+    v int
+}
+
+// Another unrelated type happens to have a matching `size`; Bx has none.
+type Other {
+    w int
+}
+fn Other @size() -> int => @w
+
+fn show[T Sizer](v T) -> int => v.size()
+
+fn main() Io -> () {
+    println(show(Bx { v: 1 }))
+}

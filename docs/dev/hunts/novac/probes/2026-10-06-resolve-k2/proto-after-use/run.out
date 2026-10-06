@@ -1,0 +1,25 @@
+=== PROGRAM
+     1	type Bx {
+     2	    v int
+     3	}
+     4	fn Bx @size() -> int => @v
+     5	
+     6	fn show[T Sizer](v T) -> int => v.size()
+     7	
+     8	fn main() Io -> () {
+     9	    println(show(Bx { v: 5 }))
+    10	}
+    11	
+    12	// The bound's protocol is declared AFTER every use above.
+    13	type Sizer protocol {
+    14	    @size() -> int
+    15	}
+=== ORACLE: nova check prog.nv
+oracle check rc=0
+=== SUBJECT: novac check prog.nv
+novac check rc=0
+=== both accept: oracle build + run (the behaviour)
+oracle build rc=0
+5
+oracle run rc=0
+=== VERDICT: BOTH ACCEPT

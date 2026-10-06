@@ -36,12 +36,12 @@ module novac.resolve
 
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
-import ../builtins.{ENTRY_FN, TypeKind}
+import ../builtins.{ENTRY_FN, TypeKind, is_derived_proto}
 import ../types.{TyId, is_ty, Interner}
 import ../sem.{FnTable, FnDef, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault, ParamMode}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
 import ../sem.{bind_slot_of, mode_admits, type_admits, lit_admits, slot_binding_in}
-import ../sem.{ty_source_name}
+import ../sem.{ty_source_name, decl_of_ty, gate_names}
 
 /// How a callable lookup turned out. A sum, not an int code: "not found"
 /// and "more than one candidate" are different answers, and both must be
@@ -775,6 +775,17 @@ export fn FnIndex @lookup(fns FnTable, tys Interner, name str, args []ArgSpec, f
 /// protocol's own unreadable declaration.
 export fn missing_sig_of(ctx Ctx, index FnIndex, t TyId, proto str) -> Option[str] {
     ro pd = ctx.protos.def_of(proto)?
+    // D341 "Bound satisfaction": the author's `#impl(P)` of a BUILT-IN derivable
+    // protocol meets `[T P]` before the method is materialized -- and novac
+    // materializes `@display` at the slot, never as a row. Since std's protocols
+    // are in the registry (task #14) this is the line between `show[T
+    // Display](Pt {..})` accepted, as the oracle does, and "missing display".
+    if is_derived_proto(proto) && ctx.tys.names_a_decl(t) {
+        ro td = decl_of_ty(ctx, t)
+        if gate_names(ctx.gates, td.gate_off, td.gate_cnt, proto) { return None }
+    } else {
+        // Not a derivable protocol, or a type no gate can stand over.
+    }
     for i in pd.sig_off..(pd.sig_off + pd.sig_cnt) {
         ro sig = ctx.protos.sigs[i]
         if index.has_method_for(t, ctx, sig) {

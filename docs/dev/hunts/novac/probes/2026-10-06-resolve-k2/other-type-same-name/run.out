@@ -1,0 +1,28 @@
+=== PROGRAM
+     1	type Sizer protocol {
+     2	    @size() -> int
+     3	}
+     4	
+     5	type Bx {
+     6	    v int
+     7	}
+     8	
+     9	// Another unrelated type happens to have a matching `size`; Bx has none.
+    10	type Other {
+    11	    w int
+    12	}
+    13	fn Other @size() -> int => @w
+    14	
+    15	fn show[T Sizer](v T) -> int => v.size()
+    16	
+    17	fn main() Io -> () {
+    18	    println(show(Bx { v: 1 }))
+    19	}
+=== ORACLE: nova check prog.nv
+oracle check rc=1
+  C:/Users/B7E3~1/AppData/Local/Temp/tmp.4x3XfC02cr/prog.nv:18:13: error: [E_BOUND_NOT_SATISFIED] type `Bx` does not satisfy `Sizer` bound (in call to `show[T Sizer]`).
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+=== SUBJECT: novac check prog.nv
+novac check rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"C:/Users/B7E3~1/AppData/Local/Temp/tmp.4x3XfC02cr/prog.nv","start":272,"end":276},"message":"type `Bx` does not satisfy `Sizer` bound (in call to `show[T Sizer]`) -- `Bx` is missing: size() -> int (E_BOUND_NOT_SATISFIED, D72)","poisoned_by":null}
+=== VERDICT: BOTH REFUSE

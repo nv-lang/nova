@@ -411,6 +411,62 @@ export const DISPLAY_PROTO = "Display"
 /// fallback -- so the checker asks the gate for this name (274.7 wave R).
 export const EQUAL_PROTO = "Equal"
 
+/// The protocol std's serde encodes through (D341): `#impl(Serialize)` opts a
+/// record or a sum into a SYNTHESIZED `@serialize[S Serializer]`.
+export const SERIALIZE_PROTO = "Serialize"
+
+/// The method `Serialize` requires and the synthesis writes (D341).
+export const SERIALIZE_METHOD = "serialize"
+
+/// A container std's serde takes apart element by element (D342: `Option` an
+/// option, `Vec`/`Set` a sequence): a field of it is eligible when its
+/// elements are.
+#realtime nogc
+export fn is_serde_seq_head(name str) -> bool =>
+    name == OPTION_SUM || name == SLICE_HEAD || name == "Set" || name == "HashSet"
+
+/// A map std's serde writes as an object (D342; its key must be `str`, Q16).
+#realtime nogc
+export fn is_serde_map_head(name str) -> bool => name == "HashMap" || name == "Map"
+
+/// The `Serializer` call a scalar FIELD is written by (D341/D342: a primitive
+/// receiver dispatches no `@serialize`, so the synthesis writes the wire call
+/// itself), `""` for a primitive serde does not carry (`char`, `i128`).
+#realtime nogc
+export fn serde_scalar_wire(prim str) -> str {
+    if prim == "int" || prim == "i8" || prim == "i16" || prim == "i32" || prim == "i64" { return "serialize_int" }
+    if prim == "u64" || prim == "uint" || prim == "u8" || prim == "u16" || prim == "u32" { return "serialize_uint" }
+    if prim == "f64" || prim == "f32" { return "serialize_float" }
+    if prim == "bool" { return "serialize_bool" }
+    if prim == "str" { return "serialize_str" }
+    ""
+}
+
+/// The type a NARROW scalar is widened to before its wire call (`i32` ->
+/// `int`, `u8` -> `u64`, `f32` -> `f64`), `""` when it is taken as it is.
+#realtime nogc
+export fn serde_scalar_widen(prim str) -> str {
+    if prim == "i8" || prim == "i16" || prim == "i32" || prim == "i64" { return "int" }
+    if prim == "uint" || prim == "u8" || prim == "u16" || prim == "u32" { return "u64" }
+    if prim == "f32" { return "f64" }
+    ""
+}
+
+/// A scalar std's GENERIC bodies dispatch `@serialize` on inside a container
+/// (`Option[int]`, `[]str`): a narrow one has no such method, so nested it is
+/// not eligible (the oracle's own line, `serde_container_scalar`).
+#realtime nogc
+export fn is_serde_nested_scalar(prim str) -> bool =>
+    prim == "int" || prim == "u64" || prim == "f64" || prim == "bool" || prim == "str"
+
+/// Is `proto` one of the BUILT-IN auto-derivable protocols (D341: the six of
+/// D186 plus `Serialize`/`Deserialize`)? Their `#impl(P)` satisfies a bound
+/// `[T P]` even before the method is materialized (D341 "Bound satisfaction").
+#realtime nogc
+export fn is_derived_proto(proto str) -> bool =>
+    proto == EQUAL_PROTO || proto == "Hash" || proto == "Clone" || proto == "Compare" ||
+    proto == DISPLAY_PROTO || proto == "Debug" || proto == SERIALIZE_PROTO || proto == "Deserialize"
+
 /// The `#impl(P1 + P2 + ...)` attribute (D186): the type author's explicit
 /// opt-in that the type implements those protocols. Structural conformance is
 /// NOT enough for a bare `${x}` -- at least one of (type author, use site) must

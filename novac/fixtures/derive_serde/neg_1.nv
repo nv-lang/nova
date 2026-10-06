@@ -1,0 +1,23 @@
+module derive_serde.neg_1
+
+// A FIELD THAT DOES NOT SERIALIZE (D341 "Field-eligibility ... else
+// E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL (named field; no silent drop)"): `Plain`
+// has neither `#impl(Serialize)` nor `@serialize`, so `Dto` cannot derive its
+// method. Both compilers refuse at the declaration -- novac with the code in a
+// language error at the field, and it derives nothing for `Dto`.
+// NOVAC_EXPECT E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+import std.encoding.serde.{Serialize}
+
+type Plain {
+    n int
+}
+
+#impl(Serialize)
+type Dto {
+    name str
+    inner Plain
+}
+
+fn main() {
+    println(1)
+}

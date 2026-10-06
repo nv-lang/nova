@@ -107,6 +107,8 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     // invisible to this judge -- and invisible, not refused. `file_decls`
     // unwraps it and keeps the order, which is what a run of attributes needs.
     c.reject_repeated_impl(file_decls(file))
+    // D341: a Serialize opt-in the synthesis did not spell is refused by its cause.
+    c.judge_serde_fields(file_decls(file))
     c.walk(file)
     c.tell_gap_if_silent()
     if c.out.len() == 0 {

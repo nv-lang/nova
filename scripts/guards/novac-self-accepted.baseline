@@ -67,6 +67,9 @@
 #   отвергаются разбором — это №1691, не регресс (в индексе LF).
 # 2026-10-03, интегратор nova-20 (слияние strarm поверх sweep 10-12 и mono-k2): emit_c/emit_expr.nv принят — его
 #   отказ (приёмник value-записи по указателю, №1654) сняла дверь cast/k1, уже стоящая в main. Мерено на LF.
+# 2026-10-06, task #14 (E2-b3 step 7): diag/diag.nv accepted -- `#impl(Serialize)` derives its
+#   `@serialize` (D341/D345, check/derive_serde.nv) and `[T Serialize]` is judged (D72). The unit has no
+#   `main`, so the instance `json_encode[DiagDto]` is not typed (#1734); typed, it waits for step 5 (the
+#   shell's JSON serializer). Measured with the tree's binary, LF index.
 novac/src/check/binds.nv
-novac/src/diag/diag.nv
 novac/src/lex/lex_test.nv

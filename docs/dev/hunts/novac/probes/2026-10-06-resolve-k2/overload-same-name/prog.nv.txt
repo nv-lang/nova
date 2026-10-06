@@ -1,0 +1,16 @@
+type Sizer protocol {
+    @size() -> int
+}
+
+type Bx {
+    v int
+}
+
+fn Bx @size(extra int) -> int => @v + extra
+fn Bx @size() -> int => @v
+
+fn show[T Sizer](v T) -> int => v.size()
+
+fn main() Io -> () {
+    println(show(Bx { v: 7 }))
+}

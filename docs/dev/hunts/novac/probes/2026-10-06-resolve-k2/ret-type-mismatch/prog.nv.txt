@@ -1,0 +1,15 @@
+type Sizer protocol {
+    @size() -> int
+}
+
+type Bx {
+    v int
+}
+
+fn Bx @size() -> str => "bx"
+
+fn show_sizer[T Sizer](v T) -> int => v.size()
+
+fn main() Io -> () {
+    println(show_sizer(Bx { v: 1 }))
+}

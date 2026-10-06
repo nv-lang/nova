@@ -44,7 +44,7 @@ import ../source.{SourceText}
 import ../lex.{lex, reserialize, Token}
 import ../parse.{parse}
 import ../tree.{Node, NodeKind, raw_node}
-import ../check.{check, check_instance}
+import ../check.{check, check_instance, derive_serialize_text, DerivedText}
 import ../diag.{Diagnostic, ice}
 import ../emit_c.{emit, Instantiation, shell_surface}
 import ../mono.{Reach, reachable}
@@ -564,18 +564,82 @@ export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagno
 
 /// The same, with what the door read for the text's `embed` calls (D412).
 export fn compile_with_embeds(text str, decls []Node, interop InteropTable, embeds EmbedTable) -> []Diagnostic {
-    ro src = SourceText { text }
-    ro tree = parse(tokens_of(text))
-    ro ctx = context_with_embeds(tree, decls, interop, embeds)
+    ro fr = front(text, decls, interop, embeds)
+    ro src = fr.src
+    ro tree = fr.tree
+    ro ctx = fr.ctx
     ro (diags, chan) = check(tree, src, ctx)
-    if diags.len() > 0 { return diags }
+    if diags.len() > 0 { return derived_named(diags, fr) }
     // A generic body's mistakes exist only once an INSTANCE does, so `check`
     // runs the same instances the emitter will. Otherwise a file passes check
     // and is refused by emit: two verdicts about one file, which is the shape
     // this compiler exists to stop repeating.
     mut reach = reachable(tree, ctx, chan)
     ro (idiags, _) = instances_of(tree, src, ctx, reach, decls)
-    idiags
+    derived_named(idiags, fr)
+}
+
+/// The unit as the checker sees it: its text, tree and context -- with the
+/// methods `#impl(Serialize)` derives (D341) already IN the text.
+///
+/// D341 "Injection ordering": the synthesis is injected BEFORE type-check, so
+/// the derived method is typed, instantiated and emitted like one its author
+/// wrote. It needs the COLLECTED unit to be written (which types opted in, what
+/// their fields are and whether each serializes), so the unit is collected,
+/// the methods are spelled, and a unit that gained any is parsed and collected
+/// again -- appended at the END, every offset of the author's text stays what
+/// it was. A unit with no `#impl(Serialize)` pays nothing but the question.
+type Front {
+    src SourceText /// the text the phases read: the unit's, plus the derived methods
+    tree Node /// its tree
+    ctx Ctx /// its context
+    at int /// where the derived methods begin in `src` -- the unit's own length
+    derived DerivedText /// which method starts where, and whose it is
+}
+
+/// Parse and collect the unit, derive, and -- when anything was derived --
+/// parse and collect the text that carries it.
+fn front(text str, decls []Node, interop InteropTable, embeds EmbedTable) -> Front {
+    ro tree = parse(tokens_of(text))
+    ro ctx = context_with_embeds(tree, decls, interop, embeds)
+    ro derived = derive_serialize_text(ctx)
+    if derived.text == "" {
+        return Front { src: SourceText { text }, tree, ctx, at: text.byte_len(), derived }
+    } else {
+        // Something to inject: the unit is read once more, with the methods in.
+    }
+    ro full = "${text}${derived.text}"
+    ro tree2 = parse(tokens_of(full))
+    Front { src: SourceText { text: full }, tree: tree2, ctx: context_with_embeds(tree2, decls, interop, embeds),
+            at: text.byte_len(), derived }
+}
+
+/// A refusal raised INSIDE a derived method names that method, not the unit:
+/// its span lies past the author's text, where no file of the unit has a byte.
+/// The same shape a handed body's refusal takes (#1521) -- its own "file" and
+/// an offset into it -- so the door prints it as it came.
+fn derived_named(diags []Diagnostic, fr Front) -> []Diagnostic {
+    mut out = []Diagnostic.new()
+    for d in diags {
+        // Nothing derived, a span that already names its file, or one in the
+        // author's text: printed as it came.
+        if fr.derived.owners.len() == 0 || d.file != "" || d.lo < fr.at {
+            out.push(d)
+            continue
+        } else {
+            // A span in the derived text: find the method it falls in.
+        }
+        mut k = 0
+        while k + 1 < fr.derived.starts.len() && fr.at + fr.derived.starts[k + 1] <= d.lo {
+            k += 1
+        }
+        ro base = fr.at + fr.derived.starts[k]
+        ro owner = fr.derived.owners[k]
+        out.push(Diagnostic { code: d.code, severity: d.severity, lo: d.lo - base, hi: d.hi - base,
+                              file: "<#impl(Serialize) of ${owner}>",
+                              message: "in the `@serialize` D341 derives for `${owner}`: ${d.message}" })
+    }
+    out
 }
 
 /// The declaration of a row, in THIS file. `None` when the row belongs
@@ -714,19 +778,20 @@ export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
 /// The same, with what the door read for the text's `embed` calls (D412).
 export fn compile_to_c_with_embeds(text str, decls []Node, interop InteropTable, src_name str,
                                    embeds EmbedTable) -> ([]Diagnostic, str) {
-    ro src = SourceText { text }
-    ro tree = parse(tokens_of(text))
-    ro ctx = context_with_embeds(tree, decls, interop, embeds)
+    ro fr = front(text, decls, interop, embeds)
+    ro src = fr.src
+    ro tree = fr.tree
+    ro ctx = fr.ctx
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 {
-        return (diags, "")
+        return (derived_named(diags, fr), "")
     }
     // WHICH callables exist is mono's decision, and it is taken once, here:
     // the emitter is handed the answer, not the collector (E2-b2).
     mut reach = reachable(tree, ctx, chan)
     ro (idiags, insts) = instances_of(tree, src, ctx, reach, decls)
     if idiags.len() > 0 {
-        return (idiags, "")
+        return (derived_named(idiags, fr), "")
     }
     // The emitter is handed the checker's channel, not the checker: it reads
     // decisions and cannot ask for a new one (E2-b1).

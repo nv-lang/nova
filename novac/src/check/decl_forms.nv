@@ -17,7 +17,7 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
-import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO}
+import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO, SERIALIZE_PROTO}
 import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args, leaf_text}
 
 /// An `import` declaration, judged by the subset walk.
@@ -84,12 +84,14 @@ fn Checker mut @judge_attr(children []Node) -> () {
         // form does not exist, as opposed to "not read yet".
         @reject_first_leaf_of(children, IMPL_NO_PROTOCOLS_MSG)
     } else if attr_kids_name(children, IMPL_ATTR)
-              && attr_args_among(children, []str.of(DISPLAY_PROTO, EQUAL_PROTO)) {
+              && attr_args_among(children, []str.of(DISPLAY_PROTO, EQUAL_PROTO, SERIALIZE_PROTO)) {
         // `#impl(P)` (D186) -- the author's opt-in, READ ONLY FOR
-        // THE PROTOCOL THE SUBSET JUDGES, which today is `Display`
-        // (wave B1b). `#impl(Serialize)` stands in novac's own
-        // diag/diag.nv and must keep refusing, or the subset would
-        // claim to honour an opt-in it does nothing about.
+        // THE PROTOCOLS THE SUBSET HONOURS: `Display` (wave B1b),
+        // `Equal`, and `Serialize` (E2-b3: the pipeline derives its
+        // `@serialize` before type-check, check/derive_serde.nv, and
+        // `@judge_serde_fields` refuses what it cannot derive). Any
+        // other keeps refusing, or the subset would claim to honour an
+        // opt-in it does nothing about.
         //
         // ONE CONDITION AND NOT A NESTED REFUSAL, and the reason is
         // a measurement: the nested form spelled `ATTR_MSG` a SECOND
@@ -111,11 +113,9 @@ fn Checker mut @judge_attr(children []Node) -> () {
         // REALTIME_ATTR for the measurement behind it.
     } else {
         // ONE DOOR, two texts: `#impl(P)` of a protocol the subset does not
-        // derive yet -- `#impl(Serialize)` in novac's own diag/diag.nv -- is
-        // named by its cause and its stage (D341's derived `@serialize[S
-        // Serializer]` and its caller `json_encode[T Serialize]` dispatch
-        // through protocol bounds, E2-b3; the integrator's choice (c), sweep
-        // 10); any other attribute keeps the generic text.
+        // derive yet -- `#impl(Deserialize)` first of all -- is named by its
+        // cause and its stage (the integrator's choice (c), sweep 10); any
+        // other attribute keeps the generic text.
         @report_first_leaf_of(children, if attr_kids_name(children, IMPL_ATTR) { IMPL_DEFERRED_MSG } else { ATTR_MSG })
     }
 }

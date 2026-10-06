@@ -333,7 +333,13 @@
 #   know live in builtins (P5).
 # 2026-10-06, task #14 (274.5 3-pred64 step 1), merged over task #2: builtins 84 -> 85: `PANIC_FN` (see the
 #   2026-10-06 entry at the head of this file).
-builtins 85
+# 2026-10-06, task #14 (274.5 3-pred64 steps 2-7): builtins 85 -> 93. `is_derived_proto` (D341 "Bound
+#   satisfaction": the built-in derivable protocols, asked by resolve/resolve.nv), `SERIALIZE_PROTO` and
+#   `SERIALIZE_METHOD` (the protocol `#impl(Serialize)` opts into and the method it derives), and the serde
+#   wire table `is_serde_seq_head`, `is_serde_map_head`, `serde_scalar_wire`, `serde_scalar_widen`,
+#   `is_serde_nested_scalar` (D341/D342 field eligibility and the direct wire call of a scalar), all asked by
+#   check/derive_serde.nv; names of the language and of std live in builtins (P5).
+builtins 93
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -342,7 +348,11 @@ builtins 85
 # что один код отказа отвечал на ДВА разных вопроса: «этого ещё нет, и будет»
 # (долг подмножества, несёт этап) и «этого не будет никогда» (запрет языка).
 # Различает их не текст сообщения, а ТИП, и его читают двери из `rules.nv`.
-check 3
+# check 3 -> 5 (2026-10-06, task #14, 274.5 3-pred64 step 7): `derive_serialize_text` and its result
+#   `DerivedText` -- the `@serialize` `#impl(Serialize)` derives, as Nova text. Outside because the
+#   PIPELINE injects it before type-check (D341 "Injection ordering") and names a refusal raised inside
+#   it by the method's owner; pass order is the pipeline's, so the check module only spells the text.
+check 5
 diag 6
 # emit_c 1 -> 2 (2026-08-21, E2-b2): `Instantiation` -- one already-typed
 # instance crossing the pipeline -> emitter boundary as DATA (declaration,
