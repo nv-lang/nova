@@ -82,5 +82,17 @@
     "acceptor": 4
   },
   "machine_slots": 1,
-  "inflight_limit": 5
+  "inflight_limit": 5,
+  "heavy_commands": [
+    "gate.sh",
+    "gate-novac.sh",
+    "gates.sh",
+    "double-build.sh",
+    "nova test",
+    "nova.exe test",
+    "cargo build",
+    "cargo test",
+    "check-novac-differential",
+    "check-novac-self-accepted"
+  ]
 }
