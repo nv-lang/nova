@@ -18,7 +18,10 @@ fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
-if [ ! -f "$ROOT/nova-cli/target/release/nova.exe" ] && [ ! -f "$ROOT/nova-cli/target/release/nova" ]; then
+# Оракул — той же дверью, что у стража (№1750): в дереве задачи своего бинаря нет,
+# и самотест молча пропускался там, где страж уже находил бинарь главной копии.
+. "$GD/lib/novac.sh"
+if ! novac_find_oracle "$ROOT" >/dev/null 2>&1; then
     echo "test-check-novac-lint: пропуск — оракул не собран (судить нечем)"
     exit 0
 fi

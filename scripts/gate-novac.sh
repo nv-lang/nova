@@ -62,6 +62,27 @@ ROOT="${1:-$(pwd)}"
 # судил отсутствующий бинарь с 2026-10-02 09:04 (находка nova-f2, реестр №1661).
 . "$ROOT/scripts/guards/lib/novac.sh"
 
+# BOEHM GC ГЛАВНОЙ КОПИИ ДЛЯ ДЕРЕВА ЗАДАЧИ (реестр 221.1 №1750, 2026-10-06). Шаг
+# novac-build зовёт оракул, а тому нужен gc.lib с заголовками. Свежее дерево задачи
+# не несёт ни `vcpkg_installed` (вне git), ни выкачанных подмодулей GC — и сборка
+# падала «Boehm GC (gc.lib) not found» в каждом дереве задачи. Оракул сам умеет
+# брать vcpkg главного дерева (№650), но главная копия этой машины собирает GC из
+# подмодуля в `target/gc-cache` (gc.lib рядом, заголовки в `include/`), а вывод
+# заголовков `lib/../include` эту раскладку не видит. Явное окружение побеждает;
+# своё дерево с GC — тоже (подмодуль выкачан или vcpkg есть) — тогда не трогаем.
+if [ -z "${NOVA_GC_LIB_DIR:-}" ] \
+   && [ ! -f "$ROOT/compiler-codegen/nova_rt/gc/extra/gc.c" ] \
+   && [ ! -f "$ROOT/compiler-codegen/vcpkg_installed/x64-windows-static/lib/gc.lib" ]; then
+    _gm=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    _gm=${_gm%/.git}
+    if [ -n "$_gm" ] && [ -f "$_gm/target/gc-cache/gc.lib" ] && [ -d "$_gm/target/gc-cache/include" ]; then
+        export NOVA_GC_LIB_DIR="$_gm/target/gc-cache"
+        export NOVA_GC_INCLUDE_DIR="$_gm/target/gc-cache/include"
+        echo "novac-gate :: GC из главной копии ($NOVA_GC_LIB_DIR) — в дереве своего нет (№1750)"
+    fi
+    unset _gm
+fi
+
 # ОДИН ГЕЙТ НА ДЕРЕВО (реестр №1389): замок берётся ДО ловушки вердикта — иначе
 # отказанный второй прогон переписал бы своим RC файл вердикта живого первого.
 . "$(dirname "$0")/tools/gate-lock.sh"
@@ -121,7 +142,18 @@ NOVAC_VERDICT_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null ||
 NOVAC_VERDICT_SHORT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 NOVAC_TREE_TAIL=" [tree=$ROOT head=$NOVAC_VERDICT_SHORT branch=$NOVAC_VERDICT_BRANCH]"
 echo "novac-gate :: дерево $ROOT, коммит $NOVAC_VERDICT_SHORT, ветка $NOVAC_VERDICT_BRANCH, ярус $NOVAC_TIER"
+# ВЕРДИКТ — ЕЩЁ И В ДЕРЕВО (реестр 221.1 №1750, 2026-10-06). `/tmp/gate_novac.done`
+# один на машину, а гейтов novac идёт по одному на задачу: окна подряд переписывают
+# его, и страж слияния кандидата (check-merge-discipline) читал бы вердикт чужой
+# задачи — «судил другое содержимое» без вины судимого. Копия в `target/` дерева,
+# где шёл прогон, принадлежит только ему; страж берёт её первой. Общий файл
+# остаётся: его читают gate-bg и merge-precheck. Путь подменён (`NOVA_NOVAC_VERDICT`,
+# так делают самотесты) — копии в дерево НЕТ: поддельный вердикт самотеста лёг бы
+# в настоящее `target/` и открыл бы слияние, которого никто не судил.
+NOVAC_DONE_TREE=""
+[ -z "${NOVA_NOVAC_VERDICT:-}" ] && NOVAC_DONE_TREE="$ROOT/target/gate_novac.done"
 rm -f "$NOVAC_DONE"
+[ -n "$NOVAC_DONE_TREE" ] && rm -f "$NOVAC_DONE_TREE"
 # ЗЕЛЁНЫЙ ВЕРДИКТ ДАЁТ ТОЛЬКО ПРОГОН, ДОШЕДШИЙ ДО СВОЕЙ ПОСЛЕДНЕЙ СТРОКИ (№1307).
 # Ловушка EXIT берёт `$?` ПОСЛЕДНЕЙ ЗАВЕРШЁННОЙ КОМАНДЫ, а не исход прогона.
 # Прогон, убитый сигналом посреди работы (сторож окна, остановка фоновой задачи,
@@ -145,6 +177,9 @@ _novac_write_verdict() {
     [ -n "${SEAMS:-}" ] && _tier=novac-sample
     echo "RC=$_rc SEC=$(( $(date +%s) - GATE_T0 )) TIER=$_tier HASH=$NOVAC_VERDICT_HASH BRANCH=$NOVAC_VERDICT_BRANCH$_tail" \
         > "$NOVAC_DONE"
+    if [ -n "$NOVAC_DONE_TREE" ]; then
+        mkdir -p "$ROOT/target" 2>/dev/null && cp "$NOVAC_DONE" "$NOVAC_DONE_TREE" 2>/dev/null
+    fi
     gate_lock_release
     return $_rc
 }
@@ -461,8 +496,13 @@ step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ �
 # существует, гейт ОБЯЗАН собрать novac; провал сборки — красный (это регресс
 # оракула по подмножеству novac либо регресс novac — оба требуют глаз, не тишины).
 if [ -f "$ROOT/novac/src/main.nv" ]; then
-    NOVA_BIN="$ROOT/nova-cli/target/release/nova.exe"
-    [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
+    # ОРАКУЛ — ДВЕРЬЮ novac_find_oracle (реестр 221.1 №1750, 2026-10-06). Дерево
+    # задачи своего `nova-cli/target` не несёт (сборка одна на все деревья, №650),
+    # и шаг краснел «оракул не собран» в КАЖДОМ дереве задачи — гейт novac там не
+    # бывал зелёным, исполнители видели красное окружения и переставали ему верить.
+    # Дверь берёт свой бинарь, а при его отсутствии — бинарь главной копии.
+    NOVA_BIN="$(novac_find_oracle "$ROOT" 2>/dev/null || true)"
+    [ -n "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
     if [ -f "$NOVA_BIN" ]; then
         mkdir -p "$ROOT/target" "$ROOT/novac/target"
         # ПЕРЕСБОРКА ТОЛЬКО ПО НУЖДЕ (П14). Пять секунд на каждой правке текста

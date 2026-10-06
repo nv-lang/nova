@@ -413,6 +413,62 @@ fi
 $GC merge --abort >/dev/null 2>&1
 $GC checkout -q -f main 2>/dev/null
 
+# --- №1750: сборка кандидата на origin/main — тоже слияние в main ------------
+# Кандидат: ветка ровно на origin/main, `merge --no-ff` ветки задачи, затем CI и
+# перемотка main. Коммит слияния рождается на кандидате; до №1750 страж его
+# пропускал («правило касается только главной»), и три кандидата Карины ушли в CI
+# без вердикта gate-novac. Основного вердикта клетки НЕ дают — на кандидате его
+# заменяет CI, и страж не вправе его требовать.
+git -C "$TMP" update-ref refs/remotes/origin/main main
+$GC checkout -q -b cand1750 main 2>/dev/null
+$GC merge --no-commit --no-ff nvbr >/dev/null 2>&1
+NV_SHA=$(git -C "$TMP" rev-parse nvbr 2>/dev/null)
+rm -f "$NV" "$TMP/target/gate_novac.done"
+
+# 28. Кандидат несёт novac-пути, вердикта яруса novac нет — ОТКАЗ.
+out=$(NOVA_GATE_VERDICT="$TMP/no-main-verdict" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'сборка кандидата' && echo "$out" | grep -q 'яруса novac'; then
+    ok "кандидат на origin/main без вердикта novac — отказ"
+else
+    bad "кандидат с novac-путями прошёл без вердикта novac (код $rc): $out"
+fi
+
+# 29. Вердикт novac зелёный, о вливаемой вершине, лежит В ДЕРЕВЕ (`target/`) —
+#     ПРОПУСК без основного вердикта. Путь не подан: страж обязан найти его сам.
+mkdir -p "$TMP/target"
+echo "RC=0 SEC=900 TIER=novac HASH=$NV_SHA" > "$TMP/target/gate_novac.done"
+out=$(env -u NOVA_NOVAC_VERDICT NOVA_GATE_VERDICT="$TMP/no-main-verdict" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'кандидат на origin/main'; then
+    ok "кандидат с зелёным вердиктом novac из дерева — пропуск (основной гейт за CI)"
+else
+    bad "ложный отказ кандидату с вердиктом novac в дереве (код $rc): $out"
+fi
+
+# 30. Вердикт в дереве о ДРУГОЙ вершине — отказ (сосед переписал бы /tmp; своё
+#     дерево судит только своё).
+echo "RC=0 SEC=900 TIER=novac HASH=0123456789abcdef0123456789abcdef01234567" > "$TMP/target/gate_novac.done"
+out=$(env -u NOVA_NOVAC_VERDICT NOVA_GATE_VERDICT="$TMP/no-main-verdict" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q 'ДРУГОЕ содержимое'; then
+    ok "кандидат: вердикт novac о другой вершине — отказ"
+else
+    bad "вердикт novac о чужой вершине открыл кандидата (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+rm -f "$TMP/target/gate_novac.done"
+
+# 31. Ветка НЕ на origin/main (рабочая ветка задачи, сливающая что-то в себя) —
+#     пропуск, как до №1750: правило о main не судит рабочие слияния.
+$GC checkout -q -b work1750 main~1 2>/dev/null
+$GC merge --no-commit --no-ff nvbr >/dev/null 2>&1
+out=$(NOVA_GATE_VERDICT="$TMP/no-main-verdict" NOVA_NOVAC_VERDICT="$NV" bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && echo "$out" | grep -q 'пропуск'; then
+    ok "рабочая ветка не на origin/main — пропуск"
+else
+    bad "рабочее слияние задачи судится как кандидат (код $rc): $out"
+fi
+$GC merge --abort >/dev/null 2>&1
+$GC checkout -q -f main 2>/dev/null
+
 if [ "$FAILED" -eq 0 ]; then echo "селфтест check-merge-discipline: $CASES/$CASES ok"; exit 0; fi
 echo "селфтест check-merge-discipline: ЕСТЬ ПРОВАЛЫ" >&2
 exit 1
