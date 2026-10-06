@@ -219,7 +219,11 @@ fn free_overload_tail(ctx Ctx, row FnRow) -> str {
             None => s.append(UNMEASURED_SPELLING)
         }
     }
-    if fd.param_cnt == 0 { s.append(UNMEASURED_SPELLING) }
+    if fd.param_cnt == 0 {
+        s.append(UNMEASURED_SPELLING)
+    } else {
+        // The parameters above are the whole suffix.
+    }
     s
 }
 

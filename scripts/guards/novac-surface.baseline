@@ -4,6 +4,11 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-06 (задача #14, 274.5 §3-пред64 Ш2–Ш3), sem 387 -> 388: `ProtoTable @requires_method`
+#   -- требует ли метод этого имени какой-либо протокол реестра; спрашивает проход формы модуля
+#   check (check/rules.nv), который знает имена, а не типы, и не должен отвергать `x.size()` у
+#   ограниченного параметра как неизвестный метод.
+#
 #   2026-10-06 (задача #14, 274.5 §3-пред64 Ш1), builtins 82 -> 83: `PANIC_FN` -- имя
 #   интринсика `panic` (D13); наружу потому, что его спрашивают двое: дверь проверки
 #   (check/assert_call.nv) и эмиттер, выбирающий печать вызова (emit_c/emit_expr.nv).
@@ -1194,7 +1199,7 @@ resolve 27
 #   root unit then instantiates std `Vec @pop`, whose `read_consume_at` novac does not compile).
 #   sem/channel.nv: `@record_embed`, `@record_embed_copy` (check) and `@embed_row_at`,
 #   `@embed_copies` (check and emit_c) -- the checker's decision on an `embed` call node.
-sem 387
+sem 388
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

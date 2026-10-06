@@ -36,11 +36,11 @@ module novac.resolve
 
 import ../diag.{ice}
 import ../names.{NameTable, NamespaceId}
-import ../builtins.{ENTRY_FN}
+import ../builtins.{ENTRY_FN, TypeKind}
 import ../types.{TyId, is_ty, Interner}
-import ../sem.{FnTable, FnDef, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault}
+import ../sem.{FnTable, FnDef, FnRow, raw_row, no_row, Ctx, ProtoSig, ArgSpec, CallForm, bind_fault, ParamMode}
 import ../sem.{FieldTable, FieldRow, raw_frow, is_frow}
-import ../sem.{bind_slot_of, mode_admits, type_admits, lit_admits}
+import ../sem.{bind_slot_of, mode_admits, type_admits, lit_admits, slot_binding_in}
 import ../sem.{ty_source_name}
 
 /// How a callable lookup turned out. A sum, not an int code: "not found"
@@ -777,13 +777,48 @@ export fn missing_sig_of(ctx Ctx, index FnIndex, t TyId, proto str) -> Option[st
     ro pd = ctx.protos.def_of(proto)?
     for i in pd.sig_off..(pd.sig_off + pd.sig_cnt) {
         ro sig = ctx.protos.sigs[i]
-        if !index.has_method_for(t, ctx, sig) {
-            return Some(render_sig(ctx, sig))
-        } else {
+        if index.has_method_for(t, ctx, sig) {
             // This requirement is met; the next one decides.
+        } else if Some(other) = index.method_mode_for(t, ctx, sig, false) {
+            // THE METHOD IS THERE, ITS RECEIVER MODE IS NOT THE CONTRACT'S --
+            // D209 "Enforcement paths" 2: structural conformance at a generic
+            // bound judges `receiver_mut` too, under the codes of path 1.
+            return Some(mode_mismatch_text(ctx, sig, other))
+        } else {
+            return Some(render_sig(ctx, sig))
         }
     }
     None
+}
+
+/// The method a contract requires is there with ANOTHER receiver mode (D209):
+/// named by the code D209 gives the pair, and by both modes.
+fn mode_mismatch_text(ctx Ctx, sig ProtoSig, has ParamMode) -> str =>
+    "${render_sig(ctx, sig)} with a `${mode_word(sig.mode)}` receiver -- the type's method takes it `${mode_word(has)}`${mode_code(sig.mode, has)}"
+
+/// D209's code for a pair (contract mode, the type's mode), asked only for two
+/// DIFFERENT modes. The table names four pairs; the fifth (an `ro` contract, a
+/// `consume` method) is refused all the same -- path 2 "matches every method's
+/// `receiver_mut`" -- without a code the spec does not give.
+fn mode_code(want ParamMode, has ParamMode) -> str {
+    match want {
+        ModeMut => if has == ParamMode.ModeRo {
+            " (E_PROTO_IMPL_RO_FOR_MUT, D209)"
+        } else {
+            " (E_PROTO_IMPL_CONSUME_FOR_MUT, D209)"
+        }
+        ModeRo => if has == ParamMode.ModeMut { " (E_PROTO_IMPL_MUT_FOR_RO, D209)" } else { " (D209)" }
+        ModeConsume => " (E_PROTO_IMPL_MUT_FOR_CONSUME, D209)"
+    }
+}
+
+/// The spelling of a receiver mode as the source writes it.
+fn mode_word(m ParamMode) -> str {
+    match m {
+        ModeRo => "ro"
+        ModeMut => "mut"
+        ModeConsume => "consume"
+    }
 }
 
 /// One required signature as a person reads it: `size() -> int`.
@@ -823,30 +858,67 @@ fn render_sig(ctx Ctx, sig ProtoSig) -> str {
 ///
 /// Walks the SAME-NAME chain (`heads` plus `next`), never a linear scan of
 /// the table -- the names module makes that a guard-red shape.
-#realtime nogc
-export fn FnIndex @has_method_for(t TyId, ctx Ctx, sig ProtoSig) -> bool {
-    mut r = @heads.find(sig.name)
+///
+/// A GENERIC candidate (std's `Vec[T] @ptr()` for `Vec[str]`, task #14) meets
+/// the signature through the substitution its receiver fixes: until std's
+/// protocols entered the registry no bound naming one was ever judged, and the
+/// literal receiver comparison answered "missing" for every generic method.
+/// Not `#realtime nogc` any more: the substitution is a vector.
+export fn FnIndex @has_method_for(t TyId, ctx Ctx, sig ProtoSig) -> bool =>
+    @method_mode_for(t, ctx, sig, true).is_some()
+
+/// The receiver MODE of the first candidate on `t` meeting the signature, or
+/// None. `modes`: the candidate's mode must be the contract's (D209) -- asked
+/// false only to tell "no such method" from "another receiver mode".
+/// The chain's head comes from `@first_row_of`, the lookup door that builds
+/// nothing (P18); this body walks `next` and builds the receiver's substitution.
+fn FnIndex @method_mode_for(t TyId, ctx Ctx, sig ProtoSig, modes bool) -> Option[ParamMode] {
+    mut r = raw_row(@first_row_of(sig.name))
     while r >= 0 {
         ro fd = ctx.fns.rows[r]
         r = raw_row(@next[raw_row(FnRow(r))])
         if !fd.has_recv { continue }
         if fd.param_cnt != sig.param_cnt + 1 { continue }
-        if ctx.fns.params[fd.param_off].type_id != t { continue }
+        if modes && ctx.fns.params[fd.param_off].mode != sig.mode { continue }
+        ro ids = recv_subst(ctx, fd, t)
         mut ok = true
         for i in 0..sig.param_cnt {
             ro want = ctx.protos.sig_params[sig.param_off + i]
-            if !is_ty(want) { continue }
-            if ctx.fns.params[fd.param_off + 1 + i].type_id != want {
+            // A position the signature names by its OWN type parameter (`mut s
+            // S` of `@serialize[S Serializer]`) is the candidate's own parameter
+            // too, at a slot the two declarations number apart: not compared.
+            if !is_ty(want) || ctx.tys.kind_of(want) == TypeKind.TkParam { continue }
+            if at_subst(ctx, ctx.fns.params[fd.param_off + 1 + i].type_id, ids) != want {
                 ok = false
             } else {
                 // This position matches; the remaining ones decide.
             }
         }
         if !ok { continue }
-        if is_ty(sig.ret_id) && fd.ret_id != sig.ret_id { continue }
-        return true
+        if is_ty(sig.ret_id) && at_subst(ctx, fd.ret_id, ids) != sig.ret_id { continue }
+        // The receiver itself, under that substitution, must BE `t`.
+        if at_subst(ctx, ctx.fns.params[fd.param_off].type_id, ids) != t { continue }
+        return Some(ctx.fns.params[fd.param_off].mode)
     }
-    false
+    None
+}
+
+/// The substitution a candidate's RECEIVER fixes against `t`: one entry per
+/// type parameter of the row, `no_ty()` where the receiver does not mention the
+/// slot (the method's own parameters). Empty for a non-generic row.
+fn recv_subst(ctx Ctx, fd FnDef, t TyId) -> []TyId {
+    mut ids = []TyId.new()
+    for slot in 0..fd.tparam_cnt {
+        ids.push(slot_binding_in(ctx.tys, ctx.fns.params[fd.param_off].type_id, t, slot))
+    }
+    ids
+}
+
+/// `x` under `ids` -- itself for an empty substitution; `no_ty()` when `x`
+/// mentions a slot `ids` leaves unbound (the interner's partial door answers so).
+fn at_subst(ctx Ctx, x TyId, ids []TyId) -> TyId {
+    if !is_ty(x) || ids.len() == 0 { return x }
+    ctx.tys.subst_known(x, ids)
 }
 
 // `candidates_from` lived in the table file until 2026-08-21 and is gone with

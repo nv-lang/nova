@@ -1,0 +1,15 @@
+module bound_call.pos_3
+
+// A BOUND NAMING A PROTOCOL OF STD, MET BY A GENERIC METHOD OF STD: `Vec[T]
+// @append[S AsSlice[T]]` takes another vector, and `Vec[T] @ptr()` / `@len()`
+// meet the contract only through the substitution the receiver fixes (T :=
+// int). Until std's protocols entered the registry (task #14) no such bound
+// was judged at all; the first judging compared the receiver literally and
+// refused seven files of novac's own source -- this cell is that class.
+fn main() {
+    mut a = []int.of(1, 2, 3)
+    ro b = []int.of(4, 5)
+    a.append(b)
+    println(a.len())
+    println(a[4])
+}

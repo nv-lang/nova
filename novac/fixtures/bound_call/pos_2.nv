@@ -1,0 +1,40 @@
+module bound_call.pos_2
+
+// THE SERIALIZE SHAPE, on a contract of the file's own: a protocol whose
+// required method is GENERIC with a bound of its own (`@emit[S Sink](mut s S)`,
+// the form of std's `@serialize[S Serializer](mut s S)`), a `mut` receiver in
+// the inner contract, and a caller that hands a local by `mut`.
+type Sink protocol {
+    mut @put(v int) -> ()
+}
+
+type Buf {
+    total int
+}
+
+fn Buf mut @put(v int) -> () {
+    @total = @total + v
+}
+
+type Item protocol {
+    @emit[S Sink](mut s S) -> ()
+}
+
+type Bx {
+    n int
+}
+
+fn Bx @emit[S Sink](mut s S) -> () {
+    s.put(@n)
+    s.put(@n)
+}
+
+fn feed[T Item](x T) -> int {
+    mut b = Buf { total: 0 }
+    x.emit(b)
+    b.total
+}
+
+fn main() {
+    println(feed(Bx { n: 21 }))
+}

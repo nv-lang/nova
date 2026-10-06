@@ -498,35 +498,40 @@ export fn ret_is_unit(rk []Node) -> bool {
 
 /// The TYPE a protocol signature's parameter declares, or `no_ty()`.
 ///
-/// A protocol signature carries no type parameters of its own in this wave, so
-/// the resolution needs no substitution: the door that resolves a type NAME is
-/// asked with an empty parameter list, and a name it does not know answers
-/// absence rather than a guess.
-export fn ty_of_param_node(pm Node, types []TypeDef, defs DefTable, tys Interner) -> TyId {
-    mut seen_name = false
-    for c in branch_children(pm) {
-        if c.kind_of() != NodeKind.LeafNode { continue }
-        if leaf_kind(c) != TokenKind.Ident { continue }
-        if !seen_name {
-            seen_name = true
-            continue
-        }
-        return ty_of_type_name(leaf_text(c), []str.new(), []TyId.new(), types, defs)
+/// A name it does not know answers absence rather than a guess.
+/// THE TYPE REFERENCE DOOR, not the first identifier after the name (task #14,
+/// 2026-10-06): the leaf read made `v []u8` a `u8` and `Result[(), SerError]`
+/// no type, so std's `Serializer` could be met by nobody. `tps` are the
+/// signature's OWN type parameters (`@serialize[S Serializer](mut s S)`); the
+/// receiver is the candidate, unknown here, so `Self` resolves to no type and
+/// that position is not compared.
+export fn ty_of_param_node(pm Node, tps []str, types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
+    ro pk = branch_children(pm)
+    ro at = param_type_at(pk) ?? -1
+    if at < 0 { return no_ty() }
+    ty_of_type_ref(pk, at, no_ty(), tps, sig_param_rows(tps, tys), types, defs, tys)
+}
+
+/// The parameter terms of a protocol signature's own type parameters, by slot.
+fn sig_param_rows(tps []str, mut tys Interner) -> []TyId {
+    mut prow = []TyId.new()
+    for i in 0..tps.len() {
+        prow.push(tys.param(i))
     }
-    no_ty()
+    prow
 }
 
 /// The RETURN type a protocol signature declares, or `no_ty()` when it declares
 /// none -- the absence is visible because the `RetType` node is absent, and the
 /// checker names it instead of assuming a type.
-export fn ty_of_ret_node(mk []Node, types []TypeDef, defs DefTable, tys Interner) -> TyId {
+export fn ty_of_ret_node(mk []Node, tps []str, types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
     for c in mk {
         if c.kind_of() != NodeKind.RetType { continue }
-        for r in branch_children(c) {
-            if r.kind_of() != NodeKind.LeafNode { continue }
-            if leaf_kind(r) != TokenKind.Ident { continue }
-            return ty_of_type_name(leaf_text(r), []str.new(), []TyId.new(), types, defs)
-        }
+        ro rk = branch_children(c)
+        // `-> ()` is the unit, read by the same rule a declaration's return takes.
+        if ret_is_unit(rk) { return ty_of_type_name(UNIT_TYPE_NAME, tps, sig_param_rows(tps, tys), types, defs) }
+        // Child 0 is the arrow; the type reference starts after it.
+        return ty_of_type_ref(rk, 1, no_ty(), tps, sig_param_rows(tps, tys), types, defs, tys)
     }
     no_ty()
 }

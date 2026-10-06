@@ -1,0 +1,23 @@
+module bound_call.neg_2
+
+// AN UNMET BOUND ON A GENERIC METHOD'S OWN PARAMETER (`@add[U Sizer]`, D122):
+// the method call takes the same filter the free call takes.
+// NOVAC_EXPECT in call to `add[U Sizer]`
+type Sizer protocol {
+    @size() -> int
+}
+
+type Plain {
+    n int
+}
+
+type Tally {
+    base int
+}
+
+fn Tally @add[U Sizer](x U) -> int => @base + x.size()
+
+fn main() {
+    ro t = Tally { base: 1 }
+    println(t.add(Plain { n: 4 }))
+}
