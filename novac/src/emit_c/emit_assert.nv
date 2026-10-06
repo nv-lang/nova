@@ -38,12 +38,16 @@ fn Emitter mut @emit_assert(e Node, kids []Node) -> () {
 /// first (the runtime prints `at <file>:<line> (throw site)` after the message),
 /// then `nv_panic`, which never returns; the trailing `0` gives the comma
 /// expression the `never` type's C value (`nova_int`) for a value position.
-fn Emitter mut @emit_panic(e Node, kids []Node) -> () {
+fn Emitter mut @emit_panic_call(e Node, kids []Node) -> () {
     ro note = @out.contract_of(e.id_of()) ?? ice("emit_c: a panic the checker left without its note")
-    @body.append("(nova_throw_site_set_dominant(\"${@src_name}\", ${note.src_line}), nv_panic(")
+    @body.append("(nova_throw_site_set_dominant(\"${@src_name}\", ${note.src_line}), ${RT_DEATH_C}(")
     @emit_expr(call_arg_at(kids, 1, 0))
     @body.append("), (nova_int)0LL)")
 }
+
+/// The runtime's death entry (effects.h): never returns -- `longjmp` into the
+/// fiber's frame, or abort.
+const RT_DEATH_C = "nv_panic"
 
 /// The message as C text: a string literal as written, anything else -- or no
 /// message -- the runtime's NULL (the oracle's rule: only a literal is baked in).

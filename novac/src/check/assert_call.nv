@@ -22,7 +22,28 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../sem.{is_arg_node, call_arg_at}
 import ../source.{Span}
+import ../builtins.{SIZE_OF_FN, ASSERT_FN, PANIC_FN}
 import ../diag.{ice}
+
+/// THE INTRINSIC DISPATCH: a free call by one of the language's intrinsic
+/// names -- `size_of[T]()` (D216), `assert(..)` (D81), `panic(..)` (D13) -- that
+/// no declaration of the program takes, typed by its own door. Answers whether
+/// the call was one (and then it is recorded or refused by name).
+fn Checker mut @type_intrinsic_call(e Node, kids []Node, cname str) -> bool {
+    // SILENT-OK: the program declares this name itself, and the name table types its call.
+    if @ctx.defs.def_of(cname).is_some() { return false }
+    if cname == SIZE_OF_FN {
+        @type_size_of(e, kids)
+    } else if cname == ASSERT_FN {
+        @type_assert(e, kids)
+    } else if cname == PANIC_FN {
+        @type_panic_call(e, kids)
+    } else {
+        // SILENT-OK: not an intrinsic name, so the ordinary free call types it.
+        return false
+    }
+    true
+}
 
 /// `assert(cond)` and `assert(cond, msg)`: the arity, the two types, and the
 /// note the emitter spells. A message that is not a string LITERAL is typed and
@@ -83,7 +104,7 @@ fn Checker mut @type_assert(e Node, kids []Node) -> () {
 /// stands in any value position -- a tail of `-> never`, a `??` fallback, an arm.
 /// The note carries the line of the CALLEE, where the oracle stamps its throw
 /// site (`nova_throw_site_set_dominant`, effects.h); the display is unused.
-fn Checker mut @type_panic(e Node, kids []Node) -> () {
+fn Checker mut @type_panic_call(e Node, kids []Node) -> () {
     mut n = 0
     mut at = 0
     for c in kids {
@@ -138,6 +159,6 @@ const ASSERT_COND_MSG = "the condition of `assert` is a `bool` -- this argument 
 
 const ASSERT_MSG_TYPE_MSG = "the message of `assert` is a `str` -- this argument is of another type"
 
-const PANIC_ARITY_MSG = "`panic` takes one message, by position: `panic(\"msg\")` (std/prelude/runtime.nv)"
+const PANIC_ARITY_MSG = "`panic` takes exactly one message, by position (std/prelude/runtime.nv: `msg str`)"
 
 const PANIC_MSG_TYPE_MSG = "the message of `panic` is a `str` -- this argument is of another type"

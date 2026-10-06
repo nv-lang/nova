@@ -592,7 +592,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // intrinsic and noted its line.
         ro ik = branch_children(e)
         if call_callee_text(ik) == PANIC_FN {
-            @emit_panic(e, ik)
+            @emit_panic_call(e, ik)
         } else {
             @emit_assert(e, ik)
         }
