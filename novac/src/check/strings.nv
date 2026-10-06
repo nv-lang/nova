@@ -90,8 +90,8 @@ fn Checker mut @report_if_bad_escape(kids []Node) -> () {
             }
             // `\u{H…}` (D467 section 2): a codepoint in hex, and a LANGUAGE
             // rule, not a subset one -- a surrogate, a value past U+10FFFF, a
-            // missing brace or no digits is wrong Nova, refused as the oracle
-            // refuses it ("invalid Unicode codepoint", "expected hex digits").
+            // missing brace or no digits is wrong Nova, a permanent refusal
+            // and not subset debt (fixtures str_unicode_escape/neg_1..3).
             // The emitter spells the codepoint's UTF-8 bytes
             // (`literal_as_c_text`); the same door reads the escape there.
             if e == LOWER_U {

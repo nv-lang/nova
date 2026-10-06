@@ -39,7 +39,6 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../builtins.{ALIAS_MARKER, PROTOCOL_MARKER, VALUE_MARKER, EFFECT_MARKER, is_field_visibility_word}
 import ../names.{DeclId, no_decl, is_decl}
-import ../diag.{ice}
 
 /// What the TAIL of a type declaration says, when it is a type reference:
 /// which type, and whether the declaration is an ALIAS of it or a NEWTYPE over
@@ -493,7 +492,7 @@ export fn escaped_byte_len(piece str) -> int {
             // Counted as one, a Cyrillic letter's fragment ran a byte short.
             ro close = unicode_escape_close(b, i + 1)
             ro cp = if close < 0 { -1 } else { unicode_escape_value(b, i + 1, close) }
-            if cp < 0 { ice("slots: a unicode escape the judge let through") }
+            assert(cp >= 0, "slots: a unicode escape the judge let through")
             len += utf8_width(cp)
             i = close + 1
         } else {

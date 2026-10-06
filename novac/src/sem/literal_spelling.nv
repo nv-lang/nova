@@ -154,10 +154,12 @@ fn unicode_escape_close(b []u8, at int) -> int {
 /// holds cannot wrap around into a valid value.
 fn unicode_escape_value(b []u8, at int, close int) -> int {
     mut cp = 0
-    mut i = at + 2
-    while i < close {
-        if cp <= UESC_MAX { cp = cp * 16 + hex_digit_value(b[i]) }
-        i += 1
+    for i in at + 2..close {
+        if cp <= UESC_MAX {
+            cp = cp * 16 + hex_digit_value(b[i])
+        } else {
+            // Past the bound already: the sum stops growing, so it cannot wrap.
+        }
     }
     if cp > UESC_MAX || (cp >= UESC_SURROGATE_LO && cp <= UESC_SURROGATE_HI) { -1 } else { cp }
 }
@@ -206,7 +208,7 @@ fn spell_unicode_escapes(s str) -> str {
         }
         ro close = unicode_escape_close(b, i + 1)
         ro cp = if close < 0 { -1 } else { unicode_escape_value(b, i + 1, close) }
-        if cp < 0 { ice("mangle: a unicode escape the judge let through") }
+        assert(cp >= 0, "mangle: a unicode escape the judge let through")
         out.append(s[from..i])
         append_utf8_octal(out, cp)
         i = close + 1
