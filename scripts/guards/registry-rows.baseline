@@ -1568,8 +1568,11 @@
 # 2026-10-06, task #16, merge of origin/main 55af9d5ae: row 1737 arrived with it (filed by the
 # integrator), so 1737 leaves gaps= by the same merge. rows 1674 (main) + 4 (#16: 1743-1745, 1748) = 1678,
 # max 1748.
-rows=1678
-max=1748
+# 2026-10-06, task #16 (acceptance round 3): row 1749 (Carina's consume flow leaves instances of handed
+# generic bodies unwalked, the simplification [M-novac-flow-handed-generic-instances]; K2, does not block the
+# tag), numbered by the integrator for check-bug-number-sync. rows 1678->1679, max 1748->1749.
+rows=1679
+max=1749
 rows=1611
 max=1693
 rows=1590
