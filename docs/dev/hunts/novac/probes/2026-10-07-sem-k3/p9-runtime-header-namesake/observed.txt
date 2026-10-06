@@ -1,0 +1,18 @@
+check rc=0
+emit rc=0
+# emitted C naming Nova_ChannelState:
+12251:typedef struct Nova_ChannelState Nova_ChannelState;
+12252:struct Nova_ChannelState {
+12257:static nova_int novac_fn_depth_of__ChannelState__to_nova_int(Nova_ChannelState* s) {
+12267:    Nova_ChannelState* _novac_tmp_t1 = (Nova_ChannelState*)nova_alloc(sizeof(Nova_ChannelState));
+12270:    nova_print_int(novac_fn_depth_of__ChannelState__to_nova_int(_novac_tmp_t1));
+# runtime header definition:
+49:typedef struct Nova_ChannelState Nova_ChannelState;
+90:    Nova_ChannelState* channel;
+133:struct Nova_ChannelState {
+# nova_rt.h include chain:
+compiler-codegen/nova_rt/nova_rt.h:654:#include "channels.h"
+# clang -fsyntax-only on the emitted unit (includes: compiler-codegen, libuv, bdwgc):
+emitted.c:12252:8: error: redefinition of 'Nova_ChannelState'
+emitted.c:12259:13: error: no member named 'open' in 'struct Nova_ChannelState'
+emitted.c:12260:25: error: no member named 'depth' in 'struct Nova_ChannelState'

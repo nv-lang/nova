@@ -1,0 +1,23 @@
+// cmd: NOVAC_SELF_PATH=docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p7-handed-plain-sum-tags/lib novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p7-handed-plain-sum-tags/app/main.nv | grep -n 'Figure' ; NOVAC_SELF_PATH=docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p7-handed-plain-sum-tags/lib novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p7-handed-plain-sum-tags/lib/shapes.nv | grep -n 'Figure'
+// K3 probe, the p6 property WITHOUT any D381 collision: a sum of a PROGRAM
+// module, named by no shell struct. Its declaring unit spells its tags and
+// makers in novac's namespace with the module (`c_tag` mangle.nv:719,
+// `c_maker` mangle.nv:741: `NOVAC_TAG_shapes_Figure_*`,
+// `novac_make_shapes_Figure_*`); every unit it is HANDED to takes the
+// "handed = the shell's" branch (mangle.nv:714 -> `c_shell_tag` :730, and
+// :740) and spells `NOVA_TAG_Figure_*`, `nova_make_Figure_*` -- names the
+// shell does not carry, for a type that is not the shell's. The struct door
+// (`decl_base`, mangle.nv:249) does tell a program module from std
+// (`interop.has_module`); the tag and maker doors do not.
+
+import shapes.{Figure, ring}
+
+fn show(f Figure) -> str => match f {
+    Dot => "dot"
+    Ring(n) => "ring ${n}"
+}
+
+fn main() {
+    println(show(ring(4)))
+    println(show(Dot))
+}

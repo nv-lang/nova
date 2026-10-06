@@ -1,0 +1,6 @@
+12251:typedef struct NovaTuple_Pt NovaTuple_Pt;
+12252:struct NovaTuple_Pt {
+12257:typedef struct Nova_Vec____NovaValue_Pt Nova_Vec____NovaValue_Pt;
+12258:struct Nova_Vec____NovaValue_Pt {
+12259:    NovaTuple_Pt* data;
+12264:static nova_int novac_fn_collections_vec_len__Vec_of_Pt__to_nova_int__Pt(Nova_Vec____NovaValue_Pt* _novac_self);

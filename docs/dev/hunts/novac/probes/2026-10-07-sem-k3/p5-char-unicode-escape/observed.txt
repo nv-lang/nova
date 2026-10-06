@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p5-char-unicode-escape/probe.nv","start":632,"end":641},"message":"outside the subset: the unicode char escape (backslash-u) is not compiled yet (E2-b3) -- write the character itself","poisoned_by":null}

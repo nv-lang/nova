@@ -1,0 +1,5 @@
+== p4-abi-name-sum-eq
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p4-abi-name-sum-eq/probe.nv","start":871,"end":873},"message":"outside the subset: this operator on these operands dispatches through a protocol (D46: @plus / @compare / @equal), and protocol dispatch arrives with bounds","poisoned_by":null}
+rc=1
+== p4-abi-name-sum-eq-control
+rc=0

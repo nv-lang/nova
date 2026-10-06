@@ -1,0 +1,24 @@
+# importing unit (app/main.nv), novac check rc=0, emit rc=0:
+12253:static nova_str novac_fn_show__Decomp__to_nova_str(Nova_kinds_Decomp* d) {
+12254:    Nova_kinds_Decomp* _novac_l2 = d;
+12257:    if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_Decomp_Whole))) {
+12261:    if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_Decomp_Part))) {
+12273:    nova_print_str(novac_fn_show__Decomp__to_nova_str(novac_fn_kinds_part__nova_int__to_Decomp(((nova_int)2LL))));
+12276:    nova_print_str(novac_fn_show__Decomp__to_nova_str(nova_make_Decomp_Whole()));
+# declaring unit (lib/kinds.nv emitted with the same NOVAC_SELF_PATH):
+12251:typedef struct Nova_kinds_Decomp Nova_kinds_Decomp;
+12253:    NOVAC_TAG_kinds_Decomp_Whole,
+12254:    NOVAC_TAG_kinds_Decomp_Part,
+12255:} Nova_kinds_Decomp_Tag;
+12256:struct Nova_kinds_Decomp {
+12257:    Nova_kinds_Decomp_Tag tag;
+12267:static Nova_kinds_Decomp* novac_make_kinds_Decomp_Whole(void) {
+12268:    Nova_kinds_Decomp* _r = (Nova_kinds_Decomp*)nova_alloc(sizeof(Nova_kinds_Decomp));
+12269:    _r->tag = NOVAC_TAG_kinds_Decomp_Whole;
+12273:static Nova_kinds_Decomp* novac_make_kinds_Decomp_Part(nova_int _0) {
+12274:    Nova_kinds_Decomp* _r = (Nova_kinds_Decomp*)nova_alloc(sizeof(Nova_kinds_Decomp));
+12275:    _r->tag = NOVAC_TAG_kinds_Decomp_Part;
+# clang -fsyntax-only on the emitted importing unit (includes: compiler-codegen, libuv, bdwgc):
+emitted.c:12253:52: error: unknown type name 'Nova_kinds_Decomp'
+emitted.c:12254:5: error: use of undeclared identifier 'Nova_kinds_Decomp'
+emitted.c:12254:24: error: use of undeclared identifier '_novac_l2'

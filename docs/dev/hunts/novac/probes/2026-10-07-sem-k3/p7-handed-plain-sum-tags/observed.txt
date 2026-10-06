@@ -1,0 +1,22 @@
+# app/main.nv
+check rc=0
+12253:static nova_str novac_fn_show__Figure__to_nova_str(Nova_Figure* f) {
+12254:    Nova_Figure* _novac_l2 = f;
+12257:    if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_Figure_Dot))) {
+12261:    if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_Figure_Ring))) {
+12273:    nova_print_str(novac_fn_show__Figure__to_nova_str(novac_fn_shapes_ring__nova_int__to_Figure(((nova_int)4LL))));
+12276:    nova_print_str(novac_fn_show__Figure__to_nova_str(nova_make_Figure_Dot()));
+# lib/shapes.nv
+check rc=0
+12251:typedef struct Nova_Figure Nova_Figure;
+12253:    NOVAC_TAG_shapes_Figure_Dot,
+12254:    NOVAC_TAG_shapes_Figure_Ring,
+12255:} Nova_Figure_Tag;
+12256:struct Nova_Figure {
+12257:    Nova_Figure_Tag tag;
+12267:static Nova_Figure* novac_make_shapes_Figure_Dot(void) {
+12268:    Nova_Figure* _r = (Nova_Figure*)nova_alloc(sizeof(Nova_Figure));
+12269:    _r->tag = NOVAC_TAG_shapes_Figure_Dot;
+12273:static Nova_Figure* novac_make_shapes_Figure_Ring(nova_int _0) {
+12274:    Nova_Figure* _r = (Nova_Figure*)nova_alloc(sizeof(Nova_Figure));
+12275:    _r->tag = NOVAC_TAG_shapes_Figure_Ring;

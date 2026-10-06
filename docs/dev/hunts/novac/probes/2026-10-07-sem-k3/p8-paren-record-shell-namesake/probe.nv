@@ -1,0 +1,17 @@
+// cmd: novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p8-paren-record-shell-namesake/probe.nv | grep -n 'struct NovaTuple_Number'
+// K3 probe: the D381 collision set misses ONE OF THE THREE prefixes a struct
+// is spelled with. `shell_defines_struct` (mangle.nv:218-219) asks the shell
+// for `Nova_<name>` and `NovaValue_<name>` only; a PARENTHESISED record is
+// spelled `NovaTuple_<name>` (`c_struct`, mangle.nv:470,
+// PAREN_RECORD_C_PREFIX). The shell defines `struct NovaTuple_Number`
+// (std's private float-parse record, std/src/runtime/float_parse/convert.nv:79),
+// so the program's own `Number` below is a second `struct NovaTuple_Number`
+// in one unit -- exactly what `decl_base` exists to qualify -- and stays bare.
+
+type Number(a int, b int)
+
+fn sum(n Number) -> int => n.a + n.b
+
+fn main() {
+    println(sum(Number(2, 3)))
+}

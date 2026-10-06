@@ -1,0 +1,22 @@
+// cmd: novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p9-runtime-header-namesake/probe.nv | grep -n 'Nova_ChannelState'
+// K3 probe: the D381 collision set is lifted from the SHELL TEMPLATE's struct
+// bodies (`shell_defines_struct`, mangle.nv:218-219 -> `InteropTable
+// @has_body`), but the unit also carries the RUNTIME HEADERS the shell
+// includes (`#include "nova_rt/nova_rt.h"`, shell.tpl.c:3), and several
+// struct names are defined there and nowhere in the template:
+// `Nova_ChannelState` (compiler-codegen/nova_rt/channels.h:49, typedef),
+// `Nova_CancelError`/`Nova_Error`/`Nova_RuntimeError` (nova_rt/array.h),
+// `Nova_WaitResult` (sync_condvar.h), `Nova_MemOrdering`/`Nova_OnceState`
+// (sync_primitives.h). No std type is named `ChannelState`, so the program's
+// own record below collides with the runtime alone -- and stays bare.
+
+type ChannelState {
+    open bool
+    depth int
+}
+
+fn depth_of(s ChannelState) -> int => if s.open { s.depth } else { 0 }
+
+fn main() {
+    println(depth_of(ChannelState { open: true, depth: 3 }))
+}

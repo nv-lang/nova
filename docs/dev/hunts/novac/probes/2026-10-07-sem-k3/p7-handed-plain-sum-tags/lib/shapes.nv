@@ -1,0 +1,10 @@
+module shapes
+
+// The PROGRAM module of probe p7 (handed through NOVAC_SELF_PATH). `Figure`
+// collides with nothing: no shell struct, no std type of that name.
+
+export type Figure enum
+    | Dot
+    | Ring(int)
+
+export fn ring(n int) -> Figure => Ring(n)

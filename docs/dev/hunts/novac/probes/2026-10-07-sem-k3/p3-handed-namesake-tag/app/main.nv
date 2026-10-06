@@ -1,0 +1,19 @@
+// cmd: NOVAC_SELF_PATH=docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p3-handed-namesake-tag/lib novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p3-handed-namesake-tag/app/main.nv | grep -n 'ErrorKind'
+// K3 probe: a HANDED sum of a program module whose name the shell already
+// spells. Its STRUCT and TAG ENUM go through the D381 base (`type_base` ->
+// `decl_base`, mangle.nv:242: `<home>_<Name>`), but its TAG CONSTANTS and
+// MAKERS go through `c_shell_tag` (mangle.nv:730) and `c_maker`
+// (mangle.nv:736-740), which spell `decl_of_ty(..).name` bare -- std.io's
+// `NOVA_TAG_ErrorKind_*` / `nova_make_ErrorKind_*`. One type, two bases.
+
+import kinds.{ErrorKind, mine}
+
+fn show(k ErrorKind) -> str => match k {
+    Mine(n) => "mine ${n}"
+    NotFound => "nf"
+}
+
+fn main() {
+    println(show(mine(3)))
+    println(show(NotFound))
+}

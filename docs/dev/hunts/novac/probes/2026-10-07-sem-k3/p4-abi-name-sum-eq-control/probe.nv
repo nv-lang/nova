@@ -1,0 +1,13 @@
+// cmd: novac/target/novac.exe check docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p4-abi-name-sum-eq-control/probe.nv
+// Control of p4: the same program, the sum renamed `Waited` (not on the
+// runtime-ABI name list). Only the name differs.
+
+#impl(Equal)
+type Waited enum Ready | Timeout
+
+fn same(a Waited, b Waited) -> bool => a == b
+
+fn main() {
+    println(same(Waited.Ready, Waited.Ready))
+    println(same(Waited.Ready, Waited.Timeout))
+}
