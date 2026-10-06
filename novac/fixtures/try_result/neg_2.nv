@@ -1,0 +1,22 @@
+module try_result.neg_2
+
+// ONE seeded cause: `?` over a `Result[int, int]` in a fn returning a
+// `Result[int, any]`. LEGAL Nova -- D85 lets the body's error be a supertype of the
+// operand's, `any` is the supertype of every type (D53), and novac boxes the error on
+// the way out. But the `Err` it builds is of the BODY's instance, and a `Result`
+// instance is the shell's struct: the shell carries no `Result[int, any]`, so `?`
+// meets the refusal a written `Err(..)` of that instance meets (option_rules.nv) --
+// outside the subset, not the language's error (contrast neg_1).
+// NOVAC_EXPECT the shell novac links into carries no `Result` instance
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn lift(n int) -> Result[int, any] {
+    ro v = get(n)?
+    println(v)
+    lift(n - 1)
+}
+
+fn main() {
+    println(1)
+}

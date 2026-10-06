@@ -1,0 +1,37 @@
+=== PROGRAM
+     1	fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+     2	
+     3	fn work(n int) -> Result[int, int] {
+     4	    supervised {
+     5	        spawn {
+     6	            ro v = get(n)?
+     7	            println("in spawn ${v}")
+     8	        }
+     9	    }
+    10	    Ok(n)
+    11	}
+    12	
+    13	fn main() {
+    14	    match work(3) {
+    15	        Ok(v) => println("ok ${v}")
+    16	        Err(e) => println("err ${e}")
+    17	    }
+    18	    match work(-3) {
+    19	        Ok(v) => println("ok ${v}")
+    20	        Err(e) => println("err ${e}")
+    21	    }
+    22	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=101
+=== SUBJECT: novac emit prog.nv
+novac emit rc=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): array: index -1 out of bounds for length 366","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+in spawn 3
+ok 3
+nova: unhandled Fail: <typed err>

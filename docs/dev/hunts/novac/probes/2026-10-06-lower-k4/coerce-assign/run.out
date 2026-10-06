@@ -1,0 +1,22 @@
+=== PROGRAM
+     1	type Bytes { n int }
+     2	
+     3	#coerce fn str consume @to_bytes() -> Bytes => { n: 7 }
+     4	
+     5	fn main() {
+     6	    mut b = Bytes { n: 1 }
+     7	    b = "s"
+     8	    println(b.n)
+     9	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"<tmp>/prog.nv","start":124,"end":125},"message":"cannot assign value of type `str` to a target of type `Bytes` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or change the target","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+7

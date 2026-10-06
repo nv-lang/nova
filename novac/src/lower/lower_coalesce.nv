@@ -2,14 +2,15 @@
 // Donor: rustc `rustc_ast_lowering::expr` -- `x?` lowers to a match whose failing arm
 //   returns from the enclosing body (`lower_expr_try`); NOT taken: the `Try` trait and its
 //   `branch`/`from_residual` calls, because D85 has two fixed containers and no conversion.
-// Role: layer lower -- the value forms that test an Option and continue with its payload:
-//   `a ?? b` (D86), `X ?? return R` (D86 amended 2026-09-01) and `x?` (D85). The last two
-//   leave the body from their None branch through the return place and `Return`.
+// Role: layer lower -- the value forms that test an Option or a Result and continue with
+//   its payload: `a ?? b` (D86), `X ?? return R` (D86 amended 2026-09-01) and `x?` (D85).
+//   The last two leave the body from their failing branch through the return place and
+//   `Return` (`?` over a Result: the body's own `Err(e)`, cleanups handed `Failure(e)`).
 // Used by: lowering.nv -- `@lower_value_source` (every value position) and
 //   `@hoist_sealed_args` (an argument); emit_c.nv's print-time hoist for `??`.
-// Guarded by: check-novac-differential.sh (the try_option and coalesce_return pos
-//   fixtures, byte for byte with the oracle), nova test novac/src/pipeline/try_test.nv
-//   (the early return's C), lower_test.nv (the graph shapes).
+// Guarded by: check-novac-differential.sh (the try_option, try_result, cleanup_try_outcome
+//   and coalesce_return pos fixtures, byte for byte with the oracle or its twin),
+//   nova test novac/src/pipeline/try_test.nv (the early return's C), lower_test.nv (the graph shapes).
 //
 // A FILE OF ITS OWN because lowering.nv sits at the thousand-line limit: `??` moved here
 // with `?`, which shares its Some-test and differs only in its None branch.
@@ -18,6 +19,7 @@ module novac.lower
 
 import ../tree.{Node}
 import ../sem.{branch_children, is_coalesce_return, coalesce_ok_variant, option_payload, VariantRow}
+import ../sem.{result_err_variant, result_error, is_any_ty}
 import ../types.{is_ty}
 
 /// `a ?? b` as a VALUE: the Option into a temporary, then the payload or the
@@ -96,27 +98,51 @@ fn Lowerer mut @lower_coalesce(e Node) -> Local {
 }
 
 
-/// `x?` on an Option (D85) as a VALUE: `match x { Some(v) => v, None => return None }`.
-/// The Some branch is `??`'s, read by the same door; the None branch writes the `None` of
-/// the RETURN place's own type -- an Option of another payload than the operand's, so the
-/// operand's `None` is not it -- and leaves the body. The checker admitted only an Option
-/// operand in a body that returns an Option (check/try_rules.nv).
+/// `x?` (D85) as a VALUE: `match x { Some(v) => v, None => return None }` over an Option,
+/// `match x { Ok(v) => v, Err(e) => return Err(e) }` over a Result. The value branch is
+/// `??`'s, read by the same door; the failing branch writes the `None` / `Err(e)` of the
+/// RETURN place's own type -- a container of another payload than the operand's, so the
+/// operand itself is not it -- and leaves the body. The checker admitted only an Option in
+/// a body returning an Option and a Result in a body returning a Result of the same error
+/// or of `any` (check/try_rules.nv).
 fn Lowerer mut @lower_try(e Node) -> Local {
     ro tk = branch_children(e)
-    ro lo = @ir.temp(@out.type_of(tk[0].id_of()))
+    ro ot = @out.type_of(tk[0].id_of())
+    ro lo = @ir.temp(ot)
     @lower_place(tk[0], lo)
     ro lr = @ir.temp(@out.type_of(e.id_of()))
     @ir.declare_zeroed(lr)
-    ro c = @ir.begin_if(Cond.IsSome(lo), ElseShape.Braced)
-    @ir.take_payload(lr, lo)
+    ro is_opt = is_ty(option_payload(@ctx, ot))
+    ro ok = coalesce_ok_variant(@ctx, ot)
+    ro cond = if is_opt {
+        Cond.IsSome(lo)
+    } else {
+        Cond.Holds(PatTest { pat: Pattern.Variant(VariantMatch { head: ok, also: []VariantRow.new() }), scr: lo })
+    }
+    ro c = @ir.begin_if(cond, ElseShape.Braced)
+    if is_opt {
+        @ir.take_payload(lr, lo)
+    } else {
+        @ir.take_field(lr, lo, ok, 0)
+    }
     @ir.begin_else(c)
-    // The empty path is an exit (D85: `return None`): what the checker found owned
-    // there is cleaned before it leaves (D432) -- with `Success`, D314's row for `?`
-    // over an `Option` (amended 2026-10-03): `None` is "no value", not an error. The
-    // `Err` exit of `?` over a `Result` would hand `Failure(e)`; it is outside the
-    // subset (try_rules.nv, E2-b3; registry 221.1 #1707).
-    @lower_cleanups(e.id_of(), ExitOutcome.NormalExit)
-    @ir.set_none(@ir.ret_place())
+    // The failing path is an exit (D85: `return None` / `return Err(e)`): what the checker
+    // found owned there is cleaned before it leaves (D432), each cleanup handed D314's
+    // outcome for `?` (amended 2026-10-03) -- `Success` over an `Option` (`None` is "no
+    // value", not an error), `Failure(e)` over a `Result`, the payload the `Err` value
+    // itself (registry 221.1 #1707).
+    if is_opt {
+        @lower_cleanups(e.id_of(), ExitOutcome.NormalExit)
+        @ir.set_none(@ir.ret_place())
+    } else {
+        ro err = result_err_variant(@ctx, ot)
+        ro le = @ir.temp(result_error(@ctx, ot))
+        @ir.take_field(le, lo, err, 0)
+        @lower_cleanups(e.id_of(), ExitOutcome.FailureExit(le))
+        ro rt = @ir.decl_of(@ir.ret_place()).ty
+        ro boxed = is_any_ty(@ctx.tys, result_error(@ctx, rt)) && !is_any_ty(@ctx.tys, result_error(@ctx, ot))
+        @ir.set_err(@ir.ret_place(), le, result_err_variant(@ctx, rt), boxed)
+    }
     @ir.ret()
     @ir.end_if(c)
     lr

@@ -1,9 +1,0 @@
-// Hunt 2026-10-02 cast x K1, contradiction probe (not a finding).
-// `-128 as i8`: D54 amendment 2026-10-01 p.3 reads `-(128 as i8)`, i.e.
-// -(-128), a negation overflow; D489 names `-1` an untyped constant
-// expression -- read as ONE literal, `(-128) as i8` is -128. Both compilers
-// follow D54 today: -127 is printed, then "negation overflow".
-fn main() {
-    println(-127 as i8)
-    println(-128 as i8)
-}

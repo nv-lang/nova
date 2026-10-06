@@ -202,6 +202,7 @@ type Emitter consume {
     cur_spawn int /// the C number of the spawn whose body function is being emitted, -1 outside one
     cur_lit int /// the C number of the literal whose op function is being emitted, -1 outside one: a literal built there reads its outer captures through that op's context
     mut blobs []int /// the rows of `Ctx.embeds` whose static arrays the emission printed a reference to (D412, emit_embed.nv): their arrays go before the code
+    mut infos []TyId /// the types a value was boxed into `any` through (`Failure(e)` of `x?`, emit_flow.nv): `NOVAC_TYPEINFO_<index>`, defined before the code
 }
 
 /// Splice string literals, the emitted body and the module values'

@@ -591,4 +591,10 @@ refusals=137
 # 2026-10-02, cloud session p274-carina-cast (step 7): `?` and `X ?? return R` compile -- TRY_MSG
 #   left with the form; the new position gate is dated (E2) and `?` over a Result shares
 #   `??`'s dated E2-b3 text. By door 70 -> 69, the guard's count on the tree.
-undated_by_door=69
+# 2026-10-06, task #15 (`?` over a `Result`, registry 221.1 #1707): TRY_RESULT_MSG left with the
+#   form -- undated_by_door 69 -> 68, the guard's count on the tree. The Err branch of `?`
+#   builds the body's own `Err` (a body instance the shell lacks meets the dated text a written
+#   `Err(..)` meets), and `Failure(e)` boxes any error type. Acceptance round 1: D85's "supertype
+#   through sum extension" (D55 sum-coercion of the error) is legal and its wrap is not built --
+#   ONE dated (E2-b3) text REPLACES TRY_RESULT_MSG, so refusals stay 137 (136 after round 0).
+undated_by_door=68

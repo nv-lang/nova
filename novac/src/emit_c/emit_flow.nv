@@ -41,10 +41,11 @@ import ../sem.{is_unit_ty}
 import ../types.{is_ty}
 import ../lower.{IfCtx, LoopHead, Cond, Fn, Stmt, BlockId, SwitchTerm, no_block, raw_block}
 import ../lower.{HandlerSwap, CleanupCall, raw_local}
-import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow}
+import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow, any_tid_c, ty_source_name, Ctx}
 import ../types.{TyId, no_ty}
 import ../sem.{c_type, effect_slot_c}
 import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME, SCOPE_OUTCOME_TYPE, SCOPE_OUTCOME_SUCCESS}
+import ../builtins.{SCOPE_OUTCOME_FAILURE, NOVAC_TID_BASE}
 
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
@@ -466,22 +467,66 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
 
 /// One auto-`@cleanup` call (D432): the type's `@cleanup` on the value still owned,
 /// with the outcome THE LOWERING DECIDED for its exit (`ExitOutcome`, D314's table,
-/// amended 2026-10-03) -- printed here, not chosen. `Failure(e)` needs `e` boxed into
-/// `any`, which novac does not build yet; its one source, `?` over a `Result`, is
-/// outside the subset (E2-b3), so it stops here loudly rather than passing `Success`
-/// (registry 221.1 #1707).
+/// amended 2026-10-03) -- printed here, not chosen. `Failure(e)` hands `e` boxed into
+/// `any` (`@any_box_of`), its payload the very `Err` value.
 fn Emitter mut @emit_cleanup(c CleanupCall) -> () {
     ro target = if raw_local(c.local) >= 0 { @lo.ir.decl_of(c.local).name } else { c.name }
-    match c.outcome {
-        NormalExit => {}
-        FailureExit(_) => ice("emit: an auto-cleanup at a `Failure(e)` exit reached the emitter -- boxing `e` into `any` is not built (E2-b3, registry 221.1 #1707)")
-    }
     ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
-    ro success = variant_named_in(@ctx, SCOPE_OUTCOME_SUCCESS, outcome_t)
-    assert(raw_vrow(success) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Success` to pass")
+    ro arg = match c.outcome {
+        NormalExit => {
+            ro success = variant_named_in(@ctx, SCOPE_OUTCOME_SUCCESS, outcome_t)
+            assert(raw_vrow(success) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Success` to pass")
+            "${c_maker(@ctx, success)}()"
+        }
+        FailureExit(le) => {
+            ro failure = variant_named_in(@ctx, SCOPE_OUTCOME_FAILURE, outcome_t)
+            assert(raw_vrow(failure) >= 0, "emit: an auto-cleanup reached the emitter with no `ScopeOutcome.Failure` to pass")
+            ro d = @lo.ir.decl_of(le)
+            "${c_maker(@ctx, failure)}(${@any_box_of(d.ty, d.name)})"
+        }
+    }
     // Behind a drop flag (D432 s5): only while no move of the binding set it.
     ro guard = if raw_local(c.gone) >= 0 { "if (!${@lo.ir.decl_of(c.gone).name}) " } else { "" }
-    @body.append("    ${guard}(void)(${c_callable(@ctx, c.row, []TyId.new())}(${target}, ${c_maker(@ctx, success)}()));\n")
+    @body.append("    ${guard}(void)(${c_callable(@ctx, c.row, []TyId.new())}(${target}, ${arg}));\n")
+}
+
+/// The C that boxes the value of the local `name`, of type `t`, into `any` (D53):
+/// `nova_any_box(&<info>, &<name>, sizeof(<C type>))` -- the runtime's upcast
+/// (`nova_rt/typeid.h`), the same call the oracle prints for `x as any`. A GC pointer
+/// type boxes the pointer, which is the slot the narrowing reads back (`*(T*)data`).
+fn Emitter mut @any_box_of(t TyId, name str) -> str =>
+    "nova_any_box(&${@type_info_of(t)}, &${name}, sizeof(${c_type(@ctx, t)}))"
+
+/// The runtime type info a value of `t` is boxed through: `NOVAC_TYPEINFO_<k>`, defined
+/// once before the code (`type_info_defs`), `k` its first-use index -- novac's own names,
+/// so the shell's `NOVA_TYPEINFO_nova_str` is never defined twice.
+fn Emitter mut @type_info_of(t TyId) -> str {
+    for k in 0..@infos.len() {
+        if @infos[k] == t { return "NOVAC_TYPEINFO_${k}" }
+    }
+    @infos.push(t)
+    "NOVAC_TYPEINFO_${@infos.len() - 1}"
+}
+
+/// The definitions `@type_info_of` named: `{ <id>, "<name>" }`, the oracle's own shape for
+/// the same struct (`NOVA_TYPEINFO_nova_str` in shell.tpl.c). A primitive with a FIXED id
+/// (`nova_rt/typeid.h`) carries it, so `err is int` in a cleanup reads it back; every other
+/// type's id is the oracle's per compilation unit, never known here, so novac numbers its
+/// own from `NOVAC_TID_BASE` -- a range no oracle unit reaches, distinct per type within
+/// this program. Only the id's equality is read (`nova_any_is`); `is` on such a type is
+/// refused by the checker (check/is_expr.nv), so no reader compares it with the oracle's.
+fn type_info_defs(ctx Ctx, tys []TyId) -> str {
+    consume out = StringBuilder.new()
+    mut k = 0
+    for t in tys {
+        ro (tid, name) = match any_tid_c(ctx, t) {
+            Some(fixed) => (fixed, c_type(ctx, t))
+            None => ("((NovaTypeId)${NOVAC_TID_BASE + k}u)", ty_source_name(ctx, t))
+        }
+        out.append("static const NovaTypeInfo NOVAC_TYPEINFO_${k} = { ${tid}, \"${name}\" };\n")
+        k += 1
+    }
+    out
 }
 
 /// `prev = slot; slot = handler` -- the displaced handler is DECLARED here, its

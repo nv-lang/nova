@@ -1,0 +1,78 @@
+module cleanup_try_outcome.pos_3
+
+// THE `Failure(e)` OUTCOME (D314's table, amended 2026-10-03; pointer in D85): an
+// auto-`@cleanup` live where `?` over a `Result` leaves with `Err(e)` is handed
+// `Failure(e)`, the payload the very `Err` value boxed into `any` -- in a function,
+// inside a loop, and narrowed back by `if err is T` in the cleanup, for an `int` error
+// and a `str` one. The `Ok` path and the loop's passes still hand `Success`. This is
+// the obligation neg_1 carried until task #15 (registry 221.1 #1707). The oracle hands
+// `Success` here (its defect #1706), so the differential compares novac's run of this
+// file against twin_3.nv, which spells each outcome by hand (plan 274.12).
+
+// NOVAC_TWIN twin_3.nv
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    match outcome {
+        Success => println("cleanup ${@id}: Success")
+        Failure(err) => {
+            if err is int {
+                println("cleanup ${@id}: Failure(int ${err})")
+            } else if err is str {
+                println("cleanup ${@id}: Failure(str ${err})")
+            } else {
+                println("cleanup ${@id}: Failure(other)")
+            }
+        }
+        Panic(_) => println("cleanup ${@id}: Panic")
+    }
+}
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn bytes(n int) -> Result[[]u8, str] {
+    if n > 0 {
+        return Ok([]u8.new())
+    }
+    Err("short ${n}")
+}
+
+fn one(n int) -> Result[int, int] {
+    consume a = Lk { id: n }
+    ro v = get(n)?
+    println("got ${v}")
+    Ok(v)
+}
+
+fn looped(n int) -> Result[int, int] {
+    for k in 0..3 {
+        consume a = Lk { id: 40 + k }
+        ro v = get(n - k)?
+        println("pass ${v}")
+    }
+    Ok(0)
+}
+
+fn sized(n int) -> Result[[]u8, str] {
+    consume a = Lk { id: 90 + n }
+    ro b = bytes(n)?
+    Ok(b)
+}
+
+fn report(r Result[[]u8, str]) -> () {
+    match r {
+        Ok(b) => println("ok ${b.len()}")
+        Err(e) => println("err ${e}")
+    }
+}
+
+fn main() {
+    println(one(1) ?? 0)
+    println(one(-7) ?? 0)
+    println(looped(1) ?? 9)
+    report(sized(1))
+    report(sized(-1))
+}
