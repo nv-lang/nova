@@ -1,0 +1,19 @@
+module disj_in_option.neg_3
+
+// A `|` below Option inside an irrefutable record pattern of a destructuring
+// binding (registry 1756): a disjunction is refutable, and a binding takes
+// irrefutable forms at any depth (D486 s4, E_REFUTABLE_BINDING) -- the record
+// around it does not make it legal.
+
+// NOVAC_EXPECT a destructuring binding takes an irrefutable pattern
+
+type Pr {
+    o Option[int]
+    n int
+}
+
+fn main() {
+    ro p = Pr { o: Some(2), n: 1 }
+    ro Pr { o: None | Some(2), n } = p
+    println(n)
+}

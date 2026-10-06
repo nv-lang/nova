@@ -1,0 +1,24 @@
+module disj_in_option.neg_4
+
+// A `|` below Option inside an irrefutable record pattern of a `for` header
+// (registry 1756): the loop has no `else`, so its pattern is irrefutable at
+// any depth (D486 s4, E_REFUTABLE_BINDING).
+
+// NOVAC_EXPECT a `for` header takes an irrefutable pattern
+
+type Pr {
+    o Option[int]
+    n int
+}
+
+fn count(xs []Pr) -> int {
+    mut c = 0
+    for Pr { o: None | Some(2), n } in xs {
+        c += n
+    }
+    c
+}
+
+fn main() {
+    println(1)
+}

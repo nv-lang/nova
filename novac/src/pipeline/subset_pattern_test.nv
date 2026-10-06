@@ -740,3 +740,28 @@ fn main() {\n\
     assert(d0.len() == 0, messages(d0))
     assert(!c0.contains("_In_Qq)"), "CONTROL: `_` tests no inner tag")
 }
+
+test "a disjunction below a shell OPTION tests its heads too (registry 1756)" {
+    // `Some(None | Some(2))` took every `Some`: over an Option the `|` had no
+    // test at all, so the literal below its second alternative was never
+    // compared. CONTROL: `Some(None | Some(_))` compares no value.
+    ro std = std_decls()
+    ro (d, c) = compile_to_c("fn k(o Option[Option[int]]) -> int => match o {\n\
+ Some(None | Some(2)) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(None))\n\
+}", std)
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("== 2LL)"), "the literal below the second alternative is compared")
+    ro (d0, c0) = compile_to_c("fn k(o Option[Option[int]]) -> int => match o {\n\
+ Some(None | Some(_)) => 1\n\
+ _ => 0\n\
+}\n\
+fn main() {\n\
+ println(k(None))\n\
+}", std)
+    assert(d0.len() == 0, messages(d0))
+    assert(!c0.contains("== 2LL)"), "CONTROL: `_` compares no value")
+}
