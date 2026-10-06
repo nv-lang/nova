@@ -40,9 +40,17 @@ fn is_loop_kind(k NodeKind) -> bool =>
     k == NodeKind.WhileStmt || k == NodeKind.WhileLet || k == NodeKind.ForStmt
 
 /// An EXIT POINT at `at`: every value bound since entry `mark` that is still owned,
-/// on any path, is `D133-not-consumed` there. An error stops tracking: the rest of
-/// the body is drawn from a state the error already broke.
+/// on any path, is `D133-not-consumed` there -- and an exit of the whole function
+/// (`mark` 0) closes the record of a `consume` receiver (`@flow_close_record`). An
+/// error stops tracking: the rest of the body is drawn from a state the error already
+/// broke.
 fn Checker mut @flow_exit(mut fl ConsumeFlow, mark int, at Node, exit str) -> () {
+    if mark == 0 {
+        @flow_close_record(fl, at, "${exit} leaves this `consume` method")
+        if fl.stopped { return }
+    } else {
+        // A loop's `break` or `continue`: it leaves an iteration, not the method.
+    }
     for i in past_fields(fl, mark)..fl.owned_ty.len() {
         if fl.state[i] == VarState.VsConsumed { continue }
         if fl.auto_at[i] >= 0 {

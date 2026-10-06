@@ -1601,8 +1601,23 @@
 #   1751, 1758-1761) = 1698, max 1761.
 # 2026-10-06, integrator (row 1763, guard export-has-caller speed; merge of main c9b2d4c35): rows 1690 (main) + 1 (1763) = 1691, max 1757 -> 1763; 1758-1762 are numbers of other branches (1758-1761 task #14, 1762 task #17) and stand in gaps= until their rows arrive.
 # 2026-10-06, acceptor of task #14 (candidate on main 7ba6979fd, row 1763 in): rows 1698 + 1 (1763) = 1699, max 1763.
-rows=1699
-max=1763
+# 2026-10-06, task #18 (numbers from the integrator): rows 1687 -> 1691, max 1757 -> 1767 (row 1764 filed CLOSED -- a handed declaration of another module had its type names read in the compiled file's view; 1765 OPEN -- the oracle fails a value-record/newtype/generic namesake of a std type in one CU in clang; 1766 OPEN -- Carina accepts `-> T => T { ... }` against syntax.md:455; 1767 OPEN -- Carina accepts the required arguments of a parenthesised record's constructor by name, against D102); 1758-1763 are numbers of other branches (1763 the integrator), declared holes in gaps= until their rows reach this branch.
+# 2026-10-06, task #18, merge of origin/main f2b6517c7 (task #14 in): rows 1699 (main) + 4 (#18: 1764-1767) = 1703, max 1763 -> 1767; the D78 row stays TBD until numbered.
+# 2026-10-06, task #17, merge of origin/main f2b6517c7 (task #14 in): rows 1699 (main) + 1 (#17: 1762) = 1700,
+# max stays 1763; 1762 arrives with this branch and leaves gaps= by this merge.
+# 2026-10-06, task #18, merge of origin/main 412499bcf (task #17 in): rows 1700 (main) + 4 (#18: 1764-1767) = 1704, max 1763 -> 1767; the D78 row stays TBD until numbered.
+# 2026-10-06, task #18 (number from the integrator): the D78 row is 1771 -- rows 1704 -> 1705, max 1767 -> 1771;
+#   1768-1770 are numbers of other branches and stand in gaps= until their rows arrive.
+# 2026-10-06, task #18 (number from the integrator): the two-module namesake row is 1777 -- rows 1705 -> 1706,
+#   max 1771 -> 1777; 1772-1776 are numbers of other branches and stand in gaps= until their rows arrive.
+# 2026-10-06, task #20, merge of origin/main 412499bcf (task #17 in): rows 1700 (main) + 2 (#20: 1768, 1769) = 1702,
+# max 1763 -> 1769; 1764-1767 are numbers the integrator issued to other branches and stand in gaps= until their
+# rows arrive (then they leave gaps= by that merge).
+# 2026-10-06, task #18, merge of origin/main 7a245c0f8 (task #20 in): rows 1702 (main) + 6 (#18: 1764-1767,
+#   1771, 1777) = 1708, max 1769 -> 1777; 1764-1767 carry this branch's rows -- out of gaps= by this merge,
+#   1768-1769 carry #20's; 1770 and 1772-1776 stay holes (other branches).
+rows=1708
+max=1777
 rows=1611
 max=1693
 rows=1590
@@ -2367,7 +2382,7 @@ stale_gaps=0
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35): 1738-1739, 1752 (#10) and 1740-1742, 1751 (#14) all carry rows -- none in gaps=.
 # 2026-10-06, integrator (row 1763): 1758-1762 issued to other branches (1758-1761 #14, 1762 #17); removal: drop from gaps= by the merge that brings their rows.
 # 2026-10-06, acceptor of task #14 (candidate on main 7ba6979fd): 1740-1742, 1751, 1758-1761 carry #14's rows -- out of gaps=; 1762 (task #17) stays.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1762
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1770,1772-1776
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
