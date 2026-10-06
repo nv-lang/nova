@@ -25,6 +25,7 @@ type Box consume {
 
 fn Box consume @close() -> () {
     println(0)
+    @t.commit()
 }
 
 fn main() {

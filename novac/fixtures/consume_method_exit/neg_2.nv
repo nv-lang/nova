@@ -1,0 +1,23 @@
+module consume_method_exit.neg_2
+
+// A `consume` FIELD STILL OWNED AT AN EARLY `return` (registry 221.1 #1745; D133: `return
+// expr` is an exit point, and at the exit of a `consume` method the record closes). The
+// tail consumes `@body`, the early path does not; the refusal stands at the `return`, as
+// a local binding's does.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this `return` leaves this `consume` method
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(early bool) -> str {
+    if early { return "none" } // the one refusal: line 16
+    @body.into_str()
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.take(false))
+}

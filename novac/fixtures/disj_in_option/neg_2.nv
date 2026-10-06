@@ -1,0 +1,21 @@
+module disj_in_option.neg_2
+
+// A `|` below Option in a `while` condition (registry 1756): the same position
+// rule as the `if` (D486 s4, amendment 2026-09-30) -- refused by name.
+
+// NOVAC_EXPECT a literal or `|` stands in it at no depth
+
+fn o2(k int) -> Option[Option[int]] {
+    if k == 0 {
+        return None
+    }
+    Some(Some(k))
+}
+
+fn main() {
+    mut k = 3
+    while Some(None | Some(2)) = o2(k) {
+        k -= 1
+    }
+    println(k)
+}

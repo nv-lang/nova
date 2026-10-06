@@ -1,0 +1,22 @@
+module consume_method_exit.neg_3
+
+// A `consume` FIELD STILL OWNED AT `?` (registry 221.1 #1745; D133: `expr?` is an exit
+// point -- D85 makes it `return None` on the empty path). `@body` is consumed after the
+// `?`, so on the `None` path the record leaves unclosed.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this `?` leaves this `consume` method
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(o Option[int]) -> Option[str] {
+    ro v = o? // the one refusal: line 15
+    Some("${v}:${@body.into_str()}")
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.take(Some(1)) ?? "none")
+}
