@@ -507,6 +507,66 @@ fn Checker mut @flow_field_use(e Node, slot int, moved bool, mut fl ConsumeFlow)
     } else if fl.depth > 0 {
         @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
     } else {
-        fl.state[slot] = VarState.VsConsumed
+        // The move takes the paths below it too (they follow it, `@flow_own_fields`):
+        // each path then carries its own state, and an exit judges them one by one
+        // (`@flow_close_record`) -- a join keeps "`@inner` moved on one path,
+        // `@inner.body` on the other" as two closed paths, not two maybes.
+        for j in slot..fl.fields {
+            if path_within(fl.nm[j], path) { fl.state[j] = VarState.VsConsumed } else { continue }
+        }
+    }
+}
+
+/// D133-not-consumed for a field of a `consume` receiver at an exit of its method:
+/// `when` -- "this `consume` method ends", or the exit leaving it.
+fn field_not_closed_msg(path str, ty str, how str, when str, partly bool) -> str {
+    ro state = if partly { "is consumed on only some paths" } else { "is still owned" }
+    "the field `${path}` (type `${ty}`) ${state} when ${when} -- a `consume` method closes its record (D133 \"Field-aware flow\"): ${how}, return it, or pass it to a `consume` parameter first"
+}
+
+/// An exit of a `consume` method CLOSES ITS RECORD (D133 "Field-aware flow": at the exit
+/// of `fn X consume @method` every `consume` field is `Consumed`). A nested record is
+/// closed when it moved whole or when every path below it is closed -- the "empty
+/// container" of D133 "Assign in a Live consume field". A move consumes the paths below
+/// it (`@flow_field_use`), so the record is closed when every LEAF path is `Consumed`.
+/// The refusal names the outermost path nothing below which is closed (`@.inner`), else
+/// descends to the first leaf that is not (`@.inner.b`). An affine field (`@cleanup`)
+/// is judged the same: D432 lifts the obligation from a bare `consume X = e` binding and
+/// a `consume` parameter only (s2; amendment #672; rev-2), and a field is neither -- no
+/// cleanup runs for it here. Called at the exits of the FUNCTION (`mark` 0): a `break`
+/// leaves an iteration, not the method. `at`: where the refusal stands.
+fn Checker mut @flow_close_record(mut fl ConsumeFlow, at Node, when str) -> () {
+    mut i = 0
+    while i < fl.fields {
+        ro below = "${fl.nm[i]}."
+        mut stop = i + 1
+        while stop < fl.fields && fl.nm[stop].starts_with(below) { stop += 1 }
+        mut leaves = 0
+        mut closed = 0
+        mut partly = false
+        for j in i..stop {
+            if fl.state[j] == VarState.VsMaybe {
+                partly = true
+            } else {
+                // Live or Consumed on every path.
+            }
+            ro leaf = j + 1 >= stop || !fl.nm[j + 1].starts_with("${fl.nm[j]}.")
+            if !leaf { continue }
+            leaves += 1
+            if fl.state[j] == VarState.VsConsumed { closed += 1 } else { continue }
+        }
+        if closed == leaves {
+            // Closed: moved whole, or emptied path by path.
+            i = stop
+        } else if closed == 0 {
+            ro t = fl.owned_ty[i]
+            @reject_first_leaf_of([]Node.of(at),
+                field_not_closed_msg(fl.nm[i], ty_source_name(@ctx, t), @ways_out(t), when, partly))
+            fl.stopped = true
+            return
+        } else {
+            // Emptied in part: the paths below name what is left.
+            i += 1
+        }
     }
 }
