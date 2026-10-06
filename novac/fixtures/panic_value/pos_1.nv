@@ -1,0 +1,43 @@
+module panic_value.pos_1
+
+// `panic(msg)` IS A VALUE OF TYPE `never` (D13 + D26): the prelude declares it
+// `extern "nova" fn panic(msg str) -> never`, so no row of anyone's has a body
+// and the call is the intrinsic. Until 2026-10-06 novac knew no `panic` at all
+// -- `never_value/pos_1` had to recurse instead -- and novac's own
+// `diag/diag.nv` (`fn ice(msg str) -> never { panic(..) }`) was refused for it
+// the moment its `#impl(Serialize)` refusal stopped hiding it (plan 274.5,
+// section 3-pred64, step 1).
+//
+// The cells: the TAIL of a `-> never` body (the diag.nv shape), a STATEMENT
+// after which the body still owes an `int`, a `??` fallback and a value `if`
+// branch. One of them fires: the death is observable -- the message, the
+// throw-site line the runtime prints after it (the line of `panic` in `die`),
+// and exit code 101 -- and the differential compares all three.
+
+fn die(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn stmt_form(n int) -> int {
+    if n < 0 {
+        panic("negative")
+    }
+    n
+}
+
+fn coalesce_form(o Option[int]) -> int {
+    ro v = o ?? panic("none")
+    v
+}
+
+fn if_form(n int) -> int {
+    ro v = if n > 0 { n } else { panic("not positive") }
+    v
+}
+
+fn main() {
+    println(stmt_form(3))
+    println(coalesce_form(Some(4)))
+    println(if_form(5))
+    die("last")
+}

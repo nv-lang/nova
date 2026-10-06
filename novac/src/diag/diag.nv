@@ -23,7 +23,7 @@
 
 module novac.diag
 
-import std.encoding.serde.{json_encode}
+import std.encoding.serde.{json_encode, Serialize}
 
 /// Diagnostic severity of the §7 schema (renders "error"/"warning").
 export type Severity enum

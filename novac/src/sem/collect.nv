@@ -364,7 +364,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
                        bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]),
                        char_id: ty_of_row(types, seeded[14]),
-                       unit_id: ty_of_row(types, seeded[15]) }
+                       unit_id: ty_of_row(types, seeded[15]),
+                       never_id: ty_of_row(types, seeded[17]) }
     mut fields = FieldTable.new()
     mut protos = ProtoTable.new()
     mut fns = FnTable.new()
@@ -487,21 +488,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
             // types are resolved in pass 2, for the same reason fields are: a
             // signature may name a type declared further down the file.
             ShapeProtocol => {
-                mut cnt = 0
-                for m in branch_children(c) {
-                    if m.kind_of() != NodeKind.ProtoMethod { continue }
-                    cnt += 1
-                }
-                protos.add(tname, protos.sigs.len(), cnt)
-                for m in branch_children(c) {
-                    if m.kind_of() != NodeKind.ProtoMethod { continue }
-                    // A nameless signature keeps its ROW (the counts must stay
-                    // aligned with pass 1) and an empty name, which no candidate
-                    // can ever match -- and `check` refuses the declaration by
-                    // name, so the empty row is never the thing a reader sees.
-                    protos.sigs.push(ProtoSig { name: proto_method_name(m) ?? "",
-                                                ret_id: no_ty(), param_off: 0, param_cnt: 0 })
-                }
+                register_proto(protos, c, tname)
             }
             ShapeRecord => {
                 ro d = DeclId(types.len())
@@ -740,6 +727,11 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // THE HANDED RECORDS' FIELDS, after every name exists (registry 1322): a
     // field's type may name any declaration, handed or the file's own.
     fill_handed_fields(file, decls, foreign_types_cnt, types, defs, fields, tys)
+    // THE HANDED PROTOCOLS, at the same moment and for the same reason: a
+    // signature may name any declaration (`Result[(), SerError]`). Until task
+    // #14 a protocol of std was a fieldless RECORD and nothing else, so a bound
+    // on it (`[S Serializer]`) was refused as unknown (D122).
+    harvest_protocols(protos, decls, types, defs, tys)
     // THE E2-b1 INVARIANT LIVED HERE AND IS GONE BY DESIGN, not by neglect.
     // It asserted `types[i].ty_id == i` -- that the interner hands out ids in
     // exactly the order declaration rows are pushed -- and its own comment said

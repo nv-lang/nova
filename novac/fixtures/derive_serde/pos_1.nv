@@ -1,0 +1,49 @@
+module derive_serde.pos_1
+
+// `#impl(Serialize)` IS HONOURED (D341/D345): a record of every scalar kind, a
+// nested record, a sum of all four variant forms and an `Option` field -- each
+// gets its synthesized `@serialize` before type-check, and the program around
+// them compiles and runs as the oracle's does. Encoding them (`json_encode`)
+// waits for the shell to carry std's JSON serializer (E2-b3 step 5).
+import std.encoding.serde.{Serialize}
+
+#impl(Serialize)
+type Span {
+    file str
+    start int
+    narrow i32
+    wide u64
+    ratio f64
+    ok bool
+}
+
+#impl(Serialize)
+type Shape enum
+    | Dot
+    | Circle(int)
+    | Seg(int, int)
+    | Rect { w int, h int }
+
+#impl(Serialize)
+type Dto {
+    span Span
+    shape Shape
+    note Option[str]
+}
+
+fn Shape @tell() -> str {
+    match @ {
+        Dot => "dot"
+        Circle(r) => "circle ${r}"
+        Seg(a, b) => "seg ${a} ${b}"
+        Rect { w, h } => "rect ${w}x${h}"
+    }
+}
+
+fn main() {
+    ro sp = Span { file: "a.nv", start: 3, narrow: 7, wide: 9, ratio: 0.5, ok: true }
+    ro d = Dto { span: sp, shape: Shape.Seg(1, 2), note: None }
+    println(d.span.file)
+    println(d.span.start + d.span.narrow as int)
+    println(d.shape.tell())
+}

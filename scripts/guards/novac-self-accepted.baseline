@@ -72,4 +72,12 @@
 #   отвергаются разбором — это №1691, не регресс (в индексе LF).
 # 2026-10-03, интегратор nova-20 (слияние strarm поверх sweep 10-12 и mono-k2): emit_c/emit_expr.nv принят — его
 #   отказ (приёмник value-записи по указателю, №1654) сняла дверь cast/k1, уже стоящая в main. Мерено на LF.
-novac/src/diag/diag.nv
+# 2026-10-06, task #14 (E2-b3 step 7): diag/diag.nv accepted -- `#impl(Serialize)` derives its
+#   `@serialize` (D341/D345, check/derive_serde.nv) and `[T Serialize]` is judged (D72). The unit has no
+#   `main`, so the instance `json_encode[DiagDto]` is not typed (#1734); typed, it waits for step 5 (the
+#   shell's JSON serializer). Measured with the tree's binary, LF index.
+# 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): #10 accepted check/binds.nv and
+#   lex/lex_test.nv, #14 accepted diag/diag.nv -- 0 rejected; measure 0.2 at zero.
+#   The empty set is written as the line `none` (check-novac-self-accepted.py): from here any rejected file is
+#   a regression, and an emptied file without `none` stays red.
+none

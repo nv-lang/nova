@@ -92,6 +92,39 @@ else
     grep -q "нет базы" "$T/err" && ok "отсутствие базы — красный" || bad "красный, но не про отсутствие"
 fi
 
+# --- 9. ноль, объявленный строкой `none`, и ни одного отвергнутого — зелёный --
+printf '# ноль\nnone\n' > "$T/base.none"
+: > "$T/out.clean"
+if run "$T/out.clean" "$T/base.none"; then
+    grep -q "отвергнуто 0" "$T/out" && ok "ноль строкой none при чистой самосборке — зелёный" || bad "зелёный, но строка не та [$(cat "$T/out")]"
+else
+    bad "объявленный ноль покраснел: $(cat "$T/err")"
+fi
+
+# --- 10. ноль объявлен, а файл отвергнут — красный регресс ------------------
+if run "$T/out.same" "$T/base.none"; then
+    bad "отвергнутый файл при базе none прошёл — ноль не держится"
+else
+    grep -q "РЕГРЕСС" "$T/err" && grep -q "sem/collect.nv" "$T/err" \
+        && ok "при базе none отвергнутый файл — регресс с именем" || bad "красный, но не регресс [$(cat "$T/err")]"
+fi
+
+# --- 11. `none` рядом с путём — база бита -----------------------------------
+printf 'none\nnovac/src/sem/collect.nv\n' > "$T/base.nonepath"
+if run "$T/out.same" "$T/base.nonepath"; then
+    bad "none вместе с путём прошёл"
+else
+    grep -q "бита" "$T/err" && ok "none рядом с путём — битая база" || bad "красный, но не про битость [$(cat "$T/err")]"
+fi
+
+# --- 12. пустая база без `none` — красный: опустевший файл не ноль ----------
+printf '# только летопись\n' > "$T/base.empty"
+if run "$T/out.clean" "$T/base.empty"; then
+    bad "пустая база без none прошла — опустевший файл принят за ноль"
+else
+    grep -q "пуста" "$T/err" && ok "пустая база без none — красный" || bad "красный, но не про пустоту [$(cat "$T/err")]"
+fi
+
 echo "итог: FAIL $fails"
 if [ "$fails" -eq 0 ]; then
     echo "test-check-novac-self-accepted ok: $cases случаев, храповик в обе стороны"
