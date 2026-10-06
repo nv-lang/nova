@@ -1,0 +1,8 @@
+module p06_tuple.geo
+
+export fn minmax(a int, b int) -> (int, int) {
+    if a < b {
+        return (a, b)
+    }
+    (b, a)
+}

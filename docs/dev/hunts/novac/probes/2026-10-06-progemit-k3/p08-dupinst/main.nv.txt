@@ -1,0 +1,14 @@
+module p08_dupinst.main
+
+// NOVAC_PROGRAM
+// Two modules (this entry and `bag`) both instantiate `geo.dbl` over `int`:
+// does the program emit ONE instance, or does each caller's instantiation
+// print its own, duplicating or conflicting in the one C file?
+
+import ./geo.{dbl}
+import ./bag.{twice}
+
+fn main() {
+    println(dbl[int](5))
+    println(twice(5))
+}

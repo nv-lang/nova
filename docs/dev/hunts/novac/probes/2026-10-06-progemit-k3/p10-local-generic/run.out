@@ -1,0 +1,40 @@
+=== PROGRAM
+--- ./geo/geo.nv
+     1	module p10_local_generic.geo
+     2	
+     3	export type Pt {
+     4	    x int
+     5	    y int
+     6	}
+--- ./main.nv
+     1	module p10_local_generic.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// A generic DECLARED in `mid`, instantiated over `geo.Pt` inside `mid`
+     5	// itself (not re-imported from elsewhere): isolates whether the ICE needs
+     6	// the generic AND its instantiation site to live in DIFFERENT modules from
+     7	// the substituted type's declaration, or fires whenever `[]T` is
+     8	// substituted with a type imported from another module at all.
+     9	
+    10	import ./geo.{Pt}
+    11	import ./mid.{wrap}
+    12	
+    13	fn main() {
+    14	    mut xs = []Pt.new()
+    15	    xs.push(Pt { x: 1, y: 2 })
+    16	    xs.push(Pt { x: 3, y: 4 })
+    17	    println(wrap(xs))
+    18	}
+--- ./mid/mid.nv
+     1	module p10_local_generic.mid
+     2	
+     3	import ../geo.{Pt}
+     4	
+     5	export fn count[T](xs []T) -> int => xs.len()
+     6	
+     7	export fn wrap(ps []Pt) -> int => count[Pt](ps)
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (1 шт.): "message":"internal compiler error (novac bug, not yours): pipeline: an instance of a row with no body novac was handed" 
+--- Carina's emission alone: its exit code and diagnostics
+novac emit rc=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): pipeline: an instance of a row with no body novac was handed","poisoned_by":null}

@@ -51,7 +51,21 @@ export fn is_arg_value_kind(k NodeKind) -> bool => is_value_tail_kind(k)
 /// not: the body was never typed and never built, and iced after a green check
 /// (#974). NOT folded into `is_expr_kind` -- that list is read by many walks,
 /// and a kind put into it moves silently into every general arm (B13).
-export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || k == NodeKind.TupleExpr
+/// The literal is named once, in `is_printer_build_kind` below; the other three
+/// kinds of that list are expression kinds already, so the union is unchanged.
+export fn is_value_tail_kind(k NodeKind) -> bool => is_expr_kind(k) || is_printer_build_kind(k)
+
+/// The kinds the PRINTER BUILDS in statements of its own before the line that
+/// reads them -- an array literal, a brace or positional record constructor, an
+/// interpolated string, and the positional record literal (a record on the stack,
+/// built by the same door as the brace constructor, 274.6 V3-1). ONE list, so the
+/// lowering's "does this condition need a place to stand" (`contains_construction`,
+/// lower_hoist.nv) and the value tail cannot name two different sets: the
+/// lowering's own copy left the literal out, and `} else if (x, 1).0 > 0 {` died as
+/// "never hoisted" (registry 1791).
+export fn is_printer_build_kind(k NodeKind) -> bool =>
+    k == NodeKind.ArrayLit || k == NodeKind.RecordCtor || k == NodeKind.InterpStr ||
+    k == NodeKind.TupleExpr
 
 /// Is this leaf the REST marker `..`? A question about what the node MEANS, so
 /// the channel answers it and not the consumer: an array pattern's lowering

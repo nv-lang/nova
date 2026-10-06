@@ -1,0 +1,14 @@
+module p07_const.main
+
+// NOVAC_PROGRAM
+// A constant of a leaf module, used both inside that module (within) and
+// read directly by the entry: does the constant's C form (its name, its
+// value) match between the two?
+
+import ./geo.{LIMIT, within}
+
+fn main() {
+    println(LIMIT)
+    println(within(3))
+    println(within(20))
+}

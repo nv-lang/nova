@@ -1,0 +1,40 @@
+=== PROGRAM
+--- ./geo/geo.nv
+     1	module p09_chain.geo
+     2	
+     3	export type Pt {
+     4	    x int
+     5	    y int
+     6	}
+     7	
+     8	export fn count[T](xs []T) -> int => xs.len()
+--- ./main.nv
+     1	module p09_chain.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// A three-module chain: entry -> mid -> geo. `mid` instantiates geo.count
+     5	// over geo.Pt, a type it only knows through re-import; the entry builds the
+     6	// Vec[Pt] itself and ALSO instantiates count[Pt] directly. Does the instance
+     7	// made through the chain match the one made directly by the entry?
+     8	
+     9	import ./geo.{Pt, count}
+    10	import ./mid.{wrap}
+    11	
+    12	fn main() {
+    13	    mut xs = []Pt.new()
+    14	    xs.push(Pt { x: 1, y: 2 })
+    15	    xs.push(Pt { x: 3, y: 4 })
+    16	    println(wrap(xs))
+    17	    println(count[Pt](xs))
+    18	}
+--- ./mid/mid.nv
+     1	module p09_chain.mid
+     2	
+     3	import ../geo.{Pt, count}
+     4	
+     5	export fn wrap(ps []Pt) -> int => count[Pt](ps)
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (1 шт.): "message":"internal compiler error (novac bug, not yours): mangle: a substituted type the checker never interned -- the instance was not typed through it" 
+--- Carina's emission alone: its exit code and diagnostics
+novac emit rc=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error (novac bug, not yours): mangle: a substituted type the checker never interned -- the instance was not typed through it","poisoned_by":null}

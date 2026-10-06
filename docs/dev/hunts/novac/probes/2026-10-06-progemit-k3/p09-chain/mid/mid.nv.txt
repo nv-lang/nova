@@ -1,0 +1,5 @@
+module p09_chain.mid
+
+import ../geo.{Pt, count}
+
+export fn wrap(ps []Pt) -> int => count[Pt](ps)

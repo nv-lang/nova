@@ -1,0 +1,6 @@
+module p10_local_generic.geo
+
+export type Pt {
+    x int
+    y int
+}

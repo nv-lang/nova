@@ -1,0 +1,20 @@
+module p05_genrec.main
+
+// NOVAC_PROGRAM
+// A generic record of a leaf module (box.Box[T]), instantiated by the entry
+// over the entry's OWN record type: does the instance struct and its
+// forward declaration agree between the module that declares the generic and
+// the module that instantiates it here?
+
+import ./box.{Box, make, unwrap}
+
+export type Item {
+    tag int
+}
+
+fn main() {
+    ro b = make[Item](Item { tag: 42 })
+    println(unwrap[Item](b).tag)
+    ro bi = make[int](7)
+    println(unwrap[int](bi))
+}

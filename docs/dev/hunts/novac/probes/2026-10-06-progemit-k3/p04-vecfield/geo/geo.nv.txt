@@ -1,0 +1,8 @@
+module p04_vecfield.geo
+
+export type Pt {
+    x int
+    y int
+}
+
+export fn mk(x int, y int) -> Pt => { x, y }

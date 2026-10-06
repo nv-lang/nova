@@ -26,7 +26,7 @@ module novac.lower
 
 import ../tree.{Node, NodeKind, bin_op_of}
 import ../types.{is_ty}
-import ../sem.{branch_children, contains_call, is_expr_kind, leaf_kind}
+import ../sem.{branch_children, contains_call, is_expr_kind, is_printer_build_kind, leaf_kind}
 import ../sem.{is_place_expr, row_recv_by_pointer, raw_row, no_row, call_returns_recv_ref}
 
 /// A form whose value is laid down by blocks of the lowering and so cannot be
@@ -73,24 +73,20 @@ fn contains_block_form(e Node) -> bool {
 }
 
 /// Does this expression hold a CONSTRUCTION the printer builds in statements of its
-/// own -- an array literal (`[]T.new()` included), a record or positional constructor,
-/// an interpolated string (`@hoist_array_lits`, emit_c.nv)? Such a form needs a place
-/// to stand before the line that reads it, exactly like a block form: a `while`
-/// condition re-builds it each turn, and `} else if (` has no room for it (task #23:
+/// own -- the kinds `is_printer_build_kind` (sem) names: an array literal (`[]T.new()`
+/// included), a record constructor, an interpolated string, the positional record
+/// literal (`@hoist_array_lits`, emit_c.nv)? Such a form needs a place to stand before
+/// the line that reads it, exactly like a block form: a `while` condition re-builds it
+/// each turn, and `} else if (` has no room for it (task #23:
 /// `} else if !@ctx.instantiates(row, []TyId.new()) {` in check/calls.nv died as
-/// "an array literal ... never hoisted"). The search stops where `contains_block_form`
-/// stops: those forms lower their own insides.
-/// A TUPLE literal is not in the list yet: naming its node kind here is a new
-/// word the tuple rule holds for the owner's yes (check-novac-tuple-no-second-door),
-/// so `} else if (x, 1).0 > 0 {` still dies as it did before this wave (registry 1791).
+/// "an array literal ... never hoisted"; `} else if (x, 1).0 > 0 {` the same, registry
+/// 1791, while this walk kept a list of its own). The search stops where
+/// `contains_block_form` stops: those forms lower their own insides.
 fn contains_construction(e Node) -> bool {
     match e {
         Leaf(_) => false
         Branch { kind, children, .. } => {
-            if kind == NodeKind.ArrayLit || kind == NodeKind.RecordCtor ||
-               kind == NodeKind.InterpStr {
-                return true
-            }
+            if is_printer_build_kind(kind) { return true }
             if kind == NodeKind.IfExpr || kind == NodeKind.MatchExpr || kind == NodeKind.Unsafe ||
                kind == NodeKind.HandlerLit || kind == NodeKind.Block {
                 return false

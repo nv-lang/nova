@@ -1,5 +1,0 @@
-module prog
-
-fn main() Io -> () {
-    println("x\u{D800}y")
-}

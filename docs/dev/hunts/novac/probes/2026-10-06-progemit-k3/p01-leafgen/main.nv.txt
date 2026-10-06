@@ -1,0 +1,19 @@
+module p01_leafgen.main
+
+// NOVAC_PROGRAM
+// A generic function of leaf module `libm` instantiated over a record declared
+// only in the entry module: does the instance struct, emitted while `libm` is
+// processed, see `MainRec`'s body, which textually comes later in program order?
+
+import ./libm.{last}
+
+export type MainRec {
+    x int
+}
+
+fn main() {
+    mut xs = []MainRec.new()
+    xs.push(MainRec { x: 1 })
+    xs.push(MainRec { x: 2 })
+    println(last[MainRec](xs).x)
+}

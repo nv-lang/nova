@@ -1,0 +1,19 @@
+module p03_result_record.main
+
+// NOVAC_PROGRAM
+// Result over another module's record, matched by the entry: does the option
+// typedef and the record's C form agree between the module that returns it
+// and the module that matches it?
+
+import ./lib.{Pt, parse}
+
+fn main() {
+    match parse(3, 4) {
+        Ok(p) => println(p.x)
+        Err(e) => println(e)
+    }
+    match parse(0 - 3, 4) {
+        Ok(p) => println(p.x)
+        Err(e) => println(e)
+    }
+}
