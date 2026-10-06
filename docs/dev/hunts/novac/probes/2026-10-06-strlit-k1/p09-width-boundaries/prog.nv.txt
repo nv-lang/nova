@@ -1,0 +1,5 @@
+module prog
+
+fn main() Io -> () {
+    println("\u{7F}\u{80}\u{7FF}\u{800}\u{FFFF}\u{10000}\u{10FFFF}")
+}

@@ -1,0 +1,9 @@
+module str_unicode_escape.neg_1
+
+// NOVAC_EXPECT names a Unicode scalar value
+// ONE seeded cause: a SURROGATE codepoint. D467 section 2 -- `\u{H…}` is a
+// Unicode codepoint, "surrogates and > U+10FFFF are refused". The oracle
+// refuses the same line ("invalid Unicode codepoint: U+D800").
+fn main() {
+    println("a\u{D800}b")
+}

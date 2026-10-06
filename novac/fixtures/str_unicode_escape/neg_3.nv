@@ -1,0 +1,9 @@
+module str_unicode_escape.neg_3
+
+// NOVAC_EXPECT names a Unicode scalar value
+// ONE seeded cause: braces with NO hex digit -- D467 section 2 spells the
+// digits `H…`, one or more (D481's `hex+` for a char says the same). The oracle refuses the same line ("expected hex
+// digits in \u{...}").
+fn main() {
+    println("a\u{}b")
+}
