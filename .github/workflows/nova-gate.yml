@@ -332,10 +332,21 @@ jobs:
   # superset of it. The overlap is deliberate for now: `gate` is a proven green
   # job and this one has never run. Once `gate-push` has a green history, the
   # duplicated steps of `gate` come out — not before.
+  # FOUR PARALLEL PARTS (2026-10-06, owner: "everyone waits for CI"). One job
+  # ran this tier for 31.5 min on 915f8996b; conformance-full (552 s), mega-CU
+  # (536 s) and crate-tests (409 s) were two thirds of it and do not depend on
+  # each other. NOVA_GATE_PART makes gate.sh run only its part's steps
+  # (gate_part_of in scripts/gate.sh); every step belongs to exactly one part,
+  # and a part that finds none of its steps goes red. fail-fast is off so one
+  # red part does not hide the verdict of the others.
   gate-push:
-    name: gate.sh tier push (behaviour; tier full on the nightly schedule)
+    name: gate.sh tier push [${{ matrix.part }}] (behaviour; tier full on the nightly schedule)
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [conformance, mega, crates, rest]
     steps:
       - name: Checkout nova (submodules recursive, full history)
         uses: actions/checkout@v4
@@ -380,9 +391,13 @@ jobs:
       # помечено — Г14 запрещает выдавать одно за другое. Первый ночной прогон
       # заменит вывод замером; если он выйдет за потолок, это будет честный
       # красный, а не поломка.
+      # Tier loop (manual dispatch) has steps only in part `rest`; the heavy
+      # parts would find none of theirs and go red by design, so they sit out.
       - name: scripts/gate.sh — tier push (full on the nightly schedule)
+        if: matrix.part == 'rest' || (inputs.tier || 'push') != 'loop'
         env:
           NOVA_GATE_TIER: ${{ github.event_name == 'schedule' && 'full' || (inputs.tier || 'push') }}
+          NOVA_GATE_PART: ${{ matrix.part }}
         run: bash scripts/gate.sh
 
   gate:
