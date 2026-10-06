@@ -22,6 +22,7 @@
       "Bash(git -C * merge --abort)",
       "Bash(git -C * push origin *:integrate/*)",
       "Bash(git -C * push origin --delete integrate/*)",
+      "Bash(bash scripts/tools/land-task.sh *)",
       "Bash(nova-cli/target/release/nova.exe check *)",
       "Bash(./nova-cli/target/release/nova.exe check *)",
       "Bash(nova-cli/target/release/nova.exe lint *)",
