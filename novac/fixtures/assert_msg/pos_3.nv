@@ -1,0 +1,13 @@
+module pos_3
+
+// The message of `assert` is a literal: the oracle and novac agree, so this one
+// needs no twin. x = 0, so the assert FAILS on line 7:
+// `panic: pos_3.nv:7: assert failed: must be positive (x > 0)`.
+fn checked(x int) -> int {
+    assert(x > 0, "must be positive")
+    x
+}
+
+fn main() {
+    println(checked(0))
+}
