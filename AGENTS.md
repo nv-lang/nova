@@ -49,7 +49,9 @@ The single home of the prohibitions (root [CLAUDE.md](CLAUDE.md) only orders you
 **Where you work**
 
 * You work in **your own branch in your own worktree**. The task's **acceptor** (not its author) merges it into
-  `main` by the acceptance steps; a commit straight to `main`: the integrator only.
+  `main` by the acceptance steps; a commit straight to `main`: the integrator only. The acceptor lands with ONE
+  script, `scripts/tools/land-task.sh <N> <full tip sha>` (via `peer_watch`, under `peer_task merge`); the full path
+  and the fallback are in [.claude/commands/integrator.md](.claude/commands/integrator.md), «Путь приёмщика».
 * Your own branch MAY be pushed to `origin` (never `--force`, never `main`, never a tag; the mirrors carry `main`).
 * **Temporary files and scratch directories go in your session's scratchpad, NOWHERE else** — never at a drive root,
   beside the repository, or in the parent of the working copy. Needs to outlive the session? It goes into the
