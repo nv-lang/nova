@@ -78,3 +78,6 @@
 #   shell's JSON serializer). Measured with the tree's binary, LF index.
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): #10 accepted check/binds.nv and
 #   lex/lex_test.nv, #14 accepted diag/diag.nv -- 0 rejected; measure 0.2 at zero.
+#   The empty set is written as the line `none` (check-novac-self-accepted.py): from here any rejected file is
+#   a regression, and an emptied file without `none` stays red.
+none
