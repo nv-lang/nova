@@ -17,7 +17,7 @@
 
 module novac.emit_c
 
-import ../tree.{Node}
+import ../tree.{Node, raw_node}
 import ../sem.{call_arg_at, is_arg_node, literal_as_c_text}
 import ../lex.{TokenKind}
 import ../diag.{ice}
@@ -30,8 +30,46 @@ fn Emitter mut @emit_assert(e Node, kids []Node) -> () {
     @body.append(", \"")
     @body.append(c_literal_escaped(note.display))
     @body.append("\", \"${@src_name}\", ${note.src_line}, ")
-    @body.append(assert_msg_c(kids))
+    if assert_msg_computed(kids) {
+        // The C text the hoist copied out of the message value.
+        @body.append(@lit_tmp[raw_node(call_arg_at(kids, 1, 1).id_of())])
+    } else {
+        @body.append(assert_msg_c(kids))
+    }
     @body.append("), NOVA_UNIT)")
+}
+
+/// A message that is NOT a string literal -- an interpolation, a variable, a
+/// call -- has its value only at run time, so the hoist copies it into C text
+/// before the statement (`@hoist_assert_message`). Eager: the message is built
+/// whether or not the condition holds, as an interpolated argument always was.
+fn Emitter mut @hoist_assert_message(kids []Node) -> () {
+    if !assert_msg_computed(kids) { return }
+    ro msg = call_arg_at(kids, 1, 1)
+    ro sv = "_novac_asv${@fresh_uniq()}"
+    ro cs = "_novac_asc${@fresh_uniq()}"
+    @body.append("    nova_str ${sv} = ")
+    @emit_expr(msg)
+    @body.append(";\n")
+    @body.append("    char* ${cs} = (char*)nova_alloc(${sv}.len + 1);\n")
+    @body.append("    if (${sv}.len) memcpy(${cs}, ${sv}.ptr, ${sv}.len);\n")
+    @body.append("    ${cs}[${sv}.len] = '\\0';\n")
+    @lit_tmp[raw_node(msg.id_of())] = cs
+}
+
+/// Does the call carry a message that is not a string literal?
+fn assert_msg_computed(kids []Node) -> bool {
+    mut n = 0
+    mut at = 0
+    for c in kids {
+        if at >= 1 && is_arg_node(c) {
+            n += 1
+        } else {
+            // The callee's name, or punctuation: not an argument.
+        }
+        at += 1
+    }
+    n == 2 && assert_msg_c(kids) == "NULL"
 }
 
 /// `panic(msg)` as one C expression, the oracle's shape: the throw site stamped

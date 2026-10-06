@@ -1,0 +1,29 @@
+module assert_msg.pos_1
+
+// THE MESSAGE OF `assert` IS A VALUE, not only a literal (D81, D84, norm
+// 08-runtime.md: `<file>:<line>: assert failed: <msg> (<expr>)`). Three forms
+// of the second argument: an interpolated string, a plain literal, and a
+// variable. Every condition holds here, so the program prints its values; the
+// failing text is the runtime's `nova_assert_loc`, and the message it prints is
+// the one this emitter copies out of the value (`@hoist_assert_message`).
+fn checked(x int) -> int {
+    assert(x > 0, "bad value ${x}")
+    x
+}
+
+fn lit(x int) -> int {
+    assert(x > 0, "must be positive")
+    x
+}
+
+fn from_var(x int) -> int {
+    ro m = "must be positive"
+    assert(x > 0, m)
+    x
+}
+
+fn main() {
+    println(checked(3))
+    println(lit(4))
+    println(from_var(5))
+}
