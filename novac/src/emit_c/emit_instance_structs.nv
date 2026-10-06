@@ -9,16 +9,82 @@
 //   unit makes has no struct until this door writes one: a typedef and a body
 //   with the declaration's fields under the instance's substitution, in the
 //   shell's spelling (`instance_struct_c`).
-// Used by: emit_c.nv `emit`, after the type declarations and before the
-//   instance prototypes (a prototype names the struct).
-// Guarded by: the vec_own fixture (check-novac-differential.sh) and
-//   check-novac-emission-size.sh.
+// Used by: emit_c.nv `emit` -- the forward NAMES before the type declarations
+//   (a field of the unit's own record or sum may point to an instance), the
+//   bodies after them and before the instance prototypes (a prototype names
+//   the struct).
+// Guarded by: the vec_own and instance_field fixtures (check-novac-differential.sh)
+//   and check-novac-emission-size.sh.
 
 module novac.emit_c
 
 import ../sem.{decl_of_ty, field_range_of, no_frow, raw_frow, c_type, subst_type, instance_struct_c}
+import ../sem.{variant_range_of, no_vrow, raw_vrow}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
+
+/// The forward typedef of every generic RECORD instance the unit names and the
+/// shell does not define -- `typedef struct X X;`, before ANY type body.
+///
+/// Until E2-b3 step 6 the typedef was written with the instance's body, AFTER
+/// the unit's own declarations, so a field of the unit's own type pointing to
+/// such an instance (`type Bag { items []Pt }`) named a type C had not seen:
+/// `unknown type name 'Nova_Vec____Nova_Pt_p'`, while the oracle compiled it.
+/// The names come from where C will meet them: the instances' signatures, the
+/// fields of the unit's records and the payloads of its sums -- and, through
+/// each, the arguments and the substituted fields of every instance found (a
+/// `Vec[Vec[Pt]]` points to a `Vec[Pt]`). A pointer needs only the name, and
+/// every generic record instance is a heap record, so a name is all C asks.
+fn Emitter mut @emit_instance_struct_fwds(insts []Instantiation) -> () {
+    mut done = []TyId.new()
+    for inst in insts {
+        for p in inst.ptypes {
+            @fwd_instance_structs_in(p.type_id, done)
+        }
+        @fwd_instance_structs_in(inst.ret_id, done)
+    }
+    for t in @ctx.foreign_types_cnt..@ctx.types.len() {
+        ro td = @ctx.types[t]
+        ro frange = field_range_of(td) ?? (no_frow(), 0)
+        for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+            @fwd_instance_structs_in(@ctx.fields.rows[j].type_id, done)
+        }
+        ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+        for v in raw_vrow(vrange.0)..raw_vrow(vrange.0) + vrange.1 {
+            ro vd = @ctx.variant_rows[v]
+            for p in 0..vd.payload_cnt {
+                @fwd_instance_structs_in(@ctx.payload_types[vd.payload_off + p], done)
+            }
+        }
+    }
+}
+
+/// The forward typedef of every generic record instance inside `t` (itself
+/// included) the shell does not define and this pass has not written yet. A
+/// type with a parameter in it (a generic declaration's own field) has no C
+/// name and is left alone.
+fn Emitter mut @fwd_instance_structs_in(t TyId, mut done []TyId) -> () {
+    if !is_ty(t) || !@ctx.tys.is_concrete(t) { return }
+    for d in done {
+        if d == t { return }
+    }
+    done.push(t)
+    mut args = []TyId.new()
+    for i in 0..@ctx.tys.arg_count(t) {
+        args.push(@ctx.tys.arg(t, i))
+        @fwd_instance_structs_in(@ctx.tys.arg(t, i), done)
+    }
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return }
+    ro td = decl_of_ty(@ctx, t)
+    if td.kind != TypeKind.TkRecord { return }
+    ro sn = instance_struct_c(@ctx, t)
+    if @ctx.interop.has_body(sn) { return }
+    @body.append("typedef struct ${sn} ${sn};\n")
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+        @fwd_instance_structs_in(subst_type(@ctx, @ctx.fields.rows[j].type_id, args), done)
+    }
+}
 
 /// The struct of every generic RECORD instance an instance this unit makes
 /// takes or returns, when the shell does not define it -- once each.
@@ -48,7 +114,7 @@ fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
     for i in 0..@ctx.tys.arg_count(t) {
         args.push(@ctx.tys.arg(t, i))
     }
-    @body.append("typedef struct ${sn} ${sn};\n")
+    // The typedef was written by the forward pass (`@emit_instance_struct_fwds`).
     @body.append("struct ${sn} {\n")
     ro frange = field_range_of(td) ?? (no_frow(), 0)
     for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {

@@ -159,6 +159,21 @@ fn Emitter mut @emit_type_decls() -> () {
         // match, two behaviours; nothing decides the kind twice.
         @emit_decl_kind(t, true)
     }
+    // THE OPTION INSTANCES over the file's types (`Option[Addr]`): a field of a
+    // record holds one BY VALUE (`NovaOpt_Nova_Addr_p home;`), so its typedef
+    // must precede that record's body. Until E2-b3 step 6 they all came after
+    // the last body, and a record with an `Option[<own record>]` field was
+    // `unknown type name 'NovaOpt_Nova_Addr_p'` in clang while the oracle
+    // compiled it. A POINTER-shaped one needs only its payload's name -- out
+    // now, after pass 1; a value-shaped one embeds its payload's body and goes
+    // right after it, inside pass 2 (`@dep_done` orders its holders).
+    ro opts = @option_typedef_ids()
+    mut opt_out = []bool.new()
+    for i in 0..opts.len() {
+        ro pointer = @option_payload_is_pointer(TyId(opts[i]))
+        if pointer { @emit_option_typedef(TyId(opts[i])) }
+        opt_out.push(pointer)
+    }
     // PASS 2 -- the bodies, each AFTER every type it embeds by value.
     //
     // A pointer was satisfied by pass 1; a field embedded BY VALUE needs the
@@ -195,6 +210,13 @@ fn Emitter mut @emit_type_decls() -> () {
             done[t] = true
             moved += 1
             left -= 1
+            // The value-shaped options over THIS type, right after its body.
+            for i in 0..opts.len() {
+                if opt_out[i] { continue }
+                if decl_index_of_ty(@ctx, @ctx.tys.arg(TyId(opts[i]), 0)) != t { continue }
+                @emit_option_typedef(TyId(opts[i]))
+                opt_out[i] = true
+            }
         }
         if moved == 0 {
             ice("emit_c: a cycle of by-value fields -- a type of infinite size reached the emitter")
@@ -204,6 +226,11 @@ fn Emitter mut @emit_type_decls() -> () {
     // Last, exactly where the retired door used to run: a term embeds only
     // types the passes above have finished.
     @emit_structural_typedefs()
+    // The options no body of pass 2 released (a payload of an instance of a
+    // generic the shell lacks), where they all stood before.
+    for i in 0..opts.len() {
+        if !opt_out[i] { @emit_option_typedef(TyId(opts[i])) }
+    }
 }
 
 /// The C typedef of every STRUCTURAL term the file interned -- the anonymous
@@ -268,7 +295,6 @@ fn Emitter mut @emit_structural_typedefs() -> () {
         @body.append("} ${name};\n")
         @body.append("#endif\n")
     }
-    @emit_option_typedefs()
 }
 
 /// The C typedef of every OPTION INSTANCE over a type THIS FILE declares
@@ -279,13 +305,37 @@ fn Emitter mut @emit_structural_typedefs() -> () {
 /// two shapes (emit_option): a heap-record payload is the tagless `_p` struct
 /// holding the pointer, every other payload is `{ int tag; T value; }`.
 ///
-/// Runs after the declaration passes, like the structural terms: a value
-/// payload embeds the record's body, so the body must be out first. Order by
-/// term id, deduplicated -- the same discipline as the tuple typedefs above.
-fn Emitter mut @emit_option_typedefs() -> () {
-    mut ids = []int.new()
+/// WHERE each is written is `@emit_type_decls`' business (a pointer-shaped one
+/// after the names, a value-shaped one after its payload's body); this door
+/// only says WHICH, deduplicated, in first-met order. The candidates are the
+/// types the checker recorded and -- because a field type need not be the type
+/// of any expression -- the fields of the file's records and the payloads of
+/// its sums.
+fn Emitter @option_typedef_ids() -> []int {
+    mut cands = []TyId.new()
     for t in @out.types {
+        cands.push(t)
+    }
+    for d in @ctx.foreign_types_cnt..@ctx.types.len() {
+        ro td = @ctx.types[d]
+        ro frange = field_range_of(td) ?? (no_frow(), 0)
+        for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+            cands.push(@ctx.fields.rows[j].type_id)
+        }
+        ro vrange = variant_range_of(td) ?? (no_vrow(), 0)
+        for v in raw_vrow(vrange.0)..raw_vrow(vrange.0) + vrange.1 {
+            ro vd = @ctx.variant_rows[v]
+            for k in 0..vd.payload_cnt {
+                cands.push(@ctx.payload_types[vd.payload_off + k])
+            }
+        }
+    }
+    mut ids = []int.new()
+    for t in cands {
         if !@is_option_inst(t) { continue }
+        // A parameter-bearing instance (a generic declaration's own field) has
+        // no C name yet.
+        if !@ctx.tys.is_concrete(t) { continue }
         ro payload = @ctx.tys.arg(t, 0)
         // Only an instance over a DECLARED FILE type: a primitive names no
         // declaration (asking it for one is an ice by design), a structural
@@ -324,15 +374,17 @@ fn Emitter mut @emit_option_typedefs() -> () {
         if dup { continue }
         ids.push(rid)
     }
-    for rid in ids {
-        ro t = TyId(rid)
-        ro name = c_type(@ctx, t)
-        ro pc = c_type(@ctx, @ctx.tys.arg(t, 0))
-        if @option_payload_is_pointer(t) {
-            @body.append("typedef struct ${name} { ${pc} value; } ${name};\n")
-        } else {
-            @body.append("typedef struct ${name} { int tag; ${pc} value; } ${name};\n")
-        }
+    ids
+}
+
+/// One option instance's typedef, in the shell's two shapes (see above).
+fn Emitter mut @emit_option_typedef(t TyId) -> () {
+    ro name = c_type(@ctx, t)
+    ro pc = c_type(@ctx, @ctx.tys.arg(t, 0))
+    if @option_payload_is_pointer(t) {
+        @body.append("typedef struct ${name} { ${pc} value; } ${name};\n")
+    } else {
+        @body.append("typedef struct ${name} { int tag; ${pc} value; } ${name};\n")
     }
 }
 
@@ -365,6 +417,14 @@ fn Emitter @inline_deps_done(decl_id int, done []bool) -> bool {
 /// a parameter -- because those need no body before them at all.
 fn Emitter @dep_done(t TyId, done []bool) -> bool {
     if !is_ty(t) { return true }
+    // AN OPTION lies inline in its holder, and its typedef is written where
+    // `@emit_type_decls` releases it: a pointer-shaped one before every body, a
+    // value-shaped one right after its payload's -- so the holder waits for
+    // exactly what the payload waits for (E2-b3 step 6).
+    if @is_option_inst(t) {
+        if @option_payload_is_pointer(t) { return true }
+        return @dep_done(@ctx.tys.arg(t, 0), done)
+    }
     // NO KIND MATCH HERE, and that is the point: the layout is already decided
     // by two existing doors, and asking them is one door instead of a second
     // dispatcher (P18). `is_value_record` answers TRUE for every inline record

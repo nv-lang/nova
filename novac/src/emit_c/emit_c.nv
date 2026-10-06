@@ -151,6 +151,9 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
                           // empty pool found at runtime or never. Measured on
                           // this very field the day the pool was added.
                           pool: LitPool.new(), blobs: []int.new(), infos: []TyId.new() }
+    // The NAMES of the generic record instances first: a field of the unit's
+    // own type may point to one (E2-b3 step 6); their bodies come below.
+    e.emit_instance_struct_fwds(insts)
     e.emit_type_decls()
     // Module values (274.5 section 6): the cells before any function reads
     // them, the initializers after every function they may call, and the
@@ -167,6 +170,8 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     // (274.11 E.10 step 4d), before any prototype names them.
     e.emit_instance_structs(insts)
     e.emit_instance_protos(insts)
+    // The file's own callables too: a call may name one declared below it.
+    e.emit_file_protos(file)
     e.emit_file(file)
     for inst in insts {
         e.emit_instance(inst)
@@ -188,34 +193,63 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
 fn Emitter mut @emit_file(file Node) -> () {
     match file {
         Leaf(_) => ice("emit: file node must be a branch")
-        Branch { kind, children, .. } => {
+        Branch { kind, .. } => {
             assert(kind == NodeKind.File, "emit: root is not File")
-            // THROUGH THE DOOR, like every other walk over a file's
-            // declarations: an `export`ed one sits inside its visibility
-            // wrapper, and to a raw walk it is not there at all. Measured
-            // 2026-08-23: with the collector taught to see it and this loop not,
-            // the call resolved and the LINKER asked for the body
-            // (`undefined symbol: novac_fn_helper__nova_int__to_nova_int`).
-            for c in file_decls(file) {
-                if c.kind_of() != NodeKind.FnDecl { continue }
-                // E2-b2: a callable NOT reached from a root is not emitted.
-                // The decision belongs to mono, not to the emitter: the
-                // emitter writes what it is given and asks who decided.
-                match decl_fn_row(c, @ctx) {
-                    // No row: this declaration is not a callable of the file,
-                    // so there is nothing for the emitter to write.
-                    None => continue
-                    Some(row) => {
-                        if !@reach.has(row) {
-                            continue
-                        } else {
-                            // Reached from a root: the emitter writes it below.
-                        }
-                    }
-                }
+            for c in @reached_fns(file) {
                 @emit_fn(c)
             }
         }
+    }
+}
+
+/// The file's callables the emitter writes, in source order.
+///
+/// THROUGH THE DOOR, like every other walk over a file's declarations: an
+/// `export`ed one sits inside its visibility wrapper, and to a raw walk it is
+/// not there at all. Measured 2026-08-23: with the collector taught to see it
+/// and this loop not, the call resolved and the LINKER asked for the body
+/// (`undefined symbol: novac_fn_helper__nova_int__to_nova_int`). One walk for
+/// the prototypes and the definitions, so the two never disagree on the set.
+fn Emitter @reached_fns(file Node) -> []Node {
+    mut fns = []Node.new()
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        // E2-b2: a callable NOT reached from a root is not emitted.
+        // The decision belongs to mono, not to the emitter: the
+        // emitter writes what it is given and asks who decided.
+        match decl_fn_row(c, @ctx) {
+            // No row: this declaration is not a callable of the file,
+            // so there is nothing for the emitter to write.
+            None => continue
+            Some(row) => {
+                if !@reach.has(row) {
+                    continue
+                } else {
+                    // Reached from a root: the emitter writes it.
+                }
+            }
+        }
+        fns.push(c)
+    }
+    fns
+}
+
+/// A prototype per callable of the file, written before any definition.
+///
+/// The definitions go in source order, so a function calling one declared
+/// BELOW it named a symbol C had not seen: clang took the call for an implicit
+/// `int` declaration and refused the definition as a conflicting type, while
+/// the oracle compiled the file (E2-b3 step 6: `diag.nv`'s `to_json` calls
+/// `ice`, declared after it). Fixtures had always put the callee first. The
+/// entry takes no prototype: nothing in the file calls it.
+fn Emitter mut @emit_file_protos(file Node) -> () {
+    for c in @reached_fns(file) {
+        ro row = decl_fn_row(c, @ctx) ?? ice("emit: a reached declaration with no row in the callable table")
+        if @ctx.fns.is_entry_row(row) { continue }
+        ro fd = @ctx.fns.rows[raw_row(row)]
+        @emit_signature(c, decl_name(c), row, no_subst(),
+            @ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt], fd.ret_id)
+        @body.append(";\n")
     }
 }
 
