@@ -1,0 +1,6 @@
+module prog
+
+fn main() Io -> () {
+    ro c = '\u{41}'
+    println(c)
+}

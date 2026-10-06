@@ -1,0 +1,5 @@
+module prog
+
+fn main() Io -> () {
+    println("x\x41y")
+}

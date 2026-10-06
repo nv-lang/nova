@@ -17,3 +17,4 @@ or_pattern_binder
 consume_field_move
 variant_arm_sibling
 embed
+str_unicode_escape

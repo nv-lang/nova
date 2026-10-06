@@ -488,15 +488,27 @@ export fn escaped_byte_len(piece str) -> int {
     mut len = 0
     mut i = 0
     while i < b.len() {
-        if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
-        len += 1
+        if b[i] == INTERP_BSLASH && i + 1 < b.len() && b[i + 1] == INTERP_LOWER_U {
+            // `\u{H…}` (D467 s2) is the UTF-8 bytes of its codepoint, one to
+            // four -- the C text gets exactly those (`literal_as_c_text`).
+            // Counted as one, a Cyrillic letter's fragment ran a byte short.
+            ro close = unicode_escape_close(b, i + 1)
+            ro cp = if close < 0 { -1 } else { unicode_escape_value(b, i + 1, close) }
+            assert(cp >= 0, "slots: a unicode escape the judge let through")
+            len += utf8_width(cp)
+            i = close + 1
+        } else {
+            if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
+            len += 1
+        }
     }
     len
 }
 
-/// The three bytes the slicer reads.
+/// The bytes the slicer reads.
 const INTERP_BSLASH u8 = 0x5C  // backslash
 const INTERP_DOLLAR u8 = 0x24  // $
+const INTERP_LOWER_U u8 = 0x75  // u: the unicode escape's letter
 const INTERP_LBRACE u8 = 0x7B  // {
 const INTERP_RBRACE u8 = 0x7D  // }
 

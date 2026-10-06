@@ -1,0 +1,33 @@
+=== PROGRAM
+     1	module prog
+     2	
+     3	fn main() Io -> () {
+     4	    ro n = 1
+     5	    println("a\
+     6	   b${n}c")
+     7	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_int n = ((nova_int)1LL);
+    Nova_StringBuilder* _novac_isb_t1 = Nova_StringBuilder_static_new(22);
+    Nova_StringBuilder_method_append(_novac_isb_t1, (nova_str){.ptr=(const uint8_t*)"ab", .len=5});
+    nova_fn_7runtime14string_builder16int_display_spec(_novac_isb_t1, (nova_int)(n), ((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U));
+    Nova_StringBuilder_method_append(_novac_isb_t1, (nova_str){.ptr=(const uint8_t*)"c", .len=1});
+    nova_str _novac_istr_t2 = Nova_StringBuilder_consume_into_str(_novac_isb_t1);
+    nova_print_str(_novac_istr_t2);
+    nova_print_newline();
+    nova_print_end();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== STDOUT, line by line: oracle | Carina
+  1  ab1c                    | ab^@__1c
+=== VERDICT: DIFFERENT stdout
