@@ -1582,8 +1582,9 @@
 # 2026-10-06, task #10 (candidate from main a1c48f6ed): rows 1681 -> 1682, max 1749 -> 1752 (row 1752 filed OPEN by the hunt 2026-10-06-strlit-k1; 1750-1751 belong to other branches and stand in gaps=).
 # 2026-10-06, task #10 (candidate from main de53c3625): rows 1680 (main) + 3 (#10: 1738, 1739, 1752) = 1683, max 1750 -> 1752; 1750 arrived with main and leaves gaps=, 1751 stays (another branch).
 # 2026-10-06, task #10 (candidate from main 0e5c83421, task #15 in): rows 1687 (main) + 3 (#10: 1738, 1739, 1752) = 1690, max stays 1757; 1738, 1739 and 1752 leave gaps= with their rows, 1751 stays (another branch).
-rows=1690
-max=1757
+# 2026-10-06, integrator (row 1763, guard export-has-caller speed; merge of main c9b2d4c35): rows 1690 (main) + 1 (1763) = 1691, max 1757 -> 1763; 1758-1762 are numbers of other branches (1758-1761 task #14, 1762 task #17) and stand in gaps= until their rows arrive.
+rows=1691
+max=1763
 rows=1611
 max=1693
 rows=1590
@@ -2344,7 +2345,8 @@ stale_gaps=0
 # 2026-10-06, task #15, merge of origin/main a1c48f6ed: 1743-1745 and 1748-1749 arrive (task #16), 1746-1747 are this branch's rows -- all out of gaps= by this merge; 1738-1742 and 1750-1752 stay holes (tasks #10, #14, the integrator).
 # 2026-10-06, task #10: 1750-1751 issued to other branches (1750 -- the integrator's); removal: drop from gaps= by the merge that brings their rows.
 # 2026-10-06, task #10 (merge of main 0e5c83421): 1738-1739 and 1752 are this branch's rows -- out of gaps=; 1740-1742 (#14) and 1751 stay.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1740-1742,1751
+# 2026-10-06, integrator (row 1763): 1758-1762 issued to other branches (1758-1761 #14, 1762 #17); removal: drop from gaps= by the merge that brings their rows.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1740-1742,1751,1758-1762
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
