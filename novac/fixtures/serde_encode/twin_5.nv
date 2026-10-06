@@ -5,7 +5,7 @@ module serde_encode.twin_5
 // `begin_seq(len)`, every element's own `@serialize`, `end_seq()` -- so the
 // outer level is `[]T @serialize` over a non-generic element, which the oracle
 // builds, and its output is the output novac gives pos_5 (plan 274.12). The
-// oracle refuses pos_5 itself in C (registry 221.1 TBD). Not a `pos_*`: the
+// oracle refuses pos_5 itself in C (registry 221.1 #1801). Not a `pos_*`: the
 // differential reads it only as pos_5's twin.
 
 import std.encoding.serde.{Serialize, Serializer, SerError, json_encode}

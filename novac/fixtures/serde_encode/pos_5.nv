@@ -5,7 +5,7 @@ module serde_encode.pos_5
 // body twice over, each level a `begin_seq`/`end_seq` frame; empty inner vectors
 // included. The oracle does not build this file: its mono
 // leaves the inner call an uninstantiated `__mono_method__[]T__serialize` and the
-// C compiler refuses it (registry 221.1 TBD, plan 274.12), so the differential
+// C compiler refuses it (registry 221.1 #1801, plan 274.12), so the differential
 // compares novac's run against twin_5.nv, which writes the inner level by hand.
 
 // NOVAC_TWIN twin_5.nv

@@ -1620,8 +1620,17 @@
 # protection crashes the program with SIGSEGV. gaps= untouched (1764-1767 are task #18's numbers).
 # 2026-10-06, task #18, merge of origin/main ef60c1882 (task #21 in): rows 1703 (main) + 6 (#18) = 1709,
 #   max 1777; 1770 carries #21's row -- out of gaps= by this merge; 1772-1776 stay holes.
-rows=1709
-max=1777
+# 2026-10-06, task #24 (row 1782, the ice door carries no place), merge of origin/main ef60c1882 (task #21 in):
+#   rows 1703 (main) + 1 (1782) = 1704, max 1770 -> 1782; 1770 has its row now and leaves gaps=;
+#   1764-1767 and 1771-1781 are numbers the integrator issued to other open branches (1775, 1776, 1778
+#   seen in task #23's) and stand in gaps= until those land -- each landing shrinks gaps= back, a gap
+#   left after the row arrives would let a real row be lost.
+# 2026-10-06, task #18, merge of origin/main f997d871d (task #24 in): rows 1704 (main) + 6 (#18: 1764-1767,
+#   1771, 1777) = 1710, max 1782; this branch's six leave gaps= by this merge, 1772-1776 and 1778-1781 stay.
+# 2026-10-07, task #22 (numbers from the integrator): rows 1710 (main 9b0223445) + 9 (#22: 1795-1803) = 1719,
+#   max 1782 -> 1803; 1783-1794 are numbers of other branches and stand in gaps= until their rows arrive.
+rows=1719
+max=1803
 rows=1611
 max=1693
 rows=1590
@@ -2386,7 +2395,7 @@ stale_gaps=0
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35): 1738-1739, 1752 (#10) and 1740-1742, 1751 (#14) all carry rows -- none in gaps=.
 # 2026-10-06, integrator (row 1763): 1758-1762 issued to other branches (1758-1761 #14, 1762 #17); removal: drop from gaps= by the merge that brings their rows.
 # 2026-10-06, acceptor of task #14 (candidate on main 7ba6979fd): 1740-1742, 1751, 1758-1761 carry #14's rows -- out of gaps=; 1762 (task #17) stays.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1772-1776
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1772-1776,1778-1781,1783-1794
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

@@ -34,8 +34,8 @@ fn no_mark() -> Option[int] => None
 
 fn main() {
     // The vectors are bound first: an array literal inside `Some(..)` in a field
-    // of a record literal is an ice of novac's emitter (registry 221.1, the B8/B13
-    // hoisting rows).
+    // of a record literal is an ice of novac's emitter (registry 221.1 #1800, the B8/B13
+    // hoisting row).
     ro m1 = [Some(4), no_mark()]
     ro n1 = ["a", "b"]
     ro g = Grid { marks: m1, mode: Some(Mode.Level(2)), names: Some(n1), flag: false,

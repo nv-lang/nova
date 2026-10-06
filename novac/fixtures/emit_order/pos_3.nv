@@ -32,7 +32,7 @@ type Spot value {
 
 fn main() {
     // The value record is bound first: built inside `Some(..)` in a field of a
-    // literal it is an ice of novac's emitter (registry 221.1, TBD).
+    // literal it is an ice of novac's emitter (registry 221.1 #1800).
     ro sp = Spot { x: 1, y: 2 }
     ro ad = Addr { city: "Oslo" }
     ro u = User { name: "ann", home: Some(ad), spot: Some(sp), mood: Some(Mood.Loud(3)) }
