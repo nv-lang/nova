@@ -1,0 +1,21 @@
+module disj_in_option.neg_1
+
+// A `|` below Option in an `if` condition (registry 1756): a condition's
+// pattern compares with no value at any depth (D486 s4, amendment 2026-09-30),
+// so `Some(None | Some(2))` is a LANGUAGE error here -- the position the
+// lowering cannot build a nested test in is refused by name, not passed.
+
+// NOVAC_EXPECT a literal or `|` stands in it at no depth
+
+fn o2(k int) -> Option[Option[int]] {
+    if k == 0 {
+        return None
+    }
+    Some(Some(k))
+}
+
+fn main() {
+    if Some(None | Some(2)) = o2(2) {
+        println("a")
+    }
+}
