@@ -28,6 +28,7 @@ import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_n
 import ../sem.{is_vrow, is_arg_node, arg_expr_of, arg_name_of}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{decl_of_ty}
+import ../resolve.{FieldIndex}
 import ../sem.{option_payload, for_head_elem}
 import ../sem.{is_numeric_prim, is_float_prim}
 import ../types.{Interner}
@@ -40,14 +41,14 @@ import ../builtins.{TypeKind}
 /// same door, same order: one builder per stage of KNOWLEDGE, not one per kind
 /// of call. `from` is the index of the first argument child.
 fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope Scope,
-                  chan CheckOut) -> []ArgSpec {
+                  chan CheckOut, fres FieldIndex) -> []ArgSpec {
     mut out = []ArgSpec.new()
     // The receiver is parameter zero (plan 273), so it carries a CLASS like any
     // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
     // the precedent the whole mode axis generalizes from (P14 rule 2).
-    ro rcls = recv_class(typed_arg_class(recv, ctx, scope, chan))
+    ro rcls = recv_class(typed_arg_class(recv, ctx, scope, chan, fres))
     out.push(ArgSpec { type_id: recv_t, cls: rcls, name: "", lit: LitArg.NotLit })
-    out.append(typed_args(kids, from, ctx, scope, chan))
+    out.append(typed_args(kids, from, ctx, scope, chan, fres))
     out
 }
 
@@ -59,7 +60,7 @@ fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope 
 /// A free call's key is exactly this, with no position zero; a method call's is
 /// this after the receiver. One rule, two callers, so the two spellings of a
 /// call cannot start disagreeing about what a key is.
-fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []ArgSpec {
+fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> []ArgSpec {
     mut out = []ArgSpec.new()
     mut i = 0
     for c in kids {
@@ -69,7 +70,8 @@ fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut) -> []A
             // the wrapper adds.
             ro ax = arg_expr_of(c)
             out.push(ArgSpec { type_id: type_of(ax, ctx, scope, chan),
-                               cls: typed_arg_class(ax, ctx, scope, chan), name: arg_name_of(c), lit: arg_lit_of(ax) })
+                               cls: typed_arg_class(ax, ctx, scope, chan, fres), name: arg_name_of(c),
+                               lit: arg_lit_of(ax) })
         } else {
             // Syntax, not an argument: the argument cursor stays put while the
             // child cursor advances.
@@ -168,7 +170,7 @@ fn recv_class(c ArgClass) -> ArgClass => match c {
 /// `mut` receiver or parameter then has no candidate for it, as the spec says
 /// ("forbids calling `mut` methods on a value of type `ro T`", registry 1458).
 /// Every other shape answers what `arg_class` answers.
-fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut) -> ArgClass {
+fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> ArgClass {
     if call_hands_ro_view(e, ctx, chan) { return ArgClass.ArgRo }
     // A FLUENT CALL hands out its RECEIVER (`-> @`, D409; the `mut` chain of
     // D181): `c.reset().set_pos(4)` calls `set_pos` on the place `c` is, so
@@ -176,11 +178,41 @@ fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut) -> ArgClass {
     // registry 1540 every call result was an owned temporary here, and the
     // second `mut` link was refused under P14 where the oracle compiles it.
     if Some(recv) = fluent_receiver(e, ctx, chan) {
-        return typed_arg_class(recv, ctx, scope, chan)
+        return typed_arg_class(recv, ctx, scope, chan, fres)
     } else {
         // Not a call that returns its receiver: the shape decides below.
     }
+    // AN OWNED FIELD OF AN OWNED RECEIVER (D133, "Field-aware flow"): inside a
+    // `consume` method, `@body` of a field declared `consume body T` is the
+    // record's own obligation, and moving it out -- `@body.into_str()` -- is
+    // how the method closes the record (at its exit every `consume` field is
+    // Consumed). `field_class` lends a field as `mut` and nothing more; this
+    // is the one place a field hands over ownership. Refused by P14 until
+    // registry #1719 (novac's own emit_c.nv `@into_parts`).
+    if owned_field_of_owned_recv(e, ctx, scope, chan, fres) { return ArgClass.ArgConsume }
     arg_class(e, scope)
+}
+
+/// Is `e` a field path rooted at `@` -- `@f`, `@f.g`, through parens -- whose
+/// every link is declared `consume` (D133), inside a method whose receiver is
+/// `consume`? Only such a place may move out (02-types.md, "Field-aware flow"
+/// and "Nested field paths": `@inner.tx.commit()`). A receiver that is `mut`
+/// keeps the field a `mut` place here: the D133 rotate pattern (consume, then
+/// rebind before the exit) needs the field's state tracked, which the flow
+/// does not do yet -- refused by P14, registry #1723.
+fn owned_field_of_owned_recv(e Node, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return owned_field_of_owned_recv(branch_children(e)[1], ctx, scope, chan, fres) }
+    ro kids = branch_children(e)
+    if k == NodeKind.SelfField {
+        if kids.len() < 2 || class_of_binding(RECV_BINDING, scope) != ArgClass.ArgConsume { return false }
+        ro owner = scope.type_of_name(RECV_BINDING)
+        return is_ty(owner) && fres.field_is_owned(ctx.fields, owner, leaf_text(kids[1]))
+    }
+    if k != NodeKind.FieldAccess || kids.len() < 3 { return false }
+    if !owned_field_of_owned_recv(kids[0], ctx, scope, chan, fres) { return false }
+    ro owner = chan.type_if_known(kids[0].id_of())
+    is_ty(owner) && fres.field_is_owned(ctx.fields, owner, leaf_text(kids[2]))
 }
 
 /// The RECEIVER expression of a method call whose decided callee returns its
@@ -781,6 +813,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // `size_of[T]()` (D216) is no row's call: the checker recorded its
         // type with its substitution (274.11 E.10 step 4c-2).
         if chan.has_subst(e.id_of()) { return ctx.prims.int_id }
+        // `embed("path")` (D412) is no row's call either: the checker recorded
+        // its `[]u8` beside the door's row (check/embed_call.nv).
+        if chan.embed_row_at(e.id_of()) >= 0 { return chan.type_of(e.id_of()) }
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro cname = call_callee_text(branch_children(e))

@@ -17,7 +17,7 @@
 module novac.check
 
 import ../tree.{Node, NodeKind}
-import ../types.{TyId}
+import ../types.{TyId, no_ty}
 import ../sem.{is_never_ty, branch_children, arm_body_at}
 
 /// Fold one arm's type into the answer the arms agreed on so far.
@@ -72,6 +72,27 @@ fn Checker mut @agree_arm_type(arm Node, at TyId, first Option[TyId], before_arm
                 first
             }
         }
+    }
+}
+
+/// Is this arm's value a BARE VARIANT whose sum only a position can name --
+/// `None`, or a variant several sums declare (D478 rule 2) -- written as the
+/// body or as the tail of a block body? Such an arm has no type of its own;
+/// with no type written for the match it takes its siblings' (D489).
+fn Checker @arm_is_bare_variant(arm Node) -> bool {
+    ro v = arm_value_of(arm)
+    ro tail = if v.kind_of() == NodeKind.Block { block_tail(v) } else { v }
+    @is_deferred_variant(tail)
+}
+
+/// The expectation a waiting arm or branch takes from its siblings: the type
+/// they agreed on, unless there is none or it is `never` (an arm that leaves
+/// names no value, D26) -- then none, and the bare variant is refused by its
+/// own cause, as with no siblings at all.
+fn Checker @sibling_expect(agreed Option[TyId]) -> TyId {
+    match agreed {
+        Some(t) => if is_never_ty(@ctx.tys, t) { no_ty() } else { t }
+        None => no_ty()
     }
 }
 

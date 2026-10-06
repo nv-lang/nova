@@ -33,11 +33,16 @@ def bad(msg):
     print("  ПРОВАЛ %s" % msg)
 
 
-def run(root):
+def run(root, opencode_sid=None):
     # cwd = derevo ETOY sessii: otmetka ostudy lichnaya, i hook beret koren
     # ottuda (No1156). Bez cwd kletka merila by otmetku REPOZITORIYA.
     env = dict(os.environ)
     env["CLAUDE_PROJECT_DIR"] = root
+    # Окно Claude Code без OpenCode — переменной нет; самотест сам может идти
+    # во вкладке OpenCode, поэтому снимаем её явно и кладём только в клетке (5).
+    env.pop("OPENCODE_SESSION_ID", None)
+    if opencode_sid:
+        env["OPENCODE_SESSION_ID"] = opencode_sid
     p = subprocess.run([sys.executable, HOOK], input=b"{}",
                        capture_output=True, env=env, cwd=root)
     return p.stdout.decode("utf-8", "replace").strip()
@@ -93,6 +98,17 @@ try:
         ok(u"отметку записать нельзя — время всё равно подано")
     else:
         bad(u"без возможности записать отметку хук промолчал")
+
+    # (5) ВКЛАДКА CLAUDE-CODE В OPENCODE — МОЛЧИТ (слово владельца 2026-10-06):
+    #     время ставит провайдер, вторая метка от модели не нужна. Свежее дерево
+    #     без отметки остуды: молчание здесь — от вкладки, а не от остуды.
+    oc_root = tempfile.mkdtemp(prefix="nova-time-oc-")
+    if run(oc_root, opencode_sid=u"ses_selftest") == "":
+        ok(u"во вкладке OpenCode (OPENCODE_SESSION_ID) хук молчит")
+    else:
+        bad(u"во вкладке OpenCode хук подал время — будет вторая метка")
+    shutil_oc = __import__("shutil")
+    shutil_oc.rmtree(oc_root, ignore_errors=True)
 finally:
     import shutil
     shutil.rmtree(root, ignore_errors=True)
@@ -111,6 +127,7 @@ _sp.run(["git", "init", "-q", _mine], capture_output=True)
 try:
     _env = dict(os.environ)
     _env["CLAUDE_PROJECT_DIR"] = _main
+    _env.pop("OPENCODE_SESSION_ID", None)
     _p = _sp.run([sys.executable, HOOK], input=b"{}",
                  capture_output=True, env=_env, cwd=_mine)
     _out = _p.stdout.decode("utf-8", "replace").strip()

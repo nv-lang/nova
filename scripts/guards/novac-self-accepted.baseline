@@ -16,11 +16,19 @@
 # мерой и здесь не сверяется.
 #
 # Летопись (новые записи — сверху):
-# 2026-10-06, задача #10 (ветка t10-karina-mera-0-2-binds-nv-i-lex-test-nv-p, на main e3d0d2c2e): 6 -> 4.
+# 2026-10-06, задача #10 (ветка t10-karina-mera-0-2-binds-nv-i-lex-test-nv-p, на main e3d0d2c2e; после слияния origin/main ee6d2ae4f с задачей #2 — 3 -> 1): 6 -> 4.
 #   ВЫШЛИ 2: check/binds.nv — исходник нарушал D35 (амендмент №1636: `mut`-метод на приёмнике `@`
 #   метода без `mut` — отказ), `@ctor_field_expect` звал `mut @field_under`; метод объявлен `mut @`.
 #   lex/lex_test.nv — неправа была Карина: `\u{H…}` входит в закрытый набор D467 §2, теперь судья
 #   (check/strings.nv) принимает его по норме, а `literal_as_c_text` пишет UTF-8 байты кодпойнта. ICE 0.
+# 2026-10-05, задача #2 (воркер, ветка t2-karina-mera-0-2-emit-c-emit-place-shell, от main 7018d685b): 6 -> 3,
+#   ВЫШЛИ emit_c/emit_c.nv, emit_c/emit_place.nv, emit_c/shell.nv. emit_c.nv: `FnRow(decl_fn_row(..) ?? ..)` --
+#   исходник неправ (дверь уже отвечает `Option[FnRow]`, E_NEWTYPE_CTOR_SELF, D52 амендмент 2026-10-02),
+#   обёртка снята; `@body.into_str()` в `consume @into_parts` -- Карина неправа (D133 «Field-aware flow»:
+#   consume-поле consume-ресивера переносится), класс P14 научен. emit_place.nv: голый `None` в рукаве без
+#   записанного типа берёт тип соседа (D489, рукав match и ветвь if). shell.nv: интринсик `embed` (D412)
+#   реализован -- дверь main.nv читает файл, check судит коды D412, emit печатает nova_blob_view/copy.
+#   Заодно судья маркера поля D133 узнаёт must-consume типы других модулей (TypeDef.must_consume). ICE 0.
 # 2026-10-03, облачная сессия p274-carina-strarm, слияние origin/main dc2617993: ВОШЛИ 3 — законное
 #   вскрытие: трек D133 этой ветки (шаги 1–6) впервые проводит модуль emit_c/ через типизацию (мера
 #   ветки 28 -> 36 при шаге 5, отчёт 15), и показались его скрытые отказы — emit_c/emit_c.nv («`@`
@@ -65,6 +73,3 @@
 # 2026-10-03, интегратор nova-20 (слияние strarm поверх sweep 10-12 и mono-k2): emit_c/emit_expr.nv принят — его
 #   отказ (приёмник value-записи по указателю, №1654) сняла дверь cast/k1, уже стоящая в main. Мерено на LF.
 novac/src/diag/diag.nv
-novac/src/emit_c/emit_c.nv
-novac/src/emit_c/emit_place.nv
-novac/src/emit_c/shell.nv

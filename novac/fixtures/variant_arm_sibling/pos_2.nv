@@ -1,0 +1,26 @@
+module variant_arm_sibling.pos_2
+
+// A BARE `None` IN THE FIRST BRANCH of a value `if` takes the type of the
+// branch after it (D489, a `match` arm and an `if` branch alike): the `if`
+// below is an `Option[str]`, so the waiting branch is typed second. Until
+// registry #1721 novac refused it as having no type to take. The ORACLE
+// MISCOMPILES this form (registry #1724: it types the `if` by its first branch,
+// `Option[int]`, and clang refuses the C) -- the E1 smoke runs it against a
+// twin with the type written (`ro tail Option[str] = ..`), pos_3.
+
+// NOVAC_TWIN pos_3.nv
+
+fn show(o Option[str]) -> str => match o {
+    Some(t) => t
+    None => "-"
+}
+
+fn tail_of(n int) -> str {
+    ro tail = if n > 1 { None } else { Some("one") }
+    show(tail)
+}
+
+fn main() {
+    println(tail_of(1))
+    println(tail_of(2))
+}

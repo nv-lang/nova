@@ -1,0 +1,10 @@
+module embed.neg_4
+
+// NOVAC_EXPECT E_EMBED_ARG_NOT_STR_LITERAL
+// ONE seeded cause: the path is a binding, not a string LITERAL -- `embed` reads
+// its file at compile time, so the path must be known there (D412).
+fn data(p str) -> []u8 => embed(p) // the one refusal: line 6
+
+fn main() {
+    println(data("pos_1.txt").len())
+}
