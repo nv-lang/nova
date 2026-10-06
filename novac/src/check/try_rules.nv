@@ -107,7 +107,7 @@ fn Checker mut @type_try(e Node) -> () {
 /// extension; otherwise a compile error" (04-effects.md, D85; auto-`From` rejected). The
 /// same type is compiled, and so is `any` (the supertype of every type, D53): the error
 /// is boxed on the way out. Anything else is the language's error, refused here although
-/// the oracle accepts it (registry 221.1 #TBD). Answers whether the pair was admitted.
+/// the oracle accepts it (registry 221.1 #1746). Answers whether the pair was admitted.
 fn Checker mut @try_result_pair_ok(tk []Node, ot TyId, rt TyId) -> bool {
     ro inst_c = c_struct(@ctx, @concrete(rt))
     if !@ctx.interop.has_body(inst_c) {

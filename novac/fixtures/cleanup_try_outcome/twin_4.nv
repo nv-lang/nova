@@ -6,7 +6,7 @@ module cleanup_try_outcome.twin_4
 // and builds this file instead; its output is novac's for pos_4 (plan 274.12). Not a
 // `pos_*`: novac does not compile the arm re-binding `s` (D347 R3). The `as any` is
 // written out -- the oracle crashes on the implicit upcast in `Failure(e)` (registry
-// 221.1 #TBD).
+// 221.1 #1747).
 
 type Lk consume {
     id int
