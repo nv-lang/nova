@@ -143,10 +143,14 @@ fn Checker mut @check_consume_flow(file Node) -> () {
 /// file pass skips a generic declaration, whose types exist only per instance --
 /// this is where they do. `body_file` declares the must-consume types it may meet.
 fn Checker mut @check_consume_flow_instance(decl Node, body_file Node) -> () {
-    // SILENT-OK: a body handed from outside the program (std's `Vec[T] @push`) is not
-    // walked -- it moves its values through raw memory (`write_consume`, D216), which
-    // the flow does not follow; until #1723 the same bodies were skipped because their
-    // file declared no must-consume type of its own. The program's bodies are walked.
+    // SILENT-OK: a deliberate NARROWING, [M-novac-flow-handed-generic-instances] (docs/dev/simplifications.md):
+    // an instance of a body handed from outside the program is not walked. Until
+    // #1723 such a body was walked only when its own file declared a `type X consume`
+    // -- never for std's `Vec[T] @push`, but yes for io/buffered.nv (`BufWriter`) and
+    // runtime/sync.nv; the set of every module made each one walkable, and they move
+    // values through raw memory (`write_consume`, D216), which the flow does not
+    // follow, so `Vec[Tx] @push` was refused. Those bodies are std's, judged by the
+    // oracle when std is built; the program's own bodies are walked as before.
     if !@ctx.in_program(@inst_row) { return }
     ro kinds = @must_consume_kinds()
     if kinds.len() == 0 { return }
