@@ -1,0 +1,22 @@
+=== PROGRAM
+     1	fn main() {
+     2	    ro y any = "hi"
+     3	    if y is str {
+     4	        println("str ", y)
+     5	    }
+     6	    println("end")
+     7	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"<tmp>/prog.nv","start":27,"end":31},"message":"a value of type `str` stands in this binding (written `any`), which is `any` -- no implicit conversion between named types (E7301, D405)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"<tmp>/prog.nv","start":39,"end":40},"message":"`is` tests a value of type `any` or a sum -- this value is neither: its type is known statically, so the test answers nothing (D54, E_IS_NON_ANY)","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+str hi
+end

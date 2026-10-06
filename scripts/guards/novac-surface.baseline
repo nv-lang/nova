@@ -322,7 +322,7 @@
 #   intrinsic, asked by check/embed_call.nv and by sem/embeds.nv's token scan) and `BYTE_TYPE` (`u8`,
 #   the element of the `[]u8` an `embed` is, asked by check/embed_call.nv); names the compiler must
 #   know live in builtins (P5).
-builtins 84
+builtins 87
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -430,7 +430,7 @@ lex 11
 #   and `FnBuilder @call_next` -- one turn of a `for` over an iterator (D58, sweep 10), recorded by
 #   lower/lowering.nv and printed by emit_c/emit_place.nv.
 # merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
-lower 102
+lower 103
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1188,7 +1188,7 @@ resolve 27
 #   root unit then instantiates std `Vec @pop`, whose `read_consume_at` novac does not compile).
 #   sem/channel.nv: `@record_embed`, `@record_embed_copy` (check) and `@embed_row_at`,
 #   `@embed_copies` (check and emit_c) -- the checker's decision on an `embed` call node.
-sem 387
+sem 389
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
@@ -1406,3 +1406,12 @@ types 30
 #   литерал и судит его диапазон по значению) и `emit_c/` (печать значения в строке позиции): одна
 #   дверь, иначе проверка и печать посчитают разное. `@retype_constant` (CheckOut) -- единственная
 #   санкционированная вторая запись типа узла: позиция заменяет временный `int` выражения своим.
+# builtins 84 -> 87, lower 102 -> 103, sem 387 -> 389 (2026-10-06, task #15, `?` over a `Result`,
+#   registry 221.1 #1707). Each new name is read by ANOTHER module, so each must cross:
+#   RESULT_ERR_VARIANT -- the failing variant's name, asked by sem (`result_err_variant`), the
+#   one home of `Ok`'s twin beside RESULT_OK_VARIANT; SCOPE_OUTCOME_FAILURE -- the `Failure`
+#   variant of `ScopeOutcome` the emitter (emit_c) hands a cleanup at an `Err` exit;
+#   NOVAC_TID_BASE -- the first runtime type id novac numbers its own type infos from, printed by
+#   emit_c; ErrBuild -- the payload of `Rvalue.ErrOf` (lower), read field by field by emit_c's
+#   assignment printer; result_err_variant / result_error -- the `Err` variant and the error
+#   type of a `Result`, asked by check (the pair of error types) and lower (`@lower_try`).

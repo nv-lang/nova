@@ -1,0 +1,22 @@
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn work(n int) -> Result[int, int] {
+    supervised {
+        spawn {
+            ro v = get(n)?
+            println("in spawn ${v}")
+        }
+    }
+    Ok(n)
+}
+
+fn main() {
+    match work(3) {
+        Ok(v) => println("ok ${v}")
+        Err(e) => println("err ${e}")
+    }
+    match work(-3) {
+        Ok(v) => println("ok ${v}")
+        Err(e) => println("err ${e}")
+    }
+}

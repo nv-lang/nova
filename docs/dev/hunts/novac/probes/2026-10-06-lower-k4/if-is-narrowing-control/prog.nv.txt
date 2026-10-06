@@ -1,0 +1,18 @@
+fn main() {
+    ro base = 40
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            if err is str {
+                println("caught: ", err)
+            }
+            Decision.Stop
+        }
+    } {
+        supervised {
+            spawn {
+                println(base / (base - 40))
+            }
+        }
+    }
+    println("after")
+}

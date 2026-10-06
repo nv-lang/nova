@@ -33,7 +33,8 @@ module novac.sem
 
 import ../tree.{Node}
 import ../types.{TyId, no_ty, is_ty, Interner}
-import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_VARIANT, RESULT_SUM, RESULT_OK_VARIANT, BuiltinType, prim_row}
+import ../builtins.{TypeKind, OPTION_SUM, OPTION_SOME_VARIANT, RESULT_SUM, RESULT_OK_VARIANT, RESULT_ERR_VARIANT}
+import ../builtins.{BuiltinType, prim_row}
 
 /// The ONE type argument of an arity-one instance, or no type: the question
 /// both the for-head judge and the Option judge ask (the second-door guard
@@ -103,6 +104,22 @@ export fn coalesce_ok_variant(ctx Ctx, t TyId) -> VariantRow {
         return variant_in_sum(ctx, sum_t, RESULT_OK_VARIANT) ?? no_vrow()
     }
     no_vrow()
+}
+
+/// THE FAILING VARIANT of a `Result` instance -- `Err` -- or no variant when `t` is
+/// not the language's `Result`. Asked by `x?` (D85), whose failing branch reads the
+/// operand's `Err` payload and builds the `Err` of the body's own `Result`; the
+/// container test stays `coalesce_ok_variant`'s, so the two cannot disagree on
+/// what a `Result` is.
+export fn result_err_variant(ctx Ctx, t TyId) -> VariantRow {
+    if !is_vrow(coalesce_ok_variant(ctx, t)) || is_ty(option_payload(ctx, t)) { return no_vrow() }
+    variant_in_sum(ctx, decl_of_ty(ctx, t).ty_id, RESULT_ERR_VARIANT) ?? no_vrow()
+}
+
+/// The ERROR type `E` of a `Result[T, E]` instance, `no_ty()` for any other type.
+export fn result_error(ctx Ctx, t TyId) -> TyId {
+    if !is_vrow(result_err_variant(ctx, t)) { return no_ty() }
+    ctx.tys.arg(t, 1)
 }
 
 /// THE PAYLOAD such a container carries -- the type `??` yields, and the type the

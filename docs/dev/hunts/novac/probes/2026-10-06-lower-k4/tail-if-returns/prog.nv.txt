@@ -1,0 +1,24 @@
+fn both(c bool) -> int {
+    println("both ${c}")
+    if c {
+        return 1
+    } else {
+        return 2
+    }
+}
+
+fn mixed(c bool) -> int {
+    println("mixed ${c}")
+    if c {
+        return 10
+    } else {
+        20
+    }
+}
+
+fn main() {
+    println(both(true))
+    println(both(false))
+    println(mixed(true))
+    println(mixed(false))
+}

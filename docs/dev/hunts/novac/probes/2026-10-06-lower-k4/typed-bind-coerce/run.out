@@ -1,0 +1,31 @@
+=== PROGRAM
+     1	type Bytes { n int }
+     2	
+     3	#coerce fn str consume @to_bytes() -> Bytes => { n: 7 }
+     4	
+     5	fn take(b Bytes) -> int => b.n
+     6	
+     7	fn main() {
+     8	    ro b Bytes = "s"
+     9	    println(take(b))
+    10	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=0
+oracle run rc=0
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    Nova_Bytes* b = _novac_strlit_0;
+    nova_print_int(novac_fn_take__Bytes__to_nova_int(b));
+    nova_print_newline();
+    nova_print_end();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=1
+<tmp>:12261:17: error: initializing 'Nova_Bytes *' (aka 'struct Nova_Bytes *') with an expression of incompatible type 'const nova_str'
+1 error generated.
+=== VERDICT: one side produced no run (see above)
+--- oracle stdout
+7

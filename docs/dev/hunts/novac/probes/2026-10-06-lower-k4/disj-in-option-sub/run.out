@@ -1,0 +1,59 @@
+=== PROGRAM
+     1	fn inner(k int) -> Option[int] {
+     2	    if k == 1 {
+     3	        return None
+     4	    }
+     5	    Some(k)
+     6	}
+     7	
+     8	fn mk(k int) -> Option[Option[int]] {
+     9	    if k == 0 {
+    10	        return None
+    11	    }
+    12	    Some(inner(k))
+    13	}
+    14	
+    15	fn f(x Option[Option[int]]) -> str => match x {
+    16	    Some(None | Some(2)) => "a"
+    17	    Some(Some(_)) => "b"
+    18	    None => "c"
+    19	}
+    20	
+    21	fn main() {
+    22	    println(f(mk(1)))
+    23	    println(f(mk(2)))
+    24	    println(f(mk(5)))
+    25	    println(f(mk(0)))
+    26	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m \\?\<tmp>:16:15: error: expected `)`, got `|`
+(no oracle binary)
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_str(novac_fn_f__Option_of_Option_of_nova_int__to_nova_str(novac_fn_mk__nova_int__to_Option_of_Option_of_nova_int(((nova_int)1LL))));
+    nova_print_newline();
+    nova_print_end();
+    nova_print_str(novac_fn_f__Option_of_Option_of_nova_int__to_nova_str(novac_fn_mk__nova_int__to_Option_of_Option_of_nova_int(((nova_int)2LL))));
+    nova_print_newline();
+    nova_print_end();
+    nova_print_str(novac_fn_f__Option_of_Option_of_nova_int__to_nova_str(novac_fn_mk__nova_int__to_Option_of_Option_of_nova_int(((nova_int)5LL))));
+    nova_print_newline();
+    nova_print_end();
+    nova_print_str(novac_fn_f__Option_of_Option_of_nova_int__to_nova_str(novac_fn_mk__nova_int__to_Option_of_Option_of_nova_int(((nova_int)0LL))));
+    nova_print_newline();
+    nova_print_end();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=0
+link rc=0
+novac run rc=0
+=== VERDICT: one side produced no run (see above)
+--- Carina stdout
+a
+a
+a
+c

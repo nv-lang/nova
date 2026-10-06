@@ -1,0 +1,43 @@
+=== PROGRAM
+     1	type AppErr enum
+     2	    | Io(str)
+     3	    | Code(int)
+     4	
+     5	fn get(n int) -> Result[int, str] => if n > 0 { Ok(n) } else { Err("neg") }
+     6	
+     7	fn work(n int) -> Result[int, AppErr] {
+     8	    ro v = get(n)?
+     9	    Ok(v + 1)
+    10	}
+    11	
+    12	fn main() {
+    13	    match work(3) {
+    14	        Ok(v) => println("ok ${v}")
+    15	        Err(e) => match e {
+    16	            Io(s) => println("io ${s}")
+    17	            Code(c) => println("code ${c}")
+    18	        }
+    19	    }
+    20	    match work(-3) {
+    21	        Ok(v) => println("ok ${v}")
+    22	        Err(e) => match e {
+    23	            Io(s) => println("io ${s}")
+    24	            Code(c) => println("code ${c}")
+    25	        }
+    26	    }
+    27	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m compiler error:
+<tmp>:7794:141: error: passing 'nova_str' to parameter of incompatible type 'Nova_AppErr *' (aka 'struct Nova_AppErr *')
+1 error generated.
+(no oracle binary)
+=== SUBJECT: novac emit prog.nv
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":96,"end":98},"message":"outside the subset: the shell novac links into carries no `Result` instance for `NovaRes_nova_int_nova_str` -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); novac emits no `Result` instance of its own yet (E2-b3)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":111,"end":114},"message":"outside the subset: the shell novac links into carries no `Result` instance for `NovaRes_nova_int_nova_str` -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); novac emits no `Result` instance of its own yet (E2-b3)","poisoned_by":null}
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/prog.nv","start":176,"end":179},"message":"outside the subset: `?` hands this `Err(e)` to a body whose error is a sum with exactly one variant over `e`'s type -- legal (D85: a supertype through sum extension, D55's sum-coercion wraps it), but wrapping the error on the way out is not compiled yet (E2-b3)","poisoned_by":null}
+--- Carina's C, the body of main
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+(skipped: refused by novac, or no smoke cache)
+=== VERDICT: one side produced no run (see above)

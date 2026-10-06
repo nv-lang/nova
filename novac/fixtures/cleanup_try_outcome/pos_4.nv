@@ -1,0 +1,54 @@
+module cleanup_try_outcome.pos_4
+
+// `Failure(e)` WITH AN ERROR THAT HAS NO FIXED RUNTIME TYPE ID. Until task #15 this
+// program was neg_1: it pinned the refusal of every `?` over a `Result` (E2-b3) and
+// carried the obligation of registry 221.1 #1707 -- the day that refusal went, replace
+// it with pos fixtures against a NOVAC_TWIN, in a function, inside a loop, the payload
+// narrowed by `if err is T` in the cleanup (pos_3 and twin_3 are those). The program
+// itself now compiles: the `Utf8Error` of `b.to_str()?` is boxed into `any` for the
+// cleanup's `Failure(e)` (D314 amended 2026-10-03) under an id novac numbers itself
+// (emit_flow.nv `type_info_defs`) -- `utf8` is no `int` and no `str`, so both tests read
+// false. The oracle hands `Success` here (#1706): compared against twin_4.nv.
+
+// NOVAC_TWIN twin_4.nv
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    match outcome {
+        Success => println("cleanup ${@id}: Success")
+        Failure(err) => {
+            if err is int {
+                println("cleanup ${@id}: Failure(int)")
+            } else if err is str {
+                println("cleanup ${@id}: Failure(str)")
+            } else {
+                println("cleanup ${@id}: Failure(other)")
+            }
+        }
+        Panic(_) => println("cleanup ${@id}: Panic")
+    }
+}
+
+fn decode(b []u8) -> Result[str, Utf8Error] {
+    consume a = Lk { id: b.len() }
+    ro s = b.to_str()?
+    Ok(s)
+}
+
+fn bytes(bad bool) -> []u8 {
+    mut b = []u8.new()
+    b.push(104 as u8)
+    if bad {
+        b.push(255 as u8)
+    }
+    b.push(105 as u8)
+    b
+}
+
+fn main() {
+    println(decode(bytes(false)) ?? "bad")
+    println(decode(bytes(true)) ?? "bad")
+}

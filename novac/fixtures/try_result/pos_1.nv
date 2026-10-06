@@ -1,0 +1,96 @@
+module try_result.pos_1
+
+// `x?` OVER A `Result` in a fn returning a `Result` (D85): `Ok(v)` continues with `v`,
+// `Err(e)` returns `Err(e)` of the fn's OWN `Result` -- of the same type (`twice`) or of
+// another `T` with the same error (`widened`: the operand is a `Result[i32, RangeError]`,
+// the body a `Result[int, RangeError]`, so the operand itself is not the returned
+// value). A chain of `?`, `?` inside a call's argument, inside a loop and inside a
+// `match` arm -- each taking both paths. Before task #15 novac refused every `?` over a
+// `Result` by name (E2-b3). Byte for byte with the oracle (novac-e1-smoke).
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn narrow(n int) -> Result[i32, RangeError] {
+    if n > 1000 {
+        return Err(RangeError.AboveMax)
+    }
+    if n < -1000 {
+        return Err(RangeError.BelowMin)
+    }
+    Ok(n as i32)
+}
+
+fn twice(n int) -> Result[int, int] {
+    ro v = get(n)?
+    Ok(v * 2)
+}
+
+fn widened(n int) -> Result[int, RangeError] {
+    ro x = narrow(n)?
+    Ok(x as int * 10)
+}
+
+fn chain(a int, b int, c int) -> Result[int, int] {
+    ro x = get(a)?
+    ro y = get(b)?
+    ro z = get(c)?
+    Ok(x + y + z)
+}
+
+fn add(a int, b int) -> int => a + b
+
+fn in_arg(a int, b int) -> Result[int, int] {
+    Ok(add(get(a)?, get(b)? * 100))
+}
+
+fn looped(n int) -> Result[int, int] {
+    mut total = 0
+    for k in 0..4 {
+        println("pass ${k}")
+        total += get(n - k)?
+    }
+    Ok(total)
+}
+
+fn matched(k int, n int) -> Result[int, int] {
+    ro r = match k {
+        0 => get(n)? + 1
+        _ => get(-n)? + 2
+    }
+    Ok(r)
+}
+
+fn show(r Result[int, int]) -> () {
+    match r {
+        Ok(v) => println("ok ${v}")
+        Err(e) => println("err ${e}")
+    }
+}
+
+fn show_range(r Result[int, RangeError]) -> () {
+    match r {
+        Ok(v) => println("ok ${v}")
+        Err(RangeError.AboveMax) => println("err above")
+        Err(RangeError.BelowMin) => println("err below")
+    }
+}
+
+fn main() {
+    show(twice(3))
+    show(twice(-3))
+    show_range(widened(7))
+    show_range(widened(5000))
+    show_range(widened(-5000))
+    show(chain(1, 2, 3))
+    show(chain(1, -2, -3))
+    show(chain(1, 2, -3))
+    show(in_arg(4, 5))
+    show(in_arg(-4, 5))
+    show(in_arg(4, -5))
+    show(looped(9))
+    show(looped(2))
+    show(matched(0, 6))
+    show(matched(0, -6))
+    show(matched(1, -6))
+    show(matched(1, 6))
+}
