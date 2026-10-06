@@ -62,6 +62,27 @@ ROOT="${1:-$(pwd)}"
 # судил отсутствующий бинарь с 2026-10-02 09:04 (находка nova-f2, реестр №1661).
 . "$ROOT/scripts/guards/lib/novac.sh"
 
+# BOEHM GC ГЛАВНОЙ КОПИИ ДЛЯ ДЕРЕВА ЗАДАЧИ (реестр 221.1 №1750, 2026-10-06). Шаг
+# novac-build зовёт оракул, а тому нужен gc.lib с заголовками. Свежее дерево задачи
+# не несёт ни `vcpkg_installed` (вне git), ни выкачанных подмодулей GC — и сборка
+# падала «Boehm GC (gc.lib) not found» в каждом дереве задачи. Оракул сам умеет
+# брать vcpkg главного дерева (№650), но главная копия этой машины собирает GC из
+# подмодуля в `target/gc-cache` (gc.lib рядом, заголовки в `include/`), а вывод
+# заголовков `lib/../include` эту раскладку не видит. Явное окружение побеждает;
+# своё дерево с GC — тоже (подмодуль выкачан или vcpkg есть) — тогда не трогаем.
+if [ -z "${NOVA_GC_LIB_DIR:-}" ] \
+   && [ ! -f "$ROOT/compiler-codegen/nova_rt/gc/extra/gc.c" ] \
+   && [ ! -f "$ROOT/compiler-codegen/vcpkg_installed/x64-windows-static/lib/gc.lib" ]; then
+    _gm=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    _gm=${_gm%/.git}
+    if [ -n "$_gm" ] && [ -f "$_gm/target/gc-cache/gc.lib" ] && [ -d "$_gm/target/gc-cache/include" ]; then
+        export NOVA_GC_LIB_DIR="$_gm/target/gc-cache"
+        export NOVA_GC_INCLUDE_DIR="$_gm/target/gc-cache/include"
+        echo "novac-gate :: GC из главной копии ($NOVA_GC_LIB_DIR) — в дереве своего нет (№1750)"
+    fi
+    unset _gm
+fi
+
 # ОДИН ГЕЙТ НА ДЕРЕВО (реестр №1389): замок берётся ДО ловушки вердикта — иначе
 # отказанный второй прогон переписал бы своим RC файл вердикта живого первого.
 . "$(dirname "$0")/tools/gate-lock.sh"
