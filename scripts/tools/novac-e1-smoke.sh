@@ -214,14 +214,13 @@ if [ ! -f "$LINKCMD" ]; then
     # ВХОД, а не флаг, и clang отвечал «cannot specify -o when generating
     # multiple output files». Отказ выглядел как поломка перехвата, хотя
     # перехват работал: он честно записал argv, а фильтр вырезал не всё.
-    # `-L` ОТДЕЛЬНОЙ СТРОКОЙ УНОСИТ И СВОЁ ЗНАЧЕНИЕ (2026-10-06, задача #14,
-    # реестр 221.1 №TBD). Фильтр снимал строку `-L`, а путь за ней оставлял, и
-    # держалось это на совпадении: путь vcpkg кончается на `/lib` и падал под
-    # другой образец. GC, собранный из вендорного исходника, кладёт библиотеку
-    # в `target/gc-cache` — путь уезжал в CFLAGS ВХОДОМ, и PCH отвечал «cannot
-    # specify -o when generating multiple output files».
-    awk 'skip { skip = 0; next } /^-L$/ { skip = 1; next } { print }' "$LINKCMD" \
-        | grep -vE '\.lib$|\.a$|\.so$|^-l|/lib$|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld' > "$CFLAGS"
+    # АРГУМЕНТ `-L` УХОДИТ ВМЕСТЕ С ФЛАГОМ (реестр 221.1 №1737, 2026-10-06). Фильтр
+    # снимал `-L` отдельной строкой, а его каталог узнавал по хвосту `/lib`; оракул с
+    # вендорной GC кладёт её в `target/gc-cache`, каталог оставался в CFLAGS входом —
+    # и тот же отказ «cannot specify -o». Парный флаг судится парой, не по имени пути.
+    awk 'skip { skip = 0; next } /^-L$/ { skip = 1; next }
+         /\.lib$|\.a$|\.so$|^-l|^-L|Wl,|^-ffunction-sections|^-fdata-sections|^-fuse-ld/ { next }
+         { print }' "$LINKCMD" > "$CFLAGS"
     grep -q -- "-DNOVA_MAX_EFFECT_STORAGES=$EFFN" "$CFLAGS" \
         || fail "флаги пробы шелла не несут -DNOVA_MAX_EFFECT_STORAGES=$EFFN (маркер шелла): шелл устарел относительно пробы -- sh scripts/tools/novac-regen-shell.sh"
 fi
