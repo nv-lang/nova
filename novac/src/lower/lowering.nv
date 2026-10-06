@@ -320,11 +320,14 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // A call in statement position is an EVALUATION of the lowered body
         // (274.8 M2a); its printer keeps the arguments and their hoists.
         @lower_eval(st)
-    } else if k == NodeKind.IfStmt {
+    } else if is_if_branch(k) {
         // A branch of the lowered body (274.8 M2b-1): opened, filled and
         // joined through the builder's events, printed at the same events
         // (emit_flow.nv). `None`: this `if` is a statement of its block, not
-        // the else branch of another.
+        // the else branch of another. An `if` written as an EXPRESSION in
+        // statement position -- a statement match's arm `None => if c {..}
+        // else {..}` -- is the same branch: nobody asked it for a value (task
+        // #23: check/calls.nv's arm died as "expression kind outside the subset").
         @lower_if(st, None)
     } else if k == NodeKind.WhileStmt {
         @lower_while(st)
@@ -477,6 +480,12 @@ fn Lowerer mut @lower_destructure_bind(st Node) -> () {
     @lower_pattern_bind(pat, pt, base)
 }
 
+/// Is this node an `if` laid down as a BRANCH -- the statement, or the expression form
+/// in statement position (its chain nests `IfExpr` in `IfExpr`)? The two share one
+/// shape, `[KwIf, cond, block, KwElse, <Block | if>]` (parse.nv, expr.nv), so one door
+/// lowers both; asked by `@lower_stmt`, `else_shape` and `@lower_else_tail` alike.
+fn is_if_branch(k NodeKind) -> bool => k == NodeKind.IfStmt || k == NodeKind.IfExpr
+
 /// One `if` statement with its `else` / `else if` chain. `outer` is the
 /// enclosing `if` when this one IS its else branch: then the else branch is
 /// opened first and the chained `if` shares the outer join.
@@ -545,11 +554,11 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
     if tk == NodeKind.Block {
         @ir.begin_else(c)
         @lower_block_stmts_fn(tail, false)
-    } else if tk == NodeKind.IfStmt && cond_needs_place(branch_children(tail)[1]) {
+    } else if is_if_branch(tk) && cond_needs_place(branch_children(tail)[1]) {
         // The braced shape `else_shape` chose: the `if` stands alone in the else block.
         @ir.begin_else(c)
         @lower_if(tail, None)
-    } else if tk == NodeKind.IfStmt {
+    } else if is_if_branch(tk) {
         @lower_if(tail, Some(c))
     } else if tk == NodeKind.IfLet {
         // C has no `else <declaration>`: the chained if-let's FIRST line is
@@ -906,7 +915,7 @@ fn else_shape(kids []Node, tail_at int) -> ElseShape {
     // An `else if` whose condition holds a block form -- or a construction the
     // printer builds (task #23) -- cannot chain: its condition's statements need a
     // place to stand, and `} else if (` has none (registry 1619).
-    ro braced_if = k == NodeKind.IfStmt && cond_needs_place(branch_children(tail)[1])
+    ro braced_if = is_if_branch(k) && cond_needs_place(branch_children(tail)[1])
     if k == NodeKind.Block || k == NodeKind.IfLet || braced_if {
         ElseShape.Braced
     } else {
