@@ -169,6 +169,35 @@ echo "gate :: старт $GATE_WALL_START (местное), ярус $NOVA_GATE_
 # не прогнав.
 NOVA_GATE_DRYRUN="${NOVA_GATE_DRYRUN:-0}"
 
+# ЧАСТЬ ГЕЙТА ДЛЯ ПАРАЛЛЕЛЬНЫХ РАБОТ CI (2026-10-06, вопрос владельца «все ждут
+# CI»). Замер job `gate.sh tier push` на 915f8996b: 31,5 минуты, из них три шага
+# — conformance-full 552 с, mega-CU 536 с, crate-tests 409 с — почти две трети.
+# Шаги независимы, поэтому CI гонит ярус ЧЕТЫРЬМЯ работами: каждая исполняет шаги
+# своей части (`gate_part_of` ниже), заголовки чужих печатает как «в другой части».
+# Пусто (умолчание, локальный гейт) — всё, как прежде.
+# КЛАСС №445/№519: часть, не нашедшая ни одного своего шага (шаг переименован),
+# была бы зелёной пустотой — поэтому такая часть КРАСНЕЕТ в итоге, а строка
+# вердикта называет часть, чтобы её не прочли как вердикт всего яруса.
+NOVA_GATE_PART="${NOVA_GATE_PART:-}"
+case "$NOVA_GATE_PART" in
+    ''|conformance|mega|crates|rest) ;;
+    *) echo "GATE FATAL: NOVA_GATE_PART=$NOVA_GATE_PART — части: conformance, mega, crates, rest (пусто — все)" >&2
+       exit 1 ;;
+esac
+GATE_PART_STEPS_N=0
+# `all` — шаг, без которого тяжёлые части не работают: сборка компилятора. Первый
+# прогон частей на CI (a10127f4c) это и показал: mega-CU и conformance-full без
+# сборки упали за 80 секунд с exit=127, потому что сборка ушла в часть `rest`.
+gate_part_of() {
+    case "$1" in
+        "cargo build --release") echo all ;;
+        "conformance-full "*) echo conformance ;;
+        "mega-CU "*) echo mega ;;
+        "crate-tests "*) echo crates ;;
+        *) echo rest ;;
+    esac
+}
+
 # ОДИН ГЕЙТ НА ДЕРЕВО (реестр №1389) — до суточного предела, иначе отказанный
 # второй прогон успел бы сжечь отметку. Сухой ход дерево не трогает и не судится.
 if [ "$NOVA_GATE_DRYRUN" != "1" ]; then
@@ -194,6 +223,18 @@ fi
 # решит, его ли это ярус: в `loop` сборки нет, а строка вызова стража с
 # `"$NOVA"` в аргументах читается всё равно.
 NOVA=""
+
+# Число потоков прогона корпуса. Его читают ДВА шага — mega-CU и conformance-full, — а
+# с частями гейта (NOVA_GATE_PART) они идут в разных работах CI; поэтому оно здесь, а
+# не в теле mega-CU (2026-10-06: часть conformance упала на `MEGA_JOBS: unbound variable`).
+# `--jobs` = половина ядер, а НЕ все (разведка p259-gate-speed, 2026-08-09).
+# Замер на одном и том же чанке из 193 работ: `--jobs 8` — стенка 160 с при
+# сумме занятости 1049 с; `--jobs 16` — стенка 154 с при сумме 2054 с. То есть
+# удвоение воркеров даёт +4% пропускной способности и РОВНО ВДВОЕ худшую
+# латентность каждой работы. А длительность шага определяется длинным полюсом —
+# одной работой, — и его шестнадцать воркеров тормозят вдвое ни за что.
+MEGA_JOBS="${NOVA_GATE_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
+[ "$MEGA_JOBS" -ge 1 ] 2>/dev/null || MEGA_JOBS=4
 
 STEP_ACTIVE=1
 # tier_at_least <ярус> — исполняется ли на ВЫБРАННОМ ярусе шаг такого класса.
@@ -333,6 +374,17 @@ step() {
            exit 1 ;;
     esac
     if tier_at_least "$_step_tier"; then
+        if [ -n "$NOVA_GATE_PART" ] && [ "$(gate_part_of "$1")" != all ] \
+           && [ "$(gate_part_of "$1")" != "$NOVA_GATE_PART" ]; then
+            STEP_ACTIVE=0
+            printf '[%5ds] -- gate: в другой части (%s) : %s\n' \
+                "$(( $(date +%s) - GATE_T0 ))" "$(gate_part_of "$1")" "$1"
+            return 0
+        fi
+        # Счёт ДО пропуска по диффу: шаг своей части, пропущенный потому, что дифф
+        # его не трогает, — законно пропущен, а не потерян.
+        # Общий шаг (`all`) не в счёт: часть из одной сборки — та же пустота.
+        [ "$(gate_part_of "$1")" = all ] || GATE_PART_STEPS_N=$((GATE_PART_STEPS_N + 1))
         # ТРЕТИЙ АРГУМЕНТ (необязательный) — области, от которых шаг зависит
         # (275 Ф.10). Нет аргумента = шаг исполняется всегда; это умолчание
         # выбрано так, чтобы забывчивость включала работу, а не выключала.
@@ -1572,14 +1624,6 @@ step push "mega-CU (spec_tests/conformance, one CU)" "corpus"
 if body_runs; then
     MEGA_LOG="${TMPDIR:-/tmp}/gate_mega_$$.log"
     _MEGA_T0=$(date +%s)
-    # `--jobs` = половина ядер, а НЕ все (разведка p259-gate-speed, 2026-08-09).
-    # Замер на одном и том же чанке из 193 работ: `--jobs 8` — стенка 160 с при
-    # сумме занятости 1049 с; `--jobs 16` — стенка 154 с при сумме 2054 с. То есть
-    # удвоение воркеров даёт +4% пропускной способности и РОВНО ВДВОЕ худшую
-    # латентность каждой работы. А длительность шага определяется длинным полюсом —
-    # одной работой, — и его шестнадцать воркеров тормозят вдвое ни за что.
-    MEGA_JOBS="${NOVA_GATE_JOBS:-$(( $(nproc 2>/dev/null || echo 8) / 2 ))}"
-    [ "$MEGA_JOBS" -ge 1 ] 2>/dev/null || MEGA_JOBS=4
     echo "mega-CU :: --jobs $MEGA_JOBS"
     "$NOVA" test --positive --compile-error --jobs "$MEGA_JOBS" "$ROOT/spec_tests/conformance" >"$MEGA_LOG" 2>&1
     MEGA_EXIT=$?
@@ -2415,10 +2459,17 @@ else
 fi
 echo "gate :: профиль шагов — bash scripts/tools/gate-profile.sh <лог этого прогона>"
 
+PART_TAIL=""
+if [ -n "$NOVA_GATE_PART" ]; then
+    PART_TAIL=" [ЧАСТЬ $NOVA_GATE_PART: шаги прочих частей судят соседние работы CI]"
+    [ "$GATE_PART_STEPS_N" -gt 0 ] \
+        || fail "часть гейта $NOVA_GATE_PART не нашла на ярусе $NOVA_GATE_TIER ни одного своего шага — шаг переименован, а gate_part_of ждёт старое имя; пустая часть зелёной не бывает (класс №445)"
+fi
+
 gate_barrier
 
 if [ -n "$OVERRIDE_FILES" ] && [ "$GATE_TIER_N" -ge 2 ]; then
     print_override_warning
 else
-    echo "GATE OK (final)$TREE_TAIL$CI_TAIL$TIER_TAIL"
+    echo "GATE OK (final)$TREE_TAIL$CI_TAIL$TIER_TAIL$PART_TAIL"
 fi
