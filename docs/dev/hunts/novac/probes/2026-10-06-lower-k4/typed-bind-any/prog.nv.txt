@@ -1,7 +1,0 @@
-fn main() {
-    ro y any = "hi"
-    if y is str {
-        println("str ", y)
-    }
-    println("end")
-}
