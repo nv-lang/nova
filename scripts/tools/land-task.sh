@@ -75,6 +75,14 @@ fi
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die 2 "запускать из дерева репозитория nova"
 COMMON=$(cd "$ROOT" && cd "$(git rev-parse --git-common-dir)" && pwd)
 MAIN_COPY=$(dirname "$COMMON")
+# ПРИЁМЩИК ВЛИВАЕТ ИЗ ДЕРЕВА ЗАДАЧИ, а не из главной копии (2026-10-06, посадка #24):
+# peer_watch запускает команду в каталоге вкладки, у приёмщика это главная копия, где
+# живёт интегратор со своими незакоммиченными правками, — pre-push check-tree-matches-push
+# честно отказал, и обойти его было нечем, кроме запрещённого приёмщику флага. Дерево
+# задачи чистое и содержит кандидата; главную копию скрипт после пуша догоняет сам.
+if [ -n "${PEERS_REVIEW_N:-}" ] && [ "$(cd "$ROOT" && pwd -P)" = "$(cd "$MAIN_COPY" && pwd -P)" ]; then
+    die 2 "приёмщик вливает из дерева задачи: в команде peer_watch — cd <дерево задачи #$N> && bash scripts/tools/land-task.sh $N <хеш>"
+fi
 SHA=$(git -C "$ROOT" rev-parse --verify -q "$SHA_IN^{commit}") || die 2 "'$SHA_IN' — не коммит"
 SHA9=${SHA:0:9}
 CAND="integrate/t$N"

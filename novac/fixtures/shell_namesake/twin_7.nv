@@ -1,0 +1,21 @@
+module shell_namesake.twin_7
+
+import std.io.{kind_from_errno}
+
+// THE TWIN OF pos_7: the same program with the user's newtype renamed `OwnKind`,
+// so the oracle builds it (it fails pos_7 in clang -- registry 221.1
+// #1765, plan 274.12). Its output is the output novac gives pos_7. Not a
+// `pos_*`: the differential reads it only as pos_7's twin.
+
+type OwnKind int
+
+fn doubled(k OwnKind) -> int => (k as int) * 2
+
+fn main() {
+    println(doubled(OwnKind(21)))
+    ro std_kind = kind_from_errno(13)
+    println(match std_kind {
+        PermissionDenied => "denied"
+        _ => "other"
+    })
+}

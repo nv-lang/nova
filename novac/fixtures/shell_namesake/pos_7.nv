@@ -1,0 +1,29 @@
+module shell_namesake.pos_7
+
+import std.io.{kind_from_errno}
+
+// A NEWTYPE named like a std sum, AND that std sum in the same unit (wave 274.5
+// pre68). novac prints no C name for the newtype at all (it is laid out as its
+// `int`), so nothing collides in novac's unit; std.io's `kind_from_errno` keeps
+// returning std's sum, read in std.io's own view (`DefTable @read_as`).
+//
+// The ORACLE fails this file in clang: std's code takes `ErrorKind` for the
+// user's newtype ("member reference type 'nova_int' is not a pointer", measured
+// 2026-10-06; registry 221.1 #1765). The differential compares novac's run
+// of THIS file against twin_7.nv, the same program with the newtype renamed
+// (plan 274.12).
+
+// NOVAC_TWIN twin_7.nv
+
+type ErrorKind int
+
+fn doubled(k ErrorKind) -> int => (k as int) * 2
+
+fn main() {
+    println(doubled(ErrorKind(21)))
+    ro std_kind = kind_from_errno(13)
+    println(match std_kind {
+        PermissionDenied => "denied"
+        _ => "other"
+    })
+}

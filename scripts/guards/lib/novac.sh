@@ -294,3 +294,24 @@ novac_bin_out() {
         *) printf '%s\n' "$1/novac/target/novac" ;;
     esac
 }
+
+# novac_borrow_main_gc ROOT [PREFIX] — Boehm GC главной копии для дерева задачи
+# (реестр 221.1 №1750). Оракулу, собирающему novac, нужен gc.lib с заголовками;
+# свежее дерево задачи не несёт ни `vcpkg_installed`, ни выкачанного подмодуля GC.
+# Главная копия этой машины собирает GC из подмодуля в `target/gc-cache`, и эту
+# раскладку оракул сам не находит. Явное окружение побеждает; своё дерево с GC —
+# тоже. Экспортирует NOVA_GC_LIB_DIR / NOVA_GC_INCLUDE_DIR и печатает строку с PREFIX.
+# Зовут: gate-novac.sh (шаг novac-build) и tools/double-build.sh (сборка A).
+novac_borrow_main_gc() {
+    [ -z "${NOVA_GC_LIB_DIR:-}" ] || return 0
+    [ -f "$1/compiler-codegen/nova_rt/gc/extra/gc.c" ] && return 0
+    [ -f "$1/compiler-codegen/vcpkg_installed/x64-windows-static/lib/gc.lib" ] && return 0
+    _bg_m=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+    _bg_m=${_bg_m%/.git}
+    if [ -n "$_bg_m" ] && [ -f "$_bg_m/target/gc-cache/gc.lib" ] && [ -d "$_bg_m/target/gc-cache/include" ]; then
+        export NOVA_GC_LIB_DIR="$_bg_m/target/gc-cache"
+        export NOVA_GC_INCLUDE_DIR="$_bg_m/target/gc-cache/include"
+        echo "${2:-novac} GC из главной копии ($NOVA_GC_LIB_DIR) — в дереве своего нет (№1750)"
+    fi
+    return 0
+}
