@@ -9,8 +9,8 @@
 // Used by: lowering.nv -- `@lower_value_source` (every value position) and
 //   `@hoist_sealed_args` (an argument); emit_c.nv's print-time hoist for `??`.
 // Guarded by: check-novac-differential.sh (the try_option, try_result, cleanup_try_outcome
-//   and coalesce_return pos fixtures, byte for byte with the oracle or its twin), nova test novac/src/pipeline/try_test.nv
-//   (the early return's C), lower_test.nv (the graph shapes).
+//   and coalesce_return pos fixtures, byte for byte with the oracle or its twin),
+//   nova test novac/src/pipeline/try_test.nv (the early return's C), lower_test.nv (the graph shapes).
 //
 // A FILE OF ITS OWN because lowering.nv sits at the thousand-line limit: `??` moved here
 // with `?`, which shares its Some-test and differs only in its None branch.

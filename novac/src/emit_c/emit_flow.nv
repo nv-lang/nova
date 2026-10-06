@@ -44,7 +44,8 @@ import ../lower.{HandlerSwap, CleanupCall, raw_local}
 import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow, any_tid_c, ty_source_name, Ctx}
 import ../types.{TyId, no_ty}
 import ../sem.{c_type, effect_slot_c}
-import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME, SCOPE_OUTCOME_TYPE, SCOPE_OUTCOME_SUCCESS, SCOPE_OUTCOME_FAILURE, NOVAC_TID_BASE}
+import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME, SCOPE_OUTCOME_TYPE, SCOPE_OUTCOME_SUCCESS}
+import ../builtins.{SCOPE_OUTCOME_FAILURE, NOVAC_TID_BASE}
 
 /// Whether this branch continues a `} else ` line its caller printed.
 fn chained_of(outer Option[IfCtx]) -> bool {
@@ -500,12 +501,11 @@ fn Emitter mut @any_box_of(t TyId, name str) -> str =>
 /// once before the code (`type_info_defs`), `k` its first-use index -- novac's own names,
 /// so the shell's `NOVA_TYPEINFO_nova_str` is never defined twice.
 fn Emitter mut @type_info_of(t TyId) -> str {
-    mut k = 0
-    while k < @infos.len() && @infos[k] != t {
-        k += 1
+    for k in 0..@infos.len() {
+        if @infos[k] == t { return "NOVAC_TYPEINFO_${k}" }
     }
-    if k == @infos.len() { @infos.push(t) }
-    "NOVAC_TYPEINFO_${k}"
+    @infos.push(t)
+    "NOVAC_TYPEINFO_${@infos.len() - 1}"
 }
 
 /// The definitions `@type_info_of` named: `{ <id>, "<name>" }`, the oracle's own shape for

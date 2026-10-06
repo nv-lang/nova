@@ -161,7 +161,11 @@ fn Checker @sum_wraps_error(have TyId, want TyId) -> bool {
     for j in raw_vrow(first)..raw_vrow(first) + cnt {
         ro vd = @ctx.variant_rows[j]
         if vd.payload_cnt != 1 { continue }
-        if subst_type(@ctx, @ctx.payload_types[vd.payload_off], args) == have { hits += 1 }
+        if subst_type(@ctx, @ctx.payload_types[vd.payload_off], args) == have {
+            hits += 1
+        } else {
+            // A variant over another type: no candidate for D55's wrap.
+        }
     }
     hits == 1
 }
