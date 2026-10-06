@@ -153,6 +153,7 @@ export type Rvalue enum
     | AnyData(Node) // the value the `any` the tree names holds, read as the destination's type (D54)
     | Bool(bool) // a boolean constant: a disjunction's "an alternative held" flag (registry 1568)
     | NoneOf // the `None` of the destination's own Option type (the early return of `x?`, D85)
+    | ErrOf(ErrBuild) // the `Err` of the destination's own Result type over a local (the early return of `x?` over a `Result`, D85)
     | CallNext(NextRead) // `next` of the iterator a local holds -- a `for` over an iterator (D58)
 
 /// ONE STEP OF A PLACE (wave M3c): a named field, or a positional component.
@@ -183,6 +184,16 @@ export type Projection enum
 export type PlaceRead value {
     base Local /// the local the projection reads
     proj Projection /// which field or component
+}
+
+/// THE `Err` OF THE DESTINATION'S OWN `Result` (task #15): `x?` over a `Result` (D85)
+/// returns `Err(e)` of the BODY's instance -- `Result[U, E]`, while the operand is a
+/// `Result[T, E]` of another `T` in general, so the operand itself is not it. `vrow` is
+/// the `Err` row the lowering chose (the printer reads its maker's name, decides nothing).
+export type ErrBuild value {
+    payload Local /// the local holding `e`, read off the operand's `Err`
+    vrow VariantRow /// `Err` of `Result`
+    boxed bool /// the destination's error is `any` and `e` is not: boxed on the way out (D85 lets `E'` be a supertype, D53)
 }
 
 /// A payload field of a matched variant (wave M2b-1d): the arm's test proved
@@ -643,6 +654,12 @@ export fn FnBuilder mut @call_next(dest Local, row FnRow, recv Local) -> () {
 /// instance of ANOTHER Option when the payloads differ.
 fn FnBuilder mut @set_none(dest Local) -> () {
     @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.NoneOf }))
+}
+
+/// `dest = Err(payload)` of dest's own Result type: the early return of `x?` over a
+/// `Result` (D85) -- the `set_none` of the second container.
+fn FnBuilder mut @set_err(dest Local, payload Local, vrow VariantRow, boxed bool) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.ErrOf(ErrBuild { payload, vrow, boxed }) }))
 }
 
 /// The element binding of a `for` over a collection (wave M2b-1c): `dest =

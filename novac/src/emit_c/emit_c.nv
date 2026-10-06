@@ -150,7 +150,7 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
                           // here would not be a compile error -- it would be an
                           // empty pool found at runtime or never. Measured on
                           // this very field the day the pool was added.
-                          pool: LitPool.new(), blobs: []int.new() }
+                          pool: LitPool.new(), blobs: []int.new(), infos: []TyId.new() }
     e.emit_type_decls()
     // Module values (274.5 section 6): the cells before any function reads
     // them, the initializers after every function they may call, and the
@@ -177,8 +177,10 @@ export fn emit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Instantiat
     ro init = e.module_value_init_calls()
     // The blobs `embed` named (D412), before every function that reads them.
     ro blobs = blob_defs(e.ctx.embeds, e.blobs)
+    // The type infos a boxing named, the same way (`Failure(e)` of `x?`, D314).
+    ro infos = type_info_defs(e.ctx, e.infos)
     ro (lits, code) = e.into_parts()
-    render(lits, "${blobs}${code}", init)
+    render(lits, "${blobs}${infos}${code}", init)
 }
 
 

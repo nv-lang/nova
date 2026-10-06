@@ -9,7 +9,7 @@
 // Role: check (layer 7) -- one door for both forms: which container, which
 //       return, which code when the pair is not the language's.
 // Used by: exprs.nv (the Try arm, and the Coalesce arm for a `return` fallback).
-// Guarded by: check-novac-differential.sh (fixtures try_option/ and
+// Guarded by: check-novac-differential.sh (fixtures try_option/, try_result/ and
 //             coalesce_return/, pos byte for byte with the oracle),
 //             check-novac-fixture-expect.sh (the neg pins), and
 //             nova test novac/src/pipeline/try_test.nv.
@@ -23,6 +23,8 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{branch_children, coalesce_payload, option_payload, is_coalesce_return, raw_row}
+import ../sem.{result_error, is_any_ty, ty_source_name, c_struct, Ctx}
+import ../builtins.{RESULT_SUM}
 
 /// `?` takes an Option or a Result (D85). The oracle accepts any operand here
 /// (`x?` with `x int` compiles), so the reference is the spec.
@@ -33,6 +35,14 @@ const TRY_IN_FAIL_FN_MSG = "`?` is allowed only in a fn returning `Result[T, E]`
 const TRY_OPTION_IN_RESULT_MSG = "`?` on an `Option` in a fn returning a `Result` would return `None`, which is not a `Result` (D85, E_TRY_OPTION_IN_RESULT_FN) -- convert first: `opt.ok_or(<error>)?`"
 /// The oracle's E_TRY_RESULT_IN_OPTION_FN.
 const TRY_RESULT_IN_OPTION_MSG = "`?` on a `Result` in a fn returning an `Option` would return `Err(e)`, which is not an `Option` (D85, E_TRY_RESULT_IN_OPTION_FN) -- convert first: `res.ok()?`"
+/// `?` over a `Result` whose error is neither the body's nor a supertype of it -- D85's
+/// compile error, with the canonical conversion (auto-`From` is rejected there).
+fn try_error_mismatch_msg(ctx Ctx, have TyId, want TyId) -> str {
+    ro h = ty_source_name(ctx, have)
+    ro w = ty_source_name(ctx, want)
+    "`?` hands this `Err(e)` up unchanged, and `e` is `${h}` while this fn returns a `Result` whose error is `${w}` -- D85 (04-effects.md): the outer fn returns `Result[U, E']` with `E'` compatible with `E`, the same type or a supertype, otherwise a compile error -- convert first: `.map_err(...)?`"
+}
+
 /// `X ?? return R` where the body returns a container: the oracle's code.
 const COALESCE_RETURN_FALLBACK_MSG = "`return` cannot be the fallback of `??` here -- this fn returns an `Option`/`Result`, so `?` is the shorter canon (D86, E_COALESCE_RETURN_FALLBACK); the form is legal only where the return is neither"
 /// `?? return` with no value in a body that promises one: the bare `return`'s own
@@ -76,17 +86,39 @@ fn Checker mut @type_try(e Node) -> () {
         @reject_first_leaf_of(tk, TRY_OPTION_IN_RESULT_MSG)
     } else if !op_is_opt && ret_is_opt {
         @reject_first_leaf_of(tk, TRY_RESULT_IN_OPTION_MSG)
-    } else if !op_is_opt {
-        // The Err branch builds this body's `Result` -- E2-b3 (literal_rules.nv).
-        // Lifting it owes D314's `Failure(e)` to the cleanups at that exit
-        // (`ExitOutcome.FailureExit`, registry 221.1 #1707): the obligation is
-        // fixtures/cleanup_try_outcome/neg_1.nv, which reddens the day this goes.
-        @report_first_leaf_of(tk, TRY_RESULT_MSG)
+    } else if !op_is_opt && !@try_result_pair_ok(tk, ot, rt) {
+        // SILENT-OK: `@try_result_pair_ok` refused the pair of error types by name.
+        return
     } else {
-        // An Option in a body returning an Option: the language's form, compiled.
+        // The language's form, compiled: an Option in a body returning an Option, or a
+        // Result whose error the body's Result carries unchanged. The Err branch builds
+        // the body's own `Err` (lower_coalesce.nv `@lower_try`, `Rvalue.ErrOf`) and hands
+        // its cleanups `Failure(e)` (D314, registry 221.1 #1707).
         @record(tk[0], ot)
         @record(e, payload)
     }
+}
+
+/// `x?` over a `Result[T, E]` in a body returning `Result[U, E']`: the Err branch BUILDS
+/// an `Err` of the body's own instance, and a `Result` instance is the SHELL's struct --
+/// one the shell does not carry is refused by the same name a written `Err(..)` meets
+/// (option_rules.nv), never printed as a type nothing declares. D85 then hands `Err(e)` up
+/// UNCHANGED, so `E'` must take `E` -- "the same type or a supertype through sum
+/// extension; otherwise a compile error" (04-effects.md, D85; auto-`From` rejected). The
+/// same type is compiled, and so is `any` (the supertype of every type, D53): the error
+/// is boxed on the way out. Anything else is the language's error, refused here although
+/// the oracle accepts it (registry 221.1 #TBD). Answers whether the pair was admitted.
+fn Checker mut @try_result_pair_ok(tk []Node, ot TyId, rt TyId) -> bool {
+    ro inst_c = c_struct(@ctx, @concrete(rt))
+    if !@ctx.interop.has_body(inst_c) {
+        @report_first_leaf_of(tk, no_shell_instance_msg(RESULT_SUM, "`${inst_c}`", RESULT_ARRIVES))
+        return false
+    }
+    ro have = @concrete(result_error(@ctx, ot))
+    ro want = @concrete(result_error(@ctx, rt))
+    if !is_ty(have) || !is_ty(want) || have == want || is_any_ty(@ctx.tys, want) { return true }
+    @reject_first_leaf_of(tk, try_error_mismatch_msg(@ctx, have, want))
+    false
 }
 
 /// `X ?? return R` (D86 amended 2026-09-01), after the `??` door admitted its

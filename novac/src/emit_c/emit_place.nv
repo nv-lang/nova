@@ -114,6 +114,7 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
         AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
         Bool(_) => ice("emit_c: a flag constant reached expr_of -- only an assignment prints it")
         NoneOf => ice("emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
+        ErrOf(_) => ice("emit_c: an `Err` of the destination's type reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -181,6 +182,15 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             @emit_assign_head(d)
             @emit_option_none(d.ty)
             @body.append(";\n")
+        }
+        ErrOf(b) => {
+            // The early return of `x?` over a `Result` (D85): the shell's maker of the
+            // destination's own instance, `nova_make_NovaRes_<T>_<E>_Err` -- over the error
+            // boxed into `any` when the destination's error is `any` (emit_flow.nv).
+            ro pd = @lo.ir.decl_of(b.payload)
+            ro arg = if b.boxed { @any_box_of(pd.ty, pd.name) } else { pd.name }
+            @emit_assign_head(d)
+            @body.append("${@variant_maker(b.vrow, d.ty)}(${arg});\n")
         }
         AnyData(subject) => {
             // The runtime's unboxing (`nova_rt/typeid.h`): the payload of the

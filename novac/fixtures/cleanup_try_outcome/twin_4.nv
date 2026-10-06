@@ -1,0 +1,56 @@
+module cleanup_try_outcome.twin_4
+
+// THE TWIN OF pos_4, WRITTEN OUT: its `?` over a `Result` as the `match` D85 makes of
+// it, the cleanup its `Err(e)` exit owes CALLED BY HAND with `Failure(e as any)` (D314
+// amended 2026-10-03). The oracle passes `Success` at that exit (registry 221.1 #1706)
+// and builds this file instead; its output is novac's for pos_4 (plan 274.12). Not a
+// `pos_*`: novac does not compile the arm re-binding `s` (D347 R3). The `as any` is
+// written out -- the oracle crashes on the implicit upcast in `Failure(e)` (registry
+// 221.1 #TBD).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    match outcome {
+        Success => println("cleanup ${@id}: Success")
+        Failure(err) => {
+            if err is int {
+                println("cleanup ${@id}: Failure(int)")
+            } else if err is str {
+                println("cleanup ${@id}: Failure(str)")
+            } else {
+                println("cleanup ${@id}: Failure(other)")
+            }
+        }
+        Panic(_) => println("cleanup ${@id}: Panic")
+    }
+}
+
+fn decode(b []u8) -> Result[str, Utf8Error] {
+    consume a = Lk { id: b.len() }
+    ro s = match b.to_str() {
+        Ok(s) => s
+        Err(e) => {
+            a.cleanup(Failure(e as any))
+            return Err(e)
+        }
+    }
+    Ok(s)
+}
+
+fn bytes(bad bool) -> []u8 {
+    mut b = []u8.new()
+    b.push(104 as u8)
+    if bad {
+        b.push(255 as u8)
+    }
+    b.push(105 as u8)
+    b
+}
+
+fn main() {
+    println(decode(bytes(false)) ?? "bad")
+    println(decode(bytes(true)) ?? "bad")
+}

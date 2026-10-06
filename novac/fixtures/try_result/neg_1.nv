@@ -1,0 +1,20 @@
+module try_result.neg_1
+
+// ONE seeded cause: `?` over a `Result[int, int]` in a fn returning a
+// `Result[int, RangeError]`. D85 hands `Err(e)` up unchanged: "the outer fn returns
+// `Result[U, E']` with `E'` compatible with `E` (the same type or a supertype),
+// otherwise a compile error"; auto-`From` is rejected. The oracle ACCEPTS the form at
+// `nova check` and then fails in its own C (measured 2026-10-06; registry 221.1 #TBD,
+// plan 274.12) -- the reference here is the spec.
+// NOVAC_EXPECT `?` hands this `Err(e)` up unchanged
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn lift(n int) -> Result[int, RangeError] {
+    ro v = get(n)?
+    Ok(v)
+}
+
+fn main() {
+    println(lift(3) ?? 0)
+}

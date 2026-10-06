@@ -1,0 +1,95 @@
+module cleanup_try_outcome.twin_3
+
+// THE TWIN OF pos_3, WRITTEN OUT: every `?` over a `Result` of pos_3 as the `match` D85
+// makes of it, with the cleanup its `Err(e)` exit owes CALLED BY HAND and handed
+// `Failure(e as any)` -- D314's row for `?` over a `Result` (amended 2026-10-03). The
+// oracle passes `Success` at that exit (registry 221.1 #1706), so it builds this file
+// and its output is the output novac gives pos_3 (plan 274.12). Not a `pos_*`: novac
+// does not compile this form (the arm re-binds `v`, D347 R3), and the differential
+// reads it only as pos_3's twin. The `as any` is written out because the oracle
+// crashes at run time on the implicit upcast of `e` in `Failure(e)` (registry 221.1
+// #TBD, measured 2026-10-06).
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    match outcome {
+        Success => println("cleanup ${@id}: Success")
+        Failure(err) => {
+            if err is int {
+                println("cleanup ${@id}: Failure(int ${err})")
+            } else if err is str {
+                println("cleanup ${@id}: Failure(str ${err})")
+            } else {
+                println("cleanup ${@id}: Failure(other)")
+            }
+        }
+        Panic(_) => println("cleanup ${@id}: Panic")
+    }
+}
+
+fn get(n int) -> Result[int, int] => if n > 0 { Ok(n) } else { Err(-n) }
+
+fn bytes(n int) -> Result[[]u8, str] {
+    if n > 0 {
+        return Ok([]u8.new())
+    }
+    Err("short ${n}")
+}
+
+fn one(n int) -> Result[int, int] {
+    consume a = Lk { id: n }
+    ro v = match get(n) {
+        Ok(v) => v
+        Err(e) => {
+            a.cleanup(Failure(e as any))
+            return Err(e)
+        }
+    }
+    println("got ${v}")
+    Ok(v)
+}
+
+fn looped(n int) -> Result[int, int] {
+    for k in 0..3 {
+        consume a = Lk { id: 40 + k }
+        ro v = match get(n - k) {
+            Ok(v) => v
+            Err(e) => {
+                a.cleanup(Failure(e as any))
+                return Err(e)
+            }
+        }
+        println("pass ${v}")
+    }
+    Ok(0)
+}
+
+fn sized(n int) -> Result[[]u8, str] {
+    consume a = Lk { id: 90 + n }
+    ro b = match bytes(n) {
+        Ok(b) => b
+        Err(e) => {
+            a.cleanup(Failure(e as any))
+            return Err(e)
+        }
+    }
+    Ok(b)
+}
+
+fn report(r Result[[]u8, str]) -> () {
+    match r {
+        Ok(b) => println("ok ${b.len()}")
+        Err(e) => println("err ${e}")
+    }
+}
+
+fn main() {
+    println(one(1) ?? 0)
+    println(one(-7) ?? 0)
+    println(looped(1) ?? 9)
+    report(sized(1))
+    report(sized(-1))
+}
