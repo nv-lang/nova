@@ -37,6 +37,8 @@ mangle-fixed-point), локальные переменные, вызовы.
 $1 — корень репозитория; $2 — override: директория с `.c`.
 """
 import collections
+import concurrent.futures
+import os
 import pathlib
 import re
 import subprocess
@@ -96,9 +98,18 @@ def main():
         if not novac.is_file() or not fixtures:
             print(f"{NAME} ok: судить нечего (нет бинаря novac или фикстур)")
             return 0
-        for f in fixtures:
-            r = subprocess.run([str(novac), "emit", str(f)], capture_output=True, text=True,
-                               encoding="utf-8", errors="replace")
+        # ПАРАЛЛЕЛЬНО ПО ЯДРАМ (2026-10-06): по одному процессу подряд на каждую
+        # фикстуру страж шёл ~298 с при пределе гейта 300 с (CI main f2b6517c7,
+        # 214 юнитов: каждый запуск заново читает std) и на следующем же коммите
+        # был убит пределом — тот же класс, что №1763. Процессы независимы;
+        # порядок результатов — порядок фикстур, поэтому вывод и вердикт прежние.
+        def emit(f):
+            return f, subprocess.run([str(novac), "emit", str(f)], capture_output=True,
+                                     text=True, encoding="utf-8", errors="replace")
+        workers = max(1, min(8, os.cpu_count() or 1))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            done = list(pool.map(emit, fixtures))
+        for f, r in done:
             if r.returncode != 0 or not r.stdout:
                 # Эмиссия не состоялась — это судит дифференциальный страж; здесь
                 # такой юнит просто не участвует, и молчания нет: юнит посчитан.
