@@ -69,10 +69,15 @@ fn harvest_methods(decls []Node, own_module str, types []TypeDef, mut defs DefTa
         // symbol, which the oracle spells from the module path. The TREE's index
         // travels too (E.10 step 4a): the row's body lives there.
         ro first = fns.rows.len()
+        // A signature of ANOTHER module names its types as that module sees
+        // them, not as the compiled file does (registry #TBD-namesake): the
+        // file's own `ErrorKind` must not become std.io's return type.
+        defs.read_as(if module_dotted(d) == own_module { "" } else { module_dotted(d) })
         harvest_in(d, module_dotted(d), own_module, types, defs, tys, fns, coerces, tree, bodies)
         resolve_const_defaults(d, fns, first)
         tree += 1
     }
+    defs.read_as("")
 }
 
 /// A HANDED parameter's default that names a CONSTANT of its own file

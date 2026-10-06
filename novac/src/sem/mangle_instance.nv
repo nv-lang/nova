@@ -307,11 +307,11 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
     match ctx.tys.kind_of(a) {
         TkPrim => prim_c_name(ctx.tys.prim_ordinal_of(a))
         TkRecord => {
-            ro nm = decl_of_ty(ctx, a).name
+            ro nm = type_base(ctx, a)
             if is_value_record(ctx, a) { "NovaValue_${nm}" } else { "Nova_${nm}_p" }
         }
         TkApp => "${instance_struct_name(ctx, a)}_p"
-        TkSum => "Nova_${decl_of_ty(ctx, a).name}_p"
+        TkSum => "Nova_${type_base(ctx, a)}_p"
         // A NEWTYPE inside an instance name is its REPRESENTATION (274.7 B7,
         // #940): `[Meters(1.0), Meters(2.0)]` with `type Meters f64` is
         // `Nova_Vec____nova_f64` in the oracle's C (measured 2026-09-05, the

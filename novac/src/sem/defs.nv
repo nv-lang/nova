@@ -113,12 +113,13 @@ export type DefTable {
     homes []str /// parallel to `rows`: the module (dotted) a HANDED row was declared in; "" for the file's own rows, the seeded ones and std's files with no module line (#1521)
     privs []bool /// parallel to `rows`: the row is a declaration its module keeps PRIVATE (D281) and that only that module's bodies may name -- a type of another module registered for its own instances (#1567)
     foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
+    asker str /// the module (dotted) whose HANDED declaration is being read, "" for the compiled file's view: `@type_decl` then answers what the name means in THAT module (registry #TBD-namesake, wave 274.5 pre68); set only by `@read_as`
 }
 
 /// Empty registry with the NsDefs namespace.
 export fn DefTable.new() -> DefTable =>
     { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), prev: []int.new(), homes: []str.new(),
-      privs: []bool.new(), foreign_cnt: 0 }
+      privs: []bool.new(), foreign_cnt: 0, asker: "" }
 
 /// Register one name. LAST PUT WINS, and that is the rule rather than a
 /// shortcut: `collect_types` gives the id to the FIRST declaration that owns
@@ -265,8 +266,18 @@ export fn DefTable @const_row(name str) -> Option[ConstRow] {
 /// rule "a type in type position must be declared" -- check/typeref_rules.nv:89,
 /// `@undeclared_in_type_ref`); sem invents
 /// nothing — it just does not register what it did not understand.
+///
+/// WHILE A HANDED DECLARATION OF ANOTHER MODULE IS READ (`@asker` set, registry
+/// 221.1 #TBD-namesake), a name means what it means IN THAT MODULE: its own
+/// type first, then a type it can see from elsewhere, and the compiled file's
+/// row only when nothing handed holds the name. Answering the head -- the
+/// file's own row, last put -- made std.io's `fn kind_from_errno(..) ->
+/// ErrorKind` return the PROGRAM's `ErrorKind` whenever the program declared
+/// one (measured 2026-10-06, wave 274.5 pre68): identity by text, the 274.12
+/// O-3 class, inside a signature the program never wrote.
 #realtime nogc
 export fn DefTable @type_decl(name str) -> Option[DeclId] {
+    if @asker != "" { return @type_decl_seen_by(name, @asker) }
     // `?` for the unknown name (this door returns an Option), then the kind.
     ro def = @def_of(name)?
     match def.target {
@@ -274,4 +285,46 @@ export fn DefTable @type_decl(name str) -> Option[DeclId] {
         // A variant, a callable or a constant is not a type: ONE answer.
         DefFn(_) | DefConst(_) => None
     }
+}
+
+/// The type `name` names inside a handed declaration of module `home` -- the
+/// walk `@type_decl` takes while `@asker` is set, along the chain of same-named
+/// rows (#1521): the row `home` declares itself, else the first handed row
+/// visible from anywhere (not private), else the head as before -- a handed
+/// file of the compiled file's own program may name the compiled file's type.
+#realtime nogc
+fn DefTable @type_decl_seen_by(name str, home str) -> Option[DeclId] {
+    mut seen = -1
+    mut i = @names.find(name)
+    while i >= 0 {
+        ro decl = match @rows[i].target {
+            DefType(d) => Some(d)
+            DefFn(_) | DefConst(_) => None
+        }
+        if Some(d) = decl {
+            if !@is_own(i) && @homes[i] == home { return Some(d) }
+            if seen < 0 && !@is_own(i) && !@privs[i] { seen = i }
+        } else {
+            // Not a type row: the name's other owners do not answer here.
+        }
+        i = @prev[i]
+    }
+    if seen >= 0 {
+        return match @rows[seen].target {
+            DefType(d) => Some(d)
+            DefFn(_) | DefConst(_) => None
+        }
+    }
+    ro def = @def_of(name)?
+    match def.target {
+        DefType(decl) => Some(decl)
+        DefFn(_) | DefConst(_) => None
+    }
+}
+
+/// Read the declarations handed from module `home` (dotted) from here on;
+/// "" returns to the compiled file's view. Set and cleared by the two
+/// collectors of handed declarations (`harvest_methods`, `fill_handed_fields`).
+export fn DefTable mut @read_as(home str) -> () {
+    @asker = home
 }

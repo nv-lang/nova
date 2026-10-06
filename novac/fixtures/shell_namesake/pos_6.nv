@@ -1,0 +1,32 @@
+module shell_namesake.pos_6
+
+import std.io.{kind_from_errno}
+
+// A VALUE RECORD named like a std sum, AND that std sum in the same unit (wave
+// 274.5 pre68). D125: the user's `ErrorKind` shadows std.io's in this file;
+// std.io's own `kind_from_errno` still returns std's. novac spells the program's
+// type `NovaValue_shell_namesake_pos_6_ErrorKind` and std's stays the shell's.
+//
+// The ORACLE fails this file in clang: its D381 does not qualify a value record,
+// and std's code resolves `ErrorKind` to the user's type ("no member named 'tag'
+// in 'struct NovaValue_ErrorKind'", measured 2026-10-06; registry 221.1
+// #TBD-oracle). So the differential compares novac's run of THIS file against
+// twin_6.nv, the same program with the user's type renamed (plan 274.12).
+
+// NOVAC_TWIN twin_6.nv
+
+type ErrorKind value {
+    code int
+}
+
+fn bumped(k ErrorKind) -> ErrorKind => { code: k.code + 1 }
+
+fn main() {
+    ro mine = bumped(ErrorKind { code: 41 })
+    println(mine.code)
+    ro std_kind = kind_from_errno(2)
+    println(match std_kind {
+        NotFound => "notfound"
+        _ => "other"
+    })
+}

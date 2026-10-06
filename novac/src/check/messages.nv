@@ -269,14 +269,6 @@ const TUPLE_PARAM_MSG = "outside the subset: a tuple as a PARAMETER is not compi
 
 const PRIM_REDECL_MSG = "a primitive is a closed type (D35): its name cannot be redeclared -- add methods to it instead"
 
-/// D125/D371 let a user declaration SHADOW a prelude/handed-over name (user
-/// wins, a warning at most) -- but novac's C name for its own types does not
-/// carry the module yet (D381), so a shadowing type would print a second
-/// `struct Nova_<name>` beside the shell's and clang refuses the unit
-/// (measured 2026-09-01: ct.c carried both). Refused BY NAME until the
-/// module-qualified C names arrive; the norm itself stays wider on purpose.
-const SHADOW_FOREIGN_MSG = "outside the subset: the interop shell already declares a struct under this name's C spelling -- a second definition in the unit is refused by clang; pick another name (goes the day novac emits the whole prelude)"
-
 /// The three ways a record construction can disagree with its declaration
 /// (#812). The spec states the first two as numbered rules
 /// (`02-types.md:1677`): every declared field must be present, and a name the

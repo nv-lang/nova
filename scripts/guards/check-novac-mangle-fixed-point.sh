@@ -10,7 +10,9 @@
 # (novac/src/emit_c/shell.tpl.c = эмиссия оракула по probe). Имя, которого нет
 # в оболочке, — мэнгл разошёлся с оракулом (или probe не покрывает форму) —
 # красный. Символы novac-собственного пространства (novac_user_*, novac_make_*,
-# NOVAC_TAG_*, Nova_<UserType>) сюда не входят: их определяет сам novac.
+# NOVAC_TAG_*, Nova_<UserType>, а у тёзки struct оболочки — D381-база
+# Nova_<modpath>_<UserType>, план 274.5 §3-пред68) сюда не входят: их
+# определяет сам novac.
 # НЕ ПРОВЕРЯЕТ: поведение (это смоук/дифф-раннер); имена, которых эмиссия
 # подмножества не порождает.
 #
@@ -63,7 +65,15 @@ for f in "$ROOT"/examples/basics/*.nv; do
     # the shell. Self-test 2026-08-15 taught the guard not to grep for the
     # rule's own spelling (a broken rule then just vanished from the count).
     grep -oE '\b(Nova|nova)_[A-Za-z0-9_]+' "$T/out.c" | grep -vE '^(novac_|NOVAC_)' | sort -u > "$T/syms"
-    grep -oE '^(export )?type [A-Z][A-Za-z0-9_]*' "$f" | awk '{printf "Nova_%s\nNova_%s_Tag\n", $NF, $NF}' | sort -u > "$T/user_syms"
+    # A type of the file whose name the shell already defines a struct for gets
+    # the D381 module base (`Nova_<modpath>_<Name>`, novac sem `type_base`,
+    # plan 274.5 section pre68) -- still novac's own name, one name per type.
+    # The modpath is the file's `module` line with dots as underscores; a file
+    # with none gets D381's formula with an empty modpath, `Nova__<Name>`.
+    MODC=$(sed -n 's/^module \([A-Za-z0-9_.]*\).*/\1/p' "$f" | head -1 | tr . _)
+    grep -oE '^(export )?type [A-Z][A-Za-z0-9_]*' "$f" \
+        | awk -v m="$MODC" '{printf "Nova_%s\nNova_%s_Tag\nNova_%s_%s\nNova_%s_%s_Tag\n", $NF, $NF, m, $NF, m, $NF}' \
+        | sort -u > "$T/user_syms"
     comm -23 "$T/syms" "$T/user_syms" > "$T/oracle_syms"
     comm -23 "$T/oracle_syms" "$T/shell_syms" | sed "s|^|  $rel: |; s|\$| — нет в оболочке (эмиссии оракула по probe)|" >> "$T/bad_all"
 done

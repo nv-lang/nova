@@ -1,0 +1,25 @@
+module shell_namesake.twin_6
+
+import std.io.{kind_from_errno}
+
+// THE TWIN OF pos_6: the same program with the user's value record renamed
+// `OwnKind`, so the oracle's unit holds no two types of one name and it builds
+// (it fails pos_6 in clang -- registry 221.1 #TBD-oracle, plan 274.12). Its
+// output is the output novac gives pos_6. Not a `pos_*`: the differential reads
+// it only as pos_6's twin.
+
+type OwnKind value {
+    code int
+}
+
+fn bumped(k OwnKind) -> OwnKind => { code: k.code + 1 }
+
+fn main() {
+    ro mine = bumped(OwnKind { code: 41 })
+    println(mine.code)
+    ro std_kind = kind_from_errno(2)
+    println(match std_kind {
+        NotFound => "notfound"
+        _ => "other"
+    })
+}
