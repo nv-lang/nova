@@ -1460,9 +1460,9 @@ static const uint8_t _nova_strlit_af64114c8602469b_buf[] = "\\";
 static const nova_str _nova_strlit_af64114c8602469b = { .ptr = _nova_strlit_af64114c8602469b_buf, .len = 1 };
 static const uint8_t _nova_strlit_af63a24c860189fe_buf[] = "/";
 static const nova_str _nova_strlit_af63a24c860189fe = { .ptr = _nova_strlit_af63a24c860189fe_buf, .len = 1 };
-static const uint8_t _nova_strlit_af63c54c8601c577_buf[] = "";
+static const uint8_t _nova_strlit_af63c54c8601c577_buf[] = "\010";
 static const nova_str _nova_strlit_af63c54c8601c577 = { .ptr = _nova_strlit_af63c54c8601c577_buf, .len = 1 };
-static const uint8_t _nova_strlit_af63c14c8601beab_buf[] = "";
+static const uint8_t _nova_strlit_af63c14c8601beab_buf[] = "\014";
 static const nova_str _nova_strlit_af63c14c8601beab = { .ptr = _nova_strlit_af63c14c8601beab_buf, .len = 1 };
 static const uint8_t _nova_strlit_af63c74c8601c8dd_buf[] = "\n";
 static const nova_str _nova_strlit_af63c74c8601c8dd = { .ptr = _nova_strlit_af63c74c8601c8dd_buf, .len = 1 };
