@@ -70,7 +70,7 @@ fn harvest_methods(decls []Node, own_module str, types []TypeDef, mut defs DefTa
         // travels too (E.10 step 4a): the row's body lives there.
         ro first = fns.rows.len()
         // A signature of ANOTHER module names its types as that module sees
-        // them, not as the compiled file does (registry #TBD-namesake): the
+        // them, not as the compiled file does (registry #1764): the
         // file's own `ErrorKind` must not become std.io's return type.
         defs.read_as(if module_dotted(d) == own_module { "" } else { module_dotted(d) })
         harvest_in(d, module_dotted(d), own_module, types, defs, tys, fns, coerces, tree, bodies)

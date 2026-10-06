@@ -224,7 +224,7 @@ fn shell_defines_struct(ctx Ctx, name str) -> bool =>
 /// modules"): a type of the PROGRAM whose name the shell already spells. Every
 /// shape of it is qualified -- the oracle's D381 stops at plain-Sum and
 /// heap-Record and fails the rest in clang (value record, newtype, generic:
-/// registry 221.1 #TBD-oracle), but a spelling is not a language rule, and a
+/// registry 221.1 #1765), but a spelling is not a language rule, and a
 /// program D125 makes legal is compiled whatever its shape. A newtype has no C
 /// name of its own (its representation's), and a generic head is named by the
 /// mono path, which the subset does not compile yet (E2-b2).

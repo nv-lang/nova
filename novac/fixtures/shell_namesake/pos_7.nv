@@ -9,7 +9,7 @@ import std.io.{kind_from_errno}
 //
 // The ORACLE fails this file in clang: std's code takes `ErrorKind` for the
 // user's newtype ("member reference type 'nova_int' is not a pointer", measured
-// 2026-10-06; registry 221.1 #TBD-oracle). The differential compares novac's run
+// 2026-10-06; registry 221.1 #1765). The differential compares novac's run
 // of THIS file against twin_7.nv, the same program with the newtype renamed
 // (plan 274.12).
 

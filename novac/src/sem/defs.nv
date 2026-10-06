@@ -113,7 +113,7 @@ export type DefTable {
     homes []str /// parallel to `rows`: the module (dotted) a HANDED row was declared in; "" for the file's own rows, the seeded ones and std's files with no module line (#1521)
     privs []bool /// parallel to `rows`: the row is a declaration its module keeps PRIVATE (D281) and that only that module's bodies may name -- a type of another module registered for its own instances (#1567)
     foreign_cnt int /// how many FIRST rows came from declarations novac was HANDED (the seeded primitives among them); every row after is the compiled file's own. A fact about the TABLE, like `FnTable.own_cnt`, and a PREFIX because a signature of this file must be able to name a handed-over type -- so those go in first
-    asker str /// the module (dotted) whose HANDED declaration is being read, "" for the compiled file's view: `@type_decl` then answers what the name means in THAT module (registry #TBD-namesake, wave 274.5 pre68); set only by `@read_as`
+    asker str /// the module (dotted) whose HANDED declaration is being read, "" for the compiled file's view: `@type_decl` then answers what the name means in THAT module (registry #1764, wave 274.5 pre68); set only by `@read_as`
 }
 
 /// Empty registry with the NsDefs namespace.
@@ -268,7 +268,7 @@ export fn DefTable @const_row(name str) -> Option[ConstRow] {
 /// nothing — it just does not register what it did not understand.
 ///
 /// WHILE A HANDED DECLARATION OF ANOTHER MODULE IS READ (`@asker` set, registry
-/// 221.1 #TBD-namesake), a name means what it means IN THAT MODULE: its own
+/// 221.1 #1764), a name means what it means IN THAT MODULE: its own
 /// type first, then a type it can see from elsewhere, and the compiled file's
 /// row only when nothing handed holds the name. Answering the head -- the
 /// file's own row, last put -- made std.io's `fn kind_from_errno(..) ->

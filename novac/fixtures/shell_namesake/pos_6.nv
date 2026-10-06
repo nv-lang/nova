@@ -10,7 +10,7 @@ import std.io.{kind_from_errno}
 // The ORACLE fails this file in clang: its D381 does not qualify a value record,
 // and std's code resolves `ErrorKind` to the user's type ("no member named 'tag'
 // in 'struct NovaValue_ErrorKind'", measured 2026-10-06; registry 221.1
-// #TBD-oracle). So the differential compares novac's run of THIS file against
+// #1765). So the differential compares novac's run of THIS file against
 // twin_6.nv, the same program with the user's type renamed (plan 274.12).
 
 // NOVAC_TWIN twin_6.nv

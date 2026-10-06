@@ -63,7 +63,7 @@ fn fill_handed_fields(file Node, decls []Node, foreign_cnt int, mut types []Type
         // `v.len` compiled where the oracle says E_FIELD_MODULE_PRIVATE.
         ro same_module = own_module != "" && module_dotted(d) == own_module
         // A record of ANOTHER module is found, and its field types read, as
-        // that module sees the names (registry #TBD-namesake): a program type
+        // that module sees the names (registry #1764): a program type
         // of the same name neither hides the record nor retypes its fields.
         defs.read_as(if same_module { "" } else { module_dotted(d) })
         // The `file_decls` walk, keeping what it drops: whether the declaration
