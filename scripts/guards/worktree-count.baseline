@@ -131,7 +131,11 @@
 # 2026-10-05 (integrator, OpenCode): 5 -> 7. Two more task trees by the owner's word of 17:50:
 #   tasks #4 (acceptor merges into main) and #5 (Stop hook code "wait") -- rules and a hook, not the
 #   compiler, so they run beside the three Carina tasks. Goes down as tasks are accepted and cleaned.
-worktrees=7
+# 2026-10-06 (integrator, OpenCode): 7 -> 9, owner's word ("да", 21:15). The plugin's inflight
+#   limit went 6 -> 8 the same evening (two tasks sat waiting while four places were held by
+#   tasks on acceptance), so up to 8 task trees live at once: 9 = main + 8 task trees. The
+#   nova-carina tree is gone. Goes down if the inflight limit goes down.
+worktrees=9
 
 # БАМП 2026-08-29: 19 -> 20. Причина: открыто компилятор-окно p790
 # (`nova-p790`, ветка p790-fiber-cancel) под два К1-блокера тега №790/№791 —
