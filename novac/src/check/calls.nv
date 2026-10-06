@@ -35,7 +35,7 @@ import ../tree.{Node, raw_node, NodeKind}
 // #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
 import ../sem.{branch_children, leaf_text, file_decls}
 import ../diag.{ice}
-import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN, RECV_BINDING}
+import ../builtins.{TypeKind, SIZE_OF_FN, ASSERT_FN, PANIC_FN, RECV_BINDING}
 import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
 import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
 import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
@@ -851,6 +851,15 @@ fn Checker mut @type_free_call(e Node) -> () {
     // outranks it, the same rule `size_of` keeps.
     if cname == ASSERT_FN && @ctx.defs.def_of(cname).is_none() {
         @type_assert(e, kids)
+        // SILENT-OK: the intrinsic's own door recorded the call or refused it by name.
+        return
+    } else {
+        // Not the intrinsic: the name table below.
+    }
+    // `panic(msg)` (D13): `extern "nova"` too, with the same precedence -- a
+    // program's own `panic` outranks the intrinsic.
+    if cname == PANIC_FN && @ctx.defs.def_of(cname).is_none() {
+        @type_panic(e, kids)
         // SILENT-OK: the intrinsic's own door recorded the call or refused it by name.
         return
     } else {

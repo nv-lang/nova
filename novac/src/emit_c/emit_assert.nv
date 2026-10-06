@@ -9,7 +9,8 @@
 // Role: the emission of the `assert` intrinsic the checker typed
 //   (check/assert_call.nv): the condition, its display and line from the
 //   channel's contract note on the call node, the file this unit names, and
-//   the literal message or NULL.
+//   the literal message or NULL; and of its sibling `panic(msg)` (D13): the
+//   throw site stamped, then the runtime's `nv_panic`.
 // Used by: emit_expr.nv (`@emit_expr`, the free-call branch with a note).
 // Guarded by: novac/fixtures/assert_stmt (byte-for-byte with the oracle),
 //   check-novac-differential.sh.
@@ -31,6 +32,17 @@ fn Emitter mut @emit_assert(e Node, kids []Node) -> () {
     @body.append("\", \"${@src_name}\", ${note.src_line}, ")
     @body.append(assert_msg_c(kids))
     @body.append("), NOVA_UNIT)")
+}
+
+/// `panic(msg)` as one C expression, the oracle's shape: the throw site stamped
+/// first (the runtime prints `at <file>:<line> (throw site)` after the message),
+/// then `nv_panic`, which never returns; the trailing `0` gives the comma
+/// expression the `never` type's C value (`nova_int`) for a value position.
+fn Emitter mut @emit_panic(e Node, kids []Node) -> () {
+    ro note = @out.contract_of(e.id_of()) ?? ice("emit_c: a panic the checker left without its note")
+    @body.append("(nova_throw_site_set_dominant(\"${@src_name}\", ${note.src_line}), nv_panic(")
+    @emit_expr(call_arg_at(kids, 1, 0))
+    @body.append("), (nova_int)0LL)")
 }
 
 /// The message as C text: a string literal as written, anything else -- or no

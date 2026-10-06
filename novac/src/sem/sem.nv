@@ -269,6 +269,7 @@ export type Prims value {
     f64_id TyId /// Type id of `f64`.
     char_id TyId /// Type id of `char` (universe ordinal 14; the char-literal wave).
     unit_id TyId /// Type id of `()` (universe ordinal 15): the return a callable declares when it returns nothing -- asked by the emitter to decide whether a body has a tail value (2026-09-04).
+    never_id TyId /// Type id of `never` (universe ordinal 17), the bottom type (D26): the type of a `panic(..)` call.
 }
 
 /// A position whose type the caller cannot state yet.

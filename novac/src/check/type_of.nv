@@ -781,6 +781,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // `size_of[T]()` (D216) is no row's call: the checker recorded its
         // type with its substitution (274.11 E.10 step 4c-2).
         if chan.has_subst(e.id_of()) { return ctx.prims.int_id }
+        // `assert(..)` and `panic(..)` are no row's calls either: the intrinsic
+        // door noted the call and recorded its type (`()`, `never`).
+        if chan.contract_of(e.id_of()).is_some() { return chan.type_of(e.id_of()) }
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro cname = call_callee_text(branch_children(e))

@@ -10,8 +10,10 @@
 // language's intrinsic: the condition is typed `bool`, the message `str`, the
 // call `()`, and the condition's display and line go into the channel as a
 // contract note on the CALL node for the emitter (emit_c/emit_assert.nv).
-// Used by: check/calls.nv (`@type_free_call` hands `assert` here when no
-//   declaration of the program takes the name).
+// Its sibling `panic(msg)` (D13, `extern "nova" ... -> never`) takes the same
+// door shape: the message typed `str`, the call `never`, the callee's line noted.
+// Used by: check/calls.nv (`@type_free_call` hands `assert` and `panic` here when
+//   no declaration of the program takes the name).
 // Guarded by: novac/fixtures/assert_stmt (pos byte-for-byte with the oracle,
 //   neg for the arity), check-novac-differential.sh.
 
@@ -77,6 +79,50 @@ fn Checker mut @type_assert(e Node, kids []Node) -> () {
     @record(e, @ctx.prims.unit_id)
 }
 
+/// `panic(msg)` (D13): one `str` by position, the call typed `never` (D26) so it
+/// stands in any value position -- a tail of `-> never`, a `??` fallback, an arm.
+/// The note carries the line of the CALLEE, where the oracle stamps its throw
+/// site (`nova_throw_site_set_dominant`, effects.h); the display is unused.
+fn Checker mut @type_panic(e Node, kids []Node) -> () {
+    mut n = 0
+    mut at = 0
+    for c in kids {
+        if at >= 1 && is_arg_node(c) {
+            n += 1
+        } else {
+            // The callee's name, or punctuation: not an argument.
+        }
+        at += 1
+    }
+    if n != 1 || has_named_arg(kids) {
+        @reject_first_leaf_of(kids, PANIC_ARITY_MSG)
+        return
+    }
+    ro msg = call_arg_at(kids, 1, 0)
+    ro mark = @out.len()
+    @type_expr(msg)
+    // SILENT-OK: the message's own walk refused it by name.
+    if @out.len() > mark { return }
+    ro mt = type_of(msg, @ctx, @scope, @chan)
+    if mt != @ctx.prims.str_id {
+        @reject_first_leaf_of([]Node.of(msg), PANIC_MSG_TYPE_MSG)
+        return
+    }
+    @record(msg, mt)
+    // A value position may walk the call twice (a `??` fallback, a value `if`
+    // branch); the note is one fact about the node, written once.
+    if @chan.contract_of(e.id_of()).is_none() {
+        ro lo = @first_leaf_offset(e)
+        if lo < 0 {
+            ice("check: a panic call with no leaf reached the note door")
+        }
+        @chan.record_contract(e.id_of(), "", @line_at(lo))
+    } else {
+        // Noted by the first walk; the type below is the same answer again.
+    }
+    @record(e, @ctx.prims.never_id)
+}
+
 /// Does the call pass anything by name? `assert` declares `cond` and `msg`,
 /// but the intrinsic is spelled by position only -- refused with the arity.
 fn has_named_arg(kids []Node) -> bool {
@@ -91,3 +137,7 @@ const ASSERT_ARITY_MSG = "`assert` takes a condition and an optional message, by
 const ASSERT_COND_MSG = "the condition of `assert` is a `bool` -- this argument is of another type"
 
 const ASSERT_MSG_TYPE_MSG = "the message of `assert` is a `str` -- this argument is of another type"
+
+const PANIC_ARITY_MSG = "`panic` takes one message, by position: `panic(\"msg\")` (std/prelude/runtime.nv)"
+
+const PANIC_MSG_TYPE_MSG = "the message of `panic` is a `str` -- this argument is of another type"

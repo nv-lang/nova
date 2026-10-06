@@ -205,6 +205,10 @@ export const SIZE_OF_FN = "size_of"
 /// declared `extern "nova"` -- no body, so the call is the language's intrinsic.
 export const ASSERT_FN = "assert"
 
+/// `panic(msg)`: the death of the current fiber (D13), declared `extern "nova"`
+/// in the prelude (`-> never`) -- no body, so the call is the intrinsic.
+export const PANIC_FN = "panic"
+
 /// The upper bound an open slice `x[lo..]` takes: the second method of std's
 /// `RangeIndex` role beside `index(r Range)` -- the receiver's OWN answer, not
 /// a `len` field (plan 284; `std/src/collections/vec/slice.nv`,

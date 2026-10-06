@@ -362,7 +362,8 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     ro prims = Prims { int_id: ty_of_row(types, seeded[0]), str_id: ty_of_row(types, seeded[1]),
                        bool_id: ty_of_row(types, seeded[2]), f64_id: ty_of_row(types, seeded[3]),
                        char_id: ty_of_row(types, seeded[14]),
-                       unit_id: ty_of_row(types, seeded[15]) }
+                       unit_id: ty_of_row(types, seeded[15]),
+                       never_id: ty_of_row(types, seeded[17]) }
     mut fields = FieldTable.new()
     mut protos = ProtoTable.new()
     mut fns = FnTable.new()

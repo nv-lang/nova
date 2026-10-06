@@ -1,0 +1,12 @@
+module panic_value.neg_1
+
+// THE INTRINSIC KEEPS ITS SIGNATURE: `panic(msg str) -> never` takes a `str`.
+// The door types the message and refuses another type by name -- the oracle
+// refuses the same call as an argument mismatch against the prelude's
+// declaration. Without this cell an intrinsic door could accept any argument
+// and print it as a string pointer.
+
+// NOVAC_EXPECT the message of `panic` is a `str`
+fn main() {
+    panic(42)
+}
