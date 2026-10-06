@@ -8,13 +8,17 @@ module disj_in_option.pos_1
 // own test, whose printer spells Option tags through the same door.
 //
 // The cells, each with the values the old code answered wrongly: a `|` below
-// Option at depth 1 and 2; below Option inside a tuple (the tuple at the root
-// and under a novac sum -- an Option OVER a tuple has no shell instance here,
-// a separate registry row); below Option under a novac sum; a guard over the
-// arm and a statement position; Option over a novac sum with a `|` of its
+// Option at depth 1 and 2, the alternatives in either order; below Option
+// inside a tuple at the root; below Option in a record's field; a guard over
+// the arm and a statement position; Option over a novac sum with a `|` of its
 // variants; the `|` at the root over Option and over Result (as a std call
 // hands it back -- the subset builds no Result); the control, the same form
 // over a novac sum (right before this wave, holds the regression).
+// NOT here, and why: an Option OVER a tuple with a non-primitive element has
+// no shell instance (registry 1768), and an Option or a tuple as a novac
+// sum's payload is refused by the subset by name -- so a `|` below Option in
+// either place cannot be built yet; a `|` BELOW a Result needs a Result whose
+// payload has variants, which no std call the subset reaches hands back.
 //
 // The oracle does not parse a nested `|` ("expected `)`, got `|`", plan
 // 274.12): it builds the twin, the same arms spelled without the nested `|`.
