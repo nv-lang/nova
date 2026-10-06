@@ -475,29 +475,27 @@ export fn interp_slices(text str) -> []str {
 /// The BYTE length a literal fragment has AFTER C reads its escapes: a
 /// backslash pair is one byte. The emitter's `.len` field needs the C
 /// answer, not the source count.
+///
+/// Reads `splice_continuations` (sem/literal_spelling.nv) FIRST, the same
+/// door `literal_as_c_text` takes for the C text itself (registry 1752,
+/// K1): a continuation's `\` + break + the next line's leading spaces/tabs
+/// (D467 s3) is gone from the text before any byte is counted, so this walk
+/// never re-derives that rule -- it had its own copy, shorter than the
+/// splice's (indentation-blind), and the two answers disagreed the moment a
+/// continuation carried leading whitespace.
 export fn escaped_byte_len(piece str) -> int {
-    ro b = piece.bytes()
+    ro b = splice_continuations(piece).bytes()
     mut len = 0
     mut i = 0
     while i < b.len() {
-        if b[i] == INTERP_BSLASH && i + 1 < b.len() && (b[i + 1] == INTERP_LF || b[i + 1] == INTERP_CR) {
-            // A LINE CONTINUATION (D467 s3) is no byte of the value: `\` + `\n`, or
-            // `\` + `\r\n` on a CRLF file (registry 1691). Counted as one, the
-            // fragment's `.len` ran a byte past its text -- the printed string
-            // carried the C terminator.
-            i += if b[i + 1] == INTERP_CR && i + 2 < b.len() && b[i + 2] == INTERP_LF { 3 } else { 2 }
-        } else {
-            if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
-            len += 1
-        }
+        if b[i] == INTERP_BSLASH { i += 2 } else { i += 1 }
+        len += 1
     }
     len
 }
 
-/// The four bytes the slicer reads.
+/// The three bytes the slicer reads.
 const INTERP_BSLASH u8 = 0x5C  // backslash
-const INTERP_LF u8 = 0x0A  // line feed: a continuation's break
-const INTERP_CR u8 = 0x0D  // carriage return: the first byte of a CRLF break
 const INTERP_DOLLAR u8 = 0x24  // $
 const INTERP_LBRACE u8 = 0x7B  // {
 const INTERP_RBRACE u8 = 0x7D  // }

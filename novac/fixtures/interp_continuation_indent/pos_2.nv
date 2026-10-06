@@ -1,0 +1,10 @@
+module interp_continuation_indent.pos_2
+
+// Same class (registry 1752), with non-ASCII bytes in the fragment either
+// side of the continuation: the spliced length must still be a BYTE count,
+// not a codepoint count, and must match what the continuation left behind.
+fn main() {
+    ro n = 3
+    println("привет\
+   ${n} мир")
+}
