@@ -373,7 +373,7 @@ const IMPL_DEFERRED_MSG = "outside the subset: `#impl` of this protocol is deriv
 /// type (its method would hang on `T[A]` with the type's own parameters) or a
 /// positional tuple record (no field name to put on the wire). Named so the
 /// opt-in is never read and silently dropped.
-const SERDE_SHAPE_MSG = "outside the subset: `#impl(Serialize)` is derived for a non-generic record with named fields or a sum -- a generic type and a positional tuple record are not synthesized yet (E2-b3)"
+const SERDE_SHAPE_MSG = "outside the subset: `#impl(Serialize)` is derived for a non-generic record with named fields or a sum -- a generic type and a record of unnamed fields are not synthesized yet (E2-b3)"
 
 /// `unsafe { ... }` -- D216 s8. Compiled since 274.11 E.10 step 3c where an `if`
 /// value stands (initializer, argument, a body's tail) and as a statement.

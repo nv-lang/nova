@@ -22,8 +22,8 @@ import ../builtins.{TypeKind, SERIALIZE_PROTO, SERIALIZE_METHOD, SLICE_HEAD, BYT
 import ../builtins.{is_serde_seq_head, is_serde_map_head, serde_scalar_wire, serde_scalar_widen, is_serde_nested_scalar}
 import ../types.{TyId, is_ty, no_ty}
 import ../diag.{ice}
-import ../sem.{Ctx, TypeDef, VariantDef, decl_of_ty, field_range_of, variant_range_of, gate_names, raw_frow, raw_vrow, no_vrow}
-import ../sem.{prim_row_of}
+import ../sem.{Ctx, TypeDef, VariantDef, decl_of_ty, field_range_of, variant_range_of, gate_names}
+import ../sem.{raw_frow, raw_vrow, no_vrow, prim_row_of, shape_of, RecordShape}
 import ../resolve.{FnIndex, missing_sig_of}
 import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, ty_source_name}
@@ -110,29 +110,28 @@ fn Checker mut @judge_serde_fields(kids []Node) -> () {
 /// of a sum counted across its variants (a positional payload is named by its
 /// variant and position, `Circle.0`).
 fn Checker @lacking_named(td TypeDef, j int) -> (str, TyId) {
-    if td.kind == TypeKind.TkRecord {
-        match field_range_of(td) {
-            Some((first, _)) => {
-                ro fd = @ctx.fields.rows[raw_frow(first) + j]
-                return (fd.name, fd.type_id)
-            }
-            None => {}
+    // A record's field rows, else a sum's variant rows: the rows the type HAS
+    // answer, so no kind is left to an `else` (P21).
+    match field_range_of(td) {
+        Some((first, _)) => {
+            ro fd = @ctx.fields.rows[raw_frow(first) + j]
+            return (fd.name, fd.type_id)
         }
-    } else {
-        mut k = 0
-        match variant_range_of(td) {
-            None => {}
-            Some((first, cnt)) => {
-                for v in 0..cnt {
-                    ro vd = @ctx.variant_rows[raw_vrow(first) + v]
-                    for p in 0..vd.payload_cnt {
-                        if k == j {
-                            ro n = @ctx.payload_names[vd.payload_off + p]
-                            if n == "" { return ("${vd.name}.${p}", @ctx.payload_types[vd.payload_off + p]) }
-                            return ("${vd.name}.${n}", @ctx.payload_types[vd.payload_off + p])
-                        } else {
-                            k += 1
-                        }
+        None => {}
+    }
+    mut k = 0
+    match variant_range_of(td) {
+        None => {}
+        Some((first, cnt)) => {
+            for v in 0..cnt {
+                ro vd = @ctx.variant_rows[raw_vrow(first) + v]
+                for p in 0..vd.payload_cnt {
+                    if k == j {
+                        ro n = @ctx.payload_names[vd.payload_off + p]
+                        if n == "" { return ("${vd.name}.${p}", @ctx.payload_types[vd.payload_off + p]) }
+                        return ("${vd.name}.${n}", @ctx.payload_types[vd.payload_off + p])
+                    } else {
+                        k += 1
                     }
                 }
             }
@@ -170,29 +169,25 @@ fn serde_derivable(ctx Ctx, index FnIndex, td TypeDef) -> bool {
 /// fields have names, or a sum? A positional tuple record has no field name to
 /// put on the wire, and `#impl(Serialize)` over it is refused by name.
 fn serde_shape_ok(td TypeDef) -> bool {
-    match td.kind {
-        TkRecord => match td.shape {
-            Record => true
-            ValueRecord => true
-            NamedTuple => true
-            PositionalTuple => false
-            AnonNamedTuple => false
-            AnonPositionalTuple => false
-        }
-        TkSum => true
-        TkPrim => false
-        TkApp => false
-        TkParam => false
-        TkInfer => false
-        TkNewtype => false
-        TkTuple => false
-        TkPtr => false
-        TkEffect => false
+    if td.kind == TypeKind.TkSum { return true }
+    td.kind == TypeKind.TkRecord && has_field_names(td.shape)
+}
+
+/// Does a record of this shape name its fields?
+fn has_field_names(shape RecordShape) -> bool {
+    match shape {
+        Record => true
+        ValueRecord => true
+        NamedTuple => true
+        PositionalTuple => false
+        AnonNamedTuple => false
+        AnonPositionalTuple => false
     }
 }
 
 /// D77: the author's own `fn T @serialize` wins over the synthesis. Asked of
 /// the unit's OWN methods only -- the author's method is written in the unit.
+#realtime nogc
 fn author_wrote_serialize(ctx Ctx, td TypeDef) -> bool {
     mut r = ctx.fns.own_methods.find(SERIALIZE_METHOD)
     while r >= 0 {
@@ -240,32 +235,32 @@ fn serde_lacking_field(ctx Ctx, index FnIndex, td TypeDef) -> int {
 fn serde_field_ok(ctx Ctx, index FnIndex, t TyId, top bool) -> bool {
     if !is_ty(t) { return false }
     if t == ctx.prims.unit_id { return true }
-    match ctx.tys.kind_of(t) {
-        TkPrim => match prim_row_of(ctx.tys, t) {
-            None => false
-            Some(b) => if top { serde_scalar_wire(b.name) != "" } else { is_serde_nested_scalar(b.name) }
-        }
-        TkApp => {
-            if top && is_byte_seq(ctx, t) { return true }
-            ro head = decl_of_ty(ctx, t).name
-            if is_serde_seq_head(head) {
-                all_args_ok(ctx, index, t)
-            } else if is_serde_map_head(head) {
-                ctx.tys.arg_count(t) == 2 && ctx.tys.arg(t, 0) == ctx.prims.str_id &&
-                    serde_field_ok(ctx, index, ctx.tys.arg(t, 1), false)
-            } else {
-                missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
-            }
-        }
-        TkTuple => all_args_ok(ctx, index, t)
-        TkRecord => missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
-        TkSum => missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
-        TkNewtype => missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
-        TkParam => false
-        TkInfer => false
-        TkPtr => false
-        TkEffect => false
+    match prim_row_of(ctx.tys, t) {
+        Some(b) => return if top { serde_scalar_wire(b.name) != "" } else { is_serde_nested_scalar(b.name) }
+        None => {}
     }
+    // A structural term of the anonymous positional shape: std writes it as a
+    // sequence of its components (a declared record answers its own shape).
+    if ctx.tys.kind_of(t) != TypeKind.TkRecord && shape_of(ctx, t) == RecordShape.AnonPositionalTuple {
+        return all_args_ok(ctx, index, t)
+    }
+    if ctx.tys.kind_of(t) == TypeKind.TkApp { return serde_app_ok(ctx, index, t, top) }
+    // Everything else -- a record, a sum, a newtype, a parameter -- by the
+    // bound's own predicate.
+    missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
+}
+
+/// An application: a byte sequence at the top, std's sequences and `str`-keyed
+/// maps by their arguments, any other head by the bound.
+fn serde_app_ok(ctx Ctx, index FnIndex, t TyId, top bool) -> bool {
+    if top && is_byte_seq(ctx, t) { return true }
+    ro head = decl_of_ty(ctx, t).name
+    if is_serde_seq_head(head) { return all_args_ok(ctx, index, t) }
+    if is_serde_map_head(head) {
+        return ctx.tys.arg_count(t) == 2 && ctx.tys.arg(t, 0) == ctx.prims.str_id &&
+            serde_field_ok(ctx, index, ctx.tys.arg(t, 1), false)
+    }
+    missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
 }
 
 /// Every type argument of `t`, judged as a NESTED position.
@@ -309,7 +304,7 @@ fn spell_record(ctx Ctx, td TypeDef) -> str {
         }
     }
     sb.append("${IND1}s.end_struct()\n}\n")
-    sb.into_str()
+    sb
 }
 
 /// D345, a sum, externally tagged: a unit variant is its name as a string; any
@@ -328,7 +323,7 @@ fn spell_sum(ctx Ctx, td TypeDef) -> str {
         }
     }
     sb.append("${IND1}}\n}\n")
-    sb.into_str()
+    sb
 }
 
 /// One arm of a sum's `match @`.
@@ -373,7 +368,7 @@ fn spell_variant(ctx Ctx, sum str, vd VariantDef) -> str {
         sb.append("${IND3}s.end_seq()?\n")
     }
     sb.append("${IND3}s.end_struct()\n${IND2}}\n")
-    sb.into_str()
+    sb
 }
 
 /// The indentation of the method's body, a sum's arm, and an arm's body.

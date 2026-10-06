@@ -30,7 +30,7 @@ fn lines(parts []str) -> str {
     for p in parts {
         sb.append(p)
     }
-    sb.into_str()
+    sb
 }
 
 /// A program of one declaration and an empty entry.
