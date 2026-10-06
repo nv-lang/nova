@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc's derive tests (`tests/ui/deriving`) -- the expansion is pinned
+// as the text it produces; NOT taken: pretty-printed AST comparison -- the
+// synthesis here IS text, so the text is the thing to pin.
+// Role: acceptance tests of E2-b3 step 7 (task #14): `#impl(Serialize)` derives
+//   `@serialize[S Serializer]` as Nova text in the shape D341 (record) and D345
+//   (sum, externally tagged) give -- the same calls the oracle's synthesis makes
+//   (`compiler-codegen/src/protocols/auto_derive.rs`, `synthesize_serialize`) --
+//   and derives nothing where the checker refuses or the author wrote the method.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; fixtures derive_serde/
+//   through check-novac-fixture-expect and the differential.
+// novac/src/pipeline/derive_serde_test.nv -- the derived `@serialize` text.
+
+module novac.pipeline
+import ../sem.{InteropTable}
+import ../check.{derive_serialize_text}
+import ../parse.{parse}
+
+/// The derived text of a program, against the minimal std of these tests.
+fn derived_of(prog str) -> str {
+    ro tree = parse(tokens_of(prog))
+    ro ctx = context(tree, parse_decls(std_decls()), InteropTable.new())
+    derive_serialize_text(ctx).text
+}
+
+/// Several literal pieces as one text (string `+` is not a form of the language).
+fn lines(parts []str) -> str {
+    consume sb = StringBuilder.new()
+    for p in parts {
+        sb.append(p)
+    }
+    sb
+}
+
+/// A program of one declaration and an empty entry.
+fn prog_of(decl str) -> str => "${decl}\nfn main() {\n    println(1)\n}"
+
+test "a record: begin_struct, its fields in declaration order with their wire calls, end_struct as the tail (D341)" {
+    ro got = derived_of(prog_of("#impl(Serialize)\ntype Pd {\n    file str\n    n i32\n    ok bool\n}"))
+    ro want = lines([]str.of(
+        "\nfn Pd @serialize[S Serializer](mut s S) -> Result[(), SerError] {\n",
+        "    s.begin_struct(\"Pd\", 3)?\n",
+        "    s.struct_field(\"file\")?\n", "    s.serialize_str(@file)?\n",
+        "    s.struct_field(\"n\")?\n", "    s.serialize_int(@n as int)?\n",
+        "    s.struct_field(\"ok\")?\n", "    s.serialize_bool(@ok)?\n",
+        "    s.end_struct()\n}\n"))
+    assert(got == want, got)
+}
+
+test "a field of a record type goes through ITS @serialize; a narrow unsigned widens to u64" {
+    ro got = derived_of(prog_of("#impl(Serialize)\ntype In {\n    b u8\n}\n#impl(Serialize)\ntype Out {\n    i In\n}"))
+    assert(got.contains("    s.serialize_uint(@b as u64)?\n"), got)
+    assert(got.contains("    s.struct_field(\"i\")?\n    @i.serialize(s)?\n"), got)
+}
+
+test "a sum, externally tagged: a unit variant its name, the others a one-key object (D345)" {
+    ro got = derived_of(prog_of("#impl(Serialize)\ntype Sh enum\n    | Dot\n    | C(int)\n    | Seg(int, int)\n    | R { w int, h str }"))
+    assert(got.contains("    match @ {\n        Dot => s.serialize_str(\"Dot\")\n"), got)
+    ro tag = "            s.begin_struct(\"Sh\", 1)?\n"
+    assert(got.contains(lines([]str.of(
+        "        C(p0) => {\n", tag, "            s.struct_field(\"C\")?\n",
+        "            s.serialize_int(p0)?\n", "            s.end_struct()\n        }\n"))), got)
+    assert(got.contains(lines([]str.of(
+        "        Seg(p0, p1) => {\n", tag, "            s.struct_field(\"Seg\")?\n",
+        "            s.begin_seq(2)?\n", "            s.serialize_int(p0)?\n", "            s.serialize_int(p1)?\n",
+        "            s.end_seq()?\n", "            s.end_struct()\n        }\n"))), got)
+    assert(got.contains(lines([]str.of(
+        "        R { w: p0, h: p1 } => {\n", tag, "            s.struct_field(\"R\")?\n",
+        "            s.begin_struct(\"R\", 2)?\n",
+        "            s.struct_field(\"w\")?\n", "            s.serialize_int(p0)?\n",
+        "            s.struct_field(\"h\")?\n", "            s.serialize_str(p1)?\n",
+        "            s.end_struct()?\n", "            s.end_struct()\n        }\n"))), got)
+}
+
+test "nothing is derived without the gate, for the author's own method (D77), or for a shape refused by name" {
+    assert(derived_of(prog_of("type Pd {\n    n int\n}")) == "", "no gate")
+    ro own = lines([]str.of("#impl(Serialize)\ntype Pd {\n    n int\n}\n",
+        "fn Pd @serialize(k int) -> int => @n + k"))
+    // `author_wrote_serialize` finds the author's method by NAME, as the oracle's
+    // `type_provides_method` does: the minimal std of these tests has no
+    // `Serializer`, so the method here is one whose signature it can read.
+    assert(derived_of(prog_of(own)) == "", "D77: the author's method wins")
+    assert(derived_of(prog_of("#impl(Serialize)\ntype Bx[T] {\n    v T\n}")) == "", "generic")
+    assert(derived_of(prog_of("#impl(Serialize)\ntype Row int")) == "", "newtype")
+}

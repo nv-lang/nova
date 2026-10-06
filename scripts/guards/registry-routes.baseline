@@ -1547,7 +1547,9 @@ no_caveat=0
 # 1762 (novac and the oracle: a diverging call that is not a tail is not judged as an exit point, a live consume
 # value on it accepted; K1, blocks Carina's tag -- the integrator's verdict 2026-10-06), routed 274 and 274.10.
 # Row 1745 stays open on the oracle (its Carina part done by #17), so it is not removed. Measured.
-blockers=110
+# 2026-10-06, task #17, merge of origin/main f2b6517c7 (task #14 in): measured 109 with row 1762 -- main reads
+# 108 without it (its key stood at 109), so 108 + 1 (#17: 1762) = 109.
+blockers=109
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

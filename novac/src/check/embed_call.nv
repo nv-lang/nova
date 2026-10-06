@@ -21,7 +21,7 @@ import ../lex.{TokenKind}
 import ../types.{no_ty, is_ty}
 import ../sem.{is_arg_node, arg_expr_of, branch_children, leaf_text, leaf_kind, interp_slices, slice_term_of}
 import ../sem.{EMBED_READ, EMBED_NOT_FOUND, EMBED_IS_A_DIR, EMBED_OUTSIDE, embed_dir_of, raw_row}
-import ../builtins.{SIZE_OF_FN, ASSERT_FN, EMBED_FN, BYTE_TYPE}
+import ../builtins.{SIZE_OF_FN, ASSERT_FN, PANIC_FN, EMBED_FN, BYTE_TYPE}
 
 const EMBED_ARG_MSG = "the argument of `embed` is one string LITERAL, by position -- the path is resolved at compile time: `embed(\"relative/path\")` (E_EMBED_ARG_NOT_STR_LITERAL, D412)"
 
@@ -36,7 +36,8 @@ const EMBED_BACKSLASH_MSG = "the path argument of `embed` uses POSIX `/` separat
 /// `alloc_buf[T]`): its type argument is recorded, its value is an `int`.
 /// `assert(cond[, msg])` (D81): the prelude declares it `extern "nova"`, so no
 /// row of anyone's has a body -- its door types it and notes the condition's
-/// text and line for the emitter.
+/// text and line for the emitter. `panic(msg)` (D13), `extern "nova"` too: its
+/// door (check/assert_call.nv) types the call `never` and notes the line.
 fn Checker mut @typed_as_intrinsic(e Node, kids []Node, cname str) -> bool {
     if @ctx.defs.def_of(cname).is_some() { return false }
     if cname == EMBED_FN {
@@ -49,6 +50,10 @@ fn Checker mut @typed_as_intrinsic(e Node, kids []Node, cname str) -> bool {
     }
     if cname == ASSERT_FN {
         @type_assert(e, kids)
+        return true
+    }
+    if cname == PANIC_FN {
+        @type_panic_call(e, kids)
         return true
     }
     false

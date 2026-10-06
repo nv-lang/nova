@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::check_bounds` / trait obligations at the CALL, after the
+// generic arguments are known -- the place a bound is a FILTER on the
+// substitution; NOT taken: obligation solving and impl selection (no impls,
+// D53: a type meets a contract by having the methods, Go's method set).
+// Role: the bound of a type parameter (D72) judged at a call -- of a free
+//   generic function and of a generic method alike (D122's mono path: the
+//   instance is made only for a substitution that meets every bound).
+// Used by: check/calls.nv (`@type_free_call`, a generic free callee) and
+//   check/methods.nv (`@record_instance_method`, a generic method).
+// Guarded by: novac/fixtures/bound_call (pos byte-for-byte with the oracle,
+//   neg per call form), check-novac-differential.sh.
+
+module novac.check
+
+import ../tree.{Node}
+import ../sem.{FnRow, raw_row, ty_source_name}
+import ../types.{TyId}
+import ../resolve.{missing_sig_of}
+
+/// Does every bound of `row`'s type parameters hold for the substitution
+/// `ids`? Refuses the FIRST unmet one at the call (`kids`) and answers false.
+///
+/// A LANGUAGE ERROR, not a subset debt: the oracle refuses the same call
+/// (`E_BOUND_NOT_SATISFIED`, D72 "Concrete K ... must implement all bound
+/// methods", D122 acceptance), and nothing will make it compile later. The
+/// text names the MISSING METHOD as well as the bound -- the oracle's own bar
+/// ("`Plain` is missing: size() -> int"): a refusal that names only the bound
+/// leaves the reader to guess which requirement failed.
+fn Checker mut @bounds_hold(kids []Node, row FnRow, ids []TyId) -> bool {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    for slot in 0..fd.tparam_cnt {
+        if slot >= ids.len() { break }
+        ro bound = @ctx.fns.tbounds[fd.tparam_off + slot]
+        if bound == "" { continue }
+        if Some(missing) = missing_sig_of(@ctx, @res, ids[slot], bound) {
+            ro tp = @ctx.fns.tparams[fd.tparam_off + slot]
+            @reject_first_leaf_of(kids, unmet_bound_msg(ty_source_name(@ctx, ids[slot]), bound, fd.name, tp, missing))
+            return false
+        } else {
+            // The contract is met on this slot; the next one decides.
+        }
+    }
+    true
+}
+
+/// The text of an unmet bound, built outside the door that judges it (the
+/// door asks tables; a door that asks tables does not allocate, P18/P14).
+fn unmet_bound_msg(ty str, bound str, callee str, tp str, missing str) -> str =>
+    "type `${ty}` does not satisfy `${bound}` bound (in call to `${callee}[${tp} ${bound}]`) -- `${ty}` is missing: ${missing} (E_BOUND_NOT_SATISFIED, D72)"

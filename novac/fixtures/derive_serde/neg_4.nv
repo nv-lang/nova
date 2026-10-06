@@ -1,0 +1,14 @@
+module derive_serde.neg_4
+
+// A NEWTYPE IS NOT DERIVED (D341 derives for a record and a sum): the oracle
+// refuses `#impl(Serialize)` over one with E_AUTO_DERIVE_UNSUPPORTED_KIND, and
+// so does novac -- a language error, not a subset debt.
+// NOVAC_EXPECT E_AUTO_DERIVE_UNSUPPORTED_KIND
+import std.encoding.serde.{Serialize}
+
+#impl(Serialize)
+type Row int
+
+fn main() {
+    println(1)
+}

@@ -1,0 +1,41 @@
+module bound_call.pos_1
+
+// A CALL THROUGH A BOUND (D72, D122 mono path): inside `total[T Sizer]` the
+// receiver's type is the parameter `T`, and `a.size()` resolves against the
+// CONTRACT the bound names -- each instance then calls its own type's method.
+// Two types, two instances, two different answers: an instance that called
+// the wrong row would print the other number.
+type Sizer protocol {
+    @size() -> int
+}
+
+type Bx {
+    n int
+}
+
+fn Bx @size() -> int => @n
+
+type Pair {
+    a int
+    b int
+}
+
+fn Pair @size() -> int => @a + @b
+
+fn total[T Sizer](x T) -> int => x.size() * 2
+
+// A generic METHOD with a bound of its own: `U` is the method's parameter,
+// the receiver is concrete.
+type Tally {
+    base int
+}
+
+fn Tally @add[U Sizer](x U) -> int => @base + x.size()
+
+fn main() {
+    println(total(Bx { n: 4 }))
+    println(total(Pair { a: 1, b: 2 }))
+    ro acc = Tally { base: 100 }
+    println(acc.add(Bx { n: 5 }))
+    println(acc.add(Pair { a: 3, b: 4 }))
+}

@@ -1,0 +1,20 @@
+module bound_call.pos_4
+
+// THE AUTHOR'S `#impl(P)` MEETS THE BOUND (D341 "Bound satisfaction"): for a
+// BUILT-IN derivable protocol the gate satisfies `[T P]` before any method is
+// materialized -- `Pt` has no `@display` row, the slot synthesizes it. Next to
+// it a primitive, which implements `Display` itself (D422). Once std's
+// protocols entered novac's registry the first call was refused as "missing
+// display" -- the oracle prints both lines.
+#impl(Display)
+type Pt {
+    x int
+    y int
+}
+
+fn show[T Display](v T) -> str => "${v}"
+
+fn main() Io -> () {
+    println(show(Pt { x: 1, y: 2 }))
+    println(show(5))
+}

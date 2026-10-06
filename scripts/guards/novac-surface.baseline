@@ -9,6 +9,15 @@
 #   что его спрашивает судья check/strings.nv, а длину фрагмента и C-текст той же дверью
 #   считает sem (одно чтение escape на троих; разбор формы и значения — внутри sem).
 #
+#   2026-10-06 (задача #14, 274.5 §3-пред64 Ш2–Ш3), sem 387 -> 388: `ProtoTable @requires_method`
+#   -- требует ли метод этого имени какой-либо протокол реестра; спрашивает проход формы модуля
+#   check (check/rules.nv), который знает имена, а не типы, и не должен отвергать `x.size()` у
+#   ограниченного параметра как неизвестный метод.
+#
+#   2026-10-06 (задача #14, 274.5 §3-пред64 Ш1), builtins 82 -> 83: `PANIC_FN` -- имя
+#   интринсика `panic` (D13); наружу потому, что его спрашивают двое: дверь проверки
+#   (check/assert_call.nv) и эмиттер, выбирающий печать вызова (emit_c/emit_expr.nv).
+#
 #   2026-10-05 (задача #3 интегратора, реестр 221.1 №1707), lower 101 -> 102: `ExitOutcome` --
 #   исход выхода (D314 после амендмента 2026-10-03), который решает понижение и несёт
 #   `CleanupCall.outcome`; наружу потому, что его читает и печатает emit_c.
@@ -327,7 +336,16 @@
 #   intrinsic, asked by check/embed_call.nv and by sem/embeds.nv's token scan) and `BYTE_TYPE` (`u8`,
 #   the element of the `[]u8` an `embed` is, asked by check/embed_call.nv); names the compiler must
 #   know live in builtins (P5).
-builtins 87
+# 2026-10-06, task #14 (274.5 3-pred64 step 1), merged over task #2: builtins 84 -> 85: `PANIC_FN` (see the
+#   2026-10-06 entry at the head of this file).
+# 2026-10-06, task #14 (274.5 3-pred64 steps 2-7): builtins 85 -> 93. `is_derived_proto` (D341 "Bound
+#   satisfaction": the built-in derivable protocols, asked by resolve/resolve.nv), `SERIALIZE_PROTO` and
+#   `SERIALIZE_METHOD` (the protocol `#impl(Serialize)` opts into and the method it derives), and the serde
+#   wire table `is_serde_seq_head`, `is_serde_map_head`, `serde_scalar_wire`, `serde_scalar_widen`,
+#   `is_serde_nested_scalar` (D341/D342 field eligibility and the direct wire call of a scalar), all asked by
+#   check/derive_serde.nv; names of the language and of std live in builtins (P5).
+# merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
+builtins 96
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -336,7 +354,11 @@ builtins 87
 # что один код отказа отвечал на ДВА разных вопроса: «этого ещё нет, и будет»
 # (долг подмножества, несёт этап) и «этого не будет никогда» (запрет языка).
 # Различает их не текст сообщения, а ТИП, и его читают двери из `rules.nv`.
-check 3
+# check 3 -> 5 (2026-10-06, task #14, 274.5 3-pred64 step 7): `derive_serialize_text` and its result
+#   `DerivedText` -- the `@serialize` `#impl(Serialize)` derives, as Nova text. Outside because the
+#   PIPELINE injects it before type-check (D341 "Injection ordering") and names a refusal raised inside
+#   it by the method's owner; pass order is the pipeline's, so the check module only spells the text.
+check 5
 diag 6
 # emit_c 1 -> 2 (2026-08-21, E2-b2): `Instantiation` -- one already-typed
 # instance crossing the pipeline -> emitter boundary as DATA (declaration,
@@ -1195,7 +1217,10 @@ resolve 27
 #   `@embed_copies` (check and emit_c) -- the checker's decision on an `embed` call node.
 # 2026-10-06, task #10 (merge of main 0e5c83421, task #15 in): sem 389 (main) + 1 (#10: `unicode_escape_end`) = 390,
 #   equal to the guard's measure.
-sem 390
+# merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
+# 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): sem 390 (main) + 1 (#14:
+#   `ProtoTable @requires_method`) = 391, equal to the guard's measure.
+sem 391
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

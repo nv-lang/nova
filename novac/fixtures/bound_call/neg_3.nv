@@ -1,0 +1,32 @@
+module bound_call.neg_3
+
+// THE RECEIVER MODE IS PART OF THE CONTRACT (D209 "Enforcement paths" 2:
+// structural conformance at a generic bound `[T Protocol]` matches every
+// method's `receiver_mut`, under the codes of path 1). `Sink` requires
+// `mut @put`, and `Buf` has `@put` with an `ro` receiver: D209 names the pair
+// E_PROTO_IMPL_RO_FOR_MUT.
+//
+// A DIVERGENCE, direction 1: the oracle ACCEPTS this file (registry 221.1
+// #1742, plan 274.12) -- novac follows the spec. A neg fixture, so the
+// differential does not compare it; check-novac-fixture-expect holds the code.
+// NOVAC_EXPECT E_PROTO_IMPL_RO_FOR_MUT
+type Sink protocol {
+    mut @put(v int) -> ()
+}
+
+type Buf {
+    total int
+}
+
+fn Buf @put(v int) -> () {
+    println(v)
+}
+
+fn feed[S Sink](mut s S) -> () {
+    s.put(3)
+}
+
+fn main() {
+    mut b = Buf { total: 0 }
+    feed(b)
+}

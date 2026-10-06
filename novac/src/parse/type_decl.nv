@@ -74,7 +74,11 @@ fn Cursor mut @type_decl() -> Node {
             // that comparison is the whole of wave 3b. So the body is read as
             // signatures now, and anything that is not one stays a leaf: the
             // tree is lossless and `check` refuses what it cannot judge.
-            while @peek() == TokenKind.At {
+            // `@name` and the static `.name` (`Deserialize`'s `.deserialize`),
+            // either one after a receiver MODE (`mut @put(..)`, std's
+            // `Serializer`): until task #14 the loop stopped at the mode word
+            // and the rest of std's contract became junk.
+            while @at_proto_sig() {
                 kids.push(@proto_method())
             }
             @push_expected(kids, TokenKind.RBrace)
@@ -366,20 +370,51 @@ fn Cursor mut @variant_record_fields(mut vk []Node) -> () {
     @push_expected(vk, TokenKind.RBrace)
 }
 
+/// Does a protocol signature start here: `@`, `.`, or a mode word before one?
+fn Cursor @at_proto_sig() -> bool {
+    ro k = @peek()
+    if k == TokenKind.At || k == TokenKind.Dot { return true }
+    ro k1 = @peek(skip: 1)
+    @at_mode_word() && (k1 == TokenKind.At || k1 == TokenKind.Dot)
+}
+
 /// Parse ONE required signature of a protocol body: `@name(params) -> T`.
 ///
-/// Narrow on purpose. A protocol method is a SIGNATURE and nothing else -- no
-/// body, no default, no mode -- so this reader is not `@fn_decl` with parts
-/// switched off; sharing that path would mean teaching it a shape it never has.
-/// What this reader does NOT accept it leaves as leaves, and `check` refuses by
-/// name: a parser that guesses is worse than one that stops.
+/// Narrow on purpose: this reader is not `@fn_decl` with parts switched off;
+/// sharing that path would mean teaching it a shape it never has. What it does
+/// NOT read -- an effect clause between the parameters and `->`, a default body
+/// (D183) -- it leaves as leaves, and `check` refuses by name: a parser that
+/// guesses is worse than one that stops.
+///
+/// WIDENED 2026-10-06 (task #14) to the forms std's serde contracts are written
+/// in, each kept as the leaves and nodes `@fn_decl` gives the same form: a
+/// receiver MODE before the mark (`mut @serialize_int(v int)`), the STATIC mark
+/// `.` (`.deserialize`), the signature's OWN type parameters (`@serialize[S
+/// Serializer]`, a Generics node, D122) and a parameter MODE (`mut s S`).
 fn Cursor mut @proto_method() -> Node {
-    mut kids = []Node.of(@take()) // At
+    mut kids = []Node.new()
+    if @at_mode_word() {
+        kids.push(@take()) // the receiver's mode: `mut`
+    } else {
+        // An unqualified receiver.
+    }
+    kids.push(@take()) // `@` or `.`
     @push_name(kids) // method name
+    if @peek() == TokenKind.LBracket {
+        kids.push(@generics())
+    } else {
+        // No type parameters of the signature's own.
+    }
     if @peek() == TokenKind.LParen {
         kids.push(@take())
-        while @peek() == TokenKind.Ident {
-            mut pk = []Node.of(@take()) // parameter name
+        while @peek() == TokenKind.Ident || @at_mode_word() {
+            mut pk = []Node.new()
+            if @at_mode_word() && @peek(skip: 1) == TokenKind.Ident {
+                pk.push(@take()) // the parameter's mode: `mut s S`
+            } else {
+                // No mode: the name is first.
+            }
+            pk.push(@take()) // parameter name
             pk.append(@type_ref())
             @push_if(pk, TokenKind.Comma)
             kids.push(@node(NodeKind.Param, pk))
