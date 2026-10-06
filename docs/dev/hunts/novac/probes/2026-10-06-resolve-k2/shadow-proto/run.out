@@ -18,10 +18,10 @@
     17	}
 === ORACLE: nova check prog.nv
 oracle check rc=1
-  D:\Sources\nv-lang\worktrees\nova-opencode-14-karina-e2-b3-ogranicheniya-protokola-d12\std\src\prelude\protocols.nv:493:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `int @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
-  D:\Sources\nv-lang\worktrees\nova-opencode-14-karina-e2-b3-ogranicheniya-protokola-d12\std\src\prelude\protocols.nv:507:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `f64 @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
-  D:\Sources\nv-lang\worktrees\nova-opencode-14-karina-e2-b3-ogranicheniya-protokola-d12\std\src\prelude\protocols.nv:525:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `f32 @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
-  D:\Sources\nv-lang\worktrees\nova-opencode-14-karina-e2-b3-ogranicheniya-protokola-d12\std\src\prelude\protocols.nv:539:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `bool @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:493:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `int @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:507:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `f64 @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:525:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `f32 @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:539:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `bool @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
 === SUBJECT: novac check prog.nv
 novac check rc=0
 === VERDICT: DIFFERENT: Carina accepts, oracle refuses
