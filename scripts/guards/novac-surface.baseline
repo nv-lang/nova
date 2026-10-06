@@ -4,6 +4,11 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-06 (задача #10 интегратора, мера 0.2 №1665; после слияния main ee6d2ae4f), sem 387 -> 388: `unicode_escape_end` --
+#   конец escape `\u{H…}` (D467 §2) или -1, если форма или кодпойнт неверны; наружу потому,
+#   что его спрашивает судья check/strings.nv, а длину фрагмента и C-текст той же дверью
+#   считает sem (одно чтение escape на троих; разбор формы и значения — внутри sem).
+#
 #   2026-10-05 (задача #3 интегратора, реестр 221.1 №1707), lower 101 -> 102: `ExitOutcome` --
 #   исход выхода (D314 после амендмента 2026-10-03), который решает понижение и несёт
 #   `CleanupCall.outcome`; наружу потому, что его читает и печатает emit_c.
@@ -1188,7 +1193,9 @@ resolve 27
 #   root unit then instantiates std `Vec @pop`, whose `read_consume_at` novac does not compile).
 #   sem/channel.nv: `@record_embed`, `@record_embed_copy` (check) and `@embed_row_at`,
 #   `@embed_copies` (check and emit_c) -- the checker's decision on an `embed` call node.
-sem 389
+# 2026-10-06, task #10 (merge of main 0e5c83421, task #15 in): sem 389 (main) + 1 (#10: `unicode_escape_end`) = 390,
+#   equal to the guard's measure.
+sem 390
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

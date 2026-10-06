@@ -1,0 +1,7 @@
+module prog
+
+fn main() Io -> () {
+    ro n = 5
+    println("a\
+   b${n}c")
+}

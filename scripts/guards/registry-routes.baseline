@@ -1539,11 +1539,15 @@ no_caveat=0
 # 2026-10-06, task #16: row 1748 (the oracle reads a consume field after its move, K1, blocks the tag: the
 # integrator's verdict, precedent #1726): 104 -> 105, measured.
 # 2026-10-06, task #15, merge of origin/main a1c48f6ed: main 105 (with #16) + 2 of this branch (1747, 1756) = 107.
-# 2026-10-06, task #17 (merge of origin/main 0e5c83421, then row 1762): main 107 + 1 of this branch = 108. Row
+# 2026-10-06, task #10 (t10-karina-mera-0-2-binds-nv-i-lex-test-nv-p): 103 -> 104 (merged with main ee6d2ae4f), row 1738 filed OPEN, BLOKIRUET TEG: DA (oracle accepts a direct `mut` method call on `@` from a method without `mut`; the write is silently lost on a value record). Row 1739 (K2) holds no tag.
+# 2026-10-06, integrator (candidate of task #10 on main a1c48f6ed): 105 (main, with #16) + 1 (#10: 1738) = 106, measured.
+# 2026-10-06, task #10 (candidate from main a1c48f6ed): 106 -> 107, row 1752 filed OPEN, BLOKIRUET TEG: DA (Carina: an interpolation fragment length counted on the unspliced text), route plan 274.
+# 2026-10-06, task #10 (merge of main 0e5c83421, task #15 in): 107 (main) + 2 (#10: 1738, 1752) = 109, measured.
+# 2026-10-06, task #17 (merge of origin/main c9b2d4c35, task #10 in; row 1762): main 109 + 1 of this branch = 110. Row
 # 1762 (novac and the oracle: a diverging call that is not a tail is not judged as an exit point, a live consume
 # value on it accepted; K1, blocks Carina's tag -- the integrator's verdict 2026-10-06), routed 274 and 274.10.
 # Row 1745 stays open on the oracle (its Carina part done by #17), so it is not removed. Measured.
-blockers=108
+blockers=110
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

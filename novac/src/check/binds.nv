@@ -860,7 +860,7 @@ fn Checker mut @vec_op_carried(vec_t TyId, name str) -> bool {
 
 /// A constructor field's declared type when it is CONCRETE and the record has
 /// the field, else no expectation (an unknown field is refused by its own door).
-fn Checker @ctor_field_expect(vtype TyId, fname str) -> TyId {
+fn Checker mut @ctor_field_expect(vtype TyId, fname str) -> TyId {
     if !is_ty(vtype) || !@fres.has_field(@ctx.fields, @field_owner(vtype), fname) { return no_ty() }
     ro ft = @field_under(vtype, @fres.field_type(@ctx.fields, @field_owner(vtype), fname))
     if is_ty(ft) && @ctx.tys.is_concrete(ft) { ft } else { no_ty() }
