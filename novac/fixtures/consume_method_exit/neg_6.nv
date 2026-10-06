@@ -1,0 +1,23 @@
+module consume_method_exit.neg_6
+
+// A `consume` FIELD CONSUMED IN ONE ARM OF AN `if` ONLY (registry 221.1 #1745; D133: the
+// branch join gives `Live ⊔ Consumed = MaybeConsumed`, and `MaybeConsumed` at an exit is
+// D133-not-consumed). The `else` arm leaves `@body` owned, so the method may end with the
+// record unclosed.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is consumed on only some paths when this `consume` method ends
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(loud bool) -> str { // the one refusal: line 15
+    ro s = if loud { @body.into_str() } else { "quiet" }
+    s
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.take(true))
+}

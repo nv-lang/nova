@@ -1,0 +1,29 @@
+module consume_method_exit.neg_11
+
+// A REFUSED `consume` MARKER ON A NESTED FIELD IS ONE REFUSAL, NOT TWO (registry 221.1
+// #1745, the acceptance of task #17; D133-marker-on-non-consume). `Inner.k` is marked
+// `consume` over `int`, which carries nothing: the marker is refused where it is written.
+// The field paths of a `consume` method are seeded by the field's TYPE, so `@.inner.k`
+// is no obligation, and `@close` -- which consumes the one real field `@inner.b` --
+// closes its record. Before the fix the exit judged `@.inner.k` again ("the field
+// `@.inner.k` (type `int`) is still owned"), a cascade the CI caught on must_consume/neg_25.
+
+// NOVAC_EXPECT field `k` is marked `consume`, but its type `int` is not must-consume
+
+type Inner consume {
+    consume k int // the one refusal: line 14
+    consume b StringBuilder
+}
+
+fn Inner consume @finish() -> str => @b.into_str()
+
+type Outer consume {
+    consume inner Inner
+}
+
+fn Outer consume @close() -> str => @inner.b.into_str()
+
+fn main() {
+    consume o = Outer { inner: Inner { k: 1, b: StringBuilder.new(cap: 8) } }
+    println(o.close())
+}

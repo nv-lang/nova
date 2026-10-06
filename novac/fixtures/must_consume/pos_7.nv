@@ -32,6 +32,7 @@ type Box consume {
 
 fn Box consume @close() -> () {
     println("close ${@n}")
+    @t.commit()
 }
 
 fn wrap(n int) -> Option[Tx] {

@@ -1,0 +1,23 @@
+module consume_method_exit.neg_7
+
+// A `consume` FIELD CONSUMED IN ONE ARM OF A `match` ONLY (registry 221.1 #1745; D133:
+// the arms join as the arms of an `if` do). The `_` arm leaves `@body` owned.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is consumed on only some paths when this `consume` method ends
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @pick() -> str { // the one refusal: line 13
+    match @n {
+        0 => @body.into_str()
+        _ => "${@n}"
+    }
+}
+
+fn main() {
+    consume p = Pad { n: 0, body: StringBuilder.new(cap: 8) }
+    println(p.pick())
+}

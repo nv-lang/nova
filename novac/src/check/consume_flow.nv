@@ -11,7 +11,9 @@
 //   `consume` fields of a `consume` receiver by path (`@.f1.f2`, D133 "Field-aware
 //   flow") -- consumed by a `consume` method, a
 //   `consume` parameter, a `return` or the tail, a `consume y = x` transfer; used
-//   after that is D131's error, still owned at an exit is `D133-not-consumed`, and a
+//   after that is D131's error, still owned at an exit is `D133-not-consumed` (a
+//   field still owned at an exit of its `consume` method too -- the record closes,
+//   registry #1745), and a
 //   fresh one handed to a view is the same error (D476 s4). The paths -- branches,
 //   loops, exits and their joins -- are check/consume_paths.nv's; the shapes a value
 //   hides in -- containers, fields, patterns -- check/consume_shapes.nv's. Every
@@ -45,7 +47,7 @@ type ConsumeFlow {
     loose []bool /// per entry: bound by a pattern WITHOUT `consume` -- its one use must move it on (plan 293)
     auto_at []int /// per entry: its type's index in `autos` when the entry is cleaned where it is left (D432: a `consume x = e` binding or a `consume` parameter of an affine type), -1 = strictly linear
     origin []Node /// per entry: what bound it -- the `consume x = e` statement, the function for a parameter -- the key an exit's cleanup names it by
-    fields int /// how many LEADING entries are field paths of a `consume` receiver (`@.f1.f2`, D133 "Field-aware flow"): judged at each use, never at an exit (see `@flow_own_fields`)
+    fields int /// how many LEADING entries are field paths of a `consume` receiver (`@.f1.f2`, D133 "Field-aware flow"): judged at each use, and at each exit of the method as one record (`@flow_close_record`), never by a scope's own end
     autos AutoCleanups /// the file's affine types (D432)
     fn_effects []str /// the effects the walked function declares -- an auto-cleanup's must be among them in an exported one (D432 s1 amendment)
     fn_export bool /// the walked function is written under `export`: its effects are declared, never inferred (D28/D62)
@@ -279,6 +281,10 @@ fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups, exported bool)
     }
     // A body that left by `return` (or diverged) had its exits judged there.
     if fl.stopped || fl.dead { return }
+    // The end of a `consume` method closes its record; the refusal stands at its
+    // header, where `consume @` starts the fields' obligation.
+    @flow_close_record(fl, fk[0], "this `consume` method ends")
+    if fl.stopped { return }
     @flow_scope_end(fl, 0, body)
 }
 
@@ -481,8 +487,8 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
     false
 }
 
-/// Where an exit's judgement from `mark` starts: past the field paths, which an
-/// exit does not judge (`ConsumeFlow.fields`).
+/// Where an exit's judgement of the values bound from `mark` starts: past the field
+/// paths, which the method's exits judge as one record (`@flow_close_record`).
 fn past_fields(fl ConsumeFlow, mark int) -> int => mark.max(fl.fields)
 
 /// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an

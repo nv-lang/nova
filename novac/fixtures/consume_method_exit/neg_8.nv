@@ -1,0 +1,30 @@
+module consume_method_exit.neg_8
+
+// AN AFFINE `consume` FIELD LEFT OWNED (registry 221.1 #1745; D432 s2 "no drop-glue": a
+// record with a `@cleanup` field is not cleaned field by field, and the amendment of
+// 2026-08-21 (#672) lifts the obligation from ONE form only -- the bare `consume X = e`
+// binding, rev-2 adding the `consume` parameter). A field of the receiver is neither, so
+// D133 holds for it unchanged: the `consume` method must consume it, and no `@cleanup`
+// runs for it at the exit.
+
+// NOVAC_EXPECT the field `@.lock` (type `Lk`) is still owned when this `consume` method ends
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+type Holder consume {
+    n int
+    consume lock Lk
+}
+
+fn Holder consume @done() -> int => @n // the one refusal: line 25
+
+fn main() {
+    consume h = Holder { n: 2, lock: Lk { id: 1 } }
+    println(h.done())
+}

@@ -1,0 +1,21 @@
+module consume_method_exit.neg_1
+
+// A `consume` METHOD THAT ENDS WITH ITS `consume` FIELD STILL OWNED (registry 221.1
+// #1745, the measurement word for word; D133 "Field-aware flow": at the exit of `fn X
+// consume @method` every `consume` field is `Consumed` -- the record closes). `@drop_it`
+// reads `@n` and never touches `@body`: the `StringBuilder` is lost. The oracle accepts
+// the form (its part of #1745); before #1745 novac did too.
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this `consume` method ends
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @drop_it() -> int => @n // the one refusal: line 16
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.drop_it())
+}
