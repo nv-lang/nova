@@ -1,0 +1,40 @@
+=== PROGRAM
+     1	fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+     2	
+     3	fn work(n int) -> int {
+     4	    supervised {
+     5	        spawn {
+     6	            ro v = get(n) ?? return 7
+     7	            println("in spawn ${v}")
+     8	        }
+     9	    }
+    10	    n
+    11	}
+    12	
+    13	fn main() {
+    14	    println(work(3))
+    15	    println(work(-3))
+    16	}
+=== ORACLE: nova build prog.nv, run
+oracle build rc=1
+[1m[31merror:[0m[0m compiler error:
+<tmp>:8279:30: error: assigning to 'nova_unit' from incompatible type 'nova_int' (aka 'long long')
+1 error generated.
+(no oracle binary)
+=== SUBJECT: novac emit prog.nv
+novac emit rc=0
+--- Carina's C, the body of main
+static nova_unit nova_fn_main_impl(void) {
+    nova_print_int(novac_fn_work__nova_int__to_nova_int(((nova_int)3LL)));
+    nova_print_newline();
+    nova_print_end();
+    nova_print_int(novac_fn_work__nova_int__to_nova_int(((nova_int)-3LL)));
+    nova_print_newline();
+    nova_print_end();
+    return NOVA_UNIT;
+}
+=== SUBJECT: Carina's C compiled, linked with the oracle's flags, run
+C compile rc=1
+<tmp>:12310:12: error: returning 'nova_int' (aka 'long long') from a function with incompatible result type 'nova_unit'
+1 error generated.
+=== VERDICT: one side produced no run (see above)

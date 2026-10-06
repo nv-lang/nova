@@ -1,0 +1,16 @@
+fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn work(n int) -> int {
+    supervised {
+        spawn {
+            ro v = get(n) ?? return 7
+            println("in spawn ${v}")
+        }
+    }
+    n
+}
+
+fn main() {
+    println(work(3))
+    println(work(-3))
+}

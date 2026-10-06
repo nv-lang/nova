@@ -1,0 +1,10 @@
+type Bytes { n int }
+
+#coerce fn str consume @to_bytes() -> Bytes => { n: 7 }
+
+type Box { b Bytes }
+
+fn main() {
+    ro x = Box { b: "s" }
+    println(x.b.n)
+}
