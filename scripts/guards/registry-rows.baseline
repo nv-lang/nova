@@ -1571,8 +1571,9 @@
 # 2026-10-06, task #16 (acceptance round 3): row 1749 (Carina's consume flow leaves instances of handed
 # generic bodies unwalked, the simplification [M-novac-flow-handed-generic-instances]; K2, does not block the
 # tag), numbered by the integrator for check-bug-number-sync. rows 1678->1679, max 1748->1749.
-rows=1679
-max=1749
+# 2026-10-06, integrator: rows -> 1680, max -> 1750 (row 1750 filed CLOSED -- building a candidate bypassed the merge guard's novac verdict; the guard now judges a merge on a branch standing on main, and gate-novac writes its verdict into its own tree).
+rows=1680
+max=1750
 rows=1611
 max=1693
 rows=1590

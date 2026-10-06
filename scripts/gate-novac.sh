@@ -121,7 +121,18 @@ NOVAC_VERDICT_BRANCH=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null ||
 NOVAC_VERDICT_SHORT=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 NOVAC_TREE_TAIL=" [tree=$ROOT head=$NOVAC_VERDICT_SHORT branch=$NOVAC_VERDICT_BRANCH]"
 echo "novac-gate :: дерево $ROOT, коммит $NOVAC_VERDICT_SHORT, ветка $NOVAC_VERDICT_BRANCH, ярус $NOVAC_TIER"
+# ВЕРДИКТ — ЕЩЁ И В ДЕРЕВО (реестр 221.1 №1750, 2026-10-06). `/tmp/gate_novac.done`
+# один на машину, а гейтов novac идёт по одному на задачу: окна подряд переписывают
+# его, и страж слияния кандидата (check-merge-discipline) читал бы вердикт чужой
+# задачи — «судил другое содержимое» без вины судимого. Копия в `target/` дерева,
+# где шёл прогон, принадлежит только ему; страж берёт её первой. Общий файл
+# остаётся: его читают gate-bg и merge-precheck. Путь подменён (`NOVA_NOVAC_VERDICT`,
+# так делают самотесты) — копии в дерево НЕТ: поддельный вердикт самотеста лёг бы
+# в настоящее `target/` и открыл бы слияние, которого никто не судил.
+NOVAC_DONE_TREE=""
+[ -z "${NOVA_NOVAC_VERDICT:-}" ] && NOVAC_DONE_TREE="$ROOT/target/gate_novac.done"
 rm -f "$NOVAC_DONE"
+[ -n "$NOVAC_DONE_TREE" ] && rm -f "$NOVAC_DONE_TREE"
 # ЗЕЛЁНЫЙ ВЕРДИКТ ДАЁТ ТОЛЬКО ПРОГОН, ДОШЕДШИЙ ДО СВОЕЙ ПОСЛЕДНЕЙ СТРОКИ (№1307).
 # Ловушка EXIT берёт `$?` ПОСЛЕДНЕЙ ЗАВЕРШЁННОЙ КОМАНДЫ, а не исход прогона.
 # Прогон, убитый сигналом посреди работы (сторож окна, остановка фоновой задачи,
@@ -145,6 +156,9 @@ _novac_write_verdict() {
     [ -n "${SEAMS:-}" ] && _tier=novac-sample
     echo "RC=$_rc SEC=$(( $(date +%s) - GATE_T0 )) TIER=$_tier HASH=$NOVAC_VERDICT_HASH BRANCH=$NOVAC_VERDICT_BRANCH$_tail" \
         > "$NOVAC_DONE"
+    if [ -n "$NOVAC_DONE_TREE" ]; then
+        mkdir -p "$ROOT/target" 2>/dev/null && cp "$NOVAC_DONE" "$NOVAC_DONE_TREE" 2>/dev/null
+    fi
     gate_lock_release
     return $_rc
 }
