@@ -42,7 +42,7 @@ import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, S
 import ../sem.{ArgClass, ParamMode, ParamDef, mode_admits, call_arg_at}
 import ../sem.{shape_of, call_callee_text}
 import ../types.{TyId, no_ty, is_ty}
-import ../resolve.{FnLookup, FieldIndex, missing_sig_of}
+import ../resolve.{FnLookup, FieldIndex}
 // Came with the call arms lifted out of `@type_expr` (2026-09-15): imports are
 // per FILE in Nova, so a body that moves between files of ONE module still has to
 // bring the names it uses. Computed from what the moved text actually mentions,
@@ -669,25 +669,10 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
             // A type the registry knows: it can stand in the substitution.
         }
     }
-    // THE BOUND AS A FILTER (wave 3b). The substitution is known here and only
-    // here, so this is where "does the deduced type satisfy the contract" can be
-    // asked at all. The refusal names the MISSING METHOD, not the bound: the
-    // oracle's own message sets that bar ("`Plain` is missing: size() -> int"),
-    // and a refusal that only says "bound not satisfied" leaves the reader to
-    // guess which of the required methods it was.
-    ro bfd = @ctx.fns.rows[raw_row(row)]
-    for slot in 0..bfd.tparam_cnt {
-        if slot >= ids.len() { break }
-        ro bound = @ctx.fns.tbounds[bfd.tparam_off + slot]
-        if bound == "" { continue }
-        if Some(missing) = missing_sig_of(@ctx, @res, ids[slot], bound) {
-            @report_first_leaf_of(kids,
-                "outside the subset: ${ty_source_name(@ctx, ids[slot])} does not satisfy `${bound}` -- missing ${missing}")
-            return
-        } else {
-            // The contract is met on this slot; the next one decides.
-        }
-    }
+    // THE BOUND AS A FILTER (wave 3b): the substitution is known here and only
+    // here (check/bounds.nv, the one door for a function and a method).
+    // SILENT-OK: the door refused the unmet bound by name.
+    if !@bounds_hold(kids, row, ids) { return }
     // THE ARGUMENTS, judged under the substitution. A generic row's parameters
     // are type PARAMETERS, so the lookup could not compare them: `dbl[int]`
     // and `dbl[str]` declare the same `x T`. Both halves are known only HERE --

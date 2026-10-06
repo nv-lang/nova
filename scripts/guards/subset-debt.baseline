@@ -164,11 +164,15 @@
 #   refusals of `==` over a vector (registry 1573, check/operators.nv) leave: a right side of
 #   another type is a LANGUAGE error (D405, D491), and an `equal` not handed gets its stage
 #   (E2-b2 multi-file) -- `str` and `Vec` declare it, so the form is legal.
+# 2026-10-06, task #14 (274.5 3-pred64): undated 55 -> 54, the guard's count on the tree -- the ratchet moved down
+#   by the work that dated or removed refusals (the deferred-`#impl` door now names Deserialize & co. with E2-b3).
 # 2026-10-06, task #18 (D381, plan 274.5 section pre68): SHADOW_FOREIGN_MSG left with its
 #   reason -- a program type named like a struct the interop shell defines gets the D381
 #   module-qualified C base (sem `type_base`), every shape, and a file with no module the
 #   empty-modpath formula `Nova__<Name>`. undated 55 -> 54, the guard's count on the tree.
-undated=54
+# 2026-10-06, task #18, merge of origin/main f2b6517c7: both moves above were made on 55 independently and
+#   each took a DIFFERENT refusal away, so together 54 -> 53 -- the guard's count on the merged tree.
+undated=53
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж

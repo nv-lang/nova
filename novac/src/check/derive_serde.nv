@@ -1,0 +1,402 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `#[derive]` -- the derive expands to a TokenStream that is
+// PARSED like any source and type-checked with the rest of the crate; NOT
+// taken: proc-macro machinery -- the synthesis here is one fixed protocol,
+// written out as Nova text.
+// Role: `#impl(Serialize)` (D341 records, D345 sums, externally tagged): the
+//   field-eligibility predicate and the `@serialize[S Serializer]` method each
+//   opted-in type of THIS unit gets, as source text. The pipeline appends the
+//   text to the unit and parses it again BEFORE type-check (D341 "Injection
+//   ordering"), so the synthesized method is an ordinary method of its type --
+//   checked, instantiated and emitted by the doors every other method takes.
+// Used by: pipeline/pipeline.nv (the synthesis between collect and check) and
+//   check/run.nv (`@judge_serde_fields`, the E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+//   refusal) -- ONE predicate for both, so a field the refusal admits is a
+//   field the synthesis spells.
+// Guarded by: novac/fixtures/derive_serde (pos byte-for-byte with the oracle,
+//   neg per refusal), check-novac-differential.sh.
+
+module novac.check
+
+import ../builtins.{TypeKind, SERIALIZE_PROTO, SERIALIZE_METHOD, SLICE_HEAD, BYTE_TYPE}
+import ../builtins.{is_serde_seq_head, is_serde_map_head, serde_scalar_wire, serde_scalar_widen, is_serde_nested_scalar}
+import ../types.{TyId, is_ty, no_ty}
+import ../diag.{ice}
+import ../sem.{Ctx, TypeDef, VariantDef, decl_of_ty, field_range_of, variant_range_of, gate_names}
+import ../sem.{raw_frow, raw_vrow, no_vrow, prim_row_of, shape_of, RecordShape}
+import ../resolve.{FnIndex, missing_sig_of}
+import ../tree.{Node, NodeKind}
+import ../sem.{branch_children, leaf_text, ty_source_name}
+
+/// The synthesized methods of a unit: their text, and for each one the offset
+/// it starts at inside `text` and the type it belongs to -- what the pipeline
+/// needs to name a refusal raised inside one.
+export type DerivedText {
+    text str /// every synthesized method, in the order of the unit's own types
+    starts []int /// per method: its byte offset in `text`
+    owners []str /// per method: the type it is synthesized for
+}
+
+/// The opted-in types of this unit, each with its `@serialize` written out.
+///
+/// A type gets the method when it is gated `#impl(Serialize)`, it is a record
+/// with named fields or a sum, it binds no type parameter, its author did not
+/// write `@serialize` (D77: the user's method wins), and every field is
+/// eligible. Any other gated type is refused by the checker -- by the field
+/// (`E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`) or by name and stage -- and gets no
+/// text, so a refusal is never doubled by the body it would have produced.
+export fn derive_serialize_text(ctx Ctx) -> DerivedText {
+    ro index = FnIndex.build(ctx.fns)
+    consume sb = StringBuilder.new()
+    mut starts = []int.new()
+    mut owners = []str.new()
+    for i in ctx.foreign_types_cnt..ctx.types.len() {
+        ro td = ctx.types[i]
+        if !serde_derivable(ctx, index, td) { continue }
+        starts.push(sb.byte_len())
+        owners.push(td.name)
+        sb.append(if td.kind == TypeKind.TkRecord { spell_record(ctx, td) } else { spell_sum(ctx, td) })
+    }
+    DerivedText { text: sb.into_str(), starts, owners }
+}
+
+/// The checker's half: every `#impl(Serialize)` of this file the synthesis
+/// does NOT spell is refused here -- a field that does not serialize is a
+/// LANGUAGE error (`E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`, D341 "no silent
+/// drop"), a shape the synthesis does not write yet is a subset debt named by
+/// its stage. Judged over the declarations (`kids`, through `file_decls`), each
+/// type found by its name the way the field-marker judge finds it.
+fn Checker mut @judge_serde_fields(kids []Node) -> () {
+    for d in kids {
+        // A sum is its own node kind (`SumDecl`), its name the same leaf.
+        if d.kind_of() != NodeKind.TypeDecl && d.kind_of() != NodeKind.SumDecl { continue }
+        ro dk = branch_children(d)
+        if dk.len() < 2 || dk[1].kind_of() != NodeKind.LeafNode { continue }
+        ro t = @ctx.ty_of_name(leaf_text(dk[1])) ?? no_ty()
+        if !is_ty(t) { continue }
+        ro kind = @ctx.tys.kind_of(t)
+        if kind != TypeKind.TkRecord && kind != TypeKind.TkSum && kind != TypeKind.TkNewtype { continue }
+        ro td = decl_of_ty(@ctx, t)
+        if !gate_names(@ctx.gates, td.gate_off, td.gate_cnt, SERIALIZE_PROTO) { continue }
+        if kind == TypeKind.TkNewtype {
+            // D341 derives for a record and a sum: a newtype is a LANGUAGE
+            // error, as the oracle refuses it (`type Pt(int, int)` included).
+            if !author_wrote_serialize(@ctx, td) {
+                @reject_first_leaf_of([]Node.of(dk[1]),
+                    "type `${td.name}` (newtype) does not support auto-derive for `Serialize` (E_AUTO_DERIVE_UNSUPPORTED_KIND, D341) -- write `fn ${td.name} @serialize[S Serializer](mut s S) -> Result[(), SerError]` yourself")
+            } else {
+                // The author's method: nothing to derive, nothing to refuse (D77).
+            }
+            continue
+        } else {
+            // A record or a sum: the shape and the fields decide.
+        }
+        if author_wrote_serialize(@ctx, td) { continue }
+        if td.tparam_cnt > 0 || !serde_shape_ok(td) {
+            @report_first_leaf_of([]Node.of(dk[1]), SERDE_SHAPE_MSG)
+            continue
+        } else {
+            // A shape the synthesis spells: its fields decide.
+        }
+        ro j = serde_lacking_field(@ctx, @res, td)
+        if j < 0 { continue }
+        ro (fname, fty) = @lacking_named(td, j)
+        @reject_first_leaf_of(@field_node_or(dk, j, td.kind == TypeKind.TkRecord),
+            "type `${td.name}` claims `#impl(Serialize)` but field `${fname}` (type `${ty_source_name(@ctx, fty)}`) does not implement `Serialize` (E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL, D341) -- add `#impl(Serialize)` to `${ty_source_name(@ctx, fty)}`, or write `fn ${td.name} @serialize[S Serializer](mut s S) -> Result[(), SerError]` yourself")
+    }
+}
+
+/// The name and type of the `j`-th field of a record, or of the `j`-th payload
+/// of a sum counted across its variants (a positional payload is named by its
+/// variant and position, `Circle.0`).
+fn Checker @lacking_named(td TypeDef, j int) -> (str, TyId) {
+    // A record's field rows, else a sum's variant rows: the rows the type HAS
+    // answer, so no kind is left to an `else` (P21).
+    match field_range_of(td) {
+        Some((first, _)) => {
+            ro fd = @ctx.fields.rows[raw_frow(first) + j]
+            return (fd.name, fd.type_id)
+        }
+        None => {}
+    }
+    mut k = 0
+    match variant_range_of(td) {
+        None => {}
+        Some((first, cnt)) => {
+            for v in 0..cnt {
+                ro vd = @ctx.variant_rows[raw_vrow(first) + v]
+                for p in 0..vd.payload_cnt {
+                    if k == j {
+                        ro n = @ctx.payload_names[vd.payload_off + p]
+                        if n == "" { return ("${vd.name}.${p}", @ctx.payload_types[vd.payload_off + p]) }
+                        return ("${vd.name}.${n}", @ctx.payload_types[vd.payload_off + p])
+                    } else {
+                        k += 1
+                    }
+                }
+            }
+        }
+    }
+    ice("check: the lacking field of a Serialize type names no row of it")
+}
+
+/// Where the refusal of the `j`-th field stands: that field's node in a
+/// record, the type's name in a sum (its payloads are not nodes of their own).
+fn Checker @field_node_or(dk []Node, j int, record bool) -> []Node {
+    if record {
+        mut k = 0
+        for f in dk {
+            if f.kind_of() != NodeKind.Field { continue }
+            if k == j { return []Node.of(f) }
+            k += 1
+        }
+    } else {
+        // A sum: the name below.
+    }
+    []Node.of(dk[1])
+}
+
+/// Is `td` a type the synthesis writes `@serialize` for? See
+/// `derive_serialize_text` for the conditions.
+fn serde_derivable(ctx Ctx, index FnIndex, td TypeDef) -> bool {
+    if !gate_names(ctx.gates, td.gate_off, td.gate_cnt, SERIALIZE_PROTO) { return false }
+    if td.tparam_cnt > 0 || !serde_shape_ok(td) { return false }
+    if author_wrote_serialize(ctx, td) { return false }
+    serde_lacking_field(ctx, index, td) < 0
+}
+
+/// Can the synthesis spell this declaration's shape at all: a record whose
+/// fields have names, or a sum? A positional tuple record has no field name to
+/// put on the wire, and `#impl(Serialize)` over it is refused by name.
+fn serde_shape_ok(td TypeDef) -> bool {
+    if td.kind == TypeKind.TkSum { return true }
+    td.kind == TypeKind.TkRecord && has_field_names(td.shape)
+}
+
+/// Does a record of this shape name its fields?
+fn has_field_names(shape RecordShape) -> bool {
+    match shape {
+        Record => true
+        ValueRecord => true
+        NamedTuple => true
+        PositionalTuple => false
+        AnonNamedTuple => false
+        AnonPositionalTuple => false
+    }
+}
+
+/// D77: the author's own `fn T @serialize` wins over the synthesis. Asked of
+/// the unit's OWN methods only -- the author's method is written in the unit.
+#realtime nogc
+fn author_wrote_serialize(ctx Ctx, td TypeDef) -> bool {
+    mut r = ctx.fns.own_methods.find(SERIALIZE_METHOD)
+    while r >= 0 {
+        ro fd = ctx.fns.rows[r]
+        if fd.has_recv && fd.param_cnt > 0 && ctx.fns.params[fd.param_off].type_id == td.ty_id { return true }
+        r = ctx.fns.own_next[r]
+    }
+    false
+}
+
+/// The FIRST field of a record -- or payload of a sum, counted across its
+/// variants in order -- that is not eligible, or -1 when every one is.
+fn serde_lacking_field(ctx Ctx, index FnIndex, td TypeDef) -> int {
+    if td.kind == TypeKind.TkRecord {
+        match field_range_of(td) {
+            None => {}
+            Some((first, cnt)) => {
+                for j in 0..cnt {
+                    ro fd = ctx.fields.rows[raw_frow(first) + j]
+                    if !serde_field_ok(ctx, index, fd.type_id, true) { return j }
+                }
+            }
+        }
+        return -1
+    }
+    mut k = 0
+    ro (first, cnt) = variant_range_of(td) ?? (no_vrow(), 0)
+    for j in 0..cnt {
+        ro vd = ctx.variant_rows[raw_vrow(first) + j]
+        for p in 0..vd.payload_cnt {
+            if !serde_field_ok(ctx, index, ctx.payload_types[vd.payload_off + p], true) { return k }
+            k += 1
+        }
+    }
+    -1
+}
+
+/// D341 field eligibility. `top`: the field itself, where a narrow scalar is
+/// written by a direct wire call; inside a container (`Option`, `Vec`, a
+/// tuple) only the scalars std's generic bodies dispatch on are eligible.
+/// Anything named -- a record, a sum, an application std does not take apart
+/// -- is eligible when it meets the `Serialize` bound, through the SAME
+/// predicate a call's bound is judged by (`missing_sig_of`, which also honours
+/// the type's own `#impl(Serialize)`): one answer to "does T serialize".
+fn serde_field_ok(ctx Ctx, index FnIndex, t TyId, top bool) -> bool {
+    if !is_ty(t) { return false }
+    if t == ctx.prims.unit_id { return true }
+    match prim_row_of(ctx.tys, t) {
+        Some(b) => return if top { serde_scalar_wire(b.name) != "" } else { is_serde_nested_scalar(b.name) }
+        None => {}
+    }
+    // A structural term of the anonymous positional shape: std writes it as a
+    // sequence of its components (a declared record answers its own shape).
+    if ctx.tys.kind_of(t) != TypeKind.TkRecord && shape_of(ctx, t) == RecordShape.AnonPositionalTuple {
+        return all_args_ok(ctx, index, t)
+    }
+    if ctx.tys.kind_of(t) == TypeKind.TkApp { return serde_app_ok(ctx, index, t, top) }
+    // Everything else -- a record, a sum, a newtype, a parameter -- by the
+    // bound's own predicate.
+    missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
+}
+
+/// An application: a byte sequence at the top, std's sequences and `str`-keyed
+/// maps by their arguments, any other head by the bound.
+fn serde_app_ok(ctx Ctx, index FnIndex, t TyId, top bool) -> bool {
+    if top && is_byte_seq(ctx, t) { return true }
+    ro head = decl_of_ty(ctx, t).name
+    if is_serde_seq_head(head) { return all_args_ok(ctx, index, t) }
+    if is_serde_map_head(head) {
+        return ctx.tys.arg_count(t) == 2 && ctx.tys.arg(t, 0) == ctx.prims.str_id &&
+            serde_field_ok(ctx, index, ctx.tys.arg(t, 1), false)
+    }
+    missing_sig_of(ctx, index, t, SERIALIZE_PROTO).is_none()
+}
+
+/// Every type argument of `t`, judged as a NESTED position.
+fn all_args_ok(ctx Ctx, index FnIndex, t TyId) -> bool {
+    for i in 0..ctx.tys.arg_count(t) {
+        if !serde_field_ok(ctx, index, ctx.tys.arg(t, i), false) { return false }
+    }
+    true
+}
+
+/// `[]u8` -- a byte sequence, written as one `serialize_bytes` (D342: base64 on
+/// the JSON wire), not as an array of numbers.
+fn is_byte_seq(ctx Ctx, t TyId) -> bool {
+    if ctx.tys.kind_of(t) != TypeKind.TkApp || ctx.tys.arg_count(t) != 1 { return false }
+    if decl_of_ty(ctx, t).name != SLICE_HEAD { return false }
+    match prim_row_of(ctx.tys, ctx.tys.arg(t, 0)) {
+        None => false
+        Some(b) => b.name == BYTE_TYPE
+    }
+}
+
+/// The method's head, the same for every opted-in type.
+fn spell_head(name str) -> str =>
+    "\nfn ${name} @serialize[S Serializer](mut s S) -> Result[(), SerError] {\n"
+
+/// D341, a record: `begin_struct`, then per field in the order of declaration
+/// its key and its value, then `end_struct` as the tail.
+fn spell_record(ctx Ctx, td TypeDef) -> str {
+    consume sb = StringBuilder.new()
+    sb.append(spell_head(td.name))
+    match field_range_of(td) {
+        None => {
+            sb.append(spell_begin_struct(td.name, 0, IND1))
+        }
+        Some((first, cnt)) => {
+            sb.append(spell_begin_struct(td.name, cnt, IND1))
+            for j in 0..cnt {
+                ro fd = ctx.fields.rows[raw_frow(first) + j]
+                sb.append(spell_field(ctx, fd.name, "@${fd.name}", fd.type_id, IND1))
+            }
+        }
+    }
+    sb.append("${IND1}s.end_struct()\n}\n")
+    sb
+}
+
+/// D345, a sum, externally tagged: a unit variant is its name as a string; any
+/// other is a one-key object whose key is the variant -- its single payload, a
+/// sequence of a tuple's payloads, or an object of a record variant's fields.
+fn spell_sum(ctx Ctx, td TypeDef) -> str {
+    consume sb = StringBuilder.new()
+    sb.append(spell_head(td.name))
+    sb.append("${IND1}match @ {\n")
+    match variant_range_of(td) {
+        None => {}
+        Some((first, cnt)) => {
+            for j in 0..cnt {
+                sb.append(spell_variant(ctx, td.name, ctx.variant_rows[raw_vrow(first) + j]))
+            }
+        }
+    }
+    sb.append("${IND1}}\n}\n")
+    sb
+}
+
+/// One arm of a sum's `match @`.
+fn spell_variant(ctx Ctx, sum str, vd VariantDef) -> str {
+    if vd.payload_cnt == 0 {
+        return "${IND2}${vd.name} => s.serialize_str(\"${vd.name}\")\n"
+    }
+    ro named = ctx.payload_names[vd.payload_off] != ""
+    consume sb = StringBuilder.new()
+    sb.append("${IND2}${vd.name}")
+    sb.append(if named { " { " } else { "(" })
+    for p in 0..vd.payload_cnt {
+        if p > 0 {
+            sb.append(", ")
+        } else {
+            // The first binder takes no separator.
+        }
+        if named {
+            sb.append("${ctx.payload_names[vd.payload_off + p]}: ")
+        } else {
+            // A positional payload is bound by its position alone.
+        }
+        sb.append("p${p}")
+    }
+    sb.append(if named { " } => {\n" } else { ") => {\n" })
+    sb.append(spell_begin_struct(sum, 1, IND3))
+    sb.append("${IND3}s.struct_field(\"${vd.name}\")?\n")
+    if named {
+        sb.append(spell_begin_struct(vd.name, vd.payload_cnt, IND3))
+        for p in 0..vd.payload_cnt {
+            sb.append(spell_field(ctx, ctx.payload_names[vd.payload_off + p], "p${p}",
+                                  ctx.payload_types[vd.payload_off + p], IND3))
+        }
+        sb.append("${IND3}s.end_struct()?\n")
+    } else if vd.payload_cnt == 1 {
+        sb.append(spell_value(ctx, "p0", ctx.payload_types[vd.payload_off], IND3))
+    } else {
+        sb.append("${IND3}s.begin_seq(${vd.payload_cnt})?\n")
+        for p in 0..vd.payload_cnt {
+            sb.append(spell_value(ctx, "p${p}", ctx.payload_types[vd.payload_off + p], IND3))
+        }
+        sb.append("${IND3}s.end_seq()?\n")
+    }
+    sb.append("${IND3}s.end_struct()\n${IND2}}\n")
+    sb
+}
+
+/// The indentation of the method's body, a sum's arm, and an arm's body.
+const IND1 = "    "
+const IND2 = "        "
+const IND3 = "            "
+
+/// `s.begin_struct("Name", n)?` on its own line.
+fn spell_begin_struct(name str, n int, ind str) -> str => "${ind}s.begin_struct(\"${name}\", ${n})?\n"
+
+/// One key and its value.
+fn spell_field(ctx Ctx, key str, val str, t TyId, ind str) -> str =>
+    "${ind}s.struct_field(\"${key}\")?\n${spell_value(ctx, val, t, ind)}"
+
+/// One value: a byte sequence and a scalar by their direct wire call (a
+/// primitive receiver dispatches no `@serialize`), anything else through its
+/// own `@serialize`.
+fn spell_value(ctx Ctx, val str, t TyId, ind str) -> str {
+    if is_byte_seq(ctx, t) { return "${ind}s.serialize_bytes(${val})?\n" }
+    match prim_row_of(ctx.tys, t) {
+        Some(b) => {
+            ro wire = serde_scalar_wire(b.name)
+            // `()` is a primitive with no wire call: it goes through its method.
+            if wire == "" { return "${ind}${val}.serialize(s)?\n" }
+            ro wide = serde_scalar_widen(b.name)
+            ro arg = if wide == "" { val } else { "${val} as ${wide}" }
+            "${ind}s.${wire}(${arg})?\n"
+        }
+        None => "${ind}${val}.serialize(s)?\n"
+    }
+}

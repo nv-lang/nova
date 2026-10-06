@@ -654,6 +654,10 @@ export fn c_free_symbol(ctx Ctx, row FnRow) -> str {
     }
     s.append("${fd.name.bytes().len()}")
     s.append(fd.name)
+    // A LATER OVERLOAD of its module carries its parameters (task #14): until
+    // `()` was a readable type argument, std.os's `env(key, value) ->
+    // Result[(), IoError]` was dropped and `env(key)` was the only one.
+    s.append(free_overload_tail(ctx, row))
     s
 }
 

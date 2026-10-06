@@ -32,6 +32,12 @@ novac-self-residual.sh, консенсус 2026-09-23 «one rung, one measure»)
       собой, счёт с ICE не мера и не база;
   (г) база не читается, пуста или бита (строка не путь `novac/src/**/*.nv`).
 
+НОЛЬ ОТВЕРГНУТЫХ — СТРОКА `none` (2026-10-06, приёмщик задачи #14: после задач
+#10 и #14 самосборка не отвергает ни одного файла). Пустое множество пишется
+ЯВНО, одной строкой `none` без путей; тогда любой отвергнутый файл — регресс (а).
+Пустой файл без `none` остаётся красным (г): опустевшую по ошибке базу нельзя
+спутать с достигнутым нулём. `none` рядом с путём — база бита.
+
 «ВЕРДИКТА НЕТ» (exit 3, слова `ok` нет): бинаря Карины нет, процесс снят
 пределом времени, код возврата не 0/1/2 (паника — не вердикт компилятора,
 lib/novac.sh F3), вывод не разобран. На пустом корне (нет novac/src) — тоже
@@ -102,21 +108,30 @@ def parse_output(text):
     return set(refused), ice, first_msg
 
 
+NONE_LINE = "none"
+
+
 def read_baseline(path):
-    """Множество путей базы; None — не читается; ('broken', строка) — бита."""
+    """(множество путей, объявлен ли ноль строкой `none`); None — не читается;
+    ('broken', строка) — бита."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    out = set()
+    out, declared_none = set(), False
     for raw in text.replace("\r", "").split("\n"):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        if line == NONE_LINE:
+            declared_none = True
+            continue
         if not (line.startswith("novac/src/") and line.endswith(".nv")) or " " in line:
             return ("broken", line)
         out.add(line)
-    return out
+    if declared_none and out:
+        return ("broken", f"{NONE_LINE} рядом с путями")
+    return out, declared_none
 
 
 def main():
@@ -137,10 +152,12 @@ def main():
     base = read_baseline(base_path)
     if base is None:
         return fail(f"нет базы {base_path}: храповику меры 0.2 не с чем сверять множество отвергнутых")
-    if isinstance(base, tuple):
+    if base[0] == "broken":
         return fail(f"база {base_path} бита: строка не путь novac/src/**/*.nv: {base[1]!r}")
-    if not base:
-        return fail(f"база {base_path} пуста: храповик без множества не судит ничего")
+    base, declared_none = base
+    if not base and not declared_none:
+        return fail(f"база {base_path} пуста: храповик без множества не судит ничего "
+                    f"(ноль отвергнутых пишется явно строкой `{NONE_LINE}`)")
 
     if from_file is not None:
         try:

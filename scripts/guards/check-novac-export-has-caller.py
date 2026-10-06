@@ -32,6 +32,7 @@
 
 $1 — корень; $2 — override директории (шов самотеста).
 """
+import collections
 import os
 import pathlib
 import re
@@ -78,11 +79,15 @@ def main():
             if m:
                 exports.setdefault(m.group(1), f"{rel}:{n}")
 
-    code = "\n".join(chunks)
+    # Один проход по словам вместо отдельного regex-прохода на каждый экспорт:
+    # 730 проходов по всему novac/src занимали ~60с — больше половины яруса loop
+    # гейта novac (замер исполнителя #10, 2026-10-06). Слово — максимальная серия
+    # [A-Za-z0-9_], ровно граница прежнего шаблона.
+    counts = collections.Counter(re.findall(r"[A-Za-z0-9_]+", "\n".join(chunks)))
     bad = []
     for nm, where in sorted(exports.items()):
         # объявление тоже попадает в счёт, поэтому спрос начинается со второго
-        uses = len(re.findall(r"(^|[^A-Za-z0-9_])" + re.escape(nm) + r"($|[^A-Za-z0-9_])", code))
+        uses = counts[nm]
         if uses <= 1:
             bad.append(f"  {where}: `{nm}` экспортировано, а в novac/src не спрошено ни разу")
 

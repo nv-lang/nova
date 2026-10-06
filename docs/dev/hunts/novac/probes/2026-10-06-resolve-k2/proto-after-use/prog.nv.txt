@@ -1,0 +1,15 @@
+type Bx {
+    v int
+}
+fn Bx @size() -> int => @v
+
+fn show[T Sizer](v T) -> int => v.size()
+
+fn main() Io -> () {
+    println(show(Bx { v: 5 }))
+}
+
+// The bound's protocol is declared AFTER every use above.
+type Sizer protocol {
+    @size() -> int
+}

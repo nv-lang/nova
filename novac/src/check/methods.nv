@@ -367,6 +367,10 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         None => return
         Some(v) => v
     }
+    // THE BOUND AS A FILTER, the free call's door (check/bounds.nv): a generic
+    // method's own parameter may carry one (`@add[U Sizer]`, D122).
+    // SILENT-OK: the door refused the unmet bound by name.
+    if !@bounds_hold(kids, row, ids) { return }
     ro fd = @ctx.fns.rows[raw_row(row)]
     // A generic method declared in THIS file is instantiated like a generic
     // function (274.11 E.10 step 4b): the callee is recorded with its type

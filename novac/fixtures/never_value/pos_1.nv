@@ -14,9 +14,10 @@ module never_value.pos_1
 // that have values, and a branch of an `if` in value position. None of the
 // diverging paths is taken at run time -- the output is the values.
 
-// The body never returns: its tail is a `never` call itself. `panic` is not a
-// callable of novac's single-file check yet (the prelude's `extern "nova" fn
-// panic` has no row -- a separate gap), and a `while true` body the oracle does
+// The body never returns: its tail is a `never` call itself. `panic` was not a
+// callable of novac when this was written (the prelude's `extern "nova" fn
+// panic` has no row; the intrinsic arrived 2026-10-06, fixtures/panic_value),
+// and a `while true` body the oracle does
 // not build (its C assigns the loop to the `nova_int` result). The fixture is
 // about the CALLER's side; no cell calls `boom` at run time.
 fn boom(msg str) -> never {

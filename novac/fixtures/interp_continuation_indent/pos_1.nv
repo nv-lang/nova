@@ -1,0 +1,28 @@
+module interp_continuation_indent.pos_1
+
+// Registry 1752 (K1): a continuation's `\` + line break eats the break AND
+// the next line's leading spaces/tabs (D467 s3) -- INSIDE an interpolated
+// literal, before the dollar sign AND after the closing brace, several times
+// in one literal, and with no indentation at all (the regression this must
+// keep holding). The fragment's byte length must be read from the SAME
+// spliced text the C string carries, not a second count of its own.
+fn main() {
+    ro n = 5
+    ro m = 7
+    // Spaces before the slot.
+    println("a\
+   b${n}c")
+    // A tab before the slot.
+    println("a\
+	b${n}c")
+    // Spaces after the slot, before the next fragment.
+    println("x${n}\
+   y")
+    // Two continuations in one literal, each with its own indentation.
+    println("a\
+  b${n}c\
+    d${m}e")
+    // No indentation after the continuation: must still splice to nothing extra.
+    println("a\
+b${n}c")
+}
