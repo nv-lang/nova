@@ -106,6 +106,15 @@
             "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/show-local-time.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|mcp__peers__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/remind-stuck-tasks.py\""
+          }
+        ]
       }
     ]
   }
