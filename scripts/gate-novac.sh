@@ -475,8 +475,13 @@ step "novac-build (274.3/F1: бинарь novac строится ГЕЙТОМ �
 # существует, гейт ОБЯЗАН собрать novac; провал сборки — красный (это регресс
 # оракула по подмножеству novac либо регресс novac — оба требуют глаз, не тишины).
 if [ -f "$ROOT/novac/src/main.nv" ]; then
-    NOVA_BIN="$ROOT/nova-cli/target/release/nova.exe"
-    [ -f "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
+    # ОРАКУЛ — ДВЕРЬЮ novac_find_oracle (реестр 221.1 №1750, 2026-10-06). Дерево
+    # задачи своего `nova-cli/target` не несёт (сборка одна на все деревья, №650),
+    # и шаг краснел «оракул не собран» в КАЖДОМ дереве задачи — гейт novac там не
+    # бывал зелёным, исполнители видели красное окружения и переставали ему верить.
+    # Дверь берёт свой бинарь, а при его отсутствии — бинарь главной копии.
+    NOVA_BIN="$(novac_find_oracle "$ROOT" 2>/dev/null || true)"
+    [ -n "$NOVA_BIN" ] || NOVA_BIN="$ROOT/nova-cli/target/release/nova"
     if [ -f "$NOVA_BIN" ]; then
         mkdir -p "$ROOT/target" "$ROOT/novac/target"
         # ПЕРЕСБОРКА ТОЛЬКО ПО НУЖДЕ (П14). Пять секунд на каждой правке текста
