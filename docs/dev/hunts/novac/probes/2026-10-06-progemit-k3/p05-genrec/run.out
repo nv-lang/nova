@@ -34,4 +34,4 @@
 novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (1 шт.): "message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)" 
 --- Carina's emission alone: its exit code and diagnostics
 novac emit rc=1
-{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"C:/Users/B7E3~1/AppData/Local/Temp/tmp.meW4yuVD98/p05_genrec/box/box.nv","start":38,"end":39},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/p05_genrec/box/box.nv","start":38,"end":39},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}

@@ -35,9 +35,13 @@ done
 echo "=== PROGRAM"
 ( cd "$T/$NAME" && find . -name '*.nv' | sort | while read -r f; do echo "--- $f"; cat -n "$f"; done )
 cd "$ROOT" || exit 1
+# A path to the temporary directory is cut down to `<tmp>` in BOTH spellings: the
+# shell's (/tmp/...) and the native one a diagnostic prints (a drive letter first),
+# so no run.out carries the machine's own path (registry 698).
+hide_tmp() { sed -E "s|$T|<tmp>|g; s|[A-Za-z]:/[^\"]*/($NAME/)|<tmp>/\\1|g"; }
 echo "=== SMOKE: oracle build and run, Carina's one C file, compiled and run"
-NOVAC="$NOVAC" NOVAC_BIN="$NOVAC" sh scripts/tools/novac-e1-smoke.sh "$T/$NAME/main.nv" 2>&1 | sed "s|$T|<tmp>|g"
+NOVAC="$NOVAC" NOVAC_BIN="$NOVAC" sh scripts/tools/novac-e1-smoke.sh "$T/$NAME/main.nv" 2>&1 | hide_tmp
 echo "--- Carina's emission alone: its exit code and diagnostics"
 NOVAC_SELF_PATH="$T/$NAME" "$NOVAC" emit "$T/$NAME/main.nv" > "$T/e.c" 2> "$T/e.err"; echo "novac emit rc=$?"
-grep '"code"' "$T/e.c" | sed "s|$T|<tmp>|g" | head -5
+grep '"code"' "$T/e.c" | hide_tmp | head -5
 rm -rf "$T"
