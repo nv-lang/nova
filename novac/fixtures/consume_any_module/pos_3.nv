@@ -2,7 +2,7 @@ module consume_any_module.pos_3
 
 // THE TWIN OF pos_2 (registry 221.1 #1723): the same program with the field moved
 // out ONCE, before the branch, so the oracle -- whose field state does not fork at a
-// branch (registry 221.1 No.TBD) -- compiles it. The smoke compares pos_2's run
+// branch (registry 221.1 #1744) -- compiles it. The smoke compares pos_2's run
 // against this one byte for byte; novac accepts both.
 
 type Pad consume {

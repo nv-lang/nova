@@ -3,7 +3,7 @@ module consume_any_module.neg_5
 // A FIELD MOVED OUT WHOLE AFTER A FIELD INSIDE IT WAS CONSUMED (registry 221.1
 // #1723; D133 "Nested field paths", D131): `@inner.body` is gone, so `@inner` is no
 // longer a whole `Pad`, and `@inner.finish()` would consume its body a second time.
-// The ORACLE accepts this form (registry 221.1 No.TBD, oracle: one level of paths).
+// The ORACLE accepts this form (registry 221.1 #1744, oracle: one level of paths).
 
 // NOVAC_EXPECT a field inside it, was consumed
 

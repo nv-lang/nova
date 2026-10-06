@@ -3,7 +3,7 @@ module consume_any_module.neg_4
 // A NESTED FIELD PATH MOVED OUT TWICE (registry 221.1 #1723; D133 "Nested field
 // paths": the state is kept per path `@f1.f2`). `@inner.body` goes to the first
 // `into_str`; the second takes it again. The ORACLE accepts this form -- it tracks
-// one level only (registry 221.1 No.TBD, oracle); D133 names the deep path in so
+// one level only (registry 221.1 #1744, oracle); D133 names the deep path in so
 // many words.
 
 // NOVAC_EXPECT the field `@.inner.body` is used after it was consumed

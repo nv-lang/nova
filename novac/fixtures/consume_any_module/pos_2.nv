@@ -3,7 +3,7 @@ module consume_any_module.pos_2
 // A `consume` FIELD CONSUMED IN EVERY ARM (registry 221.1 #1723; D133: the field's
 // slot joins as a value does -- `Consumed` on every path is `Consumed`): an `if` with
 // an `else` and a `match`, each arm moving `@body` out once. The ORACLE refuses both
-// forms as a second use of the field (registry 221.1 No.TBD, oracle: its field state
+// forms as a second use of the field (registry 221.1 #1744, oracle: its field state
 // does not fork at a branch; listed in novac/divergences.allow, plan 274.12); its run
 // is compared against the twin pos_3, which moves the field once before the branch.
 
