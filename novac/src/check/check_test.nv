@@ -191,9 +191,14 @@ test "diagnostic naming: an unknown-in-expression refusal names the ACTUAL calle
     // one in THIS file -- check-novac-no-naked-panic can't tell string
     // content from an actual call, so the literal substring is broken here
     // rather than teaching that grep-based guard to parse string literals.
-    ro src = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        pani".concat("c(\"no\")\n    }\n}\n")
+    // CARRIER MOVED 2026-10-06 (task #14): `panic` is the intrinsic now and its
+    // tail is ACCEPTED (pinned below); the contract moved to `unreachable`, the
+    // prelude's other `extern "nova"` death novac does not read yet.
+    ro src = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        unreachable(\"no\")\n    }\n}\n"
     ro msg = diagnose_first_msg(src)
-    assert(msg.contains("`panic`"), "the refusal must name the callee that actually failed")
+    assert(msg.contains("`unreachable`"), "the refusal must name the callee that actually failed")
+    ro accepted = "module m\n\nfn f(ok bool) -> int {\n    if ok {\n        1\n    } else {\n        pani".concat("c(\"no\")\n    }\n}\n")
+    assert(diagnose(accepted) == 0, "a tail `panic` is the intrinsic's value of type `never`")
 }
 
 test "termination: an infinite `while true { return }` is a terminator, no dead-tail refusal (hunt check x K6, N4, registry #1253)" {

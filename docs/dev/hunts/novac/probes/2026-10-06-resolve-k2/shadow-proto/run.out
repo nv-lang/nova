@@ -1,0 +1,27 @@
+=== PROGRAM
+     1	// Own protocol named the same as a std one, with a DIFFERENT contract.
+     2	type Display protocol {
+     3	    @display() -> str
+     4	}
+     5	
+     6	type Pt {
+     7	    x int
+     8	    y int
+     9	}
+    10	
+    11	fn Pt @display() -> str => "Pt"
+    12	
+    13	fn show[T Display](v T) -> str => v.display()
+    14	
+    15	fn main() Io -> () {
+    16	    println(show(Pt { x: 1, y: 2 }))
+    17	}
+=== ORACLE: nova check prog.nv
+oracle check rc=1
+  <repo>\std\src\prelude\protocols.nv:493:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `int @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:507:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `f64 @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:525:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `f32 @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+  <repo>\std\src\prelude\protocols.nv:539:1: error: [E_IMPL_SIGNATURE_MISMATCH] method `bool @display` has `#impl(Display)` but its signature does not match protocol `Display`'s `@display`. Expected: `display() -> str`. arity mismatch: T's `display` has 1 param(s), protocol expects 0
+=== SUBJECT: novac check prog.nv
+novac check rc=0
+=== VERDICT: DIFFERENT: Carina accepts, oracle refuses

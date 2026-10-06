@@ -1,0 +1,28 @@
+module bound_call.neg_4
+
+// THE RETURN TYPE IS PART OF THE CONTRACT (D72: "Concrete K ... must implement
+// all bound methods"): `Sizer` requires `@size() -> int`, and `Bx` has a
+// `@size` returning `str` -- a method of the right NAME is not the method the
+// bound requires. novac refuses with the missing signature.
+//
+// A DIVERGENCE, direction 1: the oracle's `nova check` ACCEPTS this file and
+// its `nova build` fails in the C compiler (registry 221.1, hunt
+// 2026-10-06-resolve-k2, plan 274.12) -- novac follows the spec. A neg
+// fixture, so the differential does not compare it; check-novac-fixture-expect
+// holds the code.
+// NOVAC_EXPECT E_BOUND_NOT_SATISFIED
+type Sizer protocol {
+    @size() -> int
+}
+
+type Bx {
+    v int
+}
+
+fn Bx @size() -> str => "bx"
+
+fn show_sizer[T Sizer](v T) -> int => v.size()
+
+fn main() {
+    println(show_sizer(Bx { v: 1 }))
+}

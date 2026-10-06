@@ -1,0 +1,17 @@
+// Own protocol named the same as a std one, with a DIFFERENT contract.
+type Display protocol {
+    @display() -> str
+}
+
+type Pt {
+    x int
+    y int
+}
+
+fn Pt @display() -> str => "Pt"
+
+fn show[T Display](v T) -> str => v.display()
+
+fn main() Io -> () {
+    println(show(Pt { x: 1, y: 2 }))
+}

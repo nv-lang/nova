@@ -37,7 +37,7 @@ test "a type WITH the required method satisfies the contract" {
     // owns its registry anyway.
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
-                                    param_off: 0, param_cnt: 0 })
+                                    param_off: 0, param_cnt: 0, mode: ParamMode.ModeRo })
     ctx.protos.add("Sized", sized_off, 1)
     // A method row: the receiver is parameter ZERO (plan 273), so `int @size()`
     // is a row named `size` whose only parameter is int.
@@ -53,7 +53,7 @@ test "a type WITHOUT it is refused, and the MISSING signature is named" {
     // owns its registry anyway.
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
-                                    param_off: 0, param_cnt: 0 })
+                                    param_off: 0, param_cnt: 0, mode: ParamMode.ModeRo })
     ctx.protos.add("Sized", sized_off, 1)
     // `str` has no `size` row registered, so the contract is unmet -- and the
     // answer carries the signature, not merely "unsatisfied": the bar is the
@@ -69,7 +69,7 @@ test "the RETURN TYPE is part of the requirement, not decoration" {
     // owns its registry anyway.
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
-                                    param_off: 0, param_cnt: 0 })
+                                    param_off: 0, param_cnt: 0, mode: ParamMode.ModeRo })
     ctx.protos.add("Sized", sized_off, 1)
     // Same name, same arity, WRONG return type: a row that answers `str` where
     // the contract wants `int` does not satisfy it. Without this the predicate
@@ -86,7 +86,7 @@ test "a FREE function of the same name does not satisfy a method requirement" {
     // owns its registry anyway.
     ro sized_off = ctx.protos.sigs.len()
     ctx.protos.sigs.push(ProtoSig { name: "size", ret_id: ctx.prims.int_id,
-                                    param_off: 0, param_cnt: 0 })
+                                    param_off: 0, param_cnt: 0, mode: ParamMode.ModeRo })
     ctx.protos.add("Sized", sized_off, 1)
     // `has_recv: false` -- a free `size(x int)` is not a method, and the two
     // spellings are kept apart by the language, so the predicate keeps them

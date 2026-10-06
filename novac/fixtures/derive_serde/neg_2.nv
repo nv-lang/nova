@@ -1,0 +1,20 @@
+module derive_serde.neg_2
+
+// A SUM'S PAYLOAD IS A FIELD TOO (D345: "Payload eligibility mirrors the
+// record-field check (typed E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL by variant)"):
+// `B(Plain)` cannot be written, so `Sh` derives nothing and is refused.
+// NOVAC_EXPECT E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL
+import std.encoding.serde.{Serialize}
+
+type Plain {
+    n int
+}
+
+#impl(Serialize)
+type Sh enum
+    | A
+    | B(Plain)
+
+fn main() {
+    println(1)
+}

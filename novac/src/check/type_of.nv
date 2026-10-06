@@ -816,6 +816,9 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // `embed("path")` (D412) is no row's call either: the checker recorded
         // its `[]u8` beside the door's row (check/embed_call.nv).
         if chan.embed_row_at(e.id_of()) >= 0 { return chan.type_of(e.id_of()) }
+        // `assert(..)` and `panic(..)` are no row's calls either: the intrinsic
+        // door noted the call and recorded its type (`()`, `never`).
+        if chan.contract_of(e.id_of()).is_some() { return chan.type_of(e.id_of()) }
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro cname = call_callee_text(branch_children(e))

@@ -1557,6 +1557,11 @@
 # 2026-10-05, task #2 (acceptance round 3): rows -> 1665, max -> 1735 (row 1735 the oracle's `nova build` accepts `mut x = <ro parameter>` of a heap type that `nova test` of the same source refuses E_READONLY_COERCE; numbered by the integrator).
 # 2026-10-06, integrator (candidate of task #2 on main 7992b1846 + p-integ-mechanics): rows 1663 (main) + 10 (#2: 1719-1724, 1727, 1729, 1734, 1735) = 1673, max stays 1736.
 # 2026-10-06, integrator: rows -> 1674, max -> 1737 (row 1737 filed CLOSED -- the E1 smoke left the `-L` directory in the compile flags when the oracle's GC is not under `.../lib`; the pair is now dropped as a pair).
+# 2026-10-06, task #14 (merged over main 55af9d5ae): rows 1674 -> 1676, max 1737 -> 1741 (rows 1740 a handed body's parse
+#   gap reached the type rules as an ICE, 1741 a later free overload of std printed under the first's name; numbered by
+#   the integrator from the reserve 1740-1742, 1742 unused and above max), and 1738-1739 declared a gap: the numbers
+#   are GIVEN to task #10, the rows live in ITS branch. Removal: drop 1738-1739 from gaps= when the branches meet.
+# 2026-10-06, task #14: rows 1676 -> 1678, max 1741 -> 1751 (row 1742 the oracle does not judge the receiver mode against the protocol at a bound, D209, from the reserve 1740-1742; row 1751 the guard check-novac-commit-donor judged the live index on /dev/null, numbered by the integrator), and 1743-1750 declared a gap: the numbers are GIVEN to other tasks, their rows live in THEIR branches. Removal: drop 1743-1750 from gaps= when the branches meet.
 # 2026-10-06, task #16 (t16-karina-1723-k1-potok-consume-vidit-must): rows 1743-1745 numbered by the
 # integrator (1743 mut-method rotation carrier of #1723, 1744 oracle field state, 1745 consume method
 # leaving its consume field). 1737-1742 are numbers the integrator reserved for other tasks (#14 holds
@@ -1575,6 +1580,14 @@
 # 2026-10-06, task #15 round 3 (numbers from the integrator): rows 1676 -> 1681, max 1747 -> 1757 (rows 1753-1757 found by the novac hunt 2026-10-06-lower-k4: spawn-body exit target, `while x is T` narrowing, `#coerce` outside return/argument, nested `|` under Option (blocks the tag), `x?` error passing recomputed); 1750-1752 are numbers of other branches (1750 the integrator, 1751 task #14, 1752 task #10), declared holes in gaps= until their rows reach this branch.
 # 2026-10-06, task #15, merge of origin/main a1c48f6ed: rows 1679 (main) + 7 (#15: 1746, 1747, 1753-1757) = 1686, max 1757.
 # 2026-10-06, integrator: rows -> 1680, max -> 1750 (row 1750 filed CLOSED -- building a candidate bypassed the merge guard's novac verdict; the guard now judges a merge on a branch standing on main, and gate-novac writes its verdict into its own tree).
+# 2026-10-06, task #14, merge of origin/main a1c48f6ed: rows 1680 (main) + 4 (#14: 1740-1742, 1751) = 1684,
+#   max 1751; 1740-1742 leave gaps= (their rows arrive), 1743-1750 are main's rows now (1746-1747 stay a gap,
+#   given to other tasks), 1738-1739 stay with task #10.
+# 2026-10-06, task #14: rows 1684 -> 1688, max 1751 -> 1761 (rows 1758-1761 numbered by the integrator: 1758 the oracle
+#   meets a bound with a method of another return type, 1759 a program protocol named like a prelude one -- hunt
+#   2026-10-06-resolve-k2; 1760 Carina does not judge E_UNKNOWN_PROTOCOL, 1761 the oracle sees a loaded module's
+#   type in `#impl(P)`), and 1752-1757 declared a gap: the numbers are GIVEN to other tasks, their rows live in
+#   THEIR branches. Removal: drop 1752-1757 from gaps= by the merge that brings each row.
 # 2026-10-06, task #15 round 4, merge of origin/main de53c3625: rows 1680 (main) + 7 (#15: 1746, 1747, 1753-1757) = 1687, max 1757; row 1750 arrives (the integrator) and leaves gaps= by this merge.
 # 2026-10-06, task #10 (merged with main ee6d2ae4f): rows 1673 -> 1675, max 1736 -> 1739 (rows 1738 filed OPEN -- the oracle accepts a direct `mut` method call on `@` from a method without `mut`, the write lost on a value record; 1739 filed OPEN -- same-named constants of two modules, the C of one names the other undeclared). 1737 declared in gaps=.
 # 2026-10-06, task #10 (merged with main 55af9d5ae): rows 1674 -> 1676, max 1737 -> 1739 (rows 1738 and 1739, see the task #10 line above; row 1737 arrived with main, so it leaves gaps=).
@@ -1582,8 +1595,12 @@
 # 2026-10-06, task #10 (candidate from main a1c48f6ed): rows 1681 -> 1682, max 1749 -> 1752 (row 1752 filed OPEN by the hunt 2026-10-06-strlit-k1; 1750-1751 belong to other branches and stand in gaps=).
 # 2026-10-06, task #10 (candidate from main de53c3625): rows 1680 (main) + 3 (#10: 1738, 1739, 1752) = 1683, max 1750 -> 1752; 1750 arrived with main and leaves gaps=, 1751 stays (another branch).
 # 2026-10-06, task #10 (candidate from main 0e5c83421, task #15 in): rows 1687 (main) + 3 (#10: 1738, 1739, 1752) = 1690, max stays 1757; 1738, 1739 and 1752 leave gaps= with their rows, 1751 stays (another branch).
-rows=1690
-max=1757
+# 2026-10-06, task #14, merge of origin/main 0e5c83421: rows 1688 (#14) + 7 (#15's 1746, 1747, 1753-1757 via main) = 1695,
+#   max 1761; 1752 stays a gap (task #10), 1738-1739 stay with task #10.
+# 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): rows 1690 (main) + 8 (#14: 1740-1742,
+#   1751, 1758-1761) = 1698, max 1761.
+rows=1698
+max=1761
 rows=1611
 max=1693
 rows=1590
@@ -2344,7 +2361,9 @@ stale_gaps=0
 # 2026-10-06, task #15, merge of origin/main a1c48f6ed: 1743-1745 and 1748-1749 arrive (task #16), 1746-1747 are this branch's rows -- all out of gaps= by this merge; 1738-1742 and 1750-1752 stay holes (tasks #10, #14, the integrator).
 # 2026-10-06, task #10: 1750-1751 issued to other branches (1750 -- the integrator's); removal: drop from gaps= by the merge that brings their rows.
 # 2026-10-06, task #10 (merge of main 0e5c83421): 1738-1739 and 1752 are this branch's rows -- out of gaps=; 1740-1742 (#14) and 1751 stay.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1740-1742,1751
+# 2026-10-06, task #14, merge of origin/main 0e5c83421: 1740-1742 and 1751 are this branch's rows, 1746-1747 and 1753-1757 arrive from main -- all out of gaps= by this merge; 1738-1739 and 1752 stay holes (task #10).
+# 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35): 1738-1739, 1752 (#10) and 1740-1742, 1751 (#14) all carry rows -- none in gaps=.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding

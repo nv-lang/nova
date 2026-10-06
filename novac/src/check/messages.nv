@@ -364,10 +364,16 @@ const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arriv
 /// `#realtime nogc` and its kin.
 const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
 
-/// `#impl(P)` for a protocol other than `Display` / `Equal` -- `Serialize` in
-/// novac's own diag/diag.nv. The derived method and its callers dispatch through
-/// protocol bounds (`S Serializer`, `T Serialize`), which arrive with E2-b3.
-const IMPL_DEFERRED_MSG = "outside the subset: `#impl` of this protocol is derived only for `Display` and `Equal` -- the derived methods of the others (`Serialize`, D341) and their callers dispatch through protocol bounds, not compiled yet (E2-b3)"
+/// `#impl(P)` for a protocol other than `Display` / `Equal` / `Serialize` --
+/// `Deserialize` first of all: its derived `.deserialize` is a STATIC method
+/// whose body reads a cursor per field (D341), a synthesis of its own.
+const IMPL_DEFERRED_MSG = "outside the subset: `#impl` of this protocol is derived only for `Display`, `Equal` and `Serialize` -- the derived methods of the others (`Deserialize`, D341; `Hash`, `Clone`, `Compare`, `Debug`) are not synthesized yet (E2-b3)"
+
+/// `#impl(Serialize)` over a shape the synthesis does not spell yet: a generic
+/// type (its method would hang on `T[A]` with the type's own parameters) or a
+/// positional tuple record (no field name to put on the wire). Named so the
+/// opt-in is never read and silently dropped.
+const SERDE_SHAPE_MSG = "outside the subset: `#impl(Serialize)` is derived for a non-generic record with named fields or a sum -- a generic type and a record of unnamed fields are not synthesized yet (E2-b3)"
 
 /// `unsafe { ... }` -- D216 s8. Compiled since 274.11 E.10 step 3c where an `if`
 /// value stands (initializer, argument, a body's tail) and as a statement.

@@ -38,6 +38,7 @@ export type ProtoSig value {
     ret_id TyId /// declared return type; `no_ty()` = the declaration wrote none
     param_off int /// first parameter type of this signature in ProtoTable.sig_params
     param_cnt int /// how many parameters, receiver EXCLUDED (the receiver is the candidate type)
+    mode ParamMode /// the receiver's mode the contract requires (`mut @put`, D209; `ro` when unwritten) -- a candidate's must be the same
 }
 
 /// One protocol declaration: a NAME and the range of signatures it requires.
@@ -61,12 +62,13 @@ export type ProtoTable {
     rows []ProtoDef /// one row per declared protocol
     sigs []ProtoSig /// signatures of every protocol, grouped by ProtoDef.sig_off/cnt
     sig_params []TyId /// parameter types of every signature, grouped by ProtoSig.param_off/cnt
+    sig_names NameTable /// method name -> 1 for every name some protocol requires: `@requires_method` asks it in O(1) (NsProtocols)
 }
 
 /// Empty protocol registry with its own namespace.
 export fn ProtoTable.new() -> ProtoTable =>
     { names: NameTable.new(NamespaceId.NsProtocols), rows: []ProtoDef.new(),
-      sigs: []ProtoSig.new(), sig_params: []TyId.new() }
+      sigs: []ProtoSig.new(), sig_params: []TyId.new(), sig_names: NameTable.new(NamespaceId.NsProtocols) }
 
 /// Register one protocol and return its row index.
 export fn ProtoTable mut @add(name str, sig_off int, sig_cnt int) -> int {
@@ -97,6 +99,68 @@ export fn ProtoTable @def_of(name str) -> Option[ProtoDef] {
     Some(@rows[r])
 }
 
+/// The receiver mode a signature writes before its mark (`mut @put`), `ro`
+/// when it writes none (D209: "Default receiver: `ro`").
+fn proto_recv_mode(mk []Node) -> ParamMode {
+    if mk.len() == 0 { return ParamMode.ModeRo }
+    mode_of_leaf(mk[0]) ?? ParamMode.ModeRo
+}
+
+/// Does any protocol of the registry require a method of this NAME? Asked by
+/// the shape walk, which knows names and not types (check/rules.nv): a method
+/// called on a bounded parameter is the contract's even where no type of the
+/// unit declares it. A scan of the signature pool, reached only on the walk's
+/// refusal path (the name is in no callable's chain), never per call.
+#realtime nogc
+export fn ProtoTable @requires_method(name str) -> bool => @sig_names.find(name) >= 0
+
+/// Register ONE protocol declaration: its NAME, a row per signature (named,
+/// typed in pass 2 by `fill_proto_sigs`), and each required method name. The
+/// ONE filler of the registry (274.5 3-pred62): the file's own protocols (the
+/// collector's pass 1) and the handed ones (`harvest_protocols`) both come here.
+fn register_proto(mut protos ProtoTable, decl Node, tname str) -> () {
+    mut cnt = 0
+    for m in branch_children(decl) {
+        cnt += if m.kind_of() == NodeKind.ProtoMethod { 1 } else { 0 }
+    }
+    protos.add(tname, protos.sigs.len(), cnt)
+    for m in branch_children(decl) {
+        if m.kind_of() != NodeKind.ProtoMethod { continue }
+        // A nameless signature keeps its ROW (the counts must stay aligned)
+        // and an empty name, which no candidate can ever match -- and `check`
+        // refuses the declaration by name, so the empty row is never read.
+        ro nm = proto_method_name(m) ?? ""
+        protos.sigs.push(ProtoSig { name: nm, ret_id: no_ty(), param_off: 0, param_cnt: 0,
+                                    mode: ParamMode.ModeRo })
+        if nm != "" {
+            protos.sig_names.put(nm, 1)
+        } else {
+            // Nothing to require by an empty name.
+        }
+    }
+}
+
+/// Register the protocols the HANDED declarations declare (std's `Serializer`,
+/// `Serialize`), each with its signatures resolved at once: every type of the
+/// unit is registered by the time this runs. A name the registry already holds
+/// -- the file's own protocol, or an earlier tree's -- is not registered twice:
+/// the file's declaration shadows the handed one (D125), and the first handed
+/// one is the one the type table kept too (`harvest_types_pass`).
+fn harvest_protocols(mut protos ProtoTable, decls []Node, types []TypeDef, defs DefTable, mut tys Interner) -> () {
+    for d in decls {
+        for c in file_decls(d) {
+            if c.kind_of() != NodeKind.TypeDecl { continue }
+            if shape_of_decl(c) != DeclShape.ShapeProtocol { continue }
+            ro nk = branch_children(c)
+            if nk.len() < 2 || nk[1].kind_of() != NodeKind.LeafNode { continue }
+            ro tname = leaf_text(nk[1])
+            if protos.def_of(tname).is_some() { continue }
+            register_proto(protos, c, tname)
+            fill_proto_sigs(protos, c, tname, types, defs, tys)
+        }
+    }
+}
+
 /// Fill the signatures of ONE protocol declaration: pass 2 of the collector.
 ///
 /// Lives with the registry it fills. Pass 1 counted the signatures and put
@@ -107,7 +171,7 @@ export fn ProtoTable @def_of(name str) -> Option[ProtoDef] {
 /// Called BEFORE the collector asks `defs` for the declaration's owner, because
 /// a contract has no row in `types` and that lookup would skip it.
 export fn fill_proto_sigs(mut protos ProtoTable, decl Node, tname str,
-                          types []TypeDef, defs DefTable, tys Interner) -> () {
+                          types []TypeDef, defs DefTable, mut tys Interner) -> () {
     mut si = 0
     if Some(pd) = protos.def_of(tname) {
         si = pd.sig_off
@@ -117,16 +181,19 @@ export fn fill_proto_sigs(mut protos ProtoTable, decl Node, tname str,
     for m in branch_children(decl) {
         if m.kind_of() != NodeKind.ProtoMethod { continue }
         ro mk = branch_children(m)
+        // The signature's OWN type parameters (`@serialize[S Serializer]`).
+        ro tps = generic_names(mk)
         ro poff = protos.sig_params.len()
         mut pcnt = 0
         for pm in mk {
             if pm.kind_of() != NodeKind.Param { continue }
-            protos.sig_params.push(ty_of_param_node(pm, types, defs, tys))
+            protos.sig_params.push(ty_of_param_node(pm, tps, types, defs, tys))
             pcnt += 1
         }
         protos.sigs[si] = ProtoSig { name: proto_method_name(m) ?? "",
-                                     ret_id: ty_of_ret_node(mk, types, defs, tys),
-                                     param_off: poff, param_cnt: pcnt }
+                                     ret_id: ty_of_ret_node(mk, tps, types, defs, tys),
+                                     param_off: poff, param_cnt: pcnt,
+                                     mode: proto_recv_mode(mk) }
         si += 1
     }
 }

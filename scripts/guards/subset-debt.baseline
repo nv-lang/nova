@@ -164,7 +164,9 @@
 #   refusals of `==` over a vector (registry 1573, check/operators.nv) leave: a right side of
 #   another type is a LANGUAGE error (D405, D491), and an `equal` not handed gets its stage
 #   (E2-b2 multi-file) -- `str` and `Vec` declare it, so the form is legal.
-undated=55
+# 2026-10-06, task #14 (274.5 3-pred64): undated 55 -> 54, the guard's count on the tree -- the ratchet moved down
+#   by the work that dated or removed refusals (the deferred-`#impl` door now names Deserialize & co. with E2-b3).
+undated=54
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж

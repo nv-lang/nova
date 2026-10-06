@@ -800,6 +800,11 @@ fn Checker mut @report_if_unknown_method(kids []Node) -> () {
             // the decision; this judge only has to stop claiming the name is a
             // missing method.
             if @is_known_variant(t.text) { return }
+            // A method a PROTOCOL requires is a known method (D72): inside
+            // `fn f[T Sizer](x T)` the call `x.size()` names the contract's
+            // signature, whether or not any type of the unit declares one
+            // (task #14). The typing walk judges it against the bound.
+            if @ctx.protos.requires_method(t.text) { return }
             // AN EFFECT-OPERATION CALL wears this shape with an EFFECT name
             // as its head (`Fs.read("p")`, E.4 item 2 of plan 274.11): the
             // name is an OPERATION of the effect, never a method of the

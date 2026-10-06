@@ -1,0 +1,21 @@
+module bound_call.neg_1
+
+// AN UNMET BOUND ON A FREE GENERIC FUNCTION (D72): `Plain` has no `@size()`, so
+// `total[T Sizer]` cannot take it. Both compilers refuse -- the oracle with
+// E_BOUND_NOT_SATISFIED, novac with the same code in a language error -- and
+// the body calls the contract method, which the shape walk must know as a
+// method of the contract (no type of this file declares `size`).
+// NOVAC_EXPECT E_BOUND_NOT_SATISFIED
+type Sizer protocol {
+    @size() -> int
+}
+
+type Plain {
+    n int
+}
+
+fn total[T Sizer](x T) -> int => x.size() * 2
+
+fn main() {
+    println(total(Plain { n: 4 }))
+}
