@@ -9,11 +9,13 @@ module multi_module.pos_1
 // all three modules, a function of `geo` reached only through another module
 // (`norm1` -> its private `abs_of`), `geo.dbl` instantiated over `int` by two
 // modules and over `f64` by this one, `geo.count` over `Pt` and `int`,
-// `bag.last` over `Pt` and `int`, and std's `Vec[Pt]` instances made by two
-// modules -- each instance once in the program.
+// `bag.last` over `Pt` and `int`, std's `Vec[Pt]` instances made by two
+// modules -- each instance once in the program -- and `Option[Pt]` returned by
+// `bag` and matched here: an option over another module's type, which no shell
+// declares (both units print it, the program keeps one).
 
 import ./geo.{Pt, shift, norm1, dbl, count}
-import ./bag.{fill, last, total, twice}
+import ./bag.{fill, last, total, twice, first_pt}
 
 fn main() {
     ro p = Pt { x: 0 - 3, y: 4 }
@@ -37,4 +39,13 @@ fn main() {
     more.push(p)
     println(more.len())
     println(last[Pt](more).y)
+    match first_pt(more) {
+        Some(q) => println(q.x)
+        None => println(0 - 1)
+    }
+    ro none = []Pt.new()
+    match first_pt(none) {
+        Some(q) => println(q.x)
+        None => println(0 - 1)
+    }
 }

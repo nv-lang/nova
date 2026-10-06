@@ -274,6 +274,31 @@ fn Emitter mut @instances_ours(insts []Instantiation) -> []bool {
 /// Is this C name -- an instance, an instance struct, an option typedef --
 /// this unit's to print? Always alone; in a program, unless an earlier unit
 /// printed it, and then it is recorded as printed here.
+/// THE ONE-COPY GUARD of a type-phase item in a program (274.11 E.10 step 2b):
+/// every unit prints the instance structs and option typedefs IT needs, and the
+/// preprocessor keeps the first in render order -- the earliest unit in import
+/// order, so the copy stands before every unit that names it. Deciding the copy
+/// at emission instead (the first unit EMITTED, which is the entry's side) put it
+/// after the units that needed it: `unknown type name 'NovaOpt_Nova_Node_p'` in
+/// the measurement on novac itself. The shape is the one the tuple typedefs use
+/// (`NOVA_TUPLE_TYPEDEF__`). A unit alone prints no guard.
+fn Emitter mut @open_once(name str) -> () {
+    if @program {
+        @body.append("#ifndef NOVAC_ONCE_${name}\n#define NOVAC_ONCE_${name}\n")
+    } else {
+        // A unit alone: each name is printed once by the unit's own dedupe.
+    }
+}
+
+/// The end of `@open_once`'s guard.
+fn Emitter mut @close_once() -> () {
+    if @program {
+        @body.append("#endif\n")
+    } else {
+        // A unit alone: no guard was opened.
+    }
+}
+
 fn Emitter mut @first_in_program(name str) -> bool {
     if !@program { return true }
     if @skip.has(name) { return false }

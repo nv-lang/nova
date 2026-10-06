@@ -1,0 +1,19 @@
+module option_newtype_prim.pos_1
+
+// An option over a NEWTYPE OF A PRIMITIVE spells its carrier's option
+// (`Option[Score]` is `NovaOpt_nova_int`), and the primitives' options are the
+// runtime's (`NOVA_ARRAY_DECL`, nova_rt/array.h): novac printed it a second time --
+// clang "redefinition of 'NovaOpt_nova_int'" -- found by whole-program emission of
+// novac (task #23), a unit alone fails the same.
+
+type Score int
+
+type Holder { s Option[Score] }
+
+fn main() {
+    ro h = Holder { s: Some(Score(4)) }
+    match h.s {
+        Some(_) => println(1)
+        None => println(0)
+    }
+}

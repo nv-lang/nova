@@ -21,7 +21,7 @@ import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_make
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
 import ../types.{TyId, is_ty, raw_ty}
-import ../sem.{decl_index_of_ty}
+import ../sem.{decl_index_of_ty, carrier_of}
 import ../diag.{ice}
 import ../builtins.{TypeKind}
 
@@ -257,9 +257,17 @@ fn Emitter mut @emit_structural_typedefs() -> () {
         }
         ids.insert(at, rid)
     }
+    // A COMPONENT'S INSTANCE STRUCT NEEDS ITS NAME FIRST (274.11 E.10 step 2b):
+    // `(Vec[Diagnostic], Vec[Instantiation])` names `Nova_Vec____Nova_Instantiation_p`,
+    // whose body comes with the instances below -- clang said "unknown type name"
+    // in the measurement on novac itself. The forward typedef repeats legally.
+    mut fwd = []str.new()
     for rid in ids {
         ro t = TyId(rid)
         ro name = c_struct(@ctx, t)
+        for i in 0..@ctx.tys.arg_count(t) {
+            @instance_forward_of(@ctx.tys.arg(t, i), fwd)
+        }
         @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
         @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
         @body.append("typedef struct ${name} { ")
@@ -304,16 +312,26 @@ fn Emitter mut @emit_option_typedefs() -> () {
         // own struct bodies by the instance's NAME, the same question
         // emit_instance_structs.nv asks of a record instance. Reachable since
         // the type reader stopped flattening `Option[[]int]` into `Option[int]`.
-        if pk == TypeKind.TkApp {
-            if @ctx.interop.has_body(c_type(@ctx, t)) { continue }
-        } else {
+        if pk != TypeKind.TkApp {
             ro declared = pk == TypeKind.TkRecord || pk == TypeKind.TkSum || pk == TypeKind.TkNewtype
             if !declared { continue }
-            // Past the foreign boundary: the file's own. A handed type's instance
-            // is declared by the shell.
-            ro di = decl_index_of_ty(@ctx, payload)
-            if di < @ctx.foreign_types_cnt { continue }
+            // A NEWTYPE OVER A PRIMITIVE spells its carrier's option
+            // (`Option[Score]` is `NovaOpt_nova_int`), and the primitives'
+            // options are the runtime's (`NOVA_ARRAY_DECL`, nova_rt/array.h) --
+            // printed again it was "redefinition of 'NovaOpt_nova_int'", in a unit
+            // alone too (measured on novac itself, 274.11 E.10 step 2b).
+            if pk == TypeKind.TkNewtype && @ctx.tys.kind_of(carrier_of(@ctx, payload)) == TypeKind.TkPrim { continue }
+        } else {
+            // An instance payload: asked of the shell by name below, as any.
         }
+        // THE SHELL'S OR OURS, ASKED BY NAME (274.11 E.10 step 2b): the shell
+        // declares the options its probe met, whatever the payload. The
+        // foreign boundary answered "a handed type's option is the shell's",
+        // and in a program a handed type may be ANOTHER MODULE's of it -- whose
+        // option no shell has (`Option[Node]` in sem, Node from tree: printed by
+        // nobody). And a newtype over a primitive spells the primitive's option
+        // (`NovaOpt_nova_int`), which the shell does have: printed a second time.
+        if @ctx.interop.has_body(c_type(@ctx, t)) { continue }
         ro rid = raw_ty(t)
         mut dup = false
         for seen in ids {
@@ -326,18 +344,22 @@ fn Emitter mut @emit_option_typedefs() -> () {
         if dup { continue }
         ids.push(rid)
     }
+    mut fwd = []str.new()
     for rid in ids {
         ro t = TyId(rid)
         ro name = c_type(@ctx, t)
-        // One typedef per PROGRAM (274.11 E.10 step 2b): an option over an
-        // instance is any unit's, and another one may have printed it.
-        if !@first_in_program(name) { continue }
+        // One typedef per PROGRAM: every unit that needs it prints it, the
+        // guard keeps the earliest (`@open_once`, 274.11 E.10 step 2b).
+        // The payload's instance struct by name first, as a tuple's component.
+        @instance_forward_of(@ctx.tys.arg(t, 0), fwd)
+        @open_once(name)
         ro pc = c_type(@ctx, @ctx.tys.arg(t, 0))
         if @option_payload_is_pointer(t) {
             @body.append("typedef struct ${name} { ${pc} value; } ${name};\n")
         } else {
             @body.append("typedef struct ${name} { int tag; ${pc} value; } ${name};\n")
         }
+        @close_once()
     }
 }
 

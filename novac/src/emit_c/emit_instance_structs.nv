@@ -45,9 +45,9 @@ fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
         if d == t { return }
     }
     done.push(t)
-    // One struct per PROGRAM: another unit of it may have printed this one
-    // (274.11 E.10 step 2b).
-    if !@first_in_program(sn) { return }
+    // One struct per PROGRAM: every unit that needs it prints it, the guard
+    // keeps the earliest (`@open_once`, 274.11 E.10 step 2b).
+    @open_once(sn)
     mut args = []TyId.new()
     for i in 0..@ctx.tys.arg_count(t) {
         args.push(@ctx.tys.arg(t, i))
@@ -60,10 +60,11 @@ fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
         @body.append("    ${c_type(@ctx, subst_type(@ctx, fd.type_id, args))} ${fd.name};\n")
     }
     @body.append("};\n\n")
+    @close_once()
 }
 
 /// A FORWARD NAME for every instance struct the file's own declarations name --
-/// in a field, a variant payload or a module value's cell (registry №TBD): the
+/// in a field, a variant payload or a module value's cell (registry 1773): the
 /// struct's body comes after the declarations (above, beside the instances that
 /// use it, or in another unit of the program), and C wants the name before a
 /// field or a cell may hold a pointer to it. Measured: `type Bag { items []Pt }`

@@ -31,3 +31,13 @@ export fn total(b Bag) -> int => sum_x(b.items)
 
 /// Twice `n`, through `geo.dbl[int]`.
 export fn twice(n int) -> int => dbl[int](n)
+
+/// The first point, if there is one: an option over ANOTHER module's type, in a
+/// signature. No shell has `Option[Pt]` and the entry needs it too -- every unit
+/// that names it prints it, and the program keeps one copy.
+export fn first_pt(xs []Pt) -> Option[Pt] {
+    if xs.len() == 0 {
+        return None
+    }
+    Some(xs[0])
+}
