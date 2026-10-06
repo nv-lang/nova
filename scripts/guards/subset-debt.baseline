@@ -166,7 +166,13 @@
 #   (E2-b2 multi-file) -- `str` and `Vec` declare it, so the form is legal.
 # 2026-10-06, task #14 (274.5 3-pred64): undated 55 -> 54, the guard's count on the tree -- the ratchet moved down
 #   by the work that dated or removed refusals (the deferred-`#impl` door now names Deserialize & co. with E2-b3).
-undated=54
+# 2026-10-06, task #18 (D381, plan 274.5 section pre68): SHADOW_FOREIGN_MSG left with its
+#   reason -- a program type named like a struct the interop shell defines gets the D381
+#   module-qualified C base (sem `type_base`), every shape, and a file with no module the
+#   empty-modpath formula `Nova__<Name>`. undated 55 -> 54, the guard's count on the tree.
+# 2026-10-06, task #18, merge of origin/main f2b6517c7: both moves above were made on 55 independently and
+#   each took a DIFFERENT refusal away, so together 54 -> 53 -- the guard's count on the merged tree.
+undated=53
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -449,7 +455,11 @@ undated=54
 #   printer tells their `if`s from the guard's. Refusals 140 -> 139, the guard's count on the tree.
 # merge of origin/main dc2617993 into p274-carina-cast (2026-10-03): refusals 138 -> 137, the guard's
 #   count on the merged tree -- main's 138 less this branch's GUARD_BLOCK_FORM_MSG (step 9, above).
-refusals=137
+# 2026-10-06, task #18 (D381, plan 274.5 section pre68): SHADOW_FOREIGN_MSG left with its
+#   reason -- a program type named like a struct the interop shell defines gets the D381
+#   module-qualified C base (sem `type_base`), every shape, and a file with no module the
+#   empty-modpath formula `Nova__<Name>`. refusals 137 -> 136, the guard's count on the tree.
+refusals=136
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:
@@ -597,4 +607,8 @@ refusals=137
 #   `Err(..)` meets), and `Failure(e)` boxes any error type. Acceptance round 1: D85's "supertype
 #   through sum extension" (D55 sum-coercion of the error) is legal and its wrap is not built --
 #   ONE dated (E2-b3) text REPLACES TRY_RESULT_MSG, so refusals stay 137 (136 after round 0).
-undated_by_door=68
+# 2026-10-06, task #18 (D381, plan 274.5 section pre68): SHADOW_FOREIGN_MSG left with its
+#   reason -- a program type named like a struct the interop shell defines gets the D381
+#   module-qualified C base (sem `type_base`), every shape, and a file with no module the
+#   empty-modpath formula `Nova__<Name>`. undated_by_door 68 -> 67, the guard's count on the tree.
+undated_by_door=67

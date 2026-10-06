@@ -1,0 +1,46 @@
+module shell_namesake.pos_2
+
+import std.io.{kind_from_errno}
+
+// A SUM WITH A PAYLOAD NAMED LIKE A STD SUM, AND THE STD SUM ITSELF IN THE SAME
+// UNIT (D381, wave 274.5 pre68). std.io's `ErrorKind` is in the shell as
+// `struct Nova_ErrorKind`; this file declares its own `ErrorKind` AND calls
+// `kind_from_errno`, whose result is std's. Two types of one simple name in one
+// unit is D381's collision exactly: the program's is spelled
+// `Nova_shell_namesake_pos_2_ErrorKind`, std's stays the shell's.
+//
+// The oracle has the same collision in its own unit (std.io comes in with
+// `kind_from_errno`) and qualifies BOTH sides (`Nova_pos_2_ErrorKind`,
+// `Nova_std_io_ErrorKind`, measured 2026-10-06). Both compilers must print the
+// same lines: the program's sum matched by its variants, std's by its own.
+type ErrorKind
+    | Alpha
+    | Beta(int)
+
+fn show(k ErrorKind) -> str => match k {
+    Alpha => "alpha"
+    Beta(n) => "beta ${n}"
+}
+
+fn weight(k ErrorKind) -> int => match k {
+    Alpha => 1
+    Beta(n) => n
+}
+
+fn main() {
+    ro a = Alpha
+    ro b = Beta(7)
+    println(show(a))
+    println(show(b))
+    println(weight(a) + weight(b))
+    ro std_kind = kind_from_errno(2)
+    println(match std_kind {
+        NotFound => "notfound"
+        _ => "other"
+    })
+    ro other = kind_from_errno(9999)
+    println(match other {
+        Other(code) => "other ${code}"
+        _ => "mapped"
+    })
+}

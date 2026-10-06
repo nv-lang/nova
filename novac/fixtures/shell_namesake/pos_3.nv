@@ -1,0 +1,44 @@
+module shell_namesake.pos_3
+
+// A PAYLOAD-FREE SUM AND A RECORD HOLDING IT, BOTH NAMED LIKE SHELL STRUCTS
+// (D381, wave 274.5 pre68). The shell defines `struct NovaValue_Sign` (std's
+// fmt sign, a payload-free enum laid out by value) and `struct Nova_Metadata` (std's
+// fs metadata). This file declares its own `Sign` -- also
+// payload-free, so novac lays it out by value too -- and a heap record `Metadata`
+// with a `Sign` field. Both collide; both get the module base; the field's C
+// type is spelled through the same door as the type's own struct, so the two
+// cannot disagree.
+//
+// The oracle's unit holds neither std type here (nothing uses them), so it
+// keeps both names bare. Same lines from both compilers.
+type Sign
+    | Neg
+    | Zero
+    | Pos
+
+type Metadata {
+    sign Sign
+    n int
+}
+
+fn sign_of(n int) -> Sign {
+    if n < 0 { return Neg }
+    if n == 0 { return Zero }
+    Pos
+}
+
+fn render(s Metadata) -> str {
+    ro mark = match s.sign {
+        Neg => "-"
+        Zero => "0"
+        Pos => "+"
+    }
+    "${mark}${s.n}"
+}
+
+fn main() {
+    for n in [-4, 0, 9] {
+        ro s = Metadata { sign: sign_of(n), n }
+        println(render(s))
+    }
+}
