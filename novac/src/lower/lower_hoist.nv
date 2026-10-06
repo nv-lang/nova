@@ -82,7 +82,7 @@ fn contains_block_form(e Node) -> bool {
 /// stops: those forms lower their own insides.
 /// A TUPLE literal is not in the list yet: naming its node kind here is a new
 /// word the tuple rule holds for the owner's yes (check-novac-tuple-no-second-door),
-/// so `} else if (x, 1).0 > 0 {` still dies as it did before this wave (registry #TBD).
+/// so `} else if (x, 1).0 > 0 {` still dies as it did before this wave (registry 1791).
 fn contains_construction(e Node) -> bool {
     match e {
         Leaf(_) => false

@@ -1611,6 +1611,10 @@
 # 2026-10-06, task #23, merge of origin/main (task #21 in): rows 1703 (main) + 17 (#23: 1772-1776, 1778-1781,
 # 1783-1790) = 1720, max 1770 -> 1790; 1771, 1777 and 1782 are numbers the integrator issued to other branches
 # (1777 is task #18's, linked to 1786) and stand in gaps= until their rows arrive, then leave it by that merge.
+# 2026-10-06, task #23: rows 1720 -> 1721, max 1790 -> 1791 -- #1791, a tuple literal in an `else if`/`while`
+# condition dies as never hoisted; its fix waits for the owner's word on the tuple rule.
+rows=1721
+max=1791
 rows=1720
 max=1790
 rows=1703
