@@ -62,7 +62,7 @@
     {
       "id": "ci",
       "required": true,
-      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в свою ветку integrate/t<N>, `python scripts/guards/check-push-proven-by-ci.py <полный хеш>` — ok (/integrator, путь приёмщика, шаг 4)"
+      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в свою ветку integrate/t<N>, `python scripts/guards/check-push-proven-by-ci.py <полный хеш>` — ok; основной путь — под замком `peer_watch` с `bash scripts/tools/land-task.sh <N> <полный хеш вершины>`, в отчёт — его строка `LANDED task=#N main=…` (/integrator, путь приёмщика, шаг 3)"
     },
     {
       "id": "commits",
