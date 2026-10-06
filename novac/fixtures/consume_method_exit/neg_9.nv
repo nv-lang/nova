@@ -6,7 +6,7 @@ module consume_method_exit.neg_9
 // binding. A `-> never` function stands for `panic`, which novac's single-file check has
 // no row for yet (never_value/pos_1). The call is the TAIL of the body: standing as a
 // statement or as the value of a branch, a diverging call is not seen as an exit at all
-// yet, for a local binding as for a field (registry 221.1 #TBD: a diverging call that
+// yet, for a local binding as for a field (registry 221.1 #1762: a diverging call that
 // is not a tail is not an exit point; novac and the oracle).
 
 // NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this diverging call leaves this `consume` method
