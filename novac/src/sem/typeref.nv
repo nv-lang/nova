@@ -119,6 +119,17 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     // Arity comes out of the walk; the term is step 3's constructor, so a
     // tuple type in a signature IS the same TyId the literal interns.
     if leaf_kind(head) == TokenKind.LParen {
+        // `()` IS THE UNIT, not a tuple of nothing (D26): a type ARGUMENT --
+        // `Result[(), SerError]`, every `Serializer` method's return -- arrives
+        // here as the pair of parens, and the component walk below read it as a
+        // tuple with no readable component, so the whole application was no
+        // type and every such std signature was dropped (task #14, 2026-10-06).
+        // The return position never came here: `ret_is_unit` answers it first.
+        if at + 1 < pk.len() && is_leaf_kind(pk[at + 1], TokenKind.RParen) {
+            return ty_of_type_name(UNIT_TYPE_NAME, tps, param_rows, types, defs)
+        } else {
+            // A real tuple run: its components below.
+        }
         mut comps = []TyId.new()
         mut depth = 0
         for i in at..pk.len() {

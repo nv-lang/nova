@@ -193,6 +193,36 @@ fn overload_tail(ctx Ctx, row FnRow, args []TyId, measured bool) -> str {
     s
 }
 
+/// WHAT follows the bare symbol of a handed FREE function: "" for the first
+/// overload of its name in its module, `__` and its parameters' C types for a
+/// later one -- the generic-method rule above, which the oracle applies to
+/// free functions too (`nova_fn_3std2os3env__nova_str_nova_str`, read off the
+/// shell). An `extern` free function keeps its bare name: its overload rule
+/// is the extern registry's and was never measured on a free function.
+fn free_overload_tail(ctx Ctx, row FnRow) -> str {
+    // SILENT-OK: the extern registry's spelling, never measured for a free function.
+    if ctx.is_extern_handed(row) { return "" }
+    // SILENT-OK: the first overload of its module takes the bare name.
+    if ctx.free_overload_ordinal(row) <= 0 { return "" }
+    ro fd = ctx.fns.rows[raw_row(row)]
+    consume s = StringBuilder.new(cap: 64)
+    s.append("__")
+    for p in 0..fd.param_cnt {
+        if p > 0 {
+            s.append("_")
+        } else {
+            // The first parameter follows the separator directly.
+        }
+        match overload_param_spelling(ctx, ctx.fns.params[fd.param_off + p].type_id) {
+            Some(sp) => s.append(sp)
+            // Never measured: a spelling no C identifier holds (see overload_tail).
+            None => s.append(UNMEASURED_SPELLING)
+        }
+    }
+    if fd.param_cnt == 0 { s.append(UNMEASURED_SPELLING) }
+    s
+}
+
 /// The oracle's `last_param_suffix` for an extern method: the Nova NAME of
 /// the last parameter's type -- a named type by its name, a slice of one by
 /// the name plus `s` (`[]u8` -> `u8s`); "" with no parameter. A shape the rule

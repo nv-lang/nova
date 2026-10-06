@@ -1,0 +1,28 @@
+module unit_type_arg.pos_1
+
+// `()` IS A TYPE ARGUMENT (D26): `Result[(), IoError]` -- the return of std's
+// `os.env(key, value)` setter -- and every `Serializer` method's
+// `Result[(), SerError]`. Until 2026-10-06 novac's type reader took `()` inside
+// brackets for a tuple with no component, the application was no type, and
+// every such signature was dropped: the call was "no such method" or "this
+// type form is not compiled yet" (task #14, plan 274.5 section 3-pred64).
+//
+// The cells: the written type in a parameter, a binding of the call's result,
+// and a `match` over it, both arms reachable in principle; the run takes `Ok`.
+
+import std.os.{env, real_os}
+import std.fs.{IoError}
+
+fn verdict(r Result[(), IoError]) -> str {
+    match r {
+        Ok(_) => "set"
+        Err(_) => "failed"
+    }
+}
+
+fn main() {
+    with Os = real_os() {
+        ro r = env("NOVAC_UNIT_TYPE_ARG", "1")
+        println(verdict(r))
+    }
+}

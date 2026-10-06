@@ -30,23 +30,25 @@ export type HandedBodies {
     heads []int /// per noted row: the declaration the method hangs on (its index), -1 for a free function
     same_prev []int /// per noted row: the noted row of the same NAME read before it (its index here), -1 at the chain's end
     by_name NameTable /// callable name -> the LAST noted row of that name (its index here): the head of the chain `same_prev` continues
+    homes []str /// per noted row: the module it was handed from (`handed_from`; "" for std read without a module line) -- a FREE function's overloads are counted within its module
 }
 
 /// No handed body known yet.
 fn HandedBodies.new() -> HandedBodies =>
     { slot: []int.new(), trees: []int.new(), decls: []Node.new(), rows: []FnRow.new(),
-      heads: []int.new(), same_prev: []int.new(), by_name: NameTable.new(NamespaceId.NsCallables) }
+      heads: []int.new(), same_prev: []int.new(), by_name: NameTable.new(NamespaceId.NsCallables),
+      homes: []str.new() }
 
 /// Note that `row`, named `name`, was read from the `FnDecl` node `decl` of
 /// handed tree `tree`. The rows are noted in READING order, so the same-name
 /// chain runs from the latest back to the first -- the order an overload's
 /// shell spelling is decided by (`Ctx @overload_ordinal`).
-fn HandedBodies mut @note(row FnRow, name str, head int, tree int, decl Node) -> () {
+fn HandedBodies mut @note(row FnRow, name str, head int, tree int, decl Node, home str) -> () {
     while @slot.len() <= raw_row(row) {
         @slot.push(-1)
     }
     @slot[raw_row(row)] = @trees.len()
-    @chain(row, name, head, tree, decl)
+    @chain(row, name, head, tree, decl, home)
 }
 
 /// Note a method declaration harvest did NOT take (a type it cannot read): no
@@ -54,13 +56,14 @@ fn HandedBodies mut @note(row FnRow, name str, head int, tree int, decl Node) ->
 /// which is what the oracle's spelling of the later ones counts (registry
 /// 1558). Without it a dropped early overload shifted every later ordinal down,
 /// and the second overload was asked of the shell by the first's bare name.
-fn HandedBodies mut @note_dropped(name str, head int, tree int, decl Node) -> () {
-    @chain(no_row(), name, head, tree, decl)
+fn HandedBodies mut @note_dropped(name str, head int, tree int, decl Node, home str) -> () {
+    @chain(no_row(), name, head, tree, decl, home)
 }
 
 /// One entry of the same-name chain, in reading order.
-fn HandedBodies mut @chain(row FnRow, name str, head int, tree int, decl Node) -> () {
+fn HandedBodies mut @chain(row FnRow, name str, head int, tree int, decl Node, home str) -> () {
     ro s = @trees.len()
+    @homes.push(home)
     @trees.push(tree)
     @decls.push(decl)
     @rows.push(row)
@@ -97,6 +100,26 @@ fn Ctx @overload_count(row FnRow) -> int {
         }
     } else {
         // A row that was not handed: no overload of it was harvested.
+    }
+    n
+}
+
+/// WHICH overload of its name a handed FREE function is within its MODULE,
+/// counted in reading order from zero over declarations taken or dropped -- the
+/// order the oracle spells the later ones by (`env(key)` is
+/// `nova_fn_3std2os3env`, `env(key, value)` is `..._env__nova_str_nova_str`).
+/// Free functions share no receiver, so the module is what makes two of them
+/// overloads of each other; -1 for a row that was not handed.
+fn Ctx @free_overload_ordinal(row FnRow) -> int {
+    if raw_row(row) < 0 || raw_row(row) >= @handed.slot.len() { return -1 }
+    ro s = @handed.slot[raw_row(row)]
+    if s < 0 { return -1 }
+    ro home = @handed.homes[s]
+    mut n = 0
+    mut p = @handed.same_prev[s]
+    while p >= 0 {
+        n += if @handed.heads[p] == -1 && @handed.homes[p] == home { 1 } else { 0 }
+        p = @handed.same_prev[p]
     }
     n
 }

@@ -171,13 +171,15 @@ fn harvest_in(n Node, handed_from str, own_module str, types []TypeDef, mut defs
                 ro key = harvest_fn(children, handed_from, own_module, types, defs, tys, fns)
                 if fns.rows.len() > before {
                     // The row this declaration became, and where its body lives.
-                    bodies.note(FnRow(before), key.name, head_index(tys, key.on), tree, n)
-                } else if key.name != "" && is_ty(key.on) {
-                    // Not taken, but a METHOD all the same: it keeps its place
-                    // among its name's overloads (registry 1558).
-                    bodies.note_dropped(key.name, head_index(tys, key.on), tree, n)
+                    bodies.note(FnRow(before), key.name, head_index(tys, key.on), tree, n, handed_from)
+                } else if key.name != "" && (is_ty(key.on) || key.free) {
+                    // Not taken, but a METHOD or a FREE function all the same:
+                    // it keeps its place among its name's overloads (registry
+                    // 1558; a free one within its module -- `env(key)` before
+                    // `env(key, value)` in std.os, task #14).
+                    bodies.note_dropped(key.name, head_index(tys, key.on), tree, n, handed_from)
                 } else {
-                    // SILENT-OK: a free function or an unreadable receiver -- no overload place to keep.
+                    // SILENT-OK: an unreadable receiver -- no type, so no overload place to keep.
                 }
                 return
             }
@@ -370,11 +372,13 @@ fn harvest_types_pass(decls []Node, mut types []TypeDef, mut gates []str, mut de
 /// WHAT a handed declaration is, whether or not it became a row: its name and
 /// the type it hangs on (the receiver's term, or the static method's owner;
 /// `no_ty()` for a free function or a receiver the registry cannot read).
-/// A DROPPED method still holds its place among its name's overloads -- the
-/// oracle spells the overloads by their order of DECLARATION (registry 1558).
+/// A DROPPED method -- and a dropped FREE function -- still holds its place
+/// among its name's overloads: the oracle spells the overloads by their order
+/// of DECLARATION (registry 1558; the free half, task #14).
 type HarvestKey value {
     name str /// the declared name; "" when the declaration has none readable
     on TyId /// the type it hangs on, or `no_ty()`
+    free bool /// a FREE function (no receiver group): `no_ty()` in `on` is then its own fact, not an unreadable receiver
 }
 
 /// One declaration: receiver, name, return type. Taken only if BOTH
@@ -456,7 +460,7 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
     } else {
         // A method: its name was read after the receiver group above.
     }
-    if mname == "" { return HarvestKey { name: "", on: no_ty() } }
+    if mname == "" { return HarvestKey { name: "", on: no_ty(), free: is_free } }
     // TYPE PARAMETERS OF A METHOD (sub-plan L2, 2026-08-26): the receiver's own
     // (`Vec[T]` -- the Generics right after its name) come first, the method's
     // (`fn[U]`, a Generics before it) after; one parameter row per slot. The
@@ -480,7 +484,7 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
         ty_of_type_ref(recv_kids, recv_head_at(recv_kids, recv_at), no_ty(), tps, prow, types, defs, tys)
     }
     // From here on a drop still answers WHAT was dropped (registry 1558).
-    ro key = HarvestKey { name: mname, on: recv_t }
+    ro key = HarvestKey { name: mname, on: recv_t, free: is_free }
     if !ret_unit && ret_kids.len() < 2 { return key }
     // `Self` is the RECEIVER's type, spelled by its role instead of its name.
     // It is not in `defs` and never will be -- it names no declaration -- so a
