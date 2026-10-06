@@ -1543,6 +1543,12 @@ no_caveat=0
 # 2026-10-06, integrator (candidate of task #10 on main a1c48f6ed): 105 (main, with #16) + 1 (#10: 1738) = 106, measured.
 # 2026-10-06, task #10 (candidate from main a1c48f6ed): 106 -> 107, row 1752 filed OPEN, BLOKIRUET TEG: DA (Carina: an interpolation fragment length counted on the unspliced text), route plan 274.
 # 2026-10-06, task #10 (merge of main 0e5c83421, task #15 in): 107 (main) + 2 (#10: 1738, 1752) = 109, measured.
+# 2026-10-06, task #17 (merge of origin/main c9b2d4c35, task #10 in; row 1762): main 109 + 1 of this branch = 110. Row
+# 1762 (novac and the oracle: a diverging call that is not a tail is not judged as an exit point, a live consume
+# value on it accepted; K1, blocks Carina's tag -- the integrator's verdict 2026-10-06), routed 274 and 274.10.
+# Row 1745 stays open on the oracle (its Carina part done by #17), so it is not removed. Measured.
+# 2026-10-06, task #17, merge of origin/main f2b6517c7 (task #14 in): measured 109 with row 1762 -- main reads
+# 108 without it (its key stood at 109), so 108 + 1 (#17: 1762) = 109.
 blockers=109
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:

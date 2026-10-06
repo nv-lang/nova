@@ -1,0 +1,44 @@
+module consume_method_exit.pos_1
+
+// A `consume` FIELD CONSUMED ON EVERY PATH OUT OF A `consume` METHOD (registry 221.1
+// #1745; D133 "Field-aware flow": the record closes at each exit). An early `return`
+// that consumes it, a `?` and a `?? return` reached after it is consumed, and a tail.
+// Nothing is left owned at any exit; the oracle compiles it, byte for byte.
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @take(early bool) -> str {
+    ro s = @body.into_str()
+    if early { return "early:${s}" }
+    "late:${s}"
+}
+
+fn Pad consume @try_take(o Option[int]) -> Option[str] {
+    ro s = @body.into_str()
+    ro v = o?
+    Some("${v}:${s}")
+}
+
+fn Pad consume @or_none(o Option[int]) -> str {
+    ro s = @body.into_str()
+    ro v = o ?? return "none:${s}"
+    "${v}:${s}:${@n}"
+}
+
+fn mk(n int, s str) -> Pad {
+    consume b = StringBuilder.new(cap: 8)
+    b.append(s)
+    Pad { n, body: b }
+}
+
+fn main() {
+    println(mk(0, "a").take(true))
+    println(mk(0, "b").take(false))
+    println(mk(0, "c").try_take(Some(1)) ?? "empty")
+    println(mk(0, "d").try_take(None) ?? "empty")
+    println(mk(5, "e").or_none(Some(2)))
+    println(mk(5, "f").or_none(None))
+}

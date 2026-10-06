@@ -1,0 +1,41 @@
+module consume_method_exit.pos_4
+
+// AN AFFINE `consume` FIELD CONSUMED BY THE METHOD (registry 221.1 #1745; D432 s2: no
+// drop-glue -- a `@cleanup` field is not cleaned for its record, so the `consume` method
+// consumes it itself, D133). `@done` releases `@lock` and reads a plain field after it;
+// `@finish` hands `@lock` to its `@cleanup` called by name. The oracle compiles it, byte
+// for byte.
+
+type Lk consume {
+    id int
+}
+
+fn Lk consume @cleanup(outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn Lk consume @release() -> () {
+    println("release ${@id}")
+}
+
+type Holder consume {
+    n int
+    consume lock Lk
+}
+
+fn Holder consume @done() -> int {
+    @lock.release()
+    @n
+}
+
+fn Holder consume @finish() -> int {
+    @lock.cleanup(ScopeOutcome.Success)
+    @n + 10
+}
+
+fn main() {
+    consume h = Holder { n: 2, lock: Lk { id: 1 } }
+    println(h.done())
+    consume g = Holder { n: 3, lock: Lk { id: 7 } }
+    println(g.finish())
+}

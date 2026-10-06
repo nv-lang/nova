@@ -1,0 +1,39 @@
+module consume_method_exit.pos_3
+
+// A NESTED `consume` FIELD CLOSED TWO WAYS (registry 221.1 #1745; D133 "Nested field
+// paths" and "Assign in a Live consume field": a nested record is done when it is moved
+// whole, or when every `consume` field inside it is -- "empty container"). `@whole` hands
+// `@inner` to its own `consume` method; `@parts` consumes `@inner.body` and leaves the
+// plain field `@inner.n` to be read. The oracle compiles it, byte for byte.
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn Pad consume @finish() -> str => "${@body.into_str()}/${@n}"
+
+type Outer consume {
+    consume inner Pad
+    consume tag StringBuilder
+}
+
+fn Outer consume @whole() -> str => "${@inner.finish()}|${@tag.into_str()}"
+
+fn Outer consume @parts() -> str {
+    ro s = @inner.body.into_str()
+    "${s}:${@inner.n}|${@tag.into_str()}"
+}
+
+fn mk(n int, s str) -> Outer {
+    consume b = StringBuilder.new(cap: 8)
+    b.append(s)
+    consume t = StringBuilder.new(cap: 8)
+    t.append("t${n}")
+    Outer { inner: Pad { n, body: b }, tag: t }
+}
+
+fn main() {
+    println(mk(1, "a").whole())
+    println(mk(2, "b").parts())
+}
