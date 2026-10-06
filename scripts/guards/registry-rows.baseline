@@ -1618,8 +1618,8 @@
 #   1768-1769 carry #20's; 1770 and 1772-1776 stay holes (other branches).
 # 2026-10-06 (task #21): rows 1702 -> 1703, max 1769 -> 1770 -- #1770, Windows: the libgc branch with page
 # protection crashes the program with SIGSEGV. gaps= untouched (1764-1767 are task #18's numbers).
-# 2026-10-06, task #22, merge of origin/main ef60c1882 (task #21 in) over #18's branch: rows 1708 (#18 tip)
-#   + 1 (#21: 1770) = 1709, max stays 1777; 1770 leaves gaps= by this merge, 1772-1776 stay holes.
+# 2026-10-06, task #18, merge of origin/main ef60c1882 (task #21 in): rows 1703 (main) + 6 (#18) = 1709,
+#   max 1777; 1770 carries #21's row -- out of gaps= by this merge; 1772-1776 stay holes.
 rows=1709
 max=1777
 rows=1611
