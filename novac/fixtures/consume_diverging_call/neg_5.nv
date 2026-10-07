@@ -1,0 +1,23 @@
+module consume_diverging_call.neg_5
+
+// A DIVERGING CALL AS THE VALUE OF A `match` ARM (registry 221.1 #1762). The arm is an
+// exit with `b` owned: refused at the call, not as a partial consumption at the scope's end.
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is still owned when this diverging call leaves its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work(n int) -> str {
+    consume b = StringBuilder.new(cap: 8)
+    match n {
+        0 => b.into_str()
+        _ => boom("no text") // the one refusal: line 17
+    }
+}
+
+fn main() {
+    println(work(0))
+}

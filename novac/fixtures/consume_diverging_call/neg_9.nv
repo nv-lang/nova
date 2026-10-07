@@ -1,0 +1,27 @@
+module consume_diverging_call.neg_9
+
+// A DIVERGING CALL IN A `spawn` BODY ENDS THAT FIBER'S PATH, NOT THIS ONE (registry 221.1
+// #1762; D13: a `spawn` body is another fiber's). The function goes on past the
+// `supervised` block, so `b` bound after it is judged at the end of its scope as usual.
+// The first cut of #1762 let the call end the enclosing path, and `b` went unjudged.
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is not consumed before the end of its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work() -> () {
+    supervised {
+        spawn {
+            boom("in a fiber")
+        }
+    }
+    consume b = StringBuilder.new(cap: 8) // the one refusal: line 21
+    println("after")
+}
+
+fn main() {
+    work()
+}

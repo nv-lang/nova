@@ -1,0 +1,23 @@
+module consume_diverging_call.neg_7
+
+// A DIVERGING CALL ON THE RIGHT OF `??` (registry 221.1 #1762, the class). On the empty
+// path the right side runs and never returns: an exit with `b` owned, as `?? return` is.
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is still owned when this diverging call leaves its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn work(n int) -> str {
+    consume b = StringBuilder.new(cap: 8)
+    ro v = get(n) ?? boom("no value") // the one refusal: line 17
+    "${v}${b.into_str()}"
+}
+
+fn main() {
+    println(work(1))
+}
