@@ -20,6 +20,7 @@ module novac.emit_c
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
+import ../sem.{c_ident}
 import ../types.{TyId, is_ty, raw_ty}
 import ../sem.{decl_index_of_ty, carrier_of}
 import ../diag.{ice_at}
@@ -62,7 +63,7 @@ fn Emitter mut @emit_record_decl(rec_id int) -> () {
         @body.append("    ")
         @body.append(c_type(@ctx, fd.type_id))
         @body.append(" ")
-        @body.append(fd.name)
+        @body.append(c_ident(fd.name))
         @body.append(";\n")
     }
     @body.append("};\n\n")

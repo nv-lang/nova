@@ -26,6 +26,7 @@ import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_sym
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
 import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
+import ../sem.{c_ident}
 import ../sem.{int_literal_c_text, literal_digits, char_literal_code, interp_slices}
 import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
@@ -426,7 +427,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     // Not a constant: an ordinary name, and `nova_bool` IS C
                     // `bool`, so the literals are the C keywords -- the same
                     // shape the oracle emits.
-                    @body.append(expr_leaf_name(e))
+                    @body.append(c_ident(expr_leaf_name(e)))
                 }
             }
         }
@@ -520,7 +521,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // keeps the pointer form, which is what every record was before the
         // layout existed.
         @body.append(if is_value_record(@ctx, @out.type_if_known(kids[0].id_of())) { "." } else { "->" })
-        @body.append(leaf_text(kids[2]))
+        @body.append(c_ident(leaf_text(kids[2])))
         @body.append(")")
     } else if k == NodeKind.MethodCall {
         // kids: [recv, '.', name, '(', args..., ')'] -> <Recv>_method_<name>(recv, args...)

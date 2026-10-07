@@ -21,6 +21,7 @@ import ../tree.{Node, AssignOp, NodeId, raw_node}
 import ../types.{TyId}
 import ../diag.{ice_at}
 import ../sem.{VariantRow, FnRow}
+import ../sem.{c_ident}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -579,7 +580,7 @@ export fn FnBuilder mut @named(ty TyId, name str) -> Local {
             "novac/src/lower/ir.nv:578",
             "lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
-    @local(ty, LocalKind.Binding, name)
+    @local(ty, LocalKind.Binding, c_ident(name))
 }
 
 /// Appends a local and returns its index -- the one place locals are created. A local is

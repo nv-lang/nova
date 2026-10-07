@@ -1,0 +1,27 @@
+module carina_c_names.pos_1
+
+// A SOURCE NAME THAT IS A C WORD (221.1 #1787, plan 274.5 §3-пред73): the fields
+// `signed`, `default`, `register` of a record, a local `union`, parameters `auto`
+// and `volatile`. C would reject `nova_int signed;` ("cannot be signed or
+// unsigned") and read `auto` / `volatile` as its own keywords; the door
+// `c_ident` spells each one `nv_<name>` as the oracle does. The axes: the field
+// declaration, a field read, a field write, a local and a parameter. Behaviour
+// byte-for-byte with the oracle (novac-e1-smoke).
+
+type Flags {
+    signed int
+    default int
+    register int
+}
+
+fn sum(auto int, volatile int) -> int => auto + volatile
+
+fn main() {
+    mut f = Flags { signed: 3, default: 4, register: 5 }
+    ro union = sum(f.signed, f.default)
+    f.register = union + f.register
+    println(f.signed)
+    println(f.default)
+    println(f.register)
+    println(union)
+}

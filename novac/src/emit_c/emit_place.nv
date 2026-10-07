@@ -22,6 +22,7 @@ import ../tree.{Node, NodeKind, no_node}
 // M3a: telling a string literal from any other argument needs the leaf's token kind.
 import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
+import ../sem.{c_ident}
 import ../diag.{ice_at}
 import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
@@ -234,7 +235,7 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             match r.proj {
                 Field(nm) => {
                     ro reach = if is_value_record(@ctx, bd.ty) { "." } else { "->" }
-                    @body.append("${bd.name}${reach}${nm};\n")
+                    @body.append("${bd.name}${reach}${c_ident(nm)};\n")
                 }
                 Elem(i) => @body.append("${bd.name}.f${i};\n")
             }
@@ -566,7 +567,7 @@ fn Emitter mut @emit_variant_ctor(e Node, v VariantRow, ty TyId) -> str {
         } else {
             match fk[0] {
                 // Punning `{ id }` stores the local of that name.
-                Leaf(_) => @body.append(ctor_field_name(c))
+                Leaf(_) => @body.append(c_ident(ctor_field_name(c)))
                 // Receiver punning `{ @id }`: the SelfField, printed as any `@id`.
                 Branch { .. } => @emit_expr(fk[0])
             }

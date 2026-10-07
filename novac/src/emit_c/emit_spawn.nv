@@ -27,6 +27,7 @@ import ../tree.{Node, NodeKind, NodeId}
 import ../diag.{ice_at}
 import ../builtins.{SUPERVISOR_EFFECT}
 import ../sem.{branch_children, decl_fn_row, file_decls, c_type, effect_slot_c, CaptureRow}
+import ../sem.{c_ident}
 import ../lower.{FnBuilder, SpawnSite}
 
 /// Every `spawn` of the functions mono reached, in the order of the file --
@@ -73,7 +74,7 @@ fn Emitter mut @emit_spawn_protos() -> () {
         @body.append("typedef struct {\n    NovaSpawnCtxBase _nova_base;\n")
         for c in @out.captures_of(@spawns[n].id_of()) {
             ro star = if c.by_ref { "*" } else { "" }
-            @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
+            @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c_ident(c.name)};\n")
         }
         @body.append("    NovaFiberQueue* _nova_captured_scope_q;\n} novac_sctx_${@tag}${n};\n")
         @body.append("static nova_unit novac_spawnbody_${@tag}${n}(novac_sctx_${@tag}${n}* _novac_cap);\n")
@@ -186,7 +187,7 @@ fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
     @body.append("    nova_bool ${v}_init = nova_runtime_is_initialized();\n")
     @body.append("    ${cx}* ${v} = (${cx}*)(${v}_init ? nova_spawn_pool_acquire(sizeof(${cx})) : nova_alloc(sizeof(${cx})));\n")
     for c in @out.captures_of(s.node) {
-        @body.append("    ${v}->${c.name} = ${@capture_source(c)};\n")
+        @body.append("    ${v}->${c_ident(c.name)} = ${@capture_source(c)};\n")
     }
     @body.append("    ${v}->_nova_captured_scope_q = ${qe};\n")
     @body.append("    ${v}->_nova_base._nova_worker_slot = -1;\n    ${v}->_nova_base._nova_parent_slot = -1;\n")

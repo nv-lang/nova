@@ -71,6 +71,7 @@ import ../sem.{ParamDef, FnRow, raw_row, decl_fn_row, decl_name_at, param_name_a
 import ../sem.{carrier_of, CNames}
 import ../sem.{CheckOut, branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type}
 import ../sem.{interp_slices, ctor_field_name}
+import ../sem.{c_ident}
 import ../sem.{c_struct, c_tag, c_tag_enum, c_maker, is_value_sum, VariantRow, raw_vrow, no_vrow}
 import ../sem.{field_range_of, variant_range_of, raw_frow, no_frow, file_decls, is_value_record, literal_elems}
 import ../sem.{recv_by_pointer_of}
@@ -532,7 +533,7 @@ fn Emitter mut @emit_signature(f Node, name str, row FnRow, subst []TyId, ptypes
         @body.append(if first { "" } else { ", " })
         @body.append(c_type(@ctx, ptype))
         @body.append(" ")
-        @body.append(pname)
+        @body.append(c_ident(pname))
         first = false
     }
     assert(slot == ptypes.len(), "emit: the caller handed types the declaration does not write")
@@ -801,7 +802,7 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str 
             } else {
                 // Punning carries a name, and a name hoists nothing.
             }
-            @body.append("    ${tmp}${arrow}${fname} = ")
+            @body.append("    ${tmp}${arrow}${c_ident(fname)} = ")
             // A value block the lowering laid down first (`unsafe { .. }`, an
             // `if`, a `??` -- `@hoist_sealed_args`, registry 1557) is read from
             // its local, as an argument is.

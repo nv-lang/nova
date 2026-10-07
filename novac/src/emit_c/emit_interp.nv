@@ -24,6 +24,7 @@ import ../sem.{literal_as_c_text, is_expr_kind, prim_row_of}
 import ../builtins.{BuiltinType, FMT_BARE_C}
 import ../sem.{c_callable, decl_of_ty, field_range_of, raw_frow, is_value_record}
 import ../sem.{c_method_symbol}
+import ../sem.{c_ident}
 import ../builtins.{DISPLAY_METHOD}
 import ../types.{TyId}
 import ../tree.{Node, NodeKind, raw_node}
@@ -192,7 +193,7 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
                         ro call = display_call_of(row)
                         @body.append("    ${call.head}(${sb}, ${call.cast}(")
                         @emit_expr(c)
-                        @body.append("${arrow}${fd.name}), ${call.tail});\n")
+                        @body.append("${arrow}${c_ident(fd.name)}), ${call.tail});\n")
                     }
                 }
             }
