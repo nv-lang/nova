@@ -70,6 +70,15 @@ fn Emitter mut @emit_interp_build(e Node) -> str {
             // `"${c_callable(@ctx, c.row, []TyId.new())}"` (emit_flow.nv) died
             // as "an array literal ... never hoisted" in whole-program emission.
             @hoist_array_lits(c)
+            if @diverges(c) {
+                // A DIVERGING SLOT (registry 1792): `"${boom()}"` has nothing to
+                // display -- the call runs as a statement and the chain goes on,
+                // unreached. It used to reach the display door below and ice.
+                @emit_diverging_stmt(c)
+                continue
+            } else {
+                // A value: displayed by its carrier below.
+            }
             // ONE DOOR PER SLOT, keyed by the universe row of the slot's carrier
             // (wave B1a, 274.7): the runtime's `*_display_spec` family has an
             // entry per primitive family, and the checker admitted only what
@@ -175,7 +184,7 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
     @body.append("(\", .len=${escaped_byte_len(td.name) + 1}});\n")
     match field_range_of(td) {
         None => ice_at(
-            "novac/src/emit_c/emit_interp.nv:177",
+            "novac/src/emit_c/emit_interp.nv:186",
             "emit: a synthesized display for a type with no field rows -- the judge admits a record with at least one field")
         Some((first, cnt)) => {
             for i in 0..cnt {
@@ -187,7 +196,7 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
                 ro fd = @ctx.fields.rows[raw_frow(first) + i]
                 match prim_row_of(@ctx.tys, fd.type_id) {
                     None => ice_at(
-                        "novac/src/emit_c/emit_interp.nv:189",
+                        "novac/src/emit_c/emit_interp.nv:202",
                         "emit: a synthesized display over a non-primitive field -- the judge admits primitives only")
                     Some(row) => {
                         ro call = display_call_of(row)
@@ -241,17 +250,17 @@ fn display_call_of(row BuiltinType) -> DisplayCall {
             // (refused by name in the checker: the runtime has no entry).
             if !row.signed && row.bits == 64 {
                 ice_at(
-                    "novac/src/emit_c/emit_interp.nv:243",
+                    "novac/src/emit_c/emit_interp.nv:260",
                     "emit_c: an unsigned 64-bit interpolation slot passed the checker -- the runtime has no display for it")
             }
             DisplayCall { head: "${sb_ns}16int_display_spec", cast: "(nova_int)",
                           tail: "((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U)" }
         }
-        PfUnit => ice_at("novac/src/emit_c/emit_interp.nv:250", "emit_c: a unit interpolation slot passed the checker")
-        PfAny => ice_at("novac/src/emit_c/emit_interp.nv:251", "emit_c: an any interpolation slot passed the checker")
+        PfUnit => ice_at("novac/src/emit_c/emit_interp.nv:271", "emit_c: a unit interpolation slot passed the checker")
+        PfAny => ice_at("novac/src/emit_c/emit_interp.nv:272", "emit_c: an any interpolation slot passed the checker")
         PfNever => ice_at(
-            "novac/src/emit_c/emit_interp.nv:252",
-            "emit_c: a never interpolation slot passed the checker -- it has no value")
+            "novac/src/emit_c/emit_interp.nv:273",
+            "emit_c: a never interpolation slot reached the display door -- the slot door prints it as a statement")
     }
 }
 

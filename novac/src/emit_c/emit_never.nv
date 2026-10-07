@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR (`TerminatorKind::Call` with `target: None` for a callee
+// returning `!`, `rustc_mir_build::build::expr::into`): a diverging call is
+// a computation whose destination is NEVER WRITTEN -- control does not come
+// back to read it, and codegen (`rustc_codegen_ssa::mir::block`, the call
+// without a return block) puts unreachability after it, not a store. Not
+// taken: the terminator form -- the M1 bridge still prints value positions as
+// C expressions, so the "no store" is spelled inside the expression.
+// Role: THE ONE DOOR of a DIVERGING expression (type `never`, D26) in a
+//   VALUE POSITION (registry 221.1 #1792). `never` has no C type of its own:
+//   its universe row says `nova_int`, so a `never` call printed as a value
+//   was a `nova_int` -- invisible where the slot was an `int`, and
+//   `assigning to 'nova_str' from incompatible type 'nova_int'` everywhere
+//   else. Every position that prints a value into a slot of a KNOWN type asks
+//   here: the call runs, and the slot receives a value of ITS OWN type that
+//   the call's result never reaches. A slot that takes no value, or whose
+//   type the emitter is given no channel for, takes the statement form.
+// Used by: emit_place.nv (the assignment door -- every lowered value position:
+//   binding, arm of an `if`/`match`, `??` fallback, tail, `return` -- and a
+//   store), emit_args.nv (a variant's payload argument), emit_c.nv (a record
+//   constructor's field), emit_interp.nv (an interpolation slot).
+// Guarded by: the fixtures novac/fixtures/never_value_pos (one cell per
+//   position, through check-novac-differential.sh) and never_value.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeId, NodeKind}
+import ../types.{TyId}
+import ../diag.{ice_at}
+import ../sem.{is_never_ty, c_type, raw_vrow, raw_row, branch_children, call_callee_text}
+import ../builtins.{PANIC_FN}
+
+/// Is `e` a divergence? THREE CHANNEL FACTS, none of them worked out from the
+/// form: the type the checker recorded on the node is `never` (an interpolation
+/// slot, an `if` whose arms all diverge); the call's DECIDED callee returns
+/// `never`; or the call is the `panic` intrinsic the checker noted. The node's
+/// own type alone is not enough, and that was measured, not assumed: in an
+/// arm, a binding or a `??` fallback the checker records no type on the call
+/// at all (`type_if_known` answers `no_ty()`), so the first version of this
+/// door saw nothing there -- the same question `check/consume_flow.nv`
+/// (`@flow_call`) answers by the callee's return type for the same reason.
+fn Emitter @diverges(e Node) -> bool {
+    if is_never_ty(@ctx.tys, @out.type_if_known(e.id_of())) { return true }
+    ro k = e.kind_of()
+    if k != NodeKind.Call && k != NodeKind.MethodCall { return false }
+    if @out.contract_of(e.id_of()).is_some() { return call_callee_text(branch_children(e)) == PANIC_FN }
+    if !@out.has_callee(e.id_of()) { return false }
+    match @out.callee_of(e.id_of()).target {
+        CalleeFn(row) => is_never_ty(@ctx.tys, @ctx.fns.rows[raw_row(row)].ret_id)
+        // A construction returns its type; a display returns unit. An effect
+        // operation's own `-> never` is not a channel fact here (it has no
+        // callable row): registry 221.1 #1818 names that edge.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+    }
+}
+
+/// A VALUE of type `slot`, where the expression may diverge.
+///
+/// An ordinary value prints as itself. A divergence in a slot that is not
+/// itself `never` prints as `(<computation>, (T){0})`: the comma operator runs
+/// the call and DISCARDS its result, and the slot receives the zero of its own
+/// C type -- the form `@emit_decl` already prints for a zeroed temporary, so
+/// it is valid for every carrier the emitter has. The zero is never observed:
+/// the computation does not return. A `never` slot (the tail of a `-> never`
+/// body) keeps the plain form, because there the C types are the same.
+fn Emitter mut @emit_value_at(e Node, slot TyId) -> () {
+    if !@diverges(e) || is_never_ty(@ctx.tys, slot) {
+        @emit_expr(e)
+        return
+    }
+    @body.append("(")
+    @emit_expr(e)
+    @body.append(", (${c_type(@ctx, slot)}){0})")
+}
+
+/// A divergence in a slot that is NOT WRITTEN: the computation as a
+/// statement of its own. Two positions take it -- an interpolation slot,
+/// which hands its value to a display call rather than storing it, and a
+/// record constructor's field, whose type the emitter has no channel for (the
+/// field row from a name is the checker's, `check-novac-channel-one-writer`).
+/// Neither needs a value: control does not come back to the line after.
+fn Emitter mut @emit_diverging_stmt(e Node) -> () {
+    @body.append("    (void)(")
+    @emit_expr(e)
+    @body.append(");\n")
+}
+
+/// The type of call argument slot `s` -- asked ONLY for a diverging argument,
+/// to give the door above its slot. A variant's payload is its declared
+/// payload type (the maker's parameter, the same row `@emit_variant_ctor`
+/// declares its temporaries by). Any other callee does not reach here: the
+/// checker refuses a `never` argument to a function (registry 221.1 #1818),
+/// and an ordinary argument never asks.
+fn Emitter @arg_slot_ty(id NodeId, s int) -> TyId {
+    match @out.callee_of(id).target {
+        CalleeVariant(v) => @ctx.payload_types[@ctx.variant_rows[raw_vrow(v)].payload_off + s]
+        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => ice_at(
+            "novac/src/emit_c/emit_never.nv:97",
+            "emit_c: a diverging argument outside a variant's payload passed the checker -- its slot has no type here")
+    }
+}
