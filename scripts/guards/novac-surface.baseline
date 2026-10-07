@@ -350,11 +350,11 @@
 #   `is_serde_nested_scalar` (D341/D342 field eligibility and the direct wire call of a scalar), all asked by
 #   check/derive_serde.nv; names of the language and of std live in builtins (P5).
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
-# 2026-10-07, task #29 (221.1 #1787): builtins 96 -> 97: `c_name_needs_escape` -- the single registry of C
-#   keywords, header macros and fixed generator members a Nova name must not take verbatim (P5: these are
-#   names of C, not of Nova or std, but the no-name-hardcode guard routes any such list here); the sem door
-#   `c_ident` calls it.
-builtins 97
+builtins 96
+# 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
+#   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
+#   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.
+atomics 1
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует

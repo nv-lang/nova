@@ -24,21 +24,103 @@
 
 module novac.sem
 
-import ../builtins.{TypeKind, RESULT_SUM, c_name_needs_escape}
+import ../builtins.{TypeKind, RESULT_SUM}
+import ../atomics.{c_tls_keyword}
 import ../types.{TyId}
 
-// THE DOOR "Nova name -> C identifier" (221.1 #1787, plan 274.5 section 74).
-// A source name a field, a local, a parameter, a capture or a plain expression
+// THE DOOR "Nova name -> C identifier" (221.1 #1787, plan 274.5 section 74). A
+// source name a field, a local, a parameter, a capture or a plain expression
 // name carries becomes a C token here, ONCE, where the emitter prints it. The
-// rule and its word lists live in builtins.nv (`c_name_needs_escape`), the one
-// registry; the escaped form is the oracle's (`nv_signed`), so interop stays one
-// spelling.
+// rule is the oracle's (compiler-codegen `codegen/emit_c/c_name.rs`, `c_ident`),
+// word for word: escape as `nv_` + name when the name is a C keyword, a listed
+// header macro, a fixed struct member of the generator, an ALL-CAPS name of two
+// or more characters, or starts with `_`, `nv_`, `nova_`, `Nova` or `NOVA` --
+// except the compiler's own namespaces `_nv_`, `_nova_`, `_at_`, `__`. The
+// escaped form is the ORACLE's (`nv_signed`), so interop stays one spelling.
+//
+// The word lists live HERE, not in `builtins.nv` (reverted 2026-10-07, round 3
+// of #1787's acceptance): `builtins` is the P5 registry of NOVA's own and std's
+// names (`check-novac-no-name-hardcode.py`), and every C keyword placed there
+// read as a claimed Nova/std name, turning `if`/`void`/`return` in unrelated
+// files red. The door that owns these words is this one, not `builtins`.
+
+/// C keywords, C89..C23 and the extensions the supported compilers accept.
+/// `thread_local` is NOT here (274 §8.1): it lives behind the atomics door
+/// (`atomics/atomics.nv` `c_tls_keyword`), asked separately below.
+ro C_NAME_KEYWORDS = []str.of("auto", "break", "case", "char", "const", "continue", "default", "do",
+    "double", "else", "enum", "extern", "float", "for", "goto", "if",
+    "inline", "int", "long", "register", "restrict", "return", "short",
+    "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+    "unsigned", "void", "volatile", "while",
+    "alignas", "alignof", "bool", "constexpr", "false", "nullptr",
+    "static_assert", "true", "typeof", "typeof_unqual",
+    "_Alignas", "_Alignof", "_Atomic", "_BitInt", "_Bool", "_Complex",
+    "_Generic", "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
+    "asm", "fortran")
+
+/// Lower-case macros of the headers a generated unit includes (Windows and glibc / POSIX).
+ro C_NAME_MACROS = []str.of("near", "far", "interface", "small", "hyper", "pascal", "cdecl", "min",
+    "max", "linux", "unix", "i386", "alloca", "assert", "errno", "stdin", "stdout", "stderr", "offsetof",
+    "setjmp", "sigsetjmp", "h_addr", "h_errno", "fpclassify", "isfinite",
+    "isgreater", "isgreaterequal", "isinf", "isless", "islessequal",
+    "islessgreater", "isnan", "isnormal", "isunordered", "signbit",
+    "math_errhandling", "isalnum", "isalpha", "isascii", "isblank", "iscntrl",
+    "isdigit", "isgraph", "islower", "isprint", "ispunct", "isspace",
+    "isupper", "isxdigit", "toascii", "st_atime", "st_ctime", "st_mtime",
+    "d_fileno", "s6_addr", "s6_addr16", "s6_addr32", "sa_handler",
+    "sa_sigaction", "sched_priority", "sigmask", "howmany", "roundup",
+    "powerof2", "setbit", "clrbit", "isset", "isclr", "dlopen",
+    "be16toh", "be32toh", "be64toh", "le16toh", "le32toh", "le64toh",
+    "htobe16", "htobe32", "htobe64", "htole16", "htole32", "htole64",
+    "pthread_create", "pthread_join", "pthread_detach", "pthread_exit",
+    "pthread_cancel", "pthread_sigmask", "pthread_cleanup_push",
+    "pthread_cleanup_pop",
+    "s_addr", "s_host", "s_net", "s_imp", "s_impno", "s_lh")
+
+/// The fixed members the generator declares next to user-named members.
+ro C_NAME_MEMBERS = []str.of("ctx", "schedlink")
+
+/// The prefixes the generator and the runtime reserve, and the compiler's own namespaces inside `_`.
+ro C_NAME_PREFIXES = []str.of("_", "nv_", "nova_", "Nova", "NOVA")
+ro C_NAME_NAMESPACES = []str.of("_nv_", "_nova_", "_at_", "__")
+
+/// Does a Nova source name have to be escaped as `nv_` + name in C? (The rule of the comment above.)
+fn c_name_needs_escape(text str) -> bool {
+    for w in C_NAME_KEYWORDS { if w == text { return true } }
+    for w in C_NAME_MACROS { if w == text { return true } }
+    for w in C_NAME_MEMBERS { if w == text { return true } }
+    if c_name_is_all_caps(text) { return true }
+    if c_name_in_namespace(text) { return false }
+    for p in C_NAME_PREFIXES {
+        if text.starts_with(p) { return true }
+    }
+    false
+}
+
+/// `_nv_`, `_nova_`, `_at_`, `__`: the compiler's own names inside `_`, which pass unchanged.
+fn c_name_in_namespace(text str) -> bool {
+    for p in C_NAME_NAMESPACES {
+        if text.starts_with(p) { return true }
+    }
+    false
+}
+
+/// `IN`, `OUT`, `INT_MAX`: two or more characters, a capital first, no lower-case letter.
+fn c_name_is_all_caps(text str) -> bool {
+    ro b = text.bytes()
+    if b.len() < 2 { return false }
+    if !(b[0] >= 0x41 && b[0] <= 0x5A) { return false }
+    for c in b {
+        if c >= 0x61 && c <= 0x7A { return false }
+    }
+    true
+}
 
 /// THE door: the C identifier of a Nova source name. An empty name (a
 /// temporary's label) passes unchanged, and so does a bool literal, which the
 /// emitter passes around the door (`true` is a C keyword by spelling, not a name).
 export fn c_ident(name str) -> str {
-    if c_name_needs_escape(name) { "nv_${name}" } else { name }
+    if c_name_needs_escape(name) || name == c_tls_keyword() { "nv_${name}" } else { name }
 }
 
 /// IS THE C TYPE OF `t` A POINTER -- the answer of the SAME match that writes

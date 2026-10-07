@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- a one-function door, no design decision to attribute.
+// Role: THE door for `__atomic_` / `thread_local` / `nova_atomic_` (274 §8.1):
+// the only module where these three substrings may appear, in code or in an
+// emitted string (`check-novac-atomics-door.py`). Nothing atomic is compiled
+// yet; this module exists so the ONE word a non-atomics door needs
+// (`c_ident`'s C-keyword table, 221.1 #1787) asks it here instead of carrying
+// the literal itself. Leaf of the graph: imports nothing (docs/dev/
+// novac-architecture.md).
+// Used by: sem/mangle_spelling.nv (`c_ident`'s escape rule).
+// Guarded by: check-novac-atomics-door.py, check-novac-surface.py.
+
+/// The C23 keyword a Nova name must not take verbatim in C (thread-local
+/// storage): `thread_local`. Asked by the C-name door instead of a literal
+/// in its own table, so the word lives behind this one door.
+export fn c_tls_keyword() -> str => "thread_local"
