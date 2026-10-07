@@ -22,7 +22,7 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../parse.{parse}
 import ../check.{check}
-import ../diag.{Diagnostic, ice}
+import ../diag.{Diagnostic, ice_at}
 import ../emit_c.{emit_unit, render_program, UnitC}
 import ../mono.{reachable_in_program}
 import ../sem.{branch_children, leaf_kind, leaf_text, module_dotted, InteropTable, EmbedTable, embed_dir_of}
@@ -150,9 +150,9 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
             if owner == k { continue }
             ro nm = c_callable(ctx, row, []TyId.new())
             if owner < 0 || state[owner] != 2 {
-                ice("pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
+                ice_at("novac/src/pipeline/program.nv:153", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
             } else if wanted.add(nm) && done[owner] {
-                ice("pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
+                ice_at("novac/src/pipeline/program.nv:155", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
             } else {
                 // Recorded for its owner, which is still to come.
             }
@@ -193,7 +193,7 @@ fn visit_unit(k int, efrom []int, eto []int, mut state []int, mut topo []int) ->
         if state[t] == 0 {
             visit_unit(t, efrom, eto, state, topo)
         } else if state[t] == 1 {
-            ice("pipeline: an import cycle between the program's modules")
+            ice_at("novac/src/pipeline/program.nv:196", "pipeline: an import cycle between the program's modules")
         } else {
             // Already placed: an import of a module reached before.
         }

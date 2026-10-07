@@ -22,7 +22,7 @@ import ../sem.{branch_children, c_type, prim_row_of, is_int_prim, carrier_of}
 import ../sem.{const_int_value}
 import ../builtins.{BuiltinType, PrimFamily}
 import ../types.{is_ty}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// A cast. What arrives is what the checker admitted, and the checker recorded
 /// the operand's type beside the target's for every primitive pair.
@@ -57,7 +57,9 @@ fn Emitter mut @emit_cast(e Node) -> () {
     }
     match prim_row_of(@ctx.tys, from) {
         Some(fr) => {
-            ro tr = prim_row_of(@ctx.tys, to) ?? ice("emit: a primitive cast whose target has no row")
+            ro tr = prim_row_of(@ctx.tys, to) ?? ice_at(
+                "novac/src/emit_c/emit_cast.nv:60",
+                "emit: a primitive cast whose target has no row")
             @emit_prim_cast(kids[0], fr, tr)
         }
         None => @emit_expr(kids[0])
@@ -145,7 +147,9 @@ fn Emitter mut @emit_bit_infix(e Node, kids []Node, form str) -> () {
 fn Emitter mut @emit_folded_constant(e Node) -> bool {
     ro decided = @out.type_if_known(e.id_of())
     if !is_ty(decided) || decided == @ctx.prims.int_id { return false }
-    ro v = const_int_value(e) ?? ice("emit_c: a constant the checker adapted does not fold")
+    ro v = const_int_value(e) ?? ice_at(
+        "novac/src/emit_c/emit_cast.nv:150",
+        "emit_c: a constant the checker adapted does not fold")
     ro row = @arith_row(decided)
     @body.append("((${row.c_name})")
     @body.append("${v}")

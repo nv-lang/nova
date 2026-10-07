@@ -1,0 +1,15 @@
+// cmd: novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p1-vec-of-option/probe.nv
+// K3 probe: a vector whose ELEMENT is an applied sum (`Option[int]`). Two sem
+// doors answer "how is a type written inside a name": `c_in_name`
+// (mangle_spelling.nv:43, from `c_layout`, spells `Option[int]` by its family
+// `NovaOpt_nova_int`) and `instance_arg_spelling` (mangle_instance.nv:344, its
+// own kind-match, sends every TkApp to `instance_struct_name` -> `instance_body`,
+// which ices on a SUM head). The record instance `Vec[Option[int]]` is spelled
+// by `applied_body_text` -> `instance_arg_spelling`.
+
+fn count(xs []Option[int]) -> int => xs.len()
+
+fn main() {
+    ro xs = [Some(1), None, Some(3)]
+    println(count(xs))
+}

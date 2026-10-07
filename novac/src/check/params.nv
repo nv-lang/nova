@@ -24,7 +24,7 @@ module novac.check
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{param_name_at, param_type_at, param_mode_at, leaf_kind, leaf_text, raw_row, FnRow}
 import ../sem.{generic_head_cnt, shape_of, is_value_record}
 import ../types.{no_ty, is_ty}
@@ -53,7 +53,9 @@ fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
 fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> bool {
     // `param_type_at` locates the type AFTER the name, so a located type means
     // the name was located too; its absence here is a broken invariant.
-    ro nat = param_name_at(pk) ?? ice("check: a parameter with a type slot and no name slot")
+    ro nat = param_name_at(pk) ?? ice_at(
+        "novac/src/check/params.nv:56",
+        "check: a parameter with a type slot and no name slot")
     ro nnode = pk[nat]
     ro tnode = pk[tat]
     // THE ROW DECIDES, not the tree shape (step B2): `xs []int` carries an

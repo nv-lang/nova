@@ -1,0 +1,11 @@
+module kinds
+
+// The PROGRAM module of probe p3 (handed to novac through NOVAC_SELF_PATH).
+// A sum named like std.io's `ErrorKind`, which the shell already spells
+// (`struct Nova_ErrorKind`, tags `NOVA_TAG_ErrorKind_*`). Variant `NotFound`
+// is shared with std's on purpose, at a DIFFERENT position (std's is first).
+export type ErrorKind enum
+    | Mine(int)
+    | NotFound
+
+export fn mine(n int) -> ErrorKind => Mine(n)

@@ -81,7 +81,7 @@ def scan(rel, text, bad):
             ok_default = True
         elif re.match(r"^[ \t]*_[ \t]*=>", line) and expl:
             ok_default = True
-        elif re.match(r"^[ \t]*_[ \t]*=>", line) and ("ice(" in line or "@refuse(" in line):
+        elif re.match(r"^[ \t]*_[ \t]*=>", line) and (re.search(r"ice(_at)?\(", line) or "@refuse(" in line):
             ok_default = True
         else:
             ok_default = False
@@ -154,7 +154,7 @@ def scan(rel, text, bad):
                     bad.append(f"  {rel}:{pending}: `else` за проверкой варианта (`{cond}`) делает работу, а не отказ")
                 pending = 0
                 continue
-            if re.search(r"ice\(|@refuse\(|report|NodeKind\.Err", line):
+            if re.search(r"ice(_at)?\(|@refuse\(|report|NodeKind\.Err", line):
                 pending = 0
             if not re.match(r"^[ \t]*//", raw):
                 look -= 1

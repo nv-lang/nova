@@ -22,7 +22,7 @@ import ../tree.{Node, NodeKind, no_node}
 // M3a: telling a string literal from any other argument needs the leaf's token kind.
 import ../lex.{TokenKind}
 import ../sem.{leaf_kind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{c_type, vec_op_c, raw_vrow, is_value_record, c_maker, VariantRow, ctor_field_name}
 // M3a: lowering `println` asks the tree three questions (is this an argument, what does the
 // callee spell, what are the children) and the output printer asks the carrier of a type.
@@ -92,7 +92,7 @@ fn Emitter mut @emit_last_stmt() -> () => @print_stmt(@lo.ir.last_stmt())
 fn Emitter mut @emit_decl(l Local) -> () {
     ro d = @lo.ir.decl_of(l)
     if d.decl_at != DeclAt.Zeroed {
-        ice("emit: a Decl statement for a local that is not zero-initialised")
+        ice_at("novac/src/emit_c/emit_place.nv:95", "emit: a Decl statement for a local that is not zero-initialised")
     }
     @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = (${c_type(@ctx, d.ty)}){0};\n")
 }
@@ -103,18 +103,42 @@ fn Emitter mut @emit_decl(l Local) -> () {
 fn Emitter @expr_of(rv Rvalue) -> Node {
     match rv {
         Expr(n) => n
-        Use(_) => ice("emit_c: an operand rvalue reached the printer before M2 lowers one")
-        SomePayload(_) => ice("emit_c: a payload read reached expr_of -- only an assignment prints it")
-        IndexPayload(_) => ice("emit_c: an element read reached expr_of -- only an assignment prints it")
-        IndexConst(_) => ice("emit_c: a constant-index element read reached expr_of -- only an assignment prints it")
-        IndexFromEnd(_) => ice("emit_c: a from-the-end element read reached expr_of -- only an assignment prints it")
-        CallNext(_) => ice("emit_c: an iterator's `next` reached expr_of -- only an assignment prints it")
-        VariantField(_) => ice("emit_c: a variant field read reached expr_of -- only an assignment prints it")
-        Read(_) => ice("emit_c: a place read reached expr_of -- only an assignment prints it")
-        AnyData(_) => ice("emit_c: an unboxing reached expr_of -- only an assignment prints it")
-        Bool(_) => ice("emit_c: a flag constant reached expr_of -- only an assignment prints it")
-        NoneOf => ice("emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
-        ErrOf(_) => ice("emit_c: an `Err` of the destination's type reached expr_of -- only an assignment prints it")
+        Use(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:106",
+            "emit_c: an operand rvalue reached the printer before M2 lowers one")
+        SomePayload(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:109",
+            "emit_c: a payload read reached expr_of -- only an assignment prints it")
+        IndexPayload(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:112",
+            "emit_c: an element read reached expr_of -- only an assignment prints it")
+        IndexConst(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:115",
+            "emit_c: a constant-index element read reached expr_of -- only an assignment prints it")
+        IndexFromEnd(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:118",
+            "emit_c: a from-the-end element read reached expr_of -- only an assignment prints it")
+        CallNext(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:121",
+            "emit_c: an iterator's `next` reached expr_of -- only an assignment prints it")
+        VariantField(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:124",
+            "emit_c: a variant field read reached expr_of -- only an assignment prints it")
+        Read(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:127",
+            "emit_c: a place read reached expr_of -- only an assignment prints it")
+        AnyData(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:130",
+            "emit_c: an unboxing reached expr_of -- only an assignment prints it")
+        Bool(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:133",
+            "emit_c: a flag constant reached expr_of -- only an assignment prints it")
+        NoneOf => ice_at(
+            "novac/src/emit_c/emit_place.nv:136",
+            "emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
+        ErrOf(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:139",
+            "emit_c: an `Err` of the destination's type reached expr_of -- only an assignment prints it")
     }
 }
 
@@ -279,7 +303,9 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
 fn Emitter @operand_name(op Operand) -> str {
     match op {
         Place(src) => @lo.ir.decl_of(src).name
-        Tree(_) => ice("emit_c: an operand of the tree reached emit_assign -- the bridge is Rvalue.Expr")
+        Tree(_) => ice_at(
+            "novac/src/emit_c/emit_place.nv:306",
+            "emit_c: an operand of the tree reached emit_assign -- the bridge is Rvalue.Expr")
     }
 }
 
@@ -411,7 +437,9 @@ fn Emitter mut @emit_element_store(st StoreStmt, built Option[str]) -> () {
     ro kids = branch_children(st.target)
     ro rt = @out.type_if_known(kids[0].id_of())
     if !is_ty(rt) {
-        ice("emit: an element store whose receiver type the checker did not record")
+        ice_at(
+            "novac/src/emit_c/emit_place.nv:440",
+            "emit: an element store whose receiver type the checker did not record")
     } else {
         // Decided: the receiver's temporary is typed from it.
     }

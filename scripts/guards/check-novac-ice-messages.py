@@ -30,7 +30,11 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-novac-ice-messages"
-RE_ICE = re.compile(r'ice\("([^"]*)"')
+RE_ICE = re.compile(r'ice_at\("([^"]*)", "([^"]*)"')
+RE_BARE = re.compile(r'(?<![A-Za-z0-9_.])ice\("')
+RE_OPEN = re.compile(r'ice_at\(\s*$')                # вызов переносится: место на следующей строке
+RE_PLACE_LINE = re.compile(r'^\s*"([^"]*)",\s*$')
+RE_MSG_LINE = re.compile(r'^\s*"([^"]*)"\)')
 RE_PREFIX = re.compile(r"^[a-z_]+: ")
 RE_COND = re.compile(r"if .* \{ ice\(")
 
@@ -54,16 +58,59 @@ def main():
     entries = []                       # «rel:строка:текст», как их клал awk
     texts = []
     cond = []
+    bare = []                          # голый ice(...) без места: дверь одна (№1782)
+    misplaced = []
+    try:
+        src_rel = src.resolve().relative_to(root).as_posix()
+    except ValueError:
+        src_rel = src.as_posix()
     for f in files:
         rel = str(f.relative_to(src)).replace("\\", "/")
+        pend = None                    # [строка «ice_at(», место] — вызов на несколько строк
         for n, line in enumerate(f.read_bytes().decode("utf-8", "replace").split("\n"), 1):
             if line.endswith("\r"):
                 line = line[:-1]
-            for m in RE_ICE.finditer(line):
-                entries.append(f"{rel}:{n}:{m.group(1)}")
-                texts.append(m.group(1))
+            if line.lstrip().startswith("//"):
+                continue
+            if RE_BARE.search(line):
+                bare.append(f"{src}/{rel}:{n}:{line.strip()}")
+            # Место называет сам вызов (№1782: дверь без места не отличает
+            # отказ от отказа); оно обязано совпасть со строкой вызова.
+            calls = [(n, m.group(1), m.group(2)) for m in RE_ICE.finditer(line)]
+            if pend is None and RE_OPEN.search(line):
+                pend = [n, None]           # аргументы идут на следующих строках
+            elif pend is not None:
+                if pend[1] is None:
+                    m = RE_PLACE_LINE.match(line)
+                    if m:
+                        pend[1] = m.group(1)
+                    else:
+                        pend = None
+                else:
+                    m = RE_MSG_LINE.match(line)
+                    if m:
+                        calls.append((pend[0], pend[1], m.group(1)))
+                    pend = None
+            for at, place, text in calls:
+                want = f"{src_rel}/{rel}:{at}"
+                if place != want:
+                    misplaced.append(f"{src}/{rel}:{at}: место «{place}», а вызов здесь «{want}»")
+                entries.append(f"{rel}:{at}:{text}")
+                texts.append(text)
             if RE_COND.search(line):
                 cond.append(f"{src}/{rel}:{n}:{line}")
+
+    if bare:
+        print(f"{NAME}: FAIL — голый ice(...) без места (№1782): дверь теперь "
+              f"ice_at(\"<путь>:<строка>\", \"текст\")", file=sys.stderr)
+        for b in bare:
+            print(f"  {b}", file=sys.stderr)
+        return 1
+    if misplaced:
+        print(f"{NAME}: FAIL — место ice_at не совпадает со строкой вызова (№1782):", file=sys.stderr)
+        for m in misplaced:
+            print(f"  {m}", file=sys.stderr)
+        return 1
 
     total = len(entries)
     if total == 0:

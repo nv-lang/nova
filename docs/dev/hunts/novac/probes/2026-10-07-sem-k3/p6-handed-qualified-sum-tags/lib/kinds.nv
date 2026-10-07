@@ -1,0 +1,12 @@
+module kinds
+
+// The PROGRAM module of probe p6 (handed through NOVAC_SELF_PATH). `Decomp`
+// is a name the SHELL already spells (`struct Nova_Decomp`, std.fs's PRIVATE
+// record, path.nv:153) -- private, so harvest registers THIS sum under the
+// name, and `decl_base` (mangle.nv:242) gives it the D381 base `kinds_Decomp`.
+
+export type Decomp enum
+    | Whole
+    | Part(int)
+
+export fn part(n int) -> Decomp => Part(n)

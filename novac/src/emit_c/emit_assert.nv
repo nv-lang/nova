@@ -20,11 +20,13 @@ module novac.emit_c
 import ../tree.{Node, raw_node}
 import ../sem.{call_arg_at, is_arg_node, literal_as_c_text}
 import ../lex.{TokenKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// `assert(cond[, msg])` as one C expression of type `nova_unit`.
 fn Emitter mut @emit_assert(e Node, kids []Node) -> () {
-    ro note = @out.contract_of(e.id_of()) ?? ice("emit_c: an assert the checker left without its note")
+    ro note = @out.contract_of(e.id_of()) ?? ice_at(
+        "novac/src/emit_c/emit_assert.nv:27",
+        "emit_c: an assert the checker left without its note")
     @body.append("((void)nova_assert_loc(")
     @emit_expr(call_arg_at(kids, 1, 0))
     @body.append(", \"")
@@ -77,7 +79,9 @@ fn assert_msg_computed(kids []Node) -> bool {
 /// then `nv_panic`, which never returns; the trailing `0` gives the comma
 /// expression the `never` type's C value (`nova_int`) for a value position.
 fn Emitter mut @emit_panic_call(e Node, kids []Node) -> () {
-    ro note = @out.contract_of(e.id_of()) ?? ice("emit_c: a panic the checker left without its note")
+    ro note = @out.contract_of(e.id_of()) ?? ice_at(
+        "novac/src/emit_c/emit_assert.nv:82",
+        "emit_c: a panic the checker left without its note")
     @body.append("(nova_throw_site_set_dominant(\"${@src_name}\", ${note.src_line}), ${RT_DEATH_C}(")
     @emit_expr(call_arg_at(kids, 1, 0))
     @body.append("), (nova_int)0LL)")

@@ -1,0 +1,16 @@
+# novac check rc=0 (clean); emit rc=0; lines of the emitted C naming ErrorKind outside the shell:
+20:typedef struct Nova_ErrorKind Nova_ErrorKind;
+1392:struct Nova_ErrorKind {
+3721:        _nv_match_17 = nova_make_ErrorKind_NotFound();
+3819:    if (!_nv_matched_29 && ((_nv_scr_27->tag == NOVA_TAG_ErrorKind_NotFound))) {
+12253:static nova_str novac_fn_show__ErrorKind__to_nova_str(Nova_ErrorKind* k) {
+12257:    if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_ErrorKind_Mine))) {
+12266:    if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_ErrorKind_NotFound))) {
+12273:    nova_print_str(novac_fn_show__ErrorKind__to_nova_str(novac_fn_kinds_mine__nova_int__to_ErrorKind(((nova_int)3LL))));
+12276:    nova_print_str(novac_fn_show__ErrorKind__to_nova_str(nova_make_ErrorKind_NotFound()));
+# occurrences of NOVA_TAG_ErrorKind_Mine in the whole unit (1 = the use only, no declaration):
+1
+# clang -fsyntax-only on the emitted importing unit (includes: compiler-codegen, libuv, bdwgc):
+emitted.c:12257:51: error: use of undeclared identifier 'NOVA_TAG_ErrorKind_Mine'; did you mean 'NOVA_TAG_ErrorKind_Other'?
+emitted.c:12258:37: error: no member named 'Mine' in 'union Nova_ErrorKind::(unnamed)'
+2 errors generated.

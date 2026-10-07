@@ -1,0 +1,14 @@
+// cmd: novac/target/novac.exe check docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p5-char-unicode-escape/probe.nv
+// K3 probe: the C spelling of a literal is computed by TWO doors. A string's
+// `\u{H…}` goes through `literal_as_c_text` -> `spell_unicode_escapes`
+// (literal_spelling.nv:125, new in this range); a CHAR literal's escape goes
+// through `char_literal_code` (literal_spelling.nv:75-90), whose escape table
+// knows n t r \ ' " 0 and ices on anything else. D467 section 2 names the
+// `\u{H…}` escape; the string door learned it, the char door did not.
+
+fn main() {
+    ro s = "\u{43f}"
+    println(s)
+    ro c = '\u{43f}'
+    println(c)
+}

@@ -22,7 +22,7 @@ module novac.sem
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, raw_node, is_node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../names.{NameTable, NamespaceId, DeclId, raw_decl, no_decl, is_decl}
 import ../builtins.{TypeKind, BuiltinType, COERCE_ATTR, UNIT_TYPE_NAME, PRIV_MARKER, is_field_visibility_word}
 import ../types.{Interner, TyId, no_ty, is_ty}

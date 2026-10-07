@@ -15,7 +15,7 @@
 
 module novac.lower
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{branch_children, leaf_text}
 
 /// A `with` statement (E.9 step 2). The parser's geometry, read the way the
@@ -29,7 +29,9 @@ fn Lowerer mut @lower_with(st Node) -> () {
     while bi + 2 < kids.len() {
         ro nm = kids[bi]
         if nm.kind_of() != NodeKind.LeafNode {
-            ice("lower: a with binding without its effect name reached the lowering")
+            ice_at(
+                "novac/src/lower/lower_with.nv:32",
+                "lower: a with binding without its effect name reached the lowering")
         }
         ro hexpr = kids[bi + 2]
         // The handler, evaluated ONCE into a local of its own type -- the
@@ -50,7 +52,9 @@ fn Lowerer mut @lower_with(st Node) -> () {
     }
     ro body = kids[kids.len() - 1]
     if body.kind_of() != NodeKind.Block {
-        ice("lower: a with statement without its body block reached the lowering")
+        ice_at(
+            "novac/src/lower/lower_with.nv:55",
+            "lower: a with statement without its body block reached the lowering")
     }
     ro c = @ir.begin_with(swaps)
     @lower_block_stmts_fn(body, false)

@@ -45,7 +45,7 @@ import ../lex.{lex, reserialize, Token}
 import ../parse.{parse}
 import ../tree.{Node, NodeKind, raw_node}
 import ../check.{check, check_instance, derive_serialize_text, DerivedText}
-import ../diag.{Diagnostic, ice}
+import ../diag.{Diagnostic, ice_at}
 import ../emit_c.{emit, Instantiation, shell_surface}
 import ../mono.{Reach, reachable}
 import ../sem.{Ctx, collect, decl_fn_row, branch_children, InteropTable, module_dotted, raw_row}
@@ -451,7 +451,9 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         // The pieces came from strings, so the bytes are UTF-8 by
         // construction and a failure here would mean the copy lost a
         // boundary -- an invariant of this function, not an input error.
-        Err(_) => ice("pipeline: a unit built from strings did not read back as UTF-8")
+        Err(_) => ice_at(
+            "novac/src/pipeline/pipeline.nv:454",
+            "pipeline: a unit built from strings did not read back as UTF-8")
     }
 }
 
@@ -718,17 +720,23 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                     // be a handed body (`Ctx @instantiates`); anything else is a
                     // broken invariant -- a call to a body novac does not compile
                     // is refused BY NAME in check.
-                    ro decl = ctx.handed.decl_of(it.row) ?? ice("pipeline: an instance of a row with no body novac was handed")
+                    ro decl = ctx.handed.decl_of(it.row) ?? ice_at(
+                        "novac/src/pipeline/pipeline.nv:723",
+                        "pipeline: an instance of a row with no body novac was handed")
                     ro t = ctx.handed.tree_of(it.row)
                     if t < 0 || t >= decls.len() {
-                        ice("pipeline: a handed body names a declaration tree outside the decls")
+                        ice_at(
+                            "novac/src/pipeline/pipeline.nv:728",
+                            "pipeline: a handed body names a declaration tree outside the decls")
                     } else {
                         // The tree the body was read from.
                     }
                     ro htree = decls[t]
                     // The ORIGINAL text, not a reserialized copy: a position is a
                     // slice's distance from the buffer it was cut from.
-                    ro htext = ctx.interop.decl_text(t) ?? ice("pipeline: a handed body to instantiate, but the declarations were handed undescribed")
+                    ro htext = ctx.interop.decl_text(t) ?? ice_at(
+                        "novac/src/pipeline/pipeline.nv:737",
+                        "pipeline: a handed body to instantiate, but the declarations were handed undescribed")
                     ro hname = ctx.interop.decl_name(t)
                     ro hsrc = SourceText { text: htext }
                     ro hcap = raw_node(htree.id_of()) + 1

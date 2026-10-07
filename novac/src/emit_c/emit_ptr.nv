@@ -14,7 +14,7 @@ module novac.emit_c
 import ../tree.{Node}
 import ../builtins.{TypeKind, PTR_WRITE_AT, PTR_WRITE_CONSUME_AT, PTR_OFFSET, PTR_DIST}
 import ../sem.{call_arg_at, leaf_text, sole_expr_of_unsafe}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../types.{is_ty}
 
 /// Is this method call's receiver a raw pointer (its recorded type)?
@@ -71,6 +71,8 @@ fn Emitter mut @emit_ptr_op(kids []Node) -> () {
 fn Emitter mut @emit_unsafe_value(e Node) -> () {
     match sole_expr_of_unsafe(e) {
         Some(x) => @emit_expr(x)
-        None => ice("emit: an `unsafe` block with statements in a position the lowering did not hoist")
+        None => ice_at(
+            "novac/src/emit_c/emit_ptr.nv:74",
+            "emit: an `unsafe` block with statements in a position the lowering did not hoist")
     }
 }

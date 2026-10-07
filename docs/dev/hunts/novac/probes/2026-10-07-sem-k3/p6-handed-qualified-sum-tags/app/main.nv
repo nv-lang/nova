@@ -1,0 +1,20 @@
+// cmd: NOVAC_SELF_PATH=docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p6-handed-qualified-sum-tags/lib novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p6-handed-qualified-sum-tags/app/main.nv | grep -n 'Decomp'
+// K3 probe: ONE handed sum, TWO bases in one unit. The struct (`c_type` ->
+// `c_layout` -> `type_base`, mangle.nv:391) and the tag enum (`c_tag_enum`,
+// mangle.nv:200) take the D381 base `kinds_Decomp`; the TAG CONSTANTS
+// (`c_tag` -> `c_shell_tag`, mangle.nv:714/730) and the MAKERS (`c_maker`,
+// mangle.nv:736/740) take `decl_of_ty(..).name` bare: `NOVA_TAG_Decomp_*`,
+// `nova_make_Decomp_*`. D381 (spec/decisions/08-runtime.md, "Единая точка"):
+// struct, tag and ctor all go through the one base.
+
+import kinds.{Decomp, part}
+
+fn show(d Decomp) -> str => match d {
+    Whole => "whole"
+    Part(n) => "part ${n}"
+}
+
+fn main() {
+    println(show(part(2)))
+    println(show(Whole))
+}

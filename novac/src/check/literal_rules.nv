@@ -24,7 +24,7 @@ import ../sem.{raw_frow, no_frow, ctor_field_name}
 import ../sem.{interp_slices, subst_type, literal_digits}
 import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
 import ../sem.{const_int_value}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{BuiltinType}
 import ../types.{TyId, is_ty}
 
@@ -184,7 +184,9 @@ fn Checker mut @lit_fits_or_refuse(e Node, t TyId) -> bool {
     // `v Small`, `type Small u8`, is out of range as `u8` is (part 9).
     ro row_opt = prim_row_of(@ctx.tys, numeric_rep(@ctx.tys, t))
     if row_opt.is_none() { return true }
-    ro r = row_opt ?? ice("check: a primitive row vanished between two reads of one Option")
+    ro r = row_opt ?? ice_at(
+        "novac/src/check/literal_rules.nv:187",
+        "check: a primitive row vanished between two reads of one Option")
     ro is_int = match r.family {
         PfInt => true
         PfFloat | PfStr | PfBool | PfChar | PfUnit | PfAny | PfNever => false

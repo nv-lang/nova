@@ -1,0 +1,19 @@
+// cmd: novac/target/novac.exe check docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p4-abi-name-sum-eq/probe.nv ; novac/target/novac.exe check docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p4-abi-name-sum-eq-control/probe.nv
+// K3 probe: the REPRESENTATION of a user's own sum decided from its NAME TEXT.
+// `is_payload_free_sum` (mangle.nv:112-113) answers false for any sum whose
+// declared name is on the runtime-ABI list (`is_runtime_abi_sum`,
+// builtins.nv:708: Decision, MemOrdering, OnceState, Result, RuntimeError,
+// ScopeOutcome, WaitResult) -- whoever declared it. The user's own
+// `WaitResult` below is payload-free and declares Equal, exactly like the
+// control (`Waited`, the sibling directory), and differs from it ONLY in the
+// spelling of its name.
+
+#impl(Equal)
+type WaitResult enum Ready | Timeout
+
+fn same(a WaitResult, b WaitResult) -> bool => a == b
+
+fn main() {
+    println(same(WaitResult.Ready, WaitResult.Ready))
+    println(same(WaitResult.Ready, WaitResult.Timeout))
+}

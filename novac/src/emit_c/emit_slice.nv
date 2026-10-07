@@ -16,24 +16,30 @@
 module novac.emit_c
 
 import ../tree.{Node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{RANGE_TYPE, END_INDEX_METHOD, VEC_INDEX_RANGE_OP}
 import ../sem.{slice_shape_of, range_index_symbol, c_method_symbol, c_type, branch_children, vec_op_c}
 import ../types.{is_ty}
 
 /// `x[lo..hi]` as the call `index(x, Range { start: lo, end: hi })`.
 fn Emitter mut @emit_slice(kids []Node) -> () {
-    ro sh = slice_shape_of(kids[2]) ?? ice("emit: a slice arm reached with no slice under the brackets")
+    ro sh = slice_shape_of(kids[2]) ?? ice_at(
+        "novac/src/emit_c/emit_slice.nv:26",
+        "emit: a slice arm reached with no slice under the brackets")
     ro st = @out.type_if_known(kids[0].id_of())
     if !is_ty(st) {
-        ice("emit: a slice whose receiver type the checker did not record reached emission")
+        ice_at(
+            "novac/src/emit_c/emit_slice.nv:31",
+            "emit: a slice whose receiver type the checker did not record reached emission")
     } else {
         // A checked slice: printed below.
     }
     // The shell's, or the instance this unit made from std's body (the checker
     // recorded its row, registry 1557) -- `vec_op_c` ices on neither.
     ro sym = range_index_symbol(@ctx, st) ?? vec_op_c(@ctx, st, VEC_INDEX_RANGE_OP, @out.vec_op_row(VEC_INDEX_RANGE_OP))
-    ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice("emit: the prelude's `Range` is not in the registry")
+    ro rng = @ctx.ty_of_name(RANGE_TYPE) ?? ice_at(
+        "novac/src/emit_c/emit_slice.nv:40",
+        "emit: the prelude's `Range` is not in the registry")
     ro bounds = branch_children(kids[2])
     @body.append("${sym}(")
     @emit_expr(kids[0])

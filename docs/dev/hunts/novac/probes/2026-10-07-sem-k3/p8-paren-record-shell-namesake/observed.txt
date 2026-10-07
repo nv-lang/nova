@@ -1,0 +1,26 @@
+# novac check:
+check rc=0
+emit rc=0
+# struct NovaTuple_Number bodies in the emitted unit (shell + program):
+416:typedef struct NovaTuple_Number NovaTuple_Number;
+417:struct NovaTuple_Number {
+945:typedef struct NovaRes_NovaTuple_Number_Nova_ParseFloatError_p NovaRes_NovaTuple_Number_Nova_ParseFloatError_p;
+2820:typedef struct NovaOpt_NovaTuple_Number { int tag; NovaTuple_Number value; } NovaOpt_NovaTuple_Number;
+2821:static inline nova_bool nova_opt_eq_NovaTuple_Number(NovaOpt_NovaTuple_Number a, NovaOpt_NovaTuple_Number b);
+2824:struct NovaRes_NovaTuple_Number_Nova_ParseFloatError_p { int tag; union { struct { NovaTuple_Number _0; } Ok; struct { Nova_ParseFloatError* _0; } Err; } payload; void* err_typed_payload; NovaTypeId err_typed_type_id; };
+2825:static inline NovaRes_NovaTuple_Number_Nova_ParseFloatError_p* nova_make_NovaRes_NovaTuple_Number_Nova_ParseFloatError_p_Ok(NovaTuple_Number v) { NovaRes_NovaTuple_Number_Nova_ParseFloatError_p* r = (NovaRes_NovaTuple_Number_Nova_ParseFloatError_p*)nova_alloc(sizeof(NovaRes_NovaTuple_Number_Nova_ParseFloatError_p)); r->tag = NOVA_TAG_Result_Ok; r->payload.Ok._0 = v; r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE; return r; }
+2826:static inline NovaRes_NovaTuple_Number_Nova_ParseFloatError_p* nova_make_NovaRes_NovaTuple_Number_Nova_ParseFloatError_p_Err(Nova_ParseFloatError* v) { NovaRes_NovaTuple_Number_Nova_ParseFloatError_p* r = (NovaRes_NovaTuple_Number_Nova_ParseFloatError_p*)nova_alloc(sizeof(NovaRes_NovaTuple_Number_Nova_ParseFloatError_p)); r->tag = NOVA_TAG_Result_Err; r->payload.Err._0 = v; r->err_typed_payload = NULL; r->err_typed_type_id = NOVA_TID_NONE; return r; }
+3548:static inline nova_bool nova_opt_eq_NovaTuple_Number(NovaOpt_NovaTuple_Number a, NovaOpt_NovaTuple_Number b) {
+12251:typedef struct NovaTuple_Number NovaTuple_Number;
+# the program's own body (emitted C lines 12251-12255):
+typedef struct NovaTuple_Number NovaTuple_Number;
+struct NovaTuple_Number {
+    nova_int a;
+    nova_int b;
+};
+# count of 'struct NovaTuple_Number {' bodies in the unit (shell :417 + program):
+2
+# clang -fsyntax-only on the emitted unit (includes: compiler-codegen, libuv, bdwgc):
+emitted.c:12252:8: error: redefinition of 'NovaTuple_Number'
+emitted.c:12258:36: error: no member named 'a' in 'struct NovaTuple_Number'
+emitted.c:12258:43: error: no member named 'b' in 'struct NovaTuple_Number'

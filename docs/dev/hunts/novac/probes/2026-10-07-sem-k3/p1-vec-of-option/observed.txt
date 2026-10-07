@@ -1,0 +1,1 @@
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/sem/mangle_instance.nv:295 (novac bug, not yours): mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family","poisoned_by":null}

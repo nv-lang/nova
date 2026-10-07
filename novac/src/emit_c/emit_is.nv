@@ -16,7 +16,7 @@
 module novac.emit_c
 
 import ../tree.{Node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{branch_children, is_any_ty, any_tid_c, variant_in_sum, c_tag, is_value_sum, type_ref_last_ident}
 import ../sem.{is_target_of, is_shell_applied_sum}
 
@@ -26,13 +26,17 @@ fn Emitter mut @emit_is_test(e Node) -> () {
     ro kids = branch_children(e)
     ro lt = @out.type_of(kids[0].id_of())
     if is_any_ty(@ctx.tys, lt) {
-        ro tid = any_tid_c(@ctx, is_target_of(e, @ctx)) ?? ice("emit: an is-test on an any whose target has no fixed type id reached the emitter")
+        ro tid = any_tid_c(@ctx, is_target_of(e, @ctx)) ?? ice_at(
+            "novac/src/emit_c/emit_is.nv:29",
+            "emit: an is-test on an any whose target has no fixed type id reached the emitter")
         @body.append("nova_any_is(")
         @emit_expr(kids[0])
         @body.append(", ${tid})")
         return
     }
-    ro vrow = variant_in_sum(@ctx, lt, type_ref_last_ident(kids[2])) ?? ice("emit: an is-test naming no variant of its sum reached the emitter")
+    ro vrow = variant_in_sum(@ctx, lt, type_ref_last_ident(kids[2])) ?? ice_at(
+        "novac/src/emit_c/emit_is.nv:37",
+        "emit: an is-test naming no variant of its sum reached the emitter")
     if is_shell_applied_sum(@ctx, lt) {
         @body.append("((")
         @emit_expr(kids[0])

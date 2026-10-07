@@ -17,7 +17,7 @@ module novac.lower
 
 import ../sem.{arm_body_at}
 import ../sem.{variant_in_sum, is_vrow, no_vrow, VariantRow}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{branch_children, pattern_lit_leaf}
 import ../sem.{raw_vrow}
 import ../sem.{payload_as_seen}
@@ -130,7 +130,9 @@ fn Lowerer @pattern_of(pat Node, scr_t TyId) -> Pattern {
         }
         Variant => {
             ro found = variant_in_sum(@ctx, scr_t, pattern_head_text(pat))
-            ro vrow = found ?? ice("lower: @pattern_of got a variant pattern naming no variant of the matched sum")
+            ro vrow = found ?? ice_at(
+                "novac/src/lower/lower_match.nv:133",
+                "lower: @pattern_of got a variant pattern naming no variant of the matched sum")
             Pattern.Variant(VariantMatch { head: vrow, also: []VariantRow.new() })
         }
         Disj => {
@@ -196,7 +198,9 @@ fn Lowerer mut @lower_pattern_bind_in(pat Node, ty TyId, base Local, pre []str) 
     mut opened = []IfCtx.new()
     @lower_pattern_tests(pat, ty, base, pre, opened)
     if opened.len() > 0 {
-        ice("lower: a nested pattern test in a position that has no arm to fall through to")
+        ice_at(
+            "novac/src/lower/lower_match.nv:201",
+            "lower: a nested pattern test in a position that has no arm to fall through to")
     }
 }
 
@@ -225,7 +229,9 @@ fn Lowerer mut @lower_pattern_tests(pat Node, ty TyId, base Local, pre []str, mu
         }
         Variant => {
             ro found = variant_in_sum(@ctx, ty, pattern_head_text(pat))
-            ro vrow = found ?? ice("lower: @lower_pattern_bind got a variant pattern naming no variant of the sum")
+            ro vrow = found ?? ice_at(
+                "novac/src/lower/lower_match.nv:232",
+                "lower: @lower_pattern_bind got a variant pattern naming no variant of the sum")
             ro vr = @ctx.variant_rows[raw_vrow(vrow)]
             // THE PAYLOAD READ HAS TWO ABI DOORS (the differential's E1 smoke,
             // wave P3): a SHELL Option stores its payload as `.value`
@@ -412,7 +418,9 @@ fn Lowerer mut @open_sub_test(sub Node, ty TyId, t Local, mut opened []IfCtx) ->
     ro option_head = is_ty(option_payload(@ctx, ty)) && pattern_shape(sub) != PatShape.Disj
     ro cond = if option_head {
         ro found = variant_in_sum(@ctx, ty, pattern_head_text(sub))
-        ro vrow = found ?? ice("lower: an Option subpattern naming no variant of Option")
+        ro vrow = found ?? ice_at(
+            "novac/src/lower/lower_match.nv:421",
+            "lower: an Option subpattern naming no variant of Option")
         if @ctx.variant_rows[raw_vrow(vrow)].payload_cnt > 0 { Cond.IsSome(t) } else { Cond.NotSome(t) }
     } else {
         Cond.Holds(PatTest { pat: @pattern_of(sub, ty), scr: t })
@@ -429,7 +437,9 @@ fn Lowerer mut @open_sub_test(sub Node, ty TyId, t Local, mut opened []IfCtx) ->
 /// so that a single later walk can print every arm without reading the tree again.
 fn Lowerer mut @lower_arm(arm Node, scr_t TyId, ls Local, c SwitchCtx, dest Local) -> () {
     ro ak = branch_children(arm)
-    ro arm_e = ak[arm_body_at(ak) ?? ice("emit_c: a match arm with no body reached the emitter")]
+    ro arm_e = ak[arm_body_at(ak) ?? ice_at(
+        "novac/src/lower/lower_match.nv:440",
+        "emit_c: a match arm with no body reached the emitter")]
     ro guard = @guard_of(ak)
     ro pattern = @pattern_of(ak[0], scr_t)
     // Recorded first, printed from the record (M2b-2 step 3a). The test itself already

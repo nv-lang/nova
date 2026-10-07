@@ -22,7 +22,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../sem.{is_arg_node, call_arg_at}
 import ../source.{Span}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// `assert(cond)` and `assert(cond, msg)`: the arity, the two types, and the
 /// note the emitter spells. A message that is not a string LITERAL is typed and
@@ -72,7 +72,7 @@ fn Checker mut @type_assert(e Node, kids []Node) -> () {
     // the condition's exact source slice and the line it starts on.
     ro lo = @first_leaf_offset(cond)
     if lo < 0 {
-        ice("check: an assert condition with no leaf reached the note door")
+        ice_at("novac/src/check/assert_call.nv:75", "check: an assert condition with no leaf reached the note door")
     }
     ro hi = @run_end_of([]Node.of(cond), lo)
     @chan.record_contract(e.id_of(), @src.slice(Span { lo, hi }), @line_at(lo))
@@ -114,7 +114,7 @@ fn Checker mut @type_panic_call(e Node, kids []Node) -> () {
     if @chan.contract_of(e.id_of()).is_none() {
         ro lo = @first_leaf_offset(e)
         if lo < 0 {
-            ice("check: a panic call with no leaf reached the note door")
+            ice_at("novac/src/check/assert_call.nv:117", "check: a panic call with no leaf reached the note door")
         }
         @chan.record_contract(e.id_of(), "", @line_at(lo))
     } else {

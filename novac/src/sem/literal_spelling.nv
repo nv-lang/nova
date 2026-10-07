@@ -21,7 +21,7 @@
 
 module novac.sem
 
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// The C SPELLING of an integer literal's text. C reads a leading zero as
 /// OCTAL (hunt 2026-09-02, N1: `println(0123)` printed 83, a `010 =>` arm
@@ -87,7 +87,7 @@ export fn char_literal_code(t str) -> str {
         if e == ('\'' as u8) { return "39" }
         if e == ('"' as u8) { return "34" }
         if e == ('0' as u8) { return "0" }
-        ice("mangle: a char escape the judge let through")
+        ice_at("novac/src/sem/literal_spelling.nv:90", "mangle: a char escape the judge let through")
     }
     // One UTF-8 codepoint, 1-4 bytes: the head byte announces the length and
     // carries the high bits, each continuation byte carries six more.

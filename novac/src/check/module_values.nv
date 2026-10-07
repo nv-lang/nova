@@ -15,7 +15,7 @@
 module novac.check
 
 import ../tree.{Node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{raw_crow, branch_children, const_full_name, ConstRow}
 import ../types.{no_ty, is_ty}
 
@@ -145,7 +145,9 @@ fn arrow_path(names []str) -> str {
 /// declaration whose read closes the cycle, the value being typed right now,
 /// with the path from `name` round to itself.
 fn Checker mut @report_module_cycle(name str) -> () {
-    ro row = raw_crow(@const_seen(name) ?? ice("check: a module value in a cycle lost its row"))
+    ro row = raw_crow(@const_seen(name) ?? ice_at(
+        "novac/src/check/module_values.nv:148",
+        "check: a module value in a cycle lost its row"))
     mut from = 0 - 1
     for i in 0..@mv_stack.len() {
         if from < 0 && @mv_stack[i] == row {
@@ -170,7 +172,7 @@ fn Checker mut @report_module_cycle(name str) -> () {
             // Another module value's declaration.
         }
     }
-    ice("check: a module value in a cycle without its declaration")
+    ice_at("novac/src/check/module_values.nv:175", "check: a module value in a cycle without its declaration")
 }
 
 /// A module value's initializer, typed ONCE into the file's channel

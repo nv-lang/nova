@@ -92,7 +92,7 @@ def scan_file(rel, text, bad):
         attr = False
         if "@body.append(" in line:
             writes = True
-        if "ice(" in line:
+        if re.search(r"ice(_at)?\(", line):
             continue
         why = ""
         if ".of(" in line or re.search(r"\]\.new\(\)", line):

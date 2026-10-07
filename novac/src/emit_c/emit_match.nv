@@ -24,7 +24,7 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../sem.{branch_children, leaf_text, leaf_kind, c_type}
 import ../sem.{int_literal_c_text, char_literal_code}
 import ../lex.{TokenKind}
@@ -114,7 +114,9 @@ fn Emitter mut @emit_text_lit_test(n Node, scr Local) -> () {
             @body.append("nova_str_eq(${scr_c}, _novac_strlit_${@tag}${idx})")
         }
         CharLit => @body.append("(${scr_c} == ((nova_char)${char_literal_code(leaf_text(n))}U))")
-        _ => ice("emit_c: a text literal arm whose token is neither a string nor a char")
+        _ => ice_at(
+            "novac/src/emit_c/emit_match.nv:117",
+            "emit_c: a text literal arm whose token is neither a string nor a char")
     }
 }
 

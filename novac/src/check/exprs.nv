@@ -26,7 +26,7 @@ module novac.check
 
 import ../lex.{Token, TokenKind}
 import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{ENTRY_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
 import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
 import ../sem.{gate_names, field_range_of, raw_frow}
@@ -516,7 +516,9 @@ fn Checker mut @type_expr(e Node) -> () {
                             @record(e, @const_type_of(t.text))
                             @chan.record_const(e.id_of(), row)
                         }
-                        None => ice("check: a constant typed by name that the registry does not carry")
+                        None => ice_at(
+                            "novac/src/check/exprs.nv:519",
+                            "check: a constant typed by name that the registry does not carry")
                     }
                 } else {
                     // A payload-less VARIANT as a VALUE (bare `Dot`, the

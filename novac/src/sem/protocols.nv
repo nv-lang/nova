@@ -25,7 +25,7 @@ module novac.sem
 import ../types.{TyId, no_ty, is_ty, Interner}
 import ../names.{NameTable, NamespaceId}
 import ../tree.{Node, NodeKind}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// ONE required signature of a protocol: `@size() -> int`.
 ///
@@ -176,7 +176,7 @@ export fn fill_proto_sigs(mut protos ProtoTable, decl Node, tname str,
     if Some(pd) = protos.def_of(tname) {
         si = pd.sig_off
     } else {
-        ice("sem: pass 2 sees a protocol pass 1 did not register")
+        ice_at("novac/src/sem/protocols.nv:179", "sem: pass 2 sees a protocol pass 1 did not register")
     }
     for m in branch_children(decl) {
         if m.kind_of() != NodeKind.ProtoMethod { continue }

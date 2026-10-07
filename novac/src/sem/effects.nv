@@ -39,7 +39,7 @@ import ../types.{TyId, no_ty, Interner}
 import ../names.{NameTable, NamespaceId}
 import ../tree.{Node, NodeKind}
 import ../builtins.{UNIT_TYPE_NAME}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 /// ONE operation of an effect's schema: `fn read(p str) -> []u8`.
 ///
@@ -149,7 +149,7 @@ fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
                               types []TypeDef, defs DefTable, mut tys Interner) -> () {
     mut oi = match fx.def_of(tname) {
         Some(ed) => ed.op_off
-        None => ice("sem: pass 2 sees an effect pass 1 did not register")
+        None => ice_at("novac/src/sem/effects.nv:152", "sem: pass 2 sees an effect pass 1 did not register")
     }
     for m in branch_children(decl) {
         if m.kind_of() != NodeKind.EffectOp { continue }

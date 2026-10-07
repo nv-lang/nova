@@ -49,7 +49,7 @@ test "ice_json carries every schema field and the message" {
     // The hand-built last-resort JSON (see ice_json's doc for WHY it is not
     // serde) is pinned to the schema HERE -- silent drift of the hand copy
     // is the exact K4 risk the owner questioned, and this unit is its guard.
-    ro j = ice_json("probe message")
+    ro j = ice_json("novac/src/probe.nv:7", "probe message")
     assert(j.contains("\"id\""))
     assert(j.contains("E_NOVAC_ICE"))
     assert(j.contains("\"severity\""))
@@ -58,4 +58,13 @@ test "ice_json carries every schema field and the message" {
     assert(j.contains("\"poisoned_by\""))
     assert(j.contains("probe message"))
     assert(j.contains("novac bug, not yours"))
+}
+
+test "ice_json names the novac site that died, and the site is escaped" {
+    // Registry 221.1 №1782: the ICE line must print file and line. A door that
+    // drops the site (the old `ice(msg)`) makes this red.
+    ro j = ice_json("novac/src/emit_c/emit_expr.nv:110", "probe")
+    assert(j.contains("at novac/src/emit_c/emit_expr.nv:110 (novac bug"))
+    ro q = ice_json("a\"b:1", "probe")
+    assert(q.contains("at a\\\"b:1 (novac bug"))
 }

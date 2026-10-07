@@ -7,7 +7,7 @@ module novac.parse
 
 import ../lex.{lex}
 import ../tree.{Node, NodeKind, tree_reserialize}
-import ../diag.{ice}
+import ../diag.{ice_at}
 
 fn roundtrip(src str) -> bool => tree_reserialize(parse(lex(src))) == src
 
@@ -582,7 +582,7 @@ fn handler_lit_test_stmt(f Node) -> ro Node {
         }
         Leaf(_) => {}
     }
-    ice("parse test: the fixture has no with statement")
+    ice_at("novac/src/parse/parse_test.nv:585", "parse test: the fixture has no with statement")
 }
 
 
@@ -645,7 +645,7 @@ fn supervised_test_stmt(f Node) -> ro Node {
         }
         Leaf(_) => {}
     }
-    ice("parse test: the fixture has no supervised statement")
+    ice_at("novac/src/parse/parse_test.nv:648", "parse test: the fixture has no supervised statement")
 }
 
 test "shape: a signature without a body ends where the next declaration begins (#1439)" {

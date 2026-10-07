@@ -16,7 +16,7 @@
 
 module novac.sem
 
-import ../diag.{ice}
+import ../diag.{ice_at}
 import ../builtins.{prim_c_name, OPTION_FAMILY_C, OPTION_SUM, RESULT_FAMILY_C, RESULT_SUM}
 import ../builtins.{FMT_PROTO, FMT_IMPL}
 import ../builtins.{TypeKind, SLICE_HEAD}
@@ -292,11 +292,15 @@ fn instance_body(ctx Ctx, t TyId) -> str {
         // the family spelling above, without building a record-shaped body. The
         // ice stays because this door is about the RECORD body specifically, and
         // a caller that asks it for a sum is asking the wrong door.
-        TkSum => ice("mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family")
+        TkSum => ice_at(
+            "novac/src/sem/mangle_instance.nv:295",
+            "mangle: the record-shaped instance body of a generic SUM -- ask `c_instance_method`, which spells a sum by its family")
         // A head is a declaration; these are not declarations a `[T]` can hang on.
         // TkEffect joins them: an effect head owns operations, not an instance body.
         TkPrim | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr =>
-            ice("mangle: an application whose head is not a record or sum declaration")
+            ice_at(
+                "novac/src/sem/mangle_instance.nv:301",
+                "mangle: an application whose head is not a record or sum declaration")
     }
     applied_body_text(ctx, t)
 }
@@ -355,13 +359,23 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         // representation's layout"): one canon, one name (K3), where this arm
         // used to be the second answer, an ice after a green check.
         TkNewtype => instance_arg_spelling(ctx, representation_of(ctx, a))
-        TkTuple => ice("mangle: a TUPLE as an instance argument — its in-name spelling is not measured on the shell")
-        TkPtr => ice("mangle: a POINTER as an instance argument — its in-name spelling is not measured on the shell")
+        TkTuple => ice_at(
+            "novac/src/sem/mangle_instance.nv:362",
+            "mangle: a structural term as an instance argument — its in-name spelling is not measured on the shell")
+        TkPtr => ice_at(
+            "novac/src/sem/mangle_instance.nv:365",
+            "mangle: a POINTER as an instance argument — its in-name spelling is not measured on the shell")
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). An effect has no in-name spelling.
-        TkEffect => ice("mangle: an EFFECT as an instance argument — an effect value reaches a generic instance only through a with-door bug (E4 wave)")
-        TkParam => ice("mangle: a type parameter as an instance argument — layout asked before substitution")
-        TkInfer => ice("mangle: an inference variable as an instance argument — a variable escaped its body")
+        TkEffect => ice_at(
+            "novac/src/sem/mangle_instance.nv:370",
+            "mangle: an EFFECT as an instance argument — an effect value reaches a generic instance only through a with-door bug (E4 wave)")
+        TkParam => ice_at(
+            "novac/src/sem/mangle_instance.nv:373",
+            "mangle: a type parameter as an instance argument — layout asked before substitution")
+        TkInfer => ice_at(
+            "novac/src/sem/mangle_instance.nv:376",
+            "mangle: an inference variable as an instance argument — a variable escaped its body")
     }
 }
 

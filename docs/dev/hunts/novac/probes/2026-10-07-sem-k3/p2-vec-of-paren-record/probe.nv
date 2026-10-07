@@ -1,0 +1,23 @@
+// cmd: novac/target/novac.exe emit docs/dev/hunts/novac/probes/2026-10-07-sem-k3/p2-vec-of-paren-record/probe.nv | grep -n 'Pt'
+// K3 probe: ONE type, TWO C spellings. `type Pt(x int, y int)` is a
+// parenthesised record (shape NamedTuple). Its struct is `NovaTuple_Pt`
+// (`c_struct`, mangle.nv:470 / `c_layout`, mangle.nv:386, PAREN_RECORD_C_PREFIX),
+// and `c_in_name` (mangle_spelling.nv:43) writes it the same way inside a name.
+// But the record-instance body `Vec[Pt]` is spelled by `instance_arg_spelling`
+// (mangle_instance.nv:348-349), whose `is_value_record` reads "true" for every
+// non-heap shape and writes `NovaValue_Pt` -- a struct no declaration defines.
+
+type Pt(x int, y int)
+
+fn total(ps []Pt) -> int {
+    mut s = 0
+    for p in ps {
+        s += p.x + p.y
+    }
+    s
+}
+
+fn main() {
+    ro ps = [Pt(1, 2), Pt(3, 4)]
+    println(total(ps))
+}

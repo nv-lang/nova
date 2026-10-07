@@ -44,7 +44,7 @@ RE_RETURN = re.compile(r"(^|[^a-zA-Z_])return([^a-zA-Z_]|$)")
 # @refuse_kind(..., DiagKind.LangError), `rules.nv:857` @reject_first_leaf_of ->
 # @report_first_leaf_kind(..., DiagKind.LangError) — обе делегируют в двери, которые
 # страж признавал и раньше. Множество решений прежнее, названо целиком.
-RE_DECISION = re.compile(r"@refuse\(|@reject\(|@reject_|@report_|ice\(|@out\.len\(\) > (?:0|[a-z_][a-z_0-9]*)")
+RE_DECISION = re.compile(r"@refuse\(|@reject\(|@reject_|@report_|ice(?:_at)?\(|@out\.len\(\) > (?:0|[a-z_][a-z_0-9]*)")
 
 
 def main():
