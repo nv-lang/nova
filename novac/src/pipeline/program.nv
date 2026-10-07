@@ -25,7 +25,7 @@ import ../check.{check}
 import ../diag.{Diagnostic, ice_at}
 import ../emit_c.{emit_unit, render_program, UnitC}
 import ../mono.{reachable_in_program}
-import ../sem.{branch_children, leaf_kind, leaf_text, module_dotted, InteropTable, EmbedTable, embed_dir_of}
+import ../sem.{branch_children, file_decls, leaf_kind, leaf_text, module_dotted, InteropTable, EmbedTable, embed_dir_of}
 import ../sem.{CNames, c_callable, FnRow}
 import ../types.{TyId}
 
@@ -247,16 +247,13 @@ fn norm_dir(p str) -> str {
 /// The directories the unit's RELATIVE imports name (`./geo` beside it,
 /// `../source` beside its directory), joined to the unit's own directory.
 /// An import of std names no directory of the program and is skipped.
+/// `export import ./x.{..}` sits inside its wrapper, which the door `file_decls`
+/// opens -- the one place that knows the wrapper (registry 1794).
 fn import_dirs(tree Node, dir str) -> []str {
     mut out = []str.new()
-    for c in branch_children(tree) {
+    for c in file_decls(tree) {
         if c.kind_of() == NodeKind.ImportDecl {
             note_import(c, dir, out)
-        } else if c.kind_of() == NodeKind.ExportDecl {
-            // `export import ./x.{..}`: the import sits inside its wrapper.
-            for w in branch_children(c) {
-                if w.kind_of() == NodeKind.ImportDecl { note_import(w, dir, out) } else { continue }
-            }
         } else {
             // A declaration: no import.
         }

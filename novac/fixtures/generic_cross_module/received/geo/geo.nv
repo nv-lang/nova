@@ -1,0 +1,19 @@
+module received.geo
+
+// A MODULE OF THE PROGRAM whose entry is `pos_1.nv` one directory up, not a
+// fixture of its own: it declares the type every other module passes around and
+// the generics they instantiate over it. Nothing here builds a `[]Pt` -- the
+// vectors are built by the entry and only RECEIVED by `mid`, which
+// is the shape of registry 1793.
+
+/// A point of the plane, declared here and used by every module of the program.
+export type Pt {
+    x int
+    y int
+}
+
+/// How many elements `xs` holds: instantiated over `Pt` by the modules that call it.
+export fn count[T](xs []T) -> int => xs.len()
+
+/// The first element of `xs`: an instance returning the element type itself.
+export fn first[T](xs []T) -> T => xs[0]

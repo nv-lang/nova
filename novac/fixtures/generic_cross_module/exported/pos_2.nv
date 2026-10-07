@@ -1,0 +1,18 @@
+module exported.pos_2
+
+// NOVAC_PROGRAM
+// REGISTRY 1794: `loc` declares `export fn tally[T]` and instantiates it over
+// `geo.Pt` itself. Before the fix novac iced "pipeline: an instance of a row
+// with no body novac was handed": the instance's declaration was looked up by
+// a raw walk over the root's children, which does not see inside an `export`
+// wrapper (`../pos_4` is the same hole in one file).
+
+import ./geo.{Pt}
+import ./loc.{wrap_local}
+
+fn main() {
+    mut xs = []Pt.new()
+    xs.push(Pt { x: 1, y: 2 })
+    xs.push(Pt { x: 3, y: 4 })
+    println(wrap_local(xs))
+}
