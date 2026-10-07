@@ -134,7 +134,7 @@
 # print/println). База в main не поднята: двоичный novac самого main (`dc2617993`) даёт те же
 # 15386/15316/15309/15277. Эмиссия novac не менялась -- рост целиком оболочечный.
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-match_demo 15606
+match_demo 15610
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
 records 15535
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
@@ -165,7 +165,7 @@ records 15535
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-arithmetic 15528
+arithmetic 15530
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
 #   the shell, novac's own emission unchanged. +5446 came with E.9 step 1
 #   (75b205fe0): the shell probe imports std.fs/std.os and exercises args, an
@@ -255,3 +255,10 @@ hello 15494
 #   15306 -> 15525, hello 15274 -> 15493. novac's own emission for these files did not change.
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
+# 2026-10-07, task #34 (registry 1823, D484 s2 over D69): +4 lines on match_demo, +2 on arithmetic --
+#   `@lower_println` now lays every argument that calls something into a local of its own, in
+#   source order, BEFORE the first output (the per-argument order of H1 printed before a later
+#   argument's effects). One line per such argument: match_demo has four println calls with a
+#   call in an argument (`area(..)`, `describe(..)`), arithmetic two (`factorial(5)`, `fib(10)`);
+#   records and hello have none and did not move.
+#   Measured by this guard: match_demo 15606 -> 15610, arithmetic 15528 -> 15530.

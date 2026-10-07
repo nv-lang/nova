@@ -15,7 +15,7 @@ import ../diag.{ice_at}
 import ../sem.{branch_children}
 import ../sem.{narrowing_of}
 import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind, leaf_text}
-import ../sem.{literal_prim_of, print_call_ends_line}
+import ../sem.{literal_prim_of, print_call_ends_line, contains_call}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{is_option_some_pattern}
 import ../sem.{loop_ctl_is_break, is_collection_head}
@@ -752,15 +752,17 @@ fn Lowerer mut @lower_eval(e Node) -> () {
     @ir.eval(e)
 }
 
-/// Lowers one `println` into the sequence it IS: per argument, whatever the argument needs
-/// laid down first, then that argument's own output statement; one newline at the end.
+/// Lowers one `println` into the sequence it IS: first every argument that calls
+/// something, laid down into its own local in source order; then per argument its output
+/// statement; one newline at the end.
 ///
-/// WHY A SEQUENCE AND NOT ONE CALL. Hoisting the whole call up front ran a constructor
-/// argument's effects AHEAD of its neighbours' prints -- the oracle printed `head` then
-/// ticked, novac ticked first (hunt emit_c x K1, finding H1). The order of output against
-/// argument effects is therefore observable, and an observable order belongs in the
-/// channel: here each argument's lowering lands immediately before ITS OWN output
-/// statement, so the interleaving holds by construction instead of by the printer's care.
+/// WHY THE ARGUMENTS COME FIRST. `println` is a call (D69), so D484 s2 applies: all of its
+/// arguments are evaluated, left to right, before it prints anything, and that order is
+/// observable. Hoisting only the CONSTRUCTIONS up front (the first edition) ran a
+/// constructor argument's effects ahead of a neighbour that calls; printing each argument
+/// right after its own lowering (H1, 2026-08-31, matching the oracle of that day) printed
+/// before a later argument's effects. Both broke D484; the pass in the body is the order
+/// the norm states, by construction rather than by the printer's care (registry #1823).
 ///
 /// A construction (an array literal, a record or positional record, an interpolation) is
 /// still printed from the tree and hoisted by the printer right before its own output line
@@ -768,6 +770,38 @@ fn Lowerer mut @lower_eval(e Node) -> () {
 /// `??` is the one form that could not stay: it LOWERS. It leaves through the one door
 /// above, and this is why the two refusals of step 3b close.
 fn Lowerer mut @lower_println(call Node) -> () {
+    // EVERY ARGUMENT THAT CALLS SOMETHING IS EVALUATED BEFORE THE FIRST OUTPUT
+    // (registry 221.1 #1823, D484 s2 over D69). `println` is `fn print(...items
+    // []any)`: its arguments are evaluated left to right and the call prints
+    // after ALL of them -- observably. The per-argument sequence above (H1,
+    // 2026-08-31) matched the oracle of that day, which printed `head` before a
+    // later argument's `tick`; the oracle has since been brought to D484 and
+    // prints `tick` then `head1`, and Carina kept the retired order -- the
+    // corpus carrier `println_arg_effect_order.nv` diverged on every run from
+    // 2026-10-03. Only an argument that calls something is laid down: one
+    // without a call has no effect to order, and a temporary for it would be
+    // emission nobody needs (the rule of `@hoist_ordered_args`). And when the ONLY
+    // argument that calls something is the FIRST, nothing is printed before it and no
+    // sibling is evaluated ahead of it: `println(f(x))` keeps its one line.
+    mut first_arg = true
+    mut calling = 0
+    mut calling_first = false
+    for c in branch_children(call) {
+        ro ck = c.kind_of()
+        if ck != NodeKind.Lit && !is_expr_kind(ck) { continue }
+        if ck != NodeKind.Lit && contains_call(c) {
+            calling += 1
+            calling_first = calling_first || first_arg
+        } else {
+            // A literal or an argument without a call: nothing to order.
+        }
+        first_arg = false
+    }
+    if calling == 0 || (calling == 1 && calling_first) {
+        // Nothing is evaluated after an output: the sequence below is already D484's order.
+    } else {
+        @lay_print_args(call)
+    }
     for c in branch_children(call) {
         ro ck = c.kind_of()
         if ck == NodeKind.Lit {
@@ -799,6 +833,14 @@ fn Lowerer mut @lower_println(call Node) -> () {
             @ir.output(Operand.Tree(c), lty)
         } else if is_expr_kind(ck) {
             ro ty = @out.type_of(c.id_of())
+            ro laid = @ir.local_of_node(c.id_of())
+            if laid != no_local() {
+                // Laid down by the pass above: its effects have run, it prints its local.
+                @ir.output(Operand.Place(laid), ty)
+                continue
+            } else {
+                // Not laid down: nothing in it calls anything.
+            }
             match @lower_value_source(c, ty) {
                 Some(l) => @ir.output(Operand.Place(l), ty)
                 None => {
@@ -829,6 +871,28 @@ fn Lowerer mut @lower_println(call Node) -> () {
         }
     }
     @ir.output_end(print_call_ends_line(call))
+}
+
+/// Every argument of a `print`/`println` that calls something, into a local of its own,
+/// in source order (registry #1823, D484 s2). The output loop of `@lower_println` then
+/// prints the local, so the arguments' effects have all run before the first output.
+fn Lowerer mut @lay_print_args(call Node) -> () {
+    for c in branch_children(call) {
+        ro ck = c.kind_of()
+        if ck == NodeKind.Lit || !is_expr_kind(ck) || !contains_call(c) { continue }
+        if @ir.local_of_node(c.id_of()) != no_local() { continue }
+        ro t = @out.type_if_known(c.id_of())
+        if !is_ty(t) {
+            // SILENT-OK: an argument the checker recorded no type for was refused where
+            // it was typed (the rule of `@hoist_ordered_args`); it prints in place.
+            continue
+        } else {
+            // A typed argument that calls something: it gets its own local, in order.
+        }
+        ro l = @ir.temp(t)
+        @lower_place(c, l)
+        @ir.remember_hoist(c.id_of(), l)
+    }
 }
 
 /// THE LOWERING HALF of the dispatch on the form of a value: a `match` and an `if` in value
