@@ -81,7 +81,7 @@
     "reviewer": 4,
     "acceptor": 4
   },
-  "machine_slots": 1,
+  "machine_slots": 2,
   "inflight_limit": 5,
   "heavy_commands": [
     "gate.sh",
