@@ -1,0 +1,30 @@
+module never_value_pos.pos_2
+
+// A `-> never` CALL AS THE VALUE OF A `match` ARM whose siblings are `str`
+// (registry 221.1 #1792): first, middle and last arm, and a match that is the
+// whole `=>` body as well as one bound to a name. No diverging arm runs.
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn word(n int) -> str => match n {
+    0 => boom("zero")
+    1 => "one"
+    2 => boom("two")
+    _ => "many"
+}
+
+fn last(n int) -> str {
+    ro w = match n {
+        1 => "first"
+        _ => boom("other")
+    }
+    w
+}
+
+fn main() {
+    println(word(1))
+    println(word(7))
+    println(last(1))
+}

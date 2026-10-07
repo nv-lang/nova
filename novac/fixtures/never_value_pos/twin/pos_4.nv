@@ -1,0 +1,46 @@
+module twin.pos_4
+
+// The ORACLE's twin of ../pos_4.nv: the same program with the diverging
+// payload argument written as a statement followed by an unreachable value
+// (the oracle passes the call's `nova_int` to the maker's `nova_str`
+// parameter, registry 221.1 #1819). The paths that differ are not taken, so
+// the output is the same.
+
+type Shape enum
+    | Named(str)
+    | Rec { text str, size int }
+    | Blank
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn describe(s Shape) -> str => match s {
+    Named(t) => t
+    Rec { text, size } => "${text}/${size}"
+    Blank => "blank"
+}
+
+fn named(n int) -> Shape {
+    ro s = if n > 100 {
+        boom("named")
+        Shape.Named("not reached")
+    } else {
+        Shape.Named("named ok")
+    }
+    s
+}
+
+fn rec(n int) -> Shape {
+    if n > 100 {
+        boom("rec")
+        return Shape.Rec { text: "not reached", size: n }
+    }
+    Shape.Rec { text: "rec ok", size: n }
+}
+
+fn main() {
+    println(describe(named(1)))
+    println(describe(rec(2)))
+    println(describe(Shape.Blank))
+}
