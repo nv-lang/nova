@@ -154,3 +154,44 @@ export fn Ctx @in_program(row FnRow) -> bool {
     ro h = @fns.rows[raw_row(row)].handed_from
     h != "" && @interop.has_module(h)
 }
+
+/// A4 FENCE OF THE PROGRAM (registry 221.1 #1813): does payload-free sum `t`
+/// stand as an argument -- of an application or a newtype -- in THIS unit's
+/// pool or in any other unit's of the program? The oracle compiles a program
+/// as ONE unit, so its fence (`sum_placement.rs`) is a fact of the whole
+/// program; judged by the unit's own pool alone, `lex` printed
+/// `NovaValue_TokenKind` and `parse` (`[]TokenKind`) `Nova_TokenKind*` --
+/// ~950 clang errors on novac itself. `fences` is empty in a single unit, where
+/// the answer is the pool's alone. Asked only by `is_value_sum`, after
+/// `is_payload_free_sum` -- so `t` is a sum with a declaration.
+fn is_fenced(ctx Ctx, t TyId) -> bool {
+    if ctx.tys.is_arg_anywhere(t) { return true }
+    ctx.fences.name_cnt > 0 && ctx.fences.has(fence_key(ctx, t))
+}
+
+/// Add THIS unit's fence to the program's: every payload-free sum of the
+/// PROGRAM standing in the unit's argument pool, by `fence_key`. A sum of the
+/// shell keeps its unit's answer -- the shell's layout is the oracle's emission
+/// of the probe, not this program's to decide.
+export fn note_fences(ctx Ctx, mut into CNames) -> () {
+    for i in 0..ctx.tys.arg_pool_len() {
+        ro t = ctx.tys.arg_pool_at(i)
+        if !is_payload_free_sum(ctx, t) { continue }
+        ro k = fence_key(ctx, t)
+        if k != "" {
+            ro _ = into.add(k)
+        } else {
+            // The shell's sum: not the program's to fence.
+        }
+    }
+}
+
+/// The program-wide name of sum `t`: its owning module in C shape and its
+/// declared name -- one string in every unit that names the sum (the owner is
+/// `program_type_module`'s, #1786); `""` for the shell's.
+fn fence_key(ctx Ctx, t TyId) -> str {
+    match program_type_module(ctx, ctx.tys.decl_head_of(t)) {
+        Some(m) => "${m}.${decl_of_ty(ctx, t).name}"
+        None => ""
+    }
+}

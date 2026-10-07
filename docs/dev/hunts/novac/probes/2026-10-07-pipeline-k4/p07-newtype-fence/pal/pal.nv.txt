@@ -1,0 +1,25 @@
+module p07_newtype_fence.pal
+
+// The owner of a payload-free sum. It uses `Color` by value only: alone, this
+// unit would lay it out as NovaValue_Color.
+
+/// A colour: no variant carries a payload.
+#impl(Equal)
+export type Color enum
+    | Red
+    | Green
+    | Blue
+
+/// The colour's name -- a match in the owner.
+export fn color_name(c Color) -> str => match c {
+    Red => "red"
+    Green => "green"
+    Blue => "blue"
+}
+
+/// The next colour round the wheel -- `==` in the owner.
+export fn next_color(c Color) -> Color {
+    if c == Color.Red { return Color.Green }
+    if c == Color.Green { return Color.Blue }
+    Color.Red
+}

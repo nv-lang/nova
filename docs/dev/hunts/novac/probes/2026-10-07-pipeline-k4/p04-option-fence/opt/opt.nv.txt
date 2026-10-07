@@ -1,0 +1,9 @@
+module p04_option_fence.opt
+
+import ../pal.{Color}
+
+/// A colour for a positive code.
+export fn maybe(code int) -> Option[Color] {
+    if code > 0 { return Some(Color.Green) }
+    None
+}

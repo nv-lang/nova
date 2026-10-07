@@ -1,5 +1,0 @@
-module p07_const.geo
-
-export const LIMIT int = 10
-
-export fn within(x int) -> bool => x < LIMIT

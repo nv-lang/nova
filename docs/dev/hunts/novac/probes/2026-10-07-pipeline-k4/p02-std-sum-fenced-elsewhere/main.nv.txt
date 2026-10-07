@@ -1,0 +1,16 @@
+module p02_std_sum_fenced_elsewhere.main
+
+// NOVAC_PROGRAM
+// The entry uses std's PathStyle by value only; module `bag` fences it.
+
+import std.fs.{PathStyle}
+import ./bag.{styles}
+
+fn main() {
+    ro s = PathStyle.Windows
+    match s {
+        Posix => println("posix")
+        Windows => println("windows")
+    }
+    println(styles().len())
+}

@@ -1,0 +1,63 @@
+=== PROGRAM
+--- ./gen/gen.nv
+     1	module p03b_fence_in_instance_option.gen
+     2	
+     3	/// `a` when `first`, else `b` -- through an option only the instance holds.
+     4	export fn pick[T](a T, b T, first bool) -> T {
+     5	    ro o = if first { Some(a) } else { None }
+     6	    match o {
+     7	        Some(x) => x
+     8	        None => b
+     9	    }
+    10	}
+--- ./main.nv
+     1	module p03b_fence_in_instance_option.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// `Color` (module pal) is used by value everywhere it is written; the only
+     5	// `Option[Color]` is inside the body of `gen.pick[Color]`, an instance.
+     6	
+     7	import ./pal.{Color, color_name, next_color}
+     8	import ./gen.{pick}
+     9	
+    10	fn main() {
+    11	    ro c = next_color(Color.Red)
+    12	    println(color_name(c))
+    13	    println(color_name(pick[Color](c, Color.Blue, true)))
+    14	    println(color_name(pick[Color](c, Color.Blue, false)))
+    15	}
+--- ./pal/pal.nv
+     1	module p03b_fence_in_instance_option.pal
+     2	
+     3	// The owner of a payload-free sum. It uses `Color` by value only: alone, this
+     4	// unit would lay it out as NovaValue_Color.
+     5	
+     6	/// A colour: no variant carries a payload.
+     7	#impl(Equal)
+     8	export type Color enum
+     9	    | Red
+    10	    | Green
+    11	    | Blue
+    12	
+    13	/// The colour's name -- a match in the owner.
+    14	export fn color_name(c Color) -> str => match c {
+    15	    Red => "red"
+    16	    Green => "green"
+    17	    Blue => "blue"
+    18	}
+    19	
+    20	/// The next colour round the wheel -- `==` in the owner.
+    21	export fn next_color(c Color) -> Color {
+    22	    if c == Color.Red { return Color.Green }
+    23	    if c == Color.Green { return Color.Blue }
+    24	    Color.Red
+    25	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — clang -c упал: <smoke>/body.c:12337:5: error: unknown type name 'NovaOpt_Nova_Color_p'; did you mean 'NovaOpt_Nova_File_p'?
+ 12337 |     NovaOpt_Nova_Color_p _novac_l2 = (NovaOpt_Nova_Color_p){0};
+       |     ^~~~~~~~~~~~~~~~~~~~
+       |     NovaOpt_Nova_File_p
+<smoke>/body.c:809:58: note: 'NovaOpt_Nova_File_p' declared here
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Color: NovaValue_Color 0, Nova_Color* 26

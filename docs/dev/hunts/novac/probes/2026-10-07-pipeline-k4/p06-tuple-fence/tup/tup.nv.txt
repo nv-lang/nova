@@ -1,0 +1,6 @@
+module p06_tuple_fence.tup
+
+import ../pal.{Color}
+
+/// A colour with its code.
+export fn tagged(k int) -> (Color, int) => (Color.Blue, k)

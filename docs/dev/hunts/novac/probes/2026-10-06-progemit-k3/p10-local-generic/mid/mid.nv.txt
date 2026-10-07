@@ -1,7 +1,0 @@
-module p10_local_generic.mid
-
-import ../geo.{Pt}
-
-export fn count[T](xs []T) -> int => xs.len()
-
-export fn wrap(ps []Pt) -> int => count[Pt](ps)

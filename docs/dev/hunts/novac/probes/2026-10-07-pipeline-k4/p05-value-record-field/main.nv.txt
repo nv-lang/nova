@@ -1,0 +1,15 @@
+module p05_value_record_field.main
+
+// NOVAC_PROGRAM
+// `pal.Px` is a value record holding a `Color`; module `bag` fences `Color`.
+// The receiver of `Px @label` crosses by copy or by pointer by the record's
+// size -- which depends on whether `Color` lies inline.
+
+import ./pal.{Color, Px}
+import ./bag.{count}
+
+fn main() {
+    ro p = Px { c: Color.Blue, n: 7 }
+    println(p.label())
+    println(count(Color.Red))
+}

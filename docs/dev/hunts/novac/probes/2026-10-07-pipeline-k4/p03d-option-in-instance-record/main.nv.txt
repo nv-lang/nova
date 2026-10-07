@@ -1,0 +1,23 @@
+module p03d_option_in_instance_record.main
+
+// `Option[Pt]` stands only inside the body of `pick[Pt]`, an instance; `Pt`
+// is a plain record. Unit mode -- no program root.
+
+/// A point.
+type Pt {
+    x int
+}
+
+/// `a` when `first`, else `b` -- through an option only the instance holds.
+fn pick[T](a T, b T, first bool) -> T {
+    ro o = if first { Some(a) } else { None }
+    match o {
+        Some(x) => x
+        None => b
+    }
+}
+
+fn main() {
+    println(pick[Pt](Pt { x: 1 }, Pt { x: 2 }, true).x)
+    println(pick[Pt](Pt { x: 1 }, Pt { x: 2 }, false).x)
+}

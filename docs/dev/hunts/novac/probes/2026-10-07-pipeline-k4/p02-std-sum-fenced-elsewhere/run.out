@@ -1,0 +1,39 @@
+=== PROGRAM
+--- ./bag/bag.nv
+     1	module p02_std_sum_fenced_elsewhere.bag
+     2	
+     3	import std.fs.{PathStyle}
+     4	
+     5	/// Both styles, in a vector -- the fence.
+     6	export fn styles() -> []PathStyle {
+     7	    mut xs = []PathStyle.new()
+     8	    xs.push(PathStyle.Posix)
+     9	    xs.push(PathStyle.Windows)
+    10	    xs
+    11	}
+--- ./main.nv
+     1	module p02_std_sum_fenced_elsewhere.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// The entry uses std's PathStyle by value only; module `bag` fences it.
+     5	
+     6	import std.fs.{PathStyle}
+     7	import ./bag.{styles}
+     8	
+     9	fn main() {
+    10	    ro s = PathStyle.Windows
+    11	    match s {
+    12	        Posix => println("posix")
+    13	        Windows => println("windows")
+    14	    }
+    15	    println(styles().len())
+    16	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — clang -c упал: <smoke>/body.c:12258:5: error: unknown type name 'Nova_PathStyle'; did you mean 'Nova_PathStyle_Tag'?
+ 12258 |     Nova_PathStyle** data;
+       |     ^~~~~~~~~~~~~~
+       |     Nova_PathStyle_Tag
+<smoke>/body.c:37:3: note: 'Nova_PathStyle_Tag' declared here
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+PathStyle: NovaValue_PathStyle 18, Nova_PathStyle* 19

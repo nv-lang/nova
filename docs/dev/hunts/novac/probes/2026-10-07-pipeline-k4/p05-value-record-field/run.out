@@ -1,0 +1,74 @@
+=== PROGRAM
+--- ./bag/bag.nv
+     1	module p05_value_record_field.bag
+     2	
+     3	import ../pal.{Color}
+     4	
+     5	/// How many times `c` is in a vector of three -- the fence.
+     6	export fn count(c Color) -> int {
+     7	    mut xs = []Color.new()
+     8	    xs.push(Color.Red)
+     9	    xs.push(Color.Green)
+    10	    xs.push(Color.Red)
+    11	    mut n = 0
+    12	    for x in xs {
+    13	        if x == c { n += 1 }
+    14	    }
+    15	    n
+    16	}
+--- ./main.nv
+     1	module p05_value_record_field.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// `pal.Px` is a value record holding a `Color`; module `bag` fences `Color`.
+     5	// The receiver of `Px @label` crosses by copy or by pointer by the record's
+     6	// size -- which depends on whether `Color` lies inline.
+     7	
+     8	import ./pal.{Color, Px}
+     9	import ./bag.{count}
+    10	
+    11	fn main() {
+    12	    ro p = Px { c: Color.Blue, n: 7 }
+    13	    println(p.label())
+    14	    println(count(Color.Red))
+    15	}
+--- ./pal/pal.nv
+     1	module p05_value_record_field.pal
+     2	
+     3	// The owner of a payload-free sum. It uses `Color` by value only: alone, this
+     4	// unit would lay it out as NovaValue_Color.
+     5	
+     6	/// A colour: no variant carries a payload.
+     7	#impl(Equal)
+     8	export type Color enum
+     9	    | Red
+    10	    | Green
+    11	    | Blue
+    12	
+    13	/// The colour's name -- a match in the owner.
+    14	export fn color_name(c Color) -> str => match c {
+    15	    Red => "red"
+    16	    Green => "green"
+    17	    Blue => "blue"
+    18	}
+    19	
+    20	/// The next colour round the wheel -- `==` in the owner.
+    21	export fn next_color(c Color) -> Color {
+    22	    if c == Color.Red { return Color.Green }
+    23	    if c == Color.Green { return Color.Blue }
+    24	    Color.Red
+    25	}
+    26	
+    27	/// A small value record with a sum field.
+    28	export type Px value {
+    29	    c Color
+    30	    n int
+    31	}
+    32	
+    33	/// The record's text -- a `ro @` receiver.
+    34	export fn Px @label() -> str => "${color_name(@c)}:${@n}"
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke ok: <tmp>/p05_value_record_field/main.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Color: NovaValue_Color 0, Nova_Color* 35
