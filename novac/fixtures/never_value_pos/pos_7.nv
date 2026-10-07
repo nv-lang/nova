@@ -1,0 +1,40 @@
+module never_value_pos.pos_7
+
+// A `-> never` CALL AS A FIELD OF A RECORD CONSTRUCTION (registry 221.1
+// #1792): a value record (built on the stack) and a heap record (built
+// through a pointer), the diverging field first and last. The field is
+// computed as a statement and left unwritten -- control does not come back to
+// read it. No diverging field runs.
+
+type Label value {
+    text str
+    width int
+}
+
+type Card {
+    title str
+    body str
+}
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn label(n int) -> Label {
+    if n > 100 {
+        return Label { text: boom("label"), width: n }
+    }
+    Label { text: "label ok", width: n }
+}
+
+fn card(n int) -> Card {
+    ro c = if n > 100 { Card { title: "t", body: boom("card") } } else { Card { title: "card", body: "ok" } }
+    c
+}
+
+fn main() {
+    ro l = label(4)
+    println("${l.text} ${l.width}")
+    ro c = card(5)
+    println("${c.title} ${c.body}")
+}

@@ -1,0 +1,26 @@
+module never_value_pos.pos_3
+
+// A `-> never` CALL AS AN INTERPOLATION SLOT (registry 221.1 #1792): the
+// slot has nothing to display, so the call runs as a statement and the chain
+// goes on, unreached. novac's emitter used to send the slot to the display
+// door and die: "a never interpolation slot passed the checker -- it has no
+// value". The slot alone, and between two fragments and a value slot. No
+// diverging slot runs.
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn work(n int) -> str => if n > 100 { "${boom("huge")}" } else { "fine" }
+
+fn mixed(n int) -> str {
+    if n > 100 {
+        return "n=${n}, then ${boom("mixed")}!"
+    }
+    "n=${n}"
+}
+
+fn main() {
+    println(work(5))
+    println(mixed(6))
+}
