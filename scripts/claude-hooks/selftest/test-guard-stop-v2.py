@@ -341,7 +341,7 @@ def c_no_agents_no_line_needed(tmp):
 
 
 # --------------------------------------- код «жду» (задача интегратора #5, 2026-10-05)
-# Ожидание окна доказывается файлом состояния вкладки плагина opencode-peers:
+# Ожидание окна доказывается файлом состояния вкладки плагина crew-harness:
 # `$XDG_DATA_HOME/opencode/nova-peers/status/<OPENCODE_SESSION_ID>.json` и
 # `watches/*.json`. Корень данных — шов через XDG_DATA_HOME, машинных путей нет.
 # Клетки идут парами: живое ожидание пропускается, пустое — блокируется.
@@ -368,7 +368,7 @@ def _peers(xdg, status=None, watches=()):
     return base
 
 
-def _wait(tmp, status=None, watches=(), arg=u"peer_watch гейта", sid=PEERS_SID,
+def _wait(tmp, status=None, watches=(), arg=u"crew_watch гейта", sid=PEERS_SID,
           drop_sid=False):
     xdg = tempfile.mkdtemp(prefix="stopwait-")
     try:
@@ -389,7 +389,7 @@ def c_wait_live_watch(tmp):
 
 
 def c_wait_req_file_before_status(tmp):
-    u"""Только что поставленный peer_watch: в status его ещё нет, есть задание."""
+    u"""Только что поставленный crew_watch: в status его ещё нет, есть задание."""
     return _wait(tmp, PEERS_EMPTY,
                  [("1791-x.req.json", {"session": PEERS_SID, "command": "gate"})]), False
 

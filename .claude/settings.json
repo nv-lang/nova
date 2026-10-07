@@ -108,7 +108,7 @@
         ]
       },
       {
-        "matcher": "Bash|mcp__peers__.*",
+        "matcher": "Bash|mcp__crew__.*",
         "hooks": [
           {
             "type": "command",

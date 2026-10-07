@@ -1,0 +1,33 @@
+module consume_diverging_call.pos_1
+
+// A DIVERGING CALL AFTER THE VALUE IS CONSUMED (registry 221.1 #1762): nothing is owned
+// where it leaves, so the exit is clean -- as a statement, inside the arm of an `if`
+// statement and of an `if` value. The calls are not reached at run time. (A `never` call as
+// the VALUE of an arm, or as an interpolation slot, is checked by the same door but not yet
+// emitted by novac -- registry 221.1 #TBD; the negative fixtures hold those positions.)
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work(n int) -> str {
+    consume b = StringBuilder.new(cap: 8)
+    ro s = b.into_str()
+    if n < 0 {
+        boom("negative")
+    } else {
+        // Nothing to leave on this path.
+    }
+    ro t = if n > 100 {
+        boom("too big")
+        "not reached"
+    } else {
+        "ok"
+    }
+    "${s}${t}${n}"
+}
+
+fn main() {
+    println(work(3))
+}

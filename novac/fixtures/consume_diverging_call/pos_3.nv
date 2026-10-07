@@ -1,0 +1,26 @@
+module consume_diverging_call.pos_3
+
+// THE RIGHT OF `??` DIVERGES, THE LEFT GOES ON (registry 221.1 #1762). On the empty path
+// `give_up(b)` takes `b` and never returns; the path that goes on is the left side's, where
+// `b` is still owned -- so the `b.into_str()` after it is accepted. Before #1762 the right
+// side's state joined the left's, and `b` was refused as possibly consumed. The oracle
+// still does so (its part of #1762): the run is compared against the twin pos_5.
+
+// NOVAC_TWIN pos_5.nv
+
+fn give_up(consume b StringBuilder) -> never {
+    println(b.into_str())
+    give_up(StringBuilder.new(cap: 1))
+}
+
+fn get(n int) -> Option[int] => if n > 0 { Some(n) } else { None }
+
+fn work(n int) -> str {
+    consume b = StringBuilder.new(cap: 8)
+    ro v = get(n) ?? give_up(b)
+    "${v}${b.into_str()}"
+}
+
+fn main() {
+    println(work(5))
+}
