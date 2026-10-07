@@ -36,7 +36,9 @@ RE_OPEN = re.compile(r'ice_at\(\s*$')                # вызов перенос
 RE_PLACE_LINE = re.compile(r'^\s*"([^"]*)",\s*$')
 RE_MSG_LINE = re.compile(r'^\s*"([^"]*)"\)')
 RE_PREFIX = re.compile(r"^[a-z_]+: ")
-RE_COND = re.compile(r"if .* \{ ice\(")
+# Условный отказ — и голый `ice(`, и дверь `ice_at(` (№1782): после перехода на
+# ice_at вторая половина стража молча перестала ловить `if … { ice_at(…) }`.
+RE_COND = re.compile(r"if .* \{ ice(_at)?\(")
 
 
 def main():

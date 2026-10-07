@@ -1623,8 +1623,9 @@
 #   gaps=, the numbers 1772-1791 of this branch leave it by this merge as well.
 # 2026-10-07, integrator, batch #23/#25/#27 (one candidate): rows of #23 (1772-1776, 1778-1781, 1783, 1785-1791, 1793-1794), #25 (1804, 1806-1810) and #27 (1784, one row with #23's duplicate dropped) are all in; gaps= keeps 1795-1803 (#22, open) and 1805 (integrator's hook defect, not filed yet).
 # 2026-10-07, integrator: rows 1805 (hook takes the role from the main branch) and 1811 (fuzzer timeout without a kept case) filed = 1739, max 1810 -> 1811; 1805 leaves gaps=.
-rows=1739
-max=1811
+# 2026-10-07, integrator: row 1812 (ice guard lost its conditional half; selftest fixed) = 1740, max 1812.
+rows=1740
+max=1812
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
