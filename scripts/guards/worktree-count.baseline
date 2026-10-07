@@ -123,10 +123,10 @@
 #   were merged. nova-carina moved to worktrees/ (mv + `git worktree repair` + submodule gitfile and
 #   core.worktree paths one level deeper). Left: main + worktrees/nova-carina.
 # 2026-10-05 (integrator, OpenCode): 2 -> 5. BUMP by the owner's decision of the same day: Carina
-#   work is handed out as peer_spawn tasks, each in its own worktree (worktrees/nova-opencode-<n>-
+#   work is handed out as crew_spawn tasks, each in its own worktree (worktrees/nova-opencode-<n>-
 #   <slug>), at most three at once (owner's limit; two while the machine runs a differential).
 #   5 = main + worktrees/nova-carina (branch p274-carina-coalesce, kept by the owner's word) + 3 task
-#   trees. A task's tree is removed when the task is accepted (`peer_task cleaned`), and the base
+#   trees. A task's tree is removed when the task is accepted (`crew_task cleaned`), and the base
 #   goes down with the last one.
 # 2026-10-05 (integrator, OpenCode): 5 -> 7. Two more task trees by the owner's word of 17:50:
 #   tasks #4 (acceptor merges into main) and #5 (Stop hook code "wait") -- rules and a hook, not the

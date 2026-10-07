@@ -59,7 +59,7 @@
 # DOUBLE_BUILD_DEADLINE -- seconds per heavy step (default 900).
 #
 # Usage: sh scripts/tools/double-build.sh            (heavy: ~3 novac builds;
-#        run it through peer_watch {machine: true}, never beside a gate)
+#        run it through crew_watch {machine: true}, never beside a gate)
 #        sh scripts/tools/double-build.sh --compare X Y
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
