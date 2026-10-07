@@ -19,8 +19,8 @@ mkdir -p "$TMP/scripts/guards" "$TMP/std/src"
 cp "$HERE/../std-module-coverage-scan.py" "$TMP/scripts/guards/"
 BASE="$TMP/scripts/guards/std-module-coverage.baseline"
 
-run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
-say() { sh "$G" "$TMP" 2>&1; }
+run() { bash "$G" "$TMP" >/dev/null 2>&1; echo $?; }
+say() { bash "$G" "$TMP" 2>&1; }
 
 mk_mod() {
     mkdir -p "$TMP/std/src/$1"
