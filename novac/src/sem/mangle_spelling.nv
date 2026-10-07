@@ -24,7 +24,8 @@
 
 module novac.sem
 
-import ../builtins.{TypeKind, RESULT_SUM}
+import ../builtins.{TypeKind, RESULT_SUM, ASSERT_FN, SUM_MARKER, INT_TYPE_NAME, BOOL_TYPE_NAME, CHAR_TYPE_NAME}
+import ../builtins.{bool_c_literal}
 import ../atomics.{c_tls_keyword}
 import ../types.{TyId}
 
@@ -45,22 +46,31 @@ import ../types.{TyId}
 // files red. The door that owns these words is this one, not `builtins`.
 
 /// C keywords, C89..C23 and the extensions the supported compilers accept.
-/// `thread_local` is NOT here (274 §8.1): it lives behind the atomics door
-/// (`atomics/atomics.nv` `c_tls_keyword`), asked separately below.
-ro C_NAME_KEYWORDS = []str.of("auto", "break", "case", "char", "const", "continue", "default", "do",
-    "double", "else", "enum", "extern", "float", "for", "goto", "if",
-    "inline", "int", "long", "register", "restrict", "return", "short",
+/// The one C23 keyword for thread-local storage is NOT spelled here (274
+/// §8.1): it lives behind the atomics door and is asked separately below --
+/// this table may not carry it, by the same P5 reasoning as the paragraph
+/// above: a name confined to one door is not a second literal elsewhere.
+/// Four entries below are not literals: `char`/`int`/`bool` collide with
+/// Nova's own primitive spellings and `enum` with `SUM_MARKER` -- P5 gives
+/// each ONE home in `builtins.nv`, so the door asks for them rather than
+/// retyping them (a literal here would read as a second, unrelated claim to
+/// the same Nova name, which `check-novac-no-name-hardcode.py` polices).
+ro C_NAME_KEYWORDS = []str.of("auto", "break", "case", CHAR_TYPE_NAME, "const", "continue", "default", "do",
+    "double", "else", SUM_MARKER, "extern", "float", "for", "goto", "if",
+    "inline", INT_TYPE_NAME, "long", "register", "restrict", "return", "short",
     "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
     "unsigned", "void", "volatile", "while",
-    "alignas", "alignof", "bool", "constexpr", "false", "nullptr",
-    "static_assert", "true", "typeof", "typeof_unqual",
+    "alignas", "alignof", BOOL_TYPE_NAME, "constexpr", bool_c_literal(false), "nullptr",
+    "static_assert", bool_c_literal(true), "typeof", "typeof_unqual",
     "_Alignas", "_Alignof", "_Atomic", "_BitInt", "_Bool", "_Complex",
     "_Generic", "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
     "asm", "fortran")
 
 /// Lower-case macros of the headers a generated unit includes (Windows and glibc / POSIX).
+/// `assert` is not a literal here either: it is Nova's own intrinsic name
+/// (`ASSERT_FN`, P5), which happens to be a glibc macro too.
 ro C_NAME_MACROS = []str.of("near", "far", "interface", "small", "hyper", "pascal", "cdecl", "min",
-    "max", "linux", "unix", "i386", "alloca", "assert", "errno", "stdin", "stdout", "stderr", "offsetof",
+    "max", "linux", "unix", "i386", "alloca", ASSERT_FN, "errno", "stdin", "stdout", "stderr", "offsetof",
     "setjmp", "sigsetjmp", "h_addr", "h_errno", "fpclassify", "isfinite",
     "isgreater", "isgreaterequal", "isinf", "isless", "islessequal",
     "islessgreater", "isnan", "isnormal", "isunordered", "signbit",

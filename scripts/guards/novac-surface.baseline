@@ -350,7 +350,11 @@
 #   `is_serde_nested_scalar` (D341/D342 field eligibility and the direct wire call of a scalar), all asked by
 #   check/derive_serde.nv; names of the language and of std live in builtins (P5).
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
-builtins 96
+# 2026-10-07, task #29 (221.1 #1787, round 3): builtins 96 -> 99: `INT_TYPE_NAME`, `BOOL_TYPE_NAME`,
+#   `CHAR_TYPE_NAME` -- Nova's own primitive spellings that collide with a C keyword, exported so the
+#   C-name escape door (sem/mangle_spelling.nv) asks for them instead of retyping them (check-novac-
+#   no-name-hardcode.py flags a second literal of a P5 name wherever it appears outside builtins.nv).
+builtins 99
 # 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
 #   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
 #   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.
