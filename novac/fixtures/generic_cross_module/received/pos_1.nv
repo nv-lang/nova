@@ -1,0 +1,21 @@
+module received.pos_1
+
+// NOVAC_PROGRAM
+// REGISTRY 1793: a generic of `geo` instantiated in `mid` -- a module that is
+// not the entry -- over `geo.Pt`, on a vector `mid` only RECEIVES. Before the
+// fix novac iced "mangle: a substituted type the checker never interned": the
+// C struct of `Vec[Pt]` asks for `*mut Pt`, which only a body touching the
+// buffer interned, and `mid` has none. `size` is the same hole without any
+// generic of the program (std's `Vec[Pt] @len`, made by `mid`).
+
+import ./geo.{Pt}
+import ./mid.{wrap, size}
+
+fn main() {
+    mut xs = []Pt.new()
+    xs.push(Pt { x: 1, y: 2 })
+    xs.push(Pt { x: 3, y: 4 })
+    xs.push(Pt { x: 5, y: 6 })
+    println(wrap(xs))
+    println(size(xs))
+}
