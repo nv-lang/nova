@@ -670,6 +670,13 @@ fn Emitter mut @emit_array_lit(init Node, vtype TyId) -> str {
         // elements need -- the same line the record constructor has carried
         // since B8 (`@hoist_array_lits(fk[2])`).
         @hoist_array_lits(e)
+        if @diverges(e) {
+            // A diverging element (registry 1792): computed, never pushed.
+            @emit_diverging_stmt(e)
+            continue
+        } else {
+            // A value: pushed below.
+        }
         @body.append("    (void)${vec_op_c(@ctx, vtype, LITERAL_PUSH, @out.vec_op_row(LITERAL_PUSH))}(${tmp}, ")
         @emit_expr(e)
         @body.append(");\n")
@@ -801,6 +808,14 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str 
             } else {
                 // Punning carries a name, and a name hoists nothing.
             }
+            if fk.len() > 1 && @diverges(fk[2]) {
+                // A DIVERGING field value (registry 1792): the computation as a
+                // statement, the field left unwritten -- nothing reads it after.
+                @emit_diverging_stmt(fk[2])
+                continue
+            } else {
+                // A value: stored below.
+            }
             @body.append("    ${tmp}${arrow}${fname} = ")
             // A value block the lowering laid down first (`unsafe { .. }`, an
             // `if`, a `??` -- `@hoist_sealed_args`, registry 1557) is read from
@@ -830,9 +845,14 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str 
             // V2b uses for a declared constructor) would not pin it at all --
             // C leaves the order of initializers unspecified.
             @hoist_array_lits(c)
-            @body.append("    ${tmp}${arrow}f${pos} = ")
-            @emit_expr(c)
-            @body.append(";\n")
+            if @diverges(c) {
+                // A diverging component: the statement form, as a field's (1792).
+                @emit_diverging_stmt(c)
+            } else {
+                @body.append("    ${tmp}${arrow}f${pos} = ")
+                @emit_expr(c)
+                @body.append(";\n")
+            }
             pos += 1
         } else {
             // The '{' ',' '}' leaves of the constructor: punctuation
