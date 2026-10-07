@@ -729,6 +729,15 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 // I2 (a nested-in-slot literal is refused by the checker).
                 return
             }
+            if kind == NodeKind.Call && @out.contract_of(e.id_of()).is_some() {
+                // `assert(cond, msg)` (D81): a computed message is copied out
+                // of its value here, after the hoist has built the operands.
+                for c in children {
+                    @hoist_array_lits(c)
+                }
+                @hoist_assert_message(children)
+                return
+            }
             if kind != NodeKind.RecordCtor {
                 for c in children {
                     @hoist_array_lits(c)

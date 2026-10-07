@@ -1,0 +1,16 @@
+module twin.pos_1
+
+// The message of `assert` is an interpolated string (norm 08-runtime.md:146:
+// `<file>:<line>: assert failed: <msg> (<expr>)`). x = 0, so the assert FAILS
+// on line 10 and the runtime prints the message:
+// `panic: pos_1.nv:10: assert failed: bad value 0 (x > 0)`. The oracle's twin
+// (twin/pos_1.nv) is this file with the message written as a literal, because
+// the oracle prints a temporary name for an interpolated message (registry 1783).
+fn checked(x int) -> int {
+    assert(x > 0, "bad value 0")
+    x
+}
+
+fn main() {
+    println(checked(0))
+}

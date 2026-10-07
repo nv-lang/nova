@@ -1,0 +1,17 @@
+module assert_msg.pos_2
+
+// The message of `assert` is a variable: its value is printed (norm 08-runtime.md:146).
+// x = 0, so the assert FAILS on line 9:
+// `panic: pos_2.nv:9: assert failed: must be positive (x > 0)`.
+// The oracle's twin (twin/pos_2.nv) writes the value as a literal on line 9.
+fn checked(x int) -> int {
+    ro m = "must be positive"
+    assert(x > 0, m)
+    x
+}
+
+fn main() {
+    println(checked(0))
+}
+
+// NOVAC_TWIN twin/pos_2.nv
