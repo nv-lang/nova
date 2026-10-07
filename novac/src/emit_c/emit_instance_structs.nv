@@ -9,12 +9,10 @@
 //   unit makes has no struct until this door writes one: a typedef and a body
 //   with the declaration's fields under the instance's substitution, in the
 //   shell's spelling (`instance_struct_c`).
-// Used by: emit_c.nv `emit` -- the forward NAMES before the type declarations
-//   (a field of the unit's own record or sum may point to an instance), the
-//   bodies after them and before the instance prototypes (a prototype names
-//   the struct).
-// Guarded by: the vec_own and instance_field fixtures (check-novac-differential.sh)
-//   and check-novac-emission-size.sh.
+// Used by: emit_c.nv `emit`, after the type declarations and before the
+//   instance prototypes (a prototype names the struct).
+// Guarded by: the vec_own fixture (check-novac-differential.sh) and
+//   check-novac-emission-size.sh.
 
 module novac.emit_c
 
@@ -22,26 +20,6 @@ import ../sem.{decl_of_ty, field_range_of, no_frow, raw_frow, c_type, subst_type
 import ../sem.{variant_range_of, raw_vrow, no_vrow}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
-
-/// The forward typedef of every generic RECORD instance the unit's INSTANCES
-/// name in their signatures -- `typedef struct X X;`, before ANY type body.
-///
-/// Until E2-b3 step 6 the typedef was written with the instance's body, AFTER
-/// the unit's own declarations and prototypes, so a signature or a nested
-/// argument naming such an instance (`Vec[Vec[Pt]]` points to a `Vec[Pt]`)
-/// named a type C had not seen, while the oracle compiled it. The fields, the
-/// payloads and the module values are `@emit_instance_forwards`' (below); both
-/// walk through `@instance_forward_of`, which follows the arguments and the
-/// substituted fields of every instance it meets.
-fn Emitter mut @emit_instance_struct_fwds(insts []Instantiation) -> () {
-    mut done = []str.new()
-    for inst in insts {
-        for p in inst.ptypes {
-            @instance_forward_of(p.type_id, done)
-        }
-        @instance_forward_of(inst.ret_id, done)
-    }
-}
 
 /// The struct of every generic RECORD instance an instance this unit makes
 /// takes or returns, when the shell does not define it -- once each.
@@ -115,21 +93,13 @@ fn Emitter mut @emit_instance_forwards() -> () {
     }
 }
 
-/// The forward name of every concrete instance of a generic record inside `t`
-/// (itself included) the shell does not define -- once each. A pointer needs
-/// only the name, and every generic record instance is a heap record, so a
-/// name is all C asks; through the ARGUMENTS and the substituted FIELDS, since
-/// a `Vec[Vec[Pt]]` points to a `Vec[Pt]` (E2-b3 step 6).
+/// The forward name of `t`'s struct, when `t` is a concrete instance of a
+/// generic record the shell does not define -- once each.
 fn Emitter mut @instance_forward_of(t TyId, mut done []str) -> () {
+    if !is_ty(t) || @ctx.tys.kind_of(t) != TypeKind.TkApp { return }
     // An instance over a parameter of the declaration has no struct of its own:
     // only a substitution makes one.
-    if !is_ty(t) || !@ctx.tys.is_concrete(t) { return }
-    mut args = []TyId.new()
-    for i in 0..@ctx.tys.arg_count(t) {
-        args.push(@ctx.tys.arg(t, i))
-        @instance_forward_of(@ctx.tys.arg(t, i), done)
-    }
-    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return }
+    if !@ctx.tys.is_concrete(t) { return }
     ro td = decl_of_ty(@ctx, t)
     if td.kind != TypeKind.TkRecord { return }
     ro sn = instance_struct_c(@ctx, t)
@@ -139,9 +109,5 @@ fn Emitter mut @instance_forward_of(t TyId, mut done []str) -> () {
     }
     done.push(sn)
     @body.append("typedef struct ${sn} ${sn};\n")
-    ro frange = field_range_of(td) ?? (no_frow(), 0)
-    for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
-        @instance_forward_of(subst_type(@ctx, @ctx.fields.rows[j].type_id, args), done)
-    }
 }
 
