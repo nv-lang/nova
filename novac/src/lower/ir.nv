@@ -573,13 +573,22 @@ export fn FnBuilder mut @temp(ty TyId) -> Local {
 }
 
 /// A local for the source binding `name` of type `ty`.
+///
+/// A DISCARD BINDING (`_`) IS NOT ONE C NAME (registry 1816): the source lets a program
+/// write `ro _ = a()` and `ro _ = b()` in the same scope, each a fresh binding by Nova's
+/// own rule, but C has exactly one `_` per scope -- the second declaration redefined the
+/// first and clang refused it. Every discard gets its own generated name here, at the one
+/// door a binding's local is born through, the same scheme `temp()` uses for its own
+/// temporaries (by the local's own index, so two discards cannot collide with each other
+/// either).
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {
     if name == "" {
         ice_at(
             "novac/src/lower/ir.nv:578",
             "lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
-    @local(ty, LocalKind.Binding, name)
+    ro c_name = if name == "_" { "_novac_discard${@locals.len()}" } else { name }
+    @local(ty, LocalKind.Binding, c_name)
 }
 
 /// Appends a local and returns its index -- the one place locals are created. A local is
