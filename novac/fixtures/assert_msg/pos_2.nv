@@ -13,3 +13,5 @@ fn checked(x int) -> int {
 fn main() {
     println(checked(0))
 }
+
+// NOVAC_TWIN twin/pos_2.nv

@@ -21,5 +21,3 @@ novac/fixtures/must_consume/pos_15.nv
 novac/fixtures/must_consume/pos_20.nv
 novac/fixtures/consume_any_module/pos_2.nv
 novac/fixtures/disj_in_option/pos_1.nv
-novac/fixtures/assert_msg/pos_1.nv
-novac/fixtures/assert_msg/pos_2.nv
