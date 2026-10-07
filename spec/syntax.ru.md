@@ -1611,7 +1611,7 @@ f(say("left"), say("right"))   // left first, then right
 `x.m(...)`.
 
 ```nova
-mark("p", 1) + mark("q", 2)   // сначала "p", затем "q"
+mark("p", 1) + mark("q", 2)   // "p" first, then "q"
 ```
 
 ### Одна форма внутри компилятора — `@` как переменная типа получателя (D458)
