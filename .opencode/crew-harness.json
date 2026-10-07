@@ -57,7 +57,7 @@
     {
       "id": "gate",
       "required": true,
-      "text": "`NOVA_GATE_TIER=loop bash scripts/gate.sh` зелёный; ярусы push/full (мега-CU) и полный `nova test` гоняет только интегратор (AGENTS.md, «Gates»); задача трогает novac — ещё `scripts/gate-novac.sh`"
+      "text": "вердикт гейта — CI на кандидате integrate/t<N> (слово владельца 2026-10-07: гейты отданы GitHub CI; его nova-gate гоняет gate.sh ярусов loop и push и novac-gate): засчитывается строкой `LANDED` land-task вместе с шагом ci. Локально `scripts/gate.sh` и `scripts/gate-novac.sh` НЕ гонять — только точечные проверки своей правки (фикстура, e1-smoke, стражи check-novac-diag-schema / check-novac-no-cascade напрямую, если тронут novac/src/check). Красный CI — доработка, без локального повтора гейта"
     },
     {
       "id": "ci",
