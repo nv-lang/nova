@@ -1,0 +1,21 @@
+module generic_cross_module.pos_4
+
+// REGISTRY 1794 WITHOUT THE PROGRAM MODE: one file, an EXPORTED generic, and
+// its instances. The instance's declaration sits inside the `export` wrapper;
+// a raw walk over the root's children did not see it, and novac iced
+// "pipeline: an instance of a row with no body novac was handed" -- the same
+// file without `export` compiled. The program mode only made the hole common:
+// a module's generic is exported to be called at all.
+
+export fn count[T](xs []T) -> int => xs.len()
+
+export fn pick[T](xs []T, i int) -> T => xs[i]
+
+fn main() {
+    mut ns = []int.new()
+    ns.push(4)
+    ns.push(5)
+    println(count[int](ns))
+    println(pick[int](ns, 1))
+    println(pick[str](["a", "b", "c"], 2))
+}

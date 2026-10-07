@@ -19,7 +19,10 @@
 МОЛЧИТ, и объявление становится невидимым ровно для одного этапа.
 
 ЧТО ЛОВИТ, две формы — обе те, которыми эти пять были написаны:
-  1. `branch_children(file)` (или `(f)`, когда параметр назван так) вне двери;
+  1. `branch_children(file)` / `(unit)` / `(tree)` вне двери. Имя `tree` — с
+     2026-10-07 (задача #30, реестр №1794): ШЕСТОЙ обход, `decl_of_row` в
+     `pipeline.nv`, назвал корень `tree`, и страж его не видел — тело экземпляра
+     `export`-генерика не находилось, ICE «an instance of a row with no body».
   2. `for … in children` в функции, которая рядом утверждает `NodeKind.File` —
      обход детей корня, полученных разбором узла.
 
@@ -37,7 +40,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-novac-file-decls-door"
 
-RE_RAW = re.compile(r"branch_children\(\s*(file|unit)\s*\)")
+RE_RAW = re.compile(r"branch_children\(\s*(file|unit|tree)\s*\)")
 RE_FILE_ASSERT = re.compile(r"NodeKind\.File")
 RE_CHILDREN_LOOP = re.compile(r"\bfor\s+\w+\s+in\s+children\b")
 

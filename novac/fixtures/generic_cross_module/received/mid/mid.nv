@@ -1,0 +1,18 @@
+module received.mid
+
+// A MODULE OF THE PROGRAM: it RECEIVES vectors of `geo.Pt` and never builds one
+// (registry 1793). The C struct of `Vec[Pt]` -- its `*mut Pt` buffer -- is still
+// written by this unit, beside the instances it makes, and nothing in this file
+// touches that field: the checker has to intern the layout where it decides the
+// instance exists.
+
+import ../geo.{Pt, count, first}
+
+/// `count[Pt]` -- a generic of `geo` instantiated here over `geo`'s own type.
+export fn wrap(ps []Pt) -> int => count[Pt](ps)
+
+/// No generic of the program at all: std's `Vec[Pt] @len`, made by this unit.
+export fn size(ps []Pt) -> int => ps.len()
+
+/// `first[Pt]` -- an instance returning `geo`'s type itself.
+export fn head_x(ps []Pt) -> int => first[Pt](ps).x

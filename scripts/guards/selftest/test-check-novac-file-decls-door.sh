@@ -36,6 +36,11 @@ D=$(mk unit "module a" "fn walk(unit Node) -> () {" \
     "    for c in branch_children(unit) { g(c) }" "}")
 run "$D" && bad "branch_children(unit) прошёл" || ok "второе имя корня пойман"
 
+# --- третье имя корня (№1794: `decl_of_row(tree Node, ...)` в pipeline.nv) --
+D=$(mk tree "module a" "fn decl_of_row(tree Node) -> () {" \
+    "    for c in branch_children(tree) { g(c) }" "}")
+run "$D" && bad "branch_children(tree) прошёл" || ok "третье имя корня пойман"
+
 # --- ЗАКОННО: обход детей ЛЮБОГО другого узла ----------------------------
 D=$(mk other "module a" "fn walk(decl Node) -> () {" \
     "    for c in branch_children(decl) { g(c) }" "}")
@@ -77,6 +82,6 @@ run "$D" && ok "*_test.nv вне суда: тест строит деревья 
 D="$T/empty"; mkdir -p "$D"
 run "$D" && ok "дерево без .nv зелёное" || bad "пустое дерево покраснело"
 
-[ "$fails" -eq 0 ] && echo "test-check-novac-file-decls-door: 10/10" && exit 0
+[ "$fails" -eq 0 ] && echo "test-check-novac-file-decls-door: 11/11" && exit 0
 echo "test-check-novac-file-decls-door: провалов $fails" >&2
 exit 1

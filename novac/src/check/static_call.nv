@@ -24,8 +24,10 @@ import ../sem.{CalleeTarget, bind_slots, is_arg_value_kind, c_static_symbol}
 import ../sem.{ArgSpec, ty_source_name, mode_admits}
 import ../resolve.{args_misfit, ARGS_FIT, ARGS_UNBOUND}
 import ../diag.{ice_at}
+import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow}
 import ../types.{TyId, no_ty, is_ty}
 import ../names.{raw_decl}
+import ../builtins.{TypeKind}
 
 /// `Type.f(args)` where `Type` names a type with a STATIC method `f`: typed,
 /// recorded, and answered true -- or false when the head names no type, or the
@@ -267,14 +269,22 @@ fn Checker @applied_head(ix Node) -> Option[(Node, []TyId)] {
 /// interner and calls a missing term a checker hole -- so the checker, which
 /// may intern, interns it where it decides the instance exists. A `*T`
 /// parameter handed a `*mut Pt` names `*Pt`, a term no expression wrote.
+///
+/// AND THE LAYOUT OF EVERY SUCH TYPE (registry 1793): the emitter writes the C
+/// struct of each generic-record instance an instance takes or returns
+/// (`emit_c @emit_instance_struct_of`), its fields under the type's arguments,
+/// through the same reading door -- `Vec[Pt]` asks for `*mut Pt`. That term was
+/// interned only by a body that touches the field (`Vec.new`, `@push`); a module
+/// that merely RECEIVES a `[]Pt` and calls `.len()` or `count[Pt]` on it had no
+/// such body, and the emitter iced. Interned here, where the instance is decided.
 fn Checker mut @intern_instance_sig(row FnRow, ids []TyId) -> () {
     if ids.len() == 0 { return }
     ro fd = @ctx.fns.rows[raw_row(row)]
     for i in 0..fd.param_cnt {
-        ro _ = @ctx.tys.subst(@ctx.fns.params[fd.param_off + i].type_id, ids)
+        @intern_record_layout(@ctx.tys.subst(@ctx.fns.params[fd.param_off + i].type_id, ids))
     }
     if is_ty(fd.ret_id) {
-        ro _ = @ctx.tys.subst(fd.ret_id, ids)
+        @intern_record_layout(@ctx.tys.subst(fd.ret_id, ids))
     } else {
         // No declared return: nothing to intern.
     }
@@ -282,6 +292,24 @@ fn Checker mut @intern_instance_sig(row FnRow, ids []TyId) -> () {
         ro _ = @ctx.tys.subst(fd.owner, ids)
     } else {
         // Not a static method: no owner term.
+    }
+}
+
+/// The fields of `t` under its arguments, interned -- when `t` is a concrete
+/// instance of a generic RECORD, the one shape whose C struct the emitter
+/// writes from them (`@emit_instance_struct_of`). One level, as the emitter
+/// reads one level: a field naming another instance prints only its name.
+fn Checker mut @intern_record_layout(t TyId) -> () {
+    if !is_ty(t) || @ctx.tys.kind_of(t) != TypeKind.TkApp || !@ctx.tys.is_concrete(t) { return }
+    ro td = decl_of_ty(@ctx, t)
+    if td.kind != TypeKind.TkRecord { return }
+    mut args = []TyId.new()
+    for i in 0..@ctx.tys.arg_count(t) {
+        args.push(@ctx.tys.arg(t, i))
+    }
+    ro frange = field_range_of(td) ?? (no_frow(), 0)
+    for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
+        ro _ = @ctx.tys.subst(@ctx.fields.rows[j].type_id, args)
     }
 }
 
@@ -314,7 +342,7 @@ fn Checker mut @static_args_fit(kids []Node, row FnRow, key []ArgSpec) -> bool {
         match @binding_refusal(row, key) {
             Some(m) => @reject_first_leaf_of(kids, m)
             None => ice_at(
-                "novac/src/check/static_call.nv:316",
+                "novac/src/check/static_call.nv:344",
                 "check: a static call's arguments do not bind, and the binding names no fault")
         }
         return false
