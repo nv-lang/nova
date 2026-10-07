@@ -1628,8 +1628,9 @@
 # 2026-10-06, task #18, merge of origin/main f997d871d (task #24 in): rows 1704 (main) + 6 (#18: 1764-1767,
 #   1771, 1777) = 1710, max 1782; this branch's six leave gaps= by this merge, 1772-1776 and 1778-1781 stay.
 # 2026-10-07, task #25 (row 1804 filed; 1782 partial), merge of origin/main dda48b543: rows 1710 (main) + 1 (1804) = 1711, max 1782 -> 1804.
-rows=1711
-max=1804
+# 2026-10-07, task #25 (hunt novac sem x K3 landed in the same branch): rows +5 = 1806-1810 (five rows of the hunt); 1805 stays in gaps= (issued to the integrator's branch).
+rows=1716
+max=1810
 rows=1611
 max=1693
 rows=1590
@@ -2395,7 +2396,7 @@ stale_gaps=0
 # 2026-10-06, integrator (row 1763): 1758-1762 issued to other branches (1758-1761 #14, 1762 #17); removal: drop from gaps= by the merge that brings their rows.
 # 2026-10-06, acceptor of task #14 (candidate on main 7ba6979fd): 1740-1742, 1751, 1758-1761 carry #14's rows -- out of gaps=; 1762 (task #17) stays.
 # 2026-10-07, task #25 (integrator's order): №1804 заведена по остатку №1782 (ice без контекста входной программы). Номера 1783-1803 — НЕ потеряны: это номера других невлитых веток (выданы окнам), их строки придут слияниями; снимаются из gaps= тем же слиянием, что и прежние.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1772-1776,1778-1781,1783-1803
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1772-1776,1778-1781,1783-1803,1805
 # 2026-09-21, integrator: 1096 and 1104 dropped from gaps -- both exist as
 # real rows now (p283-float-parse merge). 1103 stays: no row yet either side.
 # 2026-09-21, integrator: row 1227 added -- assistant's third table-5v finding
