@@ -452,18 +452,32 @@ fn Checker @is_tracked_name(c Node, fl ConsumeFlow) -> bool =>
 /// consumed there, but nothing that outlives it may change owner -- the state after
 /// it is then the state before it, on every path. Whatever would change that is
 /// refused by name (a branch or a loop inside it is walked at the same depth, so the
-/// rule holds there too; a `spawn` body is another fiber's, D13).
+/// rule holds there too; a `spawn` body is another fiber's, D13). A body that runs
+/// ELSEWHERE -- a `spawn`'s, a handler's -- is not on this path: a diverging call in
+/// it ends ITS path, never the one that goes on past it (registry #1762).
 fn Checker mut @flow_nested(n Node, mut fl ConsumeFlow) -> () {
+    ro was_dead = fl.dead
     fl.depth += 1
     for c in branch_children(n) {
-        if fl.stopped { break }
+        if fl.stopped || fl.dead { break }
         match c {
             Leaf(_) => {}
             Branch { .. } => @flow_child(c, fl)
         }
     }
     fl.depth -= 1
+    if runs_elsewhere(n.kind_of()) {
+        fl.dead = was_dead
+    } else {
+        // A `with`, a `supervised` body or an assignment is on this path: an exit in
+        // it is this path's.
+    }
 }
+
+/// The bodies that do not run where they are written: a `spawn`'s (another fiber,
+/// D13) and a handler's (run when its operation is performed).
+fn runs_elsewhere(k NodeKind) -> bool =>
+    k == NodeKind.SpawnStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp
 
 /// One child of a branch, a loop or a nested block: a block is a list of
 /// statements, and anything else -- a statement or a condition -- is judged as one
@@ -492,15 +506,15 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
 fn past_fields(fl ConsumeFlow, mark int) -> int => mark.max(fl.fields)
 
 /// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an
-/// exit (`return`, `break`, `continue`, a diverging call) judges what is owned and
-/// ends the path; a `with`-like body is walked with the depth raised (`@flow_nested`).
+/// exit (`return`, `break`, `continue`) judges what is owned and ends the path -- a
+/// diverging call is judged where it is called, in any position (`@flow_call`); a
+/// `with`-like body is walked with the depth raised (`@flow_nested`).
 fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
     // A forced move belongs to an expression statement's own value, nothing else.
     ro forced = fl.forced
     fl.forced = false
     ro k = st.kind_of()
-    ro diverges = is_node(st.id_of()) && is_never_ty(@ctx.tys, @chan.type_if_known(st.id_of()))
-    ro leaves = k == NodeKind.RetStmt || k == NodeKind.LoopCtl || diverges
+    ro leaves = k == NodeKind.RetStmt || k == NodeKind.LoopCtl
     if leaves && fl.depth > 0 && fl.owned_ty.len() > fl.fields {
         @flow_stop(st, "left early from a `with`, a `spawn` or a handler body while one is tracked", fl)
         return
@@ -537,24 +551,10 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         @flow_scope_block(unsafe_block_of(st), fl)
     } else if is_compound_kind(k) {
         @flow_nested(st, fl)
-    } else if diverges {
-        // `panic(..)` and every call that never returns: an exit point (D133).
-        @flow_expr(st, fl, false)
-        if fl.stopped { return }
-        // Its outcome is a panic, and no cleanup is placed on that path (D432).
-        for i in 0..fl.owned_ty.len() {
-            if fl.auto_at[i] >= 0 && fl.state[i] != VarState.VsConsumed {
-                @flow_stop(st, "left by a diverging call before its `@cleanup` (the Panic outcome, D432)", fl)
-                return
-            } else {
-                continue
-            }
-        }
-        @flow_exit(fl, 0, st, "this diverging call")
-        fl.dead = true
     } else {
         // An expression statement: its value is the tail's when it is the last one,
-        // else it is used and dropped. A call standing alone is a scope D476 can embrace.
+        // else it is used and dropped. A call standing alone is a scope D476 can embrace;
+        // one that never returns ends the path there (`@flow_diverge`).
         fl.forced = forced
         flow_open_scope(st, fl)
         @flow_expr(st, fl, is_last)
@@ -812,11 +812,13 @@ fn Checker mut @flow_take(e Node, i int, moved bool, forced bool, mut fl Consume
 /// A call with a recorded callable: each argument goes where its parameter's MODE
 /// says -- a `consume` slot moves it, any other slot only uses it. The receiver of a
 /// method is slot zero (plan 273). `chain`: the call answers its receiver (`-> @`)
-/// and its value moves, so the receiver moves with it.
+/// and its value moves, so the receiver moves with it. A call that never returns
+/// is an exit point once its arguments are evaluated (`@flow_diverge`).
 fn Checker mut @flow_call(e Node, mut fl ConsumeFlow, chain bool) -> () {
     ro kids = branch_children(e)
     ro is_method = e.kind_of() == NodeKind.MethodCall
     ro from = if is_method { 3 } else { 1 }
+    ro typed_never = is_never_ty(@ctx.tys, @chan.type_if_known(e.id_of()))
     ro row = match @chan.callee_of(e.id_of()).target {
         CalleeFn(r) => r
         // A variant, a constructor, a display, an effect operation: every
@@ -828,12 +830,19 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow, chain bool) -> () {
         }
         CalleeSynthDisplay(_) | CalleeEffectOp(_) => {
             @flow_args_moved(kids, from, is_method, false, fl)
+            if typed_never {
+                @flow_diverge(e, fl)
+            } else {
+                // It returns: the path goes on.
+            }
             return
         }
     }
     ro fd = @ctx.fns.rows[raw_row(row)]
     ro slots = @chan.callee_slots_of(e.id_of())
     for s in 0..slots.len() {
+        // An argument that never returned: the rest are not evaluated.
+        if fl.stopped || fl.dead { return }
         ro at = slots[s].arg_row
         if at < 0 { continue }
         ro written = if is_method { at - 1 } else { at }
@@ -848,6 +857,8 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow, chain bool) -> () {
             @flow_expr(arg, fl, mode == ParamMode.ModeConsume)
         }
     }
+    if fl.dead || !(typed_never || is_never_ty(@ctx.tys, fd.ret_id)) { return }
+    @flow_diverge(e, fl)
 }
 
 /// A FRESH value of a must-consume type: produced here, not named by a place.
@@ -960,6 +971,8 @@ fn Checker mut @flow_args_moved(kids []Node, from int, is_method bool, forced bo
     }
     mut i = 0
     for c in kids {
+        // An argument that never returned: the rest are not evaluated.
+        if fl.stopped || fl.dead { return }
         if i >= from {
             match c {
                 Leaf(_) => {}

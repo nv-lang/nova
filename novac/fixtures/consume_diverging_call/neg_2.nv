@@ -1,0 +1,28 @@
+module consume_diverging_call.neg_2
+
+// A `consume` FIELD STILL OWNED AT A DIVERGING CALL THAT IS NOT THE TAIL (registry 221.1
+// #1762, the measurement for a field; D133 "Field-aware flow": the exits of a `consume`
+// method close its record). The call leaves `@take` with `@body` owned; the field is judged
+// by the same exit door as a local binding (`@flow_exit` -> `@flow_close_record`).
+
+// NOVAC_EXPECT the field `@.body` (type `StringBuilder`) is still owned when this diverging call leaves this `consume` method
+
+type Pad consume {
+    n int
+    consume body StringBuilder
+}
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn Pad consume @take() -> str {
+    boom("no text") // the one refusal: line 21
+    @body.into_str()
+}
+
+fn main() {
+    consume p = Pad { n: 3, body: StringBuilder.new(cap: 8) }
+    println(p.take())
+}

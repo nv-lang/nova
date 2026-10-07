@@ -1,0 +1,24 @@
+module consume_diverging_call.neg_1
+
+// A `consume` BINDING STILL OWNED AT A DIVERGING CALL THAT IS NOT THE TAIL (registry 221.1
+// #1762, the measurement word for word; D133's exit points: "`panic` / `expr!!` / `expr?` /
+// unwinding-paths"). `boom` never returns, so the call leaves `work` with `b` owned, as a
+// `return` there would. Until #1762 only a call typed `never` as the body's tail was seen as
+// an exit: here the path went on, `b.into_str()` consumed `b`, and the file was accepted.
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is still owned when this diverging call leaves its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work() -> str {
+    consume b = StringBuilder.new(cap: 8)
+    boom("no text") // the one refusal: line 18
+    b.into_str()
+}
+
+fn main() {
+    println(work())
+}
