@@ -1,0 +1,41 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p03c_option_in_instance_unit.main
+     2	
+     3	// `Option[Color]` stands only inside the body of `pick[Color]`, an instance.
+     4	// Unit mode -- no program root.
+     5	
+     6	/// A colour: no variant carries a payload.
+     7	type Color enum
+     8	    | Red
+     9	    | Green
+    10	    | Blue
+    11	
+    12	fn color_name(c Color) -> str => match c {
+    13	    Red => "red"
+    14	    Green => "green"
+    15	    Blue => "blue"
+    16	}
+    17	
+    18	/// `a` when `first`, else `b` -- through an option only the instance holds.
+    19	fn pick[T](a T, b T, first bool) -> T {
+    20	    ro o = if first { Some(a) } else { None }
+    21	    match o {
+    22	        Some(x) => x
+    23	        None => b
+    24	    }
+    25	}
+    26	
+    27	fn main() {
+    28	    println(color_name(pick[Color](Color.Green, Color.Blue, true)))
+    29	    println(color_name(pick[Color](Color.Green, Color.Blue, false)))
+    30	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — clang -c упал: <smoke>/body.c:12321:5: error: unknown type name 'NovaOpt_Nova_Color_p'; did you mean 'NovaOpt_Nova_File_p'?
+ 12321 |     NovaOpt_Nova_Color_p _novac_l2 = (NovaOpt_Nova_Color_p){0};
+       |     ^~~~~~~~~~~~~~~~~~~~
+       |     NovaOpt_Nova_File_p
+<smoke>/body.c:809:58: note: 'NovaOpt_Nova_File_p' declared here
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Color: NovaValue_Color 0, Nova_Color* 21

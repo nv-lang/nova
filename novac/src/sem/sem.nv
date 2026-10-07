@@ -333,6 +333,7 @@ export type Ctx {
     interop InteropTable /// THE interop surface: C identifiers the linked shell carries, read from the embedded shell once per process (sub-plan L).
     handed HandedBodies /// where each HANDED callable's body lives: its declaration tree and `FnDecl` node (274.11 E.10 step 4a)
     embeds EmbedTable /// what the door read for each `embed("path")` (D412): HANDED like `interop`, never read here (sem/embeds.nv)
+    fences CNames /// the PROGRAM's A4 fence (registry 221.1 #1813): `fence_key`s of the program's payload-free sums standing as an argument in ANY unit's pool, gathered after every unit is checked and set before emission (pipeline/program.nv); empty for a single unit, where `is_fenced` answers by the pool alone (sem/interop.nv)
 }
 
 /// Seed one pre-declared type: the registry row and the def row are born
@@ -470,7 +471,7 @@ export fn Ctx @ty_of_name(name str) -> Option[TyId] {
 /// refusal names what it found instead -- no silent int default (#652 class).
 export fn Ctx @ty_of_name_or_ice(name str) -> TyId =>
     @ty_of_name(name) ?? ice_at(
-        "novac/src/sem/sem.nv:472",
+        "novac/src/sem/sem.nv:473",
         "sem: a name in TYPE position that the registry does not hold (#652 class)")
 
 /// A NAME in type position -> its type, or `no_ty()` when the registry does not

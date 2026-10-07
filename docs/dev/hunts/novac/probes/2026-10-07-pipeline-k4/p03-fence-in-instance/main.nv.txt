@@ -1,0 +1,14 @@
+module p03_fence_in_instance.main
+
+// NOVAC_PROGRAM
+// `Color` (module pal) is used by value everywhere it is written; the only
+// `[]Color` is the body of `gen.two[Color]`, an instance.
+
+import ./pal.{Color, color_name, next_color}
+import ./gen.{two}
+
+fn main() {
+    ro c = next_color(Color.Red)
+    println(color_name(c))
+    println(two[Color](c, Color.Blue))
+}

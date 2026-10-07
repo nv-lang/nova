@@ -4,6 +4,12 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-07 (задача #31, №1813), sem 396 -> 397, types 30 -> 32: `note_fences` -- ограда A4 единицы
+#   вливается в ограду ПРОГРАММЫ; наружу потому, что её зовёт конвейер программы (pipeline/program.nv)
+#   между проверкой всех единиц и печатью. `Interner @arg_pool_len` / `@arg_pool_at` -- обход пула
+#   аргументов, который делает `is_arg_anywhere`, открытый для sem: ограду собирают по ВСЕМ типам разом,
+#   а не спрашивают тип за типом. `is_fenced` (тот же вопрос с оградой программы) остаётся внутри sem.
+#
 #   2026-10-06 (задача #23, №1791), sem 395 -> 396: `is_printer_build_kind` -- виды узлов, которые
 #   печатник строит своими операторами до строки, что их читает; наружу потому, что её спрашивает
 #   понижение (lower/lower_hoist.nv `contains_construction`), а в sem её зовёт `is_value_tail_kind`:
@@ -1317,7 +1323,7 @@ tree 25
 # types 26 -> 28 (2026-10-01, Karina window, 274.11 E.10 step 3a): Interner.@ptr (the pointer term, asked by sem/typeref.nv)
 #   and Interner.@ptr_is_mut (its mutability, asked by sem/binding.nv and sem/mangle.nv).
 # 2026-10-01, Carina window (274.11 E.10 step 4c): types 28 -> 30: `Interner @find` / `@subst_known` -- the read-only half of interning, for `sem.subst_type`, which holds the context without the right to grow the interner.
-types 30
+types 32
 # builtins 7 -> 9 (2026-08-16): `is_bool_literal` и `bool_c_literal` — язык
 # спрашивают ЗДЕСЬ. Вопрос владельца про список литералов вскрыл, что булев
 # литерал в подмножестве вообще нельзя было написать: bool получался только из

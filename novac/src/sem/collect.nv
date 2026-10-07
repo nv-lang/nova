@@ -757,7 +757,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
           payload_names, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,
-          interop: InteropTable.new(), handed: HandedBodies.new(), embeds: EmbedTable.new() }
+          interop: InteropTable.new(), handed: HandedBodies.new(), embeds: EmbedTable.new(), fences: CNames.new() }
 }
 
 /// Fill ONE record declaration's field rows -- the door the file's own records

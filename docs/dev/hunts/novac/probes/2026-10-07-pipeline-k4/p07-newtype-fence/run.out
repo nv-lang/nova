@@ -1,0 +1,60 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p07_newtype_fence.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// `Color` stands only as a newtype's representation in module `nt`.
+     5	
+     6	import ./pal.{Color, color_name, next_color}
+     7	import ./nt.{shade_of, Shade}
+     8	
+     9	fn main() {
+    10	    println(color_name(next_color(Color.Red)))
+    11	    ro s = shade_of(2)
+    12	    println(color_name(Color(s)))
+    13	}
+--- ./nt/nt.nv
+     1	module p07_newtype_fence.nt
+     2	
+     3	import ../pal.{Color}
+     4	
+     5	/// A distinct type over a colour.
+     6	export type Shade Color
+     7	
+     8	/// A shade for a code.
+     9	export fn shade_of(k int) -> Shade {
+    10	    if k == 2 { return Shade(Color.Blue) }
+    11	    Shade(Color.Red)
+    12	}
+--- ./pal/pal.nv
+     1	module p07_newtype_fence.pal
+     2	
+     3	// The owner of a payload-free sum. It uses `Color` by value only: alone, this
+     4	// unit would lay it out as NovaValue_Color.
+     5	
+     6	/// A colour: no variant carries a payload.
+     7	#impl(Equal)
+     8	export type Color enum
+     9	    | Red
+    10	    | Green
+    11	    | Blue
+    12	
+    13	/// The colour's name -- a match in the owner.
+    14	export fn color_name(c Color) -> str => match c {
+    15	    Red => "red"
+    16	    Green => "green"
+    17	    Blue => "blue"
+    18	}
+    19	
+    20	/// The next colour round the wheel -- `==` in the owner.
+    21	export fn next_color(c Color) -> Color {
+    22	    if c == Color.Red { return Color.Green }
+    23	    if c == Color.Green { return Color.Blue }
+    24	    Color.Red
+    25	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (1 шт.): "message":"outside the subset: a type in call position constructs a value, and novac compiles that only for a newtype (`type Row int`)" 
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/p07_newtype_fence/main.nv","start":299,"end":304},"message":"outside the subset: a type in call position constructs a value, and novac compiles that only for a newtype (`type Row int`)","poisoned_by":null}
+Color: NovaValue_Color 0, Nova_Color* 0

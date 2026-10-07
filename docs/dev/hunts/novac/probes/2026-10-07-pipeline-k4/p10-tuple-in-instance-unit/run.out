@@ -1,0 +1,32 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p10_tuple_in_instance_unit.main
+     2	
+     3	// `(T, T)` stands only inside the body of `second[Pt]`, an instance; `Pt` is
+     4	// a plain record. The same door as p03d (the unit's own channel), asked for a
+     5	// tuple instead of an option. Unit mode -- no program root.
+     6	
+     7	/// A point.
+     8	type Pt {
+     9	    x int
+    10	}
+    11	
+    12	/// `b` -- through a pair only the instance holds.
+    13	fn second[T](a T, b T) -> T {
+    14	    ro p = (a, b)
+    15	    p.1
+    16	}
+    17	
+    18	fn main() {
+    19	    println(second[Pt](Pt { x: 1 }, Pt { x: 2 }).x)
+    20	    println(second[int](3, 4))
+    21	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — clang -c упал: <smoke>/body.c:12271:5: error: unknown type name '_NovaTuple_2_9_Nova_Pt_p_9_Nova_Pt_p'; did you mean '_NovaTuple_2_8_nova_str_8_nova_str'?
+ 12271 |     _NovaTuple_2_9_Nova_Pt_p_9_Nova_Pt_p _novac_tmp_t3;
+       |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+       |     _NovaTuple_2_8_nova_str_8_nova_str
+<smoke>/body.c:742:81: note: '_NovaTuple_2_8_nova_str_8_nova_str' declared here
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Pt: NovaValue_Pt 0, Nova_Pt* 10

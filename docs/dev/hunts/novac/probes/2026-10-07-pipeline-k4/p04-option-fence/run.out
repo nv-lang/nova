@@ -1,0 +1,62 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p04_option_fence.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// `Color` fenced only by `Option[Color]` in module `opt`'s signature.
+     5	
+     6	import ./pal.{Color, color_name, next_color}
+     7	import ./opt.{maybe}
+     8	
+     9	fn main() {
+    10	    println(color_name(next_color(Color.Blue)))
+    11	    match maybe(1) {
+    12	        Some(c) => println(color_name(c))
+    13	        None => println("none")
+    14	    }
+    15	    match maybe(0) {
+    16	        Some(c) => println(color_name(c))
+    17	        None => println("none")
+    18	    }
+    19	}
+--- ./opt/opt.nv
+     1	module p04_option_fence.opt
+     2	
+     3	import ../pal.{Color}
+     4	
+     5	/// A colour for a positive code.
+     6	export fn maybe(code int) -> Option[Color] {
+     7	    if code > 0 { return Some(Color.Green) }
+     8	    None
+     9	}
+--- ./pal/pal.nv
+     1	module p04_option_fence.pal
+     2	
+     3	// The owner of a payload-free sum. It uses `Color` by value only: alone, this
+     4	// unit would lay it out as NovaValue_Color.
+     5	
+     6	/// A colour: no variant carries a payload.
+     7	#impl(Equal)
+     8	export type Color enum
+     9	    | Red
+    10	    | Green
+    11	    | Blue
+    12	
+    13	/// The colour's name -- a match in the owner.
+    14	export fn color_name(c Color) -> str => match c {
+    15	    Red => "red"
+    16	    Green => "green"
+    17	    Blue => "blue"
+    18	}
+    19	
+    20	/// The next colour round the wheel -- `==` in the owner.
+    21	export fn next_color(c Color) -> Color {
+    22	    if c == Color.Red { return Color.Green }
+    23	    if c == Color.Green { return Color.Blue }
+    24	    Color.Red
+    25	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke ok: <tmp>/p04_option_fence/main.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Color: NovaValue_Color 0, Nova_Color* 20
