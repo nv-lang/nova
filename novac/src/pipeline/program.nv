@@ -12,6 +12,8 @@
 // THE PROGRAM IS CHECKED UNIT BY UNIT AND EMITTED AS ONE (274.11 E.10, "Mechanism"):
 // a module is checked as today -- a call into another module of the program is
 // typed against the owner's signature (step 2a) -- and only the emission is joined.
+// Every unit is CHECKED before any is printed: the A4 fence of a payload-free sum
+// is a fact of the whole program (registry 221.1 #1813), known after the last unit.
 // Each unit is emitted in PARTS (`emit_c.UnitC`), and the C file takes every
 // unit's types, then every unit's prototypes, then every unit's bodies -- so no
 // order between the modules is relied on but the import order of their types.
@@ -23,10 +25,10 @@ import ../lex.{TokenKind}
 import ../parse.{parse}
 import ../check.{check}
 import ../diag.{Diagnostic, ice_at}
-import ../emit_c.{emit_unit, render_program, UnitC}
-import ../mono.{reachable_in_program}
+import ../emit_c.{emit_unit, render_program, UnitC, Instantiation}
+import ../mono.{reachable_in_program, Reach}
 import ../sem.{branch_children, file_decls, leaf_kind, leaf_text, module_dotted, InteropTable, EmbedTable, embed_dir_of}
-import ../sem.{CNames, c_callable, FnRow}
+import ../sem.{CNames, c_callable, FnRow, Ctx, CheckOut, note_fences}
 import ../types.{TyId}
 
 /// A diagnostic of a unit, named by the FILE its span lies in and re-based to
@@ -106,8 +108,10 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         done.push(false)
     }
     mut diags = []Diagnostic.new()
-    mut rev = []UnitC.new()
-    mut tid_base = 0
+    mut held = []Checked.new()
+    // The program's A4 fence (#1813): gathered from EVERY unit before any is
+    // printed -- the walk below meets a consumer before the owner of its type.
+    mut fences = CNames.new()
     mut i = topo.len()
     while i > 0 {
         i -= 1
@@ -150,21 +154,31 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
             if owner == k { continue }
             ro nm = c_callable(ctx, row, []TyId.new())
             if owner < 0 || state[owner] != 2 {
-                ice_at("novac/src/pipeline/program.nv:153", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
+                ice_at("novac/src/pipeline/program.nv:157", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
             } else if wanted.add(nm) && done[owner] {
-                ice_at("novac/src/pipeline/program.nv:155", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
+                ice_at("novac/src/pipeline/program.nv:159", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
             } else {
                 // Recorded for its owner, which is still to come.
             }
         }
-        ro c = emit_unit(tree, ctx, chan, reach, insts, unit_src_name(u), "u${k}_", true, made, tid_base)
+        note_fences(ctx, fences)
+        held.push(Checked { k, tree, ctx, chan, reach, insts })
+    }
+    if diags.len() > 0 { return (diags, "") }
+    // Every unit is checked and the fence is whole: print, in the same order.
+    mut rev = []UnitC.new()
+    mut tid_base = 0
+    for h in held {
+        mut ctx = h.ctx
+        ctx.fences = fences
+        ro c = emit_unit(h.tree, ctx, h.chan, h.reach, h.insts, unit_src_name(units[h.k]), "u${h.k}_", true, made,
+                         tid_base)
         for nm in c.made {
             ro _ = made.add(nm)
         }
         tid_base += c.infos
         rev.push(c)
     }
-    if diags.len() > 0 { return (diags, "") }
     // A unit the entry's imports never reach is not walked at all; one that is
     // reached and still holds a wanted name unanswered would be a link error --
     // the walk above stops at an `ice(` naming it when the order is broken.
@@ -176,6 +190,18 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         ordered.push(rev[j])
     }
     (diags, render_program(ordered))
+}
+
+/// A unit checked and not yet printed: what its emission takes. The program
+/// holds every unit's at once, because the A4 fence is known only when the
+/// last is checked (registry 221.1 #1813).
+type Checked {
+    k int /// the unit's index in `units`
+    tree Node /// its tree
+    ctx Ctx /// its context
+    chan CheckOut /// its checker's channel
+    reach Reach /// what its emission prints
+    insts []Instantiation /// its typed instances
 }
 
 /// The tree of a unit's text, for its module line and its imports.
@@ -193,7 +219,7 @@ fn visit_unit(k int, efrom []int, eto []int, mut state []int, mut topo []int) ->
         if state[t] == 0 {
             visit_unit(t, efrom, eto, state, topo)
         } else if state[t] == 1 {
-            ice_at("novac/src/pipeline/program.nv:196", "pipeline: an import cycle between the program's modules")
+            ice_at("novac/src/pipeline/program.nv:222", "pipeline: an import cycle between the program's modules")
         } else {
             // Already placed: an import of a module reached before.
         }
