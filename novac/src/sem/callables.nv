@@ -551,6 +551,37 @@ export fn variant_sum_count(ctx Ctx, name str) -> int {
 /// Its docstring was missing until 2026-09-17 -- the wave beside it added a
 /// neighbouring door and the convention guard (P13) named this one, which is the
 /// ordinary way an old omission surfaces.
+///
+/// OWNERSHIP IS ASKED OF THE DECLARATION ID, NOT OF THE NAME (registry 221.1
+/// #1814). `ctx.defs.declared_by_file(name)` looks the TYPE NAME up again in
+/// the shared table, which answers "does the file's row win the name lookup",
+/// not "is THIS row the file's" -- and under `NOVAC_SELF_PATH` the program's
+/// own entry file is handed back to itself (its root includes the entry), so
+/// the SAME sum registers twice: once as a handed row, once as the file's own,
+/// both under one name. The file's own row then shadows the name (last put
+/// wins), so asking by name made the HANDED row of that very sum answer "yes,
+/// file-declared" too -- `n_file` counted two rows of one sum and refused the
+/// bare variant as ambiguous, a program the oracle and the unit-mode checker
+/// both accept. `foreign_types_cnt` is the boundary `types` itself was split
+/// on at the seal (`collect_types_with`): a row at or past it IS this file's,
+/// by construction, independent of what the name table later resolves to.
+///
+/// A SECOND TIER, below the file's own and above everyone else's (same
+/// registry entry, the import case): a sum handed from ANOTHER MODULE OF THE
+/// SAME PROGRAM (`NOVAC_SELF_PATH`, read via `self_decls`) is this program's
+/// own code, imported by name, same as std is handed to every file blanket --
+/// except std's declarations are visible with no import at all (a simplification
+/// this door does not touch), while a program module's sum sits beside std's in
+/// one flat `variant_names` chain with nothing to tell them apart. `Empty` of a
+/// program's own `Shape` then collided with `std`'s unrelated, unimported
+/// `LinkedList.Empty` (both exported, neither filtered by privacy) and the bare
+/// use refused as ambiguous on a program the oracle accepts (import resolves it
+/// there). Until novac tracks import lists per name (a larger feature, out of
+/// this registry entry's bound), the program's OWN modules are told apart from
+/// std by `ctx.interop.has_module` -- the same link-surface mark
+/// `program_type_module` (sem/mangle_home.nv) already uses to tell "the
+/// program's" from "the shell's" -- and preferred over std's blanket set, the
+/// same way the file's own sum is preferred over every handed one.
 #realtime nogc
 export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
     mut r = ctx.variant_names.find(name)
@@ -558,6 +589,8 @@ export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
     mut n_all = 0
     mut first_file = no_vrow()
     mut n_file = 0
+    mut first_program = no_vrow()
+    mut n_program = 0
     while r >= 0 {
         ro v = ctx.variant_rows[r]
         if !is_vrow(first_all) {
@@ -566,18 +599,31 @@ export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
             // The head is the first of all; later rows only count.
         }
         n_all += 1
-        if ctx.defs.declared_by_file(decl_of_ty(ctx, v.sum_id).name) {
+        ro sname = decl_of_ty(ctx, v.sum_id).name
+        if raw_decl(ctx.tys.decl_head_of(v.sum_id)) >= ctx.foreign_types_cnt {
             if !is_vrow(first_file) {
                 first_file = VariantRow(r)
             } else {
                 // A later file-declared row only counts.
             }
             n_file += 1
+        } else if match handed_type_home(ctx, ctx.tys.decl_head_of(v.sum_id), sname) {
+            Some(home) => ctx.interop.has_module(home)
+            None => false
+        } {
+            if !is_vrow(first_program) {
+                first_program = VariantRow(r)
+            } else {
+                // A later program-module row only counts.
+            }
+            n_program += 1
         } else {
-            // A handed sum's variant: counted among all, not among the file's.
+            // std's handed sum, or one no row's home names: counted among
+            // all, the fallback tier beneath the file's and the program's.
         }
         r = raw_vrow(v.next_same)
     }
     if n_file > 0 { return (first_file, n_file) }
+    if n_program > 0 { return (first_program, n_program) }
     (first_all, n_all)
 }

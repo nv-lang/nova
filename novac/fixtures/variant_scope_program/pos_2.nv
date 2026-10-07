@@ -1,0 +1,27 @@
+module variant_scope_program.pos_2
+
+// NOVAC_PROGRAM
+// IMPORTED MODULE SUM vs STD'S CLOSED SUM (registry 221.1 #1814, замер (2)):
+// `Empty` here is a variant of `variant_scope_program.shape`'s `Shape`, a
+// module of THIS program, named after an explicit import. It is not declared
+// by the entry file itself, so it carried no precedence over std's own prelude
+// sum of the same name (`ParseBoolError.Empty`, visible with no import at all)
+// -- the bare use refused as ambiguous, a program the oracle accepts (its
+// import resolves the name there; confirmed the oracle needs the same `Shape`
+// annotation novac does once a second candidate exists -- D478's door, not a
+// bare-inference gap). The program's own module must outrank std's
+// blanket-visible set, the same way the file's own declaration already
+// outranks every handed one.
+
+import ./shape.{Shape, Circle, Rect, Empty, area}
+
+fn main() {
+    ro c Shape = Empty
+    match c {
+        Circle(r) => println(r)
+        Rect(w, h) => println(w * h)
+        Empty => println(0 - 1)
+    }
+    println(area(Rect(2, 3)))
+    println(area(Circle(4)))
+}

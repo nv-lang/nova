@@ -1,0 +1,14 @@
+module variant_scope_program.shape
+
+export type Shape enum
+    | Circle(int)
+    | Rect(int, int)
+    | Empty
+
+export fn area(s Shape) -> int {
+    match s {
+        Circle(r) => r * r
+        Rect(w, h) => w * h
+        Empty => 0
+    }
+}
