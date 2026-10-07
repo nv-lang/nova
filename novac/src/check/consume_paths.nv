@@ -69,6 +69,37 @@ fn Checker mut @flow_exit(mut fl ConsumeFlow, mark int, at Node, exit str) -> ()
     @flow_record_cleanups(fl, mark, at)
 }
 
+/// A call that never returns (`-> never`, D26), WHEREVER it stands -- a statement, a
+/// tail, the value of an arm, an argument, an operand (registry #1762: until then only
+/// a statement typed `never` was seen) -- is an EXIT POINT (D133: "`panic` / `expr!!` /
+/// `expr?` / unwinding-paths"): what is owned there is judged as at a `return`, and the
+/// path ends. Its outcome is a panic, and no cleanup is placed on that path (D432): an
+/// affine value still owned, or a D476 temporary of the call it stands in, is refused by
+/// name; so is one left inside a `with`, a `spawn`, a handler or an assignment while a
+/// value is owned (it leaves their body first, which this step does not follow).
+fn Checker mut @flow_diverge(e Node, mut fl ConsumeFlow) -> () {
+    if fl.stopped { return }
+    if fl.depth > 0 && flow_any_live(fl) {
+        @flow_stop(e, "left by a diverging call inside a `with`, a `spawn`, a handler or an assignment while one is tracked", fl)
+        return
+    } else if fl.scope_ok && @chan.cleanup_first(fl.scope_call.id_of()) >= 0 {
+        @flow_stop(e, "left by a diverging call while a D476 temporary of the same call is alive (the Panic outcome, D432)", fl)
+        return
+    } else {
+        // No body of another kind to leave first, no temporary: the owned values below.
+    }
+    for i in 0..fl.owned_ty.len() {
+        if fl.auto_at[i] >= 0 && fl.state[i] != VarState.VsConsumed {
+            @flow_stop(e, "left by a diverging call before its `@cleanup` (the Panic outcome, D432)", fl)
+            return
+        } else {
+            continue
+        }
+    }
+    @flow_exit(fl, 0, e, "this diverging call")
+    fl.dead = true
+}
+
 /// `break` / `continue`: the values the loop body bound must be consumed here, and
 /// the state of the values from before the loop goes to the loop's exit or to its
 /// next pass. The path ends.
@@ -114,6 +145,8 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
             if @pattern_owns(branch_children(a)[0], fl.kinds) { owns = true } else { continue }
         }
         @flow_expr(kids[1], fl, owns)
+        // A scrutinee that never returns: no arm is reached, and the path has left.
+        if fl.stopped || fl.dead { return }
         entry = flow_states_copy(fl.state)
         // An arm is reached where the arms above it did not match -- or matched and
         // their GUARD was false, after it ran: its state joins the next arm's entry
@@ -143,6 +176,8 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
         if kids.len() <= then_at { return }
         ro owns = k == NodeKind.IfLet && @pattern_owns(kids[1], fl.kinds)
         @flow_expr(kids[head_at], fl, owns)
+        // A condition that never returns: no arm is reached, and the path has left.
+        if fl.stopped || fl.dead { return }
         entry = flow_states_copy(fl.state)
         // The then-arm binds what an `if`-let's pattern binds; a plain condition
         // binds nothing (its "pattern" is the condition, which owns nothing).
@@ -181,7 +216,8 @@ fn Checker mut @flow_branch(n Node, mut fl ConsumeFlow, moved bool) -> () {
 fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow, builds bool) -> () {
     ro kids = branch_children(e)
     @flow_operand(kids[0], fl, builds)
-    if fl.stopped { return }
+    // A left side that never returns ends the path: the right side is not reached.
+    if fl.stopped || fl.dead { return }
     ro entry = flow_states_copy(fl.state)
     if is_coalesce_return(kids) {
         @flow_coalesce_return(e, kids, fl)
@@ -193,6 +229,15 @@ fn Checker mut @flow_short_circuit(e Node, mut fl ConsumeFlow, builds bool) -> (
     }
     @flow_operand(kids[2], fl, builds)
     if fl.stopped { return }
+    if fl.dead {
+        // The right side never returned: its path left, and the one that goes on is
+        // the left side's (`x ?? boom()`).
+        fl.state = entry
+        fl.dead = false
+        return
+    } else {
+        // Both paths come out: joined below.
+    }
     mut joined = []VarState.new()
     flow_join(joined, fl.state, 0)
     flow_join(joined, entry, 1)
@@ -414,7 +459,8 @@ fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
     } else {
         // A condition or a `while`-let initializer runs at every pass, below.
     }
-    if fl.stopped { return }
+    // A `for` head that never returns: the loop is not entered, and the path has left.
+    if fl.stopped || fl.dead { return }
     // The enclosing loop's own exits are kept aside while this one is walked.
     ro saved_mark = fl.loop_mark
     ro saved_brk = flow_states_copy(fl.brk)
@@ -437,7 +483,9 @@ fn Checker mut @flow_loop(n Node, mut fl ConsumeFlow) -> () {
         } else {
             // The iterated value was evaluated once, above.
         }
-        if fl.stopped { break }
+        // A condition that never returns: nothing comes out of this pass (`@flow_come_out`
+        // below, with no path, leaves the path dead).
+        if fl.stopped || fl.dead { break }
         if !forever {
             // The condition fails, or the iterator is done: the loop comes out here.
             flow_join(exits, fl.state, exit_paths)

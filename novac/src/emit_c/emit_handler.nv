@@ -111,20 +111,31 @@ fn Emitter @lit_schema(lit Node) -> EffectDef =>
 /// The C signature of one operation function, without the trailing `;`/`{`.
 fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
     ro sig = @ctx.effects.ops[sig_at]
+    ro pnames = op_param_names(op)
     consume s = StringBuilder.new()
     s.append("static ${c_type(@ctx, sig.ret_id)} novac_hop_${n}_${sig.name}(void* _novac_ctx")
     mut j = 0
-    for p in branch_children(op) {
-        if p.kind_of() != NodeKind.Param { continue }
-        ro pk = branch_children(p)
-        ro pname = leaf_text(pk[param_name_at(pk) ?? ice_at(
-            "novac/src/emit_c/emit_handler.nv:120",
-            "emit: a handler op parameter without a name")])
+    for pname in pnames {
         s.append(", ${c_type(@ctx, @ctx.effects.op_params[sig.param_off + j])} ${pname}")
         j += 1
     }
     s.append(")")
     s
+}
+
+/// The names of an operation's parameters, in order -- read BEFORE the signature's
+/// builder is made: a missing one is an ice, and an ice is an exit point, where no
+/// `consume` value may still be owned (D133; registry #1762).
+fn op_param_names(op Node) -> []str {
+    mut out = []str.new()
+    for p in branch_children(op) {
+        if p.kind_of() != NodeKind.Param { continue }
+        ro pk = branch_children(p)
+        out.push(leaf_text(pk[param_name_at(pk) ?? ice_at(
+            "novac/src/emit_c/emit_handler.nv:134",
+            "emit: a handler op parameter without a name")]))
+    }
+    out
 }
 
 /// For each literal: its context type (only when it captures) and the

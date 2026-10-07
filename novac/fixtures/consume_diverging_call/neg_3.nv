@@ -1,0 +1,35 @@
+module consume_diverging_call.neg_3
+
+// A NESTED `consume` FIELD STILL OWNED AT A DIVERGING CALL (registry 221.1 #1762; D133
+// "Nested field paths"). `@inner.a` is consumed before the call, `@inner.b` is not: the
+// call leaves `@close` with `@inner.b` owned, and the refusal names that path.
+
+// NOVAC_EXPECT the field `@.inner.b` (type `StringBuilder`) is still owned when this diverging call leaves this `consume` method
+
+type Pair consume {
+    consume a StringBuilder
+    consume b StringBuilder
+}
+
+fn Pair consume @join() -> str => "${@a.into_str()}${@b.into_str()}"
+
+type Outer consume {
+    consume inner Pair
+    k int
+}
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn Outer consume @close() -> str {
+    ro head = @inner.a.into_str()
+    boom(head) // the one refusal: line 28
+    @inner.b.into_str()
+}
+
+fn main() {
+    consume o = Outer { inner: Pair { a: StringBuilder.new(cap: 4), b: StringBuilder.new(cap: 4) }, k: 1 }
+    println(o.close())
+}

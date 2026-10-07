@@ -1,0 +1,27 @@
+module consume_diverging_call.neg_4
+
+// A DIVERGING CALL AS THE VALUE OF AN `if` ARM (registry 221.1 #1762, measurement (3)).
+// The arm never comes out: it is an exit with `b` owned, refused AT THE CALL. Before #1762
+// the arm went into the join alive and the refusal came at the end of the scope, as
+// "consumed on only some paths" -- the right verdict at the wrong place, for the wrong
+// reason.
+
+// NOVAC_EXPECT `b` (type `StringBuilder`) is still owned when this diverging call leaves its scope
+
+fn boom(msg str) -> never {
+    println(msg)
+    boom(msg)
+}
+
+fn work(n int) -> str {
+    consume b = StringBuilder.new(cap: 8)
+    if n > 0 {
+        boom("no text") // the one refusal: line 19
+    } else {
+        b.into_str()
+    }
+}
+
+fn main() {
+    println(work(0))
+}
