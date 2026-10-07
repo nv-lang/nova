@@ -28,7 +28,6 @@
 module novac.sem
 
 import ../diag.{ice_at}
-import ../names.{raw_decl, DeclId, is_decl}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
 import ../builtins.{PAREN_RECORD_C_PREFIX, HANDLER_CTOR, TypeKind, EMPTY_CTOR}
 import ../types.{TyId, is_ty}
@@ -77,7 +76,7 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
         steps += 1
     }
     ice_at(
-        "novac/src/sem/mangle.nv:79",
+        "novac/src/sem/mangle.nv:78",
         "mangle: a newtype chain longer than the registry -- a cycle reached the carrier door")
 }
 
@@ -199,123 +198,6 @@ fn instance_source_name(ctx Ctx, t TyId) -> str {
 /// `novac/src/emit_c/shell.tpl.c:56-58`. `<X>` is the D381 base (`type_base`).
 export fn c_tag_enum(ctx Ctx, t TyId) -> str => "Nova_${type_base(ctx, t)}_Tag"
 
-/// D381 -- THE BASE of a nominal type's C name: the declared name, or
-/// `<modpath>_<name>` when the name COLLIDES in the unit. The oracle's single
-/// point (`def_type_base`/`ref_type_base`, spec 08-runtime.md D381, its
-/// single-point paragraph): every spelling of a user struct, tag enum and
-/// in-name argument goes through it. A name that does not collide comes back
-/// unchanged, so a unit without a collision is byte-identical (D381 rejects
-/// always-qualify).
-fn type_base(ctx Ctx, t TyId) -> str => decl_base(ctx, ctx.tys.decl_head_of(t))
-
-/// D381 -- does the SHELL already define a struct BODY under one of this
-/// name's C spellings? The collision set of OUR unit: the shell is the
-/// oracle's emission of the probe, where std's types are spelled BARE, and it
-/// is glued into every unit we emit -- so a program type of that name is the
-/// second declaration of one simple name in the unit (what D381 calls colliding),
-/// and the std side cannot be renamed (interop). Both spellings, because a
-/// value record or a payload-free sum comes out as `NovaValue_`.
-fn shell_defines_struct(ctx Ctx, name str) -> bool =>
-    ctx.interop.has_body("Nova_${name}") || ctx.interop.has_body("NovaValue_${name}")
-
-/// D381 -- the C base of declaration `d`. Measured on the oracle 2026-10-06
-/// (plan 274.5 section pre68): a user `ErrorKind` beside std.io's in one unit
-/// is `Nova_p3_ErrorKind`, and `Nova_ErrorKind` when nothing collides.
-///
-/// COLLIDING is a NAME fact, as in D381 ("a simple name declared in two
-/// modules"): a type of the PROGRAM whose name the shell already spells. Every
-/// shape of it is qualified -- the oracle's D381 stops at plain-Sum and
-/// heap-Record and fails the rest in clang (value record, newtype, generic:
-/// registry 221.1 #1765), but a spelling is not a language rule, and a
-/// program D125 makes legal is compiled whatever its shape. A newtype has no C
-/// name of its own (its representation's), and a generic head is named by the
-/// mono path, which the subset does not compile yet (E2-b2).
-///
-/// THE DEF MODULE, not the module of the file asking (D381's module
-/// resolution): the file's own row takes the file's module, a handed row of a
-/// program module its home -- `novac.lex`'s `Token` is `Nova_novac_lex_Token`
-/// in every unit naming it -- and a handed row of std is the shell's and keeps
-/// the name. A file with NO module takes D381's formula with an empty modpath,
-/// `Nova__<Name>`: the oracle collapses that to the bare name, which in our
-/// unit IS the shell's struct, and a type name never starts with `_` (D30), so
-/// the doubled separator cannot meet a bare name.
-fn decl_base(ctx Ctx, d DeclId) -> str
-    requires is_decl(d) && raw_decl(d) < ctx.types.len(), "mangle: the C base of a declaration outside the registry"
-{
-    ro td = ctx.types[raw_decl(d)]
-    if !shell_defines_struct(ctx, td.name) { return td.name }
-    match program_type_module(ctx, d) {
-        Some(m) => "${m}_${td.name}"
-        None => td.name
-    }
-}
-
-/// THE ONE DOOR "the shell's type or the program's" (registry 221.1 #1786,
-/// #1790 (a)): `Some(<module path in C shape>)` when declaration `d` is the
-/// PROGRAM's -- the file's own row (`ctx.module_c`), or a handed row whose
-/// home is a module of the program (`interop.has_module`, 274.11 E.10 step
-/// 2a) -- and `None` when it is the SHELL's: a handed row of std, or one no
-/// row registers (nothing to qualify it by, the shell keeps it).
-///
-/// The row boundary `foreign_types_cnt` answers a DIFFERENT question --
-/// whether THIS unit prints the declaration -- and in a program the two part:
-/// another module's type is handed to the unit yet compiled by its owner, so
-/// its tags, makers and C base are the owner's, never the shell's. Asked by
-/// the boundary, `c_tag` wrote `NOVA_TAG_Node_Leaf` for `novac.tree`'s `Node`
-/// in every other unit (~1000 clang errors on novac itself). The callable
-/// twin is `Ctx @in_program` (sem/interop.nv).
-export fn program_type_module(ctx Ctx, d DeclId) -> Option[str] {
-    if raw_decl(d) >= ctx.foreign_types_cnt { return Some(ctx.module_c) }
-    match handed_type_home(ctx, d, ctx.types[raw_decl(d)].name) {
-        Some(home) => if home != "" && ctx.interop.has_module(home) { Some(home.replace(".", "_")) } else { None }
-        None => None
-    }
-}
-
-/// The module a HANDED type declaration came from: the `DefTable` home of the
-/// row registering it, found along the chain of same-named rows (#1521), None
-/// when no row names it.
-fn handed_type_home(ctx Ctx, d DeclId, name str) -> Option[str] {
-    mut i = ctx.defs.first_def(name)
-    while i >= 0 {
-        ro hit = match ctx.defs.def_at(i).target {
-            DefType(id) => id == d
-            DefFn(_) | DefConst(_) => false
-        }
-        if hit { return Some(ctx.defs.home_at(i)) }
-        i = ctx.defs.prev_def(i)
-    }
-    None
-}
-
-/// The module part of one of OUR names: the path plus a separator, or `""`.
-///
-/// A door and not `"${ctx.module_c}_"` at three call sites, because the EMPTY
-/// case is the whole question: a file with no module declaration must add
-/// nothing at all, and a trailing separator would make `novac_fn__helper` -- a
-/// name with a hole where the identity is missing, which is exactly what a
-/// reader would then have to know not to trust.
-///
-/// WHAT DOES NOT GET IT, and this is interop rather than an exception: the C
-/// STRUCT names (`Nova_<name>`). Our emission is glued into the oracle's shell
-/// (274 section 7.0), the shell declares those types, and a name we invent there
-/// would not be the type the shell knows. They stay until novac emits the whole
-/// prelude itself -- the same end condition every other interop line carries.
-fn module_prefix(ctx Ctx) -> str => c_module_part(ctx.module_c)
-
-/// The same part for ANY module path in C shape -- a type's owner
-/// (`program_type_module`), not only the file's: `""` stays `""`.
-fn c_module_part(m str) -> str {
-    if m == "" { return "" }
-    "${m}_"
-}
-
-/// The module prefix of a CALLABLE: the module of the ROW -- the file's for its
-/// own rows, the handed file's (`handed_from`) for a handed one -- so every unit
-/// that calls it names one symbol (274.11 E.10 step 1).
-fn row_module_prefix(ctx Ctx, fd FnDef) -> str =>
-    if fd.handed_from == "" { module_prefix(ctx) } else { "${fd.handed_from.replace(".", "_")}_" }
-
 /// Is this type a record DECLARED `value`?
 ///
 /// A predicate over the stored word, not over the shape: a record's layout is
@@ -433,16 +315,16 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
                 return CLayout { base: instance_struct_name(ctx, t), by_ptr: true }
             }
             TkParam => { ice_at(
-                "novac/src/sem/mangle.nv:435",
+                "novac/src/sem/mangle.nv:317",
                 "mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice_at(
-                "novac/src/sem/mangle.nv:438",
+                "novac/src/sem/mangle.nv:320",
                 "mangle: c_type of an inference variable — a variable escaped its body") }
             // TkEffect: unreachable while the with-doors refuse non-handler values;
             // ice, not a fallback (E4 wave). Effect types get a C spelling with the
             // Effect-type stage, not by masquerading as a record pointer here.
             TkEffect => { ice_at(
-                "novac/src/sem/mangle.nv:444",
+                "novac/src/sem/mangle.nv:326",
                 "mangle: c_type of an EFFECT type — effect values are typed by with-doors, which are not built yet (E4 wave)") }
             // A tuple is a BY-VALUE mono struct (D123): its C type IS its
             // struct name, no pointer -- the same word `value` means on a
@@ -457,7 +339,7 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
             }
         }
     }
-    ice_at("novac/src/sem/mangle.nv:460", "mangle: type id outside the registry — no silent int default (#652 class)")
+    ice_at("novac/src/sem/mangle.nv:342", "mangle: type id outside the registry — no silent int default (#652 class)")
 }
 
 /// C name of a user type's struct (no pointer): `Nova_<name>`.
@@ -469,12 +351,12 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
 /// as a struct in silence (П21).
 export fn c_struct(ctx Ctx, t TyId) -> str {
     if !is_ty(t) {
-        ice_at("novac/src/sem/mangle.nv:472", "mangle: struct name asked for `no type`")
+        ice_at("novac/src/sem/mangle.nv:354", "mangle: struct name asked for `no type`")
     }
     match ctx.tys.kind_of(t) {
-        TkPrim => { ice_at("novac/src/sem/mangle.nv:475", "mangle: a primitive has no struct name") }
+        TkPrim => { ice_at("novac/src/sem/mangle.nv:357", "mangle: a primitive has no struct name") }
         TkPtr => { ice_at(
-            "novac/src/sem/mangle.nv:476",
+            "novac/src/sem/mangle.nv:358",
             "mangle: a pointer has no struct name -- it is its pointee's type with a star") }
         // THE SHAPE decides the prefix, and all three spellings are the
         // ORACLE's, measured off its own emission (P25 -- the fixed point of
@@ -502,16 +384,16 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
             return instance_struct_name(ctx, t)
         }
         TkParam => { ice_at(
-            "novac/src/sem/mangle.nv:504",
+            "novac/src/sem/mangle.nv:386",
             "mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice_at(
-            "novac/src/sem/mangle.nv:507",
+            "novac/src/sem/mangle.nv:389",
             "mangle: struct name of an inference variable — a variable escaped its body") }
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). An effect owns operation rows, not a C
         // struct.
         TkEffect => { ice_at(
-            "novac/src/sem/mangle.nv:513",
+            "novac/src/sem/mangle.nv:395",
             "mangle: struct name of an EFFECT type — an effect declares no C struct; with-doors refuse non-handler values (E4 wave)") }
         // The typedef is self-named (`typedef struct X {...} X;`), so the
         // struct name and the C type are the one string.
@@ -592,7 +474,7 @@ export fn vec_op_c(ctx Ctx, vec_t TyId, name str, row FnRow) -> str {
     if ctx.interop.has(shell) { return shell }
     if raw_row(row) < 0 {
         ice_at(
-            "novac/src/sem/mangle.nv:594",
+            "novac/src/sem/mangle.nv:476",
             "mangle: an implicit vector operation the shell lacks reached emission with no row recorded")
     } else {
         // The row the checker recorded for this operation.
@@ -893,7 +775,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
             ro r = ctx.tys.subst_known(t, subst)
             if !is_ty(r) {
                 ice_at(
-                    "novac/src/sem/mangle.nv:895",
+                    "novac/src/sem/mangle.nv:777",
                     "mangle: a substituted type the checker never interned -- the instance was not typed through it")
             } else {
                 // Interned: the one id this term has.
@@ -999,7 +881,7 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // what `T` stands for.
         TkParam => type_tag(ctx, subst_type(ctx, t, subst), subst)
         TkInfer => ice_at(
-            "novac/src/sem/mangle.nv:1001",
+            "novac/src/sem/mangle.nv:883",
             "mangle: type_tag of an inference variable — inference arrives at E2-b3")
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). A callable named BY an effect type is a
@@ -1008,7 +890,7 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // cannot be a parameter separator (`ptr_tag`).
         TkPtr => ptr_tag(ctx, t, subst)
         TkEffect => ice_at(
-            "novac/src/sem/mangle.nv:1010",
+            "novac/src/sem/mangle.nv:892",
             "mangle: type_tag of an EFFECT type — an effect value reaches a callable name only through a with-door bug (E4 wave)")
     }
 }
