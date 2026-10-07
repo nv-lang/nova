@@ -1,0 +1,50 @@
+module never_value.pos_2
+
+// A `never` VALUE IN A PLACE THAT IS NOT AN `int` (D26: `never` is the bottom
+// type, compatible with every type). `never` is spelled `nova_int` in C, so
+// pos_1's cells -- all of them `int` places -- were compiled by ASSIGNING the
+// call's result, and that was right by accident: an `str`, `f64`, `bool` or
+// record place took a `nova_int` and clang refused the unit, while the oracle
+// built it (E2-b3 step 6: `diag.nv`'s `json_encode(dto) ?? ice(..)`). The call
+// is now EVALUATED and the place keeps what it held -- control does not come
+// back. `die` is declared BELOW its callers, as `ice` is in diag.nv, so the
+// cells also need the file's prototypes. The last cell fires: the message, the
+// throw-site line and exit code 101 are compared too.
+
+type Pt {
+    x int
+}
+
+fn label(o Option[str]) -> str {
+    o ?? die("no label")
+}
+
+fn ratio(o Option[f64]) -> f64 {
+    o ?? die("no ratio")
+}
+
+fn flag(o Option[bool]) -> bool {
+    o ?? die("no flag")
+}
+
+fn point(o Option[Pt]) -> Pt {
+    o ?? die("no point")
+}
+
+fn name_of(n int) -> str {
+    ro s = if n > 0 { "pos" } else { die("not positive") }
+    s
+}
+
+fn main() {
+    println(label(Some("x")))
+    println(ratio(Some(0.5)))
+    println(flag(Some(true)))
+    println(point(Some(Pt { x: 7 })).x)
+    println(name_of(1))
+    println(label(None))
+}
+
+fn die(msg str) -> never {
+    panic("died: ${msg}")
+}

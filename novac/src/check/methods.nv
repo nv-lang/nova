@@ -22,7 +22,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../lex.{Token}
 import ../types.{TyId, is_ty, no_ty}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, RESULT_SUM}
 import ../diag.{ice_at}
 import ../names.{raw_decl}
 import ../resolve.{FnLookup}
@@ -31,7 +31,7 @@ import ../sem.{row_recv_by_pointer, is_place_expr}
 import ../sem.{LitArg, branch_children, ArgSpec, ArgClass, CallForm, FnRow, CalleeTarget, raw_row, no_row, bind_slots}
 import ../sem.{is_arg_value_kind, leaf_text}
 import ../sem.{c_method_symbol, c_overload_symbol, impl_of_proto, ty_source_name, decl_of_ty}
-import ../sem.{option_payload}
+import ../sem.{option_payload, c_struct}
 import ../sem.{expr_leaf_name, type_admits}
 import ../sem.{EffectOpRef, identity_slots, effect_op_dispatcher_c}
 
@@ -409,13 +409,17 @@ fn Checker mut @record_instance_method(e Node, t Token, row FnRow, key []ArgSpec
         // the mangle door) -- so an Option-returning instance method is now an
         // ordinary interop call. Every OTHER sum family keeps the refusal
         // until its carrier arrives.
-        if !is_ty(option_payload(@ctx, ret)) {
+        // A RESULT the shell carries the struct of (`NovaRes_nova_unit_NovaValue_
+        // SerError`, E2-b3 step 5) is spelled by the same door a `Result` value
+        // takes everywhere else (option_rules.nv, `has_body`).
+        ro carried_result = decl_of_ty(@ctx, ret).name == RESULT_SUM && @ctx.interop.has_body(c_struct(@ctx, ret))
+        if !is_ty(option_payload(@ctx, ret)) && !carried_result {
             @refuse(t, "outside the subset: this method returns `${ty_source_name(@ctx, ret)}` -- an instance of a sum, whose family spelling novac does not take yet")
             // Refused, but judged: the substituted return is known (274.4 s2).
             @record(e, ret)
             return
         } else {
-            // Option: falls through to the ordinary interop recording below.
+            // Option, or a Result the shell carries: the ordinary recording below.
         }
     }
     @intern_instance_sig(row, ids)
@@ -616,7 +620,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     if !@effect_op_head(kids) { return false }
     ro head_name = expr_leaf_name(kids[0])
     ro edecl = @ctx.defs.type_decl(head_name) ?? ice_at(
-        "novac/src/check/methods.nv:618",
+        "novac/src/check/methods.nv:622",
         "check: the effect-op head lost its declaration between two reads of one Option")
     ro onm = match kids[2] {
         Leaf(t) => t
@@ -624,7 +628,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     }
     ro opname = onm.text
     ro schema = @ctx.effects.def_of(head_name) ?? ice_at(
-        "novac/src/check/methods.nv:626",
+        "novac/src/check/methods.nv:630",
         "check: an effect declaration with no op schema reached the effect-op call door")
     // (a) THE OPERATION MUST BE IN THE SCHEMA -- the call-side sibling of
     // the handler literal's E_HANDLER_OP_UNKNOWN (one family, two

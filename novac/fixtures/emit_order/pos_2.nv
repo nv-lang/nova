@@ -1,0 +1,32 @@
+module emit_order.pos_2
+
+// A FIELD OF THE FILE'S OWN TYPE HOLDS A GENERIC RECORD INSTANCE THE SHELL DOES
+// NOT DEFINE (`items []Pt`). The instance's struct was written with its body,
+// AFTER the file's declarations, so the record naming it was `unknown type name
+// 'Nova_Vec____Nova_Pt_p'` in clang while the oracle built the file (E2-b3 step
+// 6: a derived DTO with a vector of the program's sum). The names of such
+// instances now precede every body. The cells: a record field and a vector of
+// vectors (its struct points to the inner one's). A sum payload of an applied
+// type (`Many([]Pt)`) is not read by novac's parser yet, so it is not a cell.
+
+type Pt {
+    x int
+}
+
+type Bag {
+    name str
+    items []Pt
+    rows [][]Pt
+}
+
+fn main() {
+    mut v = []Pt.new()
+    v.push(Pt { x: 4 })
+    v.push(Pt { x: 5 })
+    ro b = Bag { name: "b", items: v, rows: [v, v] }
+    println(b.name)
+    println(b.items.len())
+    println(b.items[1].x)
+    println(b.rows.len())
+    println(b.rows[1][0].x)
+}

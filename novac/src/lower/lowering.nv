@@ -19,6 +19,7 @@ import ../sem.{literal_prim_of, print_call_ends_line}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
 import ../sem.{is_option_some_pattern}
 import ../sem.{loop_ctl_is_break, is_collection_head}
+import ../sem.{raw_row, no_row}
 // The receiver's fields and the store it records (the receiver moved here from ir.nv).
 import ../tree.{AssignOp}
 import ../sem.{Ctx, CheckOut}
@@ -423,7 +424,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // local its Option landed in (274.8 M2b-1b, emit_flow.nv).
         @lower_if_let(st, None)
     } else {
-        ice_at("novac/src/lower/lowering.nv:426", "emit: statement kind outside the subset")
+        ice_at("novac/src/lower/lowering.nv:427", "emit: statement kind outside the subset")
     }
 }
 
@@ -572,7 +573,7 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
         // the IR already had that block -- the outer else.
         @lower_if_let(tail, Some(c))
     } else {
-        ice_at("novac/src/lower/lowering.nv:575", "emit: the else branch is neither a block nor a chained if / if-let")
+        ice_at("novac/src/lower/lowering.nv:576", "emit: the else branch is neither a block nor a chained if / if-let")
     }
 }
 
@@ -692,6 +693,17 @@ fn Lowerer mut @lower_return(st Node) -> () {
 /// streaming bridge of waves M1/M2a: statements are lowered and printed one
 /// by one until M2b prints sealed blocks.
 fn Lowerer mut @lower_place(e Node, dest Local) -> () {
+    // A `never` VALUE (D26: the bottom type, a subtype of every type) in a place of
+    // another type -- `o ?? die("..")`, a `-> never` call as a branch's value -- has no
+    // value to store: control does not come back. It is EVALUATED, and the place keeps
+    // what it held. Assigning it put a `nova_int` into a `nova_str` local and clang
+    // refused the unit (E2-b3 step 6, `diag.nv`'s `to_json` with a `main`).
+    if @is_never_value(e) && @ir.decl_of(dest).ty != @ctx.prims.never_id {
+        @lower_eval(e)
+        return
+    } else {
+        // A value of the place's own type: placed below.
+    }
     // A call holding D476 temporaries (ir_cleanup.nv): its arguments laid down first,
     // its value placed in a temporary, then they go, and only then does the value reach
     // `dest` -- which may be the return place, whose assignment the printer spells as
@@ -709,6 +721,22 @@ fn Lowerer mut @lower_place(e Node, dest Local) -> () {
     @lower_place_value(e, t)
     @d476_cleanups(cs)
     @ir.copy(dest, t)
+}
+
+/// Is `e` a value of type `never` (D26)? Recorded so on the channel -- `panic(..)` is
+/// -- or a call of a callable whose declared return is `never`: a FREE call records no
+/// type of its own (a method call does), so the callee is asked, the one fact that holds
+/// in every position a call can stand in (`??`'s fallback, an `if` branch, an arm).
+fn Lowerer @is_never_value(e Node) -> bool {
+    ro et = @out.type_if_known(e.id_of())
+    if is_ty(et) { return et == @ctx.prims.never_id }
+    if !@out.has_callee(e.id_of()) { return false }
+    ro row = match @out.callee_of(e.id_of()).target {
+        CalleeFn(r) => r
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => no_row()
+    }
+    if raw_row(row) < 0 { return false }
+    @ctx.fns.rows[raw_row(row)].ret_id == @ctx.prims.never_id
 }
 
 /// `dest = e` once the D476 temporaries, if any, are laid down (`@lower_place`).
@@ -823,7 +851,7 @@ fn Lowerer mut @lower_println(call Node) -> () {
                     // position (#870), so a branch here is a broken invariant rather than
                     // a shape to skip -- the silent fallout this arm replaces printed `ab`
                     // for `a20b`.
-                    ice_at("novac/src/lower/lowering.nv:826", "emit_c: an argument form the checker let through (#870)")
+                    ice_at("novac/src/lower/lowering.nv:854", "emit_c: an argument form the checker let through (#870)")
                 }
             }
         }

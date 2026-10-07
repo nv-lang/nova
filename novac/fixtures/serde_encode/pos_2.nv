@@ -1,0 +1,54 @@
+module serde_encode.pos_2
+
+// A HAND-WRITTEN `@serialize[S Serializer]` (D122 conformance by method, the
+// shape of std's manual_roundtrip_test.nv) is called by `json_encode` the same
+// way a derived one is; and the AUTHOR'S OWN method wins over the derivation
+// (D77): `Tagged` carries `#impl(Serialize)` and writes itself as a bare
+// string, so nothing is synthesized for it. The generic std bodies instantiate
+// over the program's types: `[]T @serialize` over a vector of a hand-written
+// record, `Option[T] @serialize` over a derived one (E2-b3 step 6).
+import std.encoding.serde.{Serialize, Serializer, SerError, json_encode}
+
+type Addr {
+    city str
+    zip int
+}
+
+fn Addr @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+    s.begin_struct("Addr", 2)?
+    s.struct_field("city")?
+    @city.serialize(s)?
+    s.struct_field("zip_code")?
+    @zip.serialize(s)?
+    s.end_struct()
+}
+
+#impl(Serialize)
+type Tagged {
+    name str
+    n int
+}
+
+fn Tagged @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+    s.serialize_str("${@name}#${@n}")
+}
+
+#impl(Serialize)
+type User {
+    name str
+    home Option[Addr]
+    tag Tagged
+    past []Addr
+}
+
+fn main() {
+    ro a = Addr { city: "Oslo", zip: 150 }
+    println(json_encode(a) ?? "fail")
+    ro t = Tagged { name: "x", n: 2 }
+    println(json_encode(t) ?? "fail")
+    ro b = Addr { city: "Rome", zip: 101 }
+    ro u = User { name: "ann", home: Some(a), tag: t, past: []Addr.of(b, a) }
+    println(json_encode(u) ?? "fail")
+    ro v = User { name: "bob", home: None, tag: t, past: []Addr.new() }
+    println(json_encode(v) ?? "fail")
+}
