@@ -1,0 +1,33 @@
+module serde_encode.pos_5
+
+// A VECTOR OF VECTORS (E2-b3 step 6): `[]T @serialize` instantiated over `[]int`
+// and over `[]str`, its body calling ITSELF at the inner element -- std's generic
+// body twice over, each level a `begin_seq`/`end_seq` frame; empty inner vectors
+// included. The oracle does not build this file: its mono
+// leaves the inner call an uninstantiated `__mono_method__[]T__serialize` and the
+// C compiler refuses it (registry 221.1 #1801, plan 274.12), so the differential
+// compares novac's run against twin_5.nv, which writes the inner level by hand.
+
+// NOVAC_TWIN twin_5.nv
+
+import std.encoding.serde.{Serialize, json_encode}
+
+#impl(Serialize)
+type Table {
+    title str
+    rows [][]int
+    words [][]str
+}
+
+fn main() {
+    ro r0 = []int.of(1, 2)
+    ro r1 = []int.new()
+    ro r2 = []int.of(-3)
+    ro w0 = []str.of("a", "b\"c")
+    ro w1 = []str.new()
+    ro t = Table { title: "t", rows: [r0, r1, r2], words: [w0] }
+    println(json_encode(t) ?? "fail")
+    ro e = Table { title: "", rows: [r1], words: [w1] }
+    println(json_encode(e) ?? "fail")
+    println(json_encode(t.rows) ?? "fail")
+}

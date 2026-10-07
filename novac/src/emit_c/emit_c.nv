@@ -212,14 +212,10 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
     // unit printed is the program's already (one body per instance).
     ro ours = e.instances_ours(insts)
     e.emit_instance_protos(insts, ours)
-    if program {
-        // A function of one module is called from another's bodies, and the
-        // bodies of all modules follow all prototypes.
-        e.emit_file_protos(file)
-    } else {
-        // A unit alone keeps its shape: definitions in source order (the
-        // forward call this leaves unanswered is registry №TBD).
-    }
+    // The file's own callables too: a call may name one declared below it, or
+    // -- in a program -- one of another module, whose bodies follow all
+    // prototypes.
+    e.emit_file_protos(file)
     ro at_bodies = e.body.byte_len()
     e.emit_file(file)
     for k in 0..insts.len() {
@@ -308,59 +304,69 @@ fn Emitter mut @first_in_program(name str) -> bool {
     true
 }
 
-/// A prototype per reached function of the file (a program only): the bodies
-/// of every unit follow every prototype, so a call into another module -- or
-/// down the file -- names a declared function.
-fn Emitter mut @emit_file_protos(file Node) -> () {
-    for c in file_decls(file) {
-        if c.kind_of() != NodeKind.FnDecl { continue }
-        match decl_fn_row(c, @ctx) {
-            // Not a callable of the file: nothing to declare.
-            None => continue
-            Some(row) => {
-                if !@reach.has(row) { continue }
-                ro fd = @ctx.fns.rows[raw_row(row)]
-                @emit_signature(c, decl_name(c), row, no_subst(),
-                    @ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt], fd.ret_id)
-                @body.append(";\n")
+/// Emit every fn declaration of the file in source order.
+fn Emitter mut @emit_file(file Node) -> () {
+    match file {
+        Leaf(_) => ice_at("novac/src/emit_c/emit_c.nv:310", "emit: file node must be a branch")
+        Branch { kind, .. } => {
+            assert(kind == NodeKind.File, "emit: root is not File")
+            for c in @reached_fns(file) {
+                @emit_fn(c)
             }
         }
     }
 }
 
-
-/// Emit every fn declaration of the file in source order.
-fn Emitter mut @emit_file(file Node) -> () {
-    match file {
-        Leaf(_) => ice_at("novac/src/emit_c/emit_c.nv:335", "emit: file node must be a branch")
-        Branch { kind, children, .. } => {
-            assert(kind == NodeKind.File, "emit: root is not File")
-            // THROUGH THE DOOR, like every other walk over a file's
-            // declarations: an `export`ed one sits inside its visibility
-            // wrapper, and to a raw walk it is not there at all. Measured
-            // 2026-08-23: with the collector taught to see it and this loop not,
-            // the call resolved and the LINKER asked for the body
-            // (`undefined symbol: novac_fn_helper__nova_int__to_nova_int`).
-            for c in file_decls(file) {
-                if c.kind_of() != NodeKind.FnDecl { continue }
-                // E2-b2: a callable NOT reached from a root is not emitted.
-                // The decision belongs to mono, not to the emitter: the
-                // emitter writes what it is given and asks who decided.
-                match decl_fn_row(c, @ctx) {
-                    // No row: this declaration is not a callable of the file,
-                    // so there is nothing for the emitter to write.
-                    None => continue
-                    Some(row) => {
-                        if !@reach.has(row) {
-                            continue
-                        } else {
-                            // Reached from a root: the emitter writes it below.
-                        }
-                    }
+/// The file's callables the emitter writes, in source order.
+///
+/// THROUGH THE DOOR, like every other walk over a file's declarations: an
+/// `export`ed one sits inside its visibility wrapper, and to a raw walk it is
+/// not there at all. Measured 2026-08-23: with the collector taught to see it
+/// and this loop not, the call resolved and the LINKER asked for the body
+/// (`undefined symbol: novac_fn_helper__nova_int__to_nova_int`). One walk for
+/// the prototypes and the definitions, so the two never disagree on the set.
+fn Emitter @reached_fns(file Node) -> []Node {
+    mut reached = []Node.new()
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        // E2-b2: a callable NOT reached from a root is not emitted.
+        // The decision belongs to mono, not to the emitter: the
+        // emitter writes what it is given and asks who decided.
+        match decl_fn_row(c, @ctx) {
+            // No row: this declaration is not a callable of the file,
+            // so there is nothing for the emitter to write.
+            None => continue
+            Some(row) => {
+                if !@reach.has(row) {
+                    continue
+                } else {
+                    // Reached from a root: the emitter writes it.
                 }
-                @emit_fn(c)
             }
         }
+        reached.push(c)
+    }
+    reached
+}
+
+/// A prototype per callable of the file, written before any definition.
+///
+/// The definitions go in source order, so a function calling one declared
+/// BELOW it named a symbol C had not seen: clang took the call for an implicit
+/// `int` declaration and refused the definition as a conflicting type, while
+/// the oracle compiled the file (E2-b3 step 6: `diag.nv`'s `to_json` calls
+/// `ice`, declared after it). Fixtures had always put the callee first. The
+/// entry takes no prototype: nothing in the file calls it.
+fn Emitter mut @emit_file_protos(file Node) -> () {
+    for c in @reached_fns(file) {
+        ro row = decl_fn_row(c, @ctx) ?? ice_at(
+            "novac/src/emit_c/emit_c.nv:362",
+            "emit: a reached declaration with no row in the callable table")
+        if @ctx.fns.is_entry_row(row) { continue }
+        ro fd = @ctx.fns.rows[raw_row(row)]
+        @emit_signature(c, decl_name(c), row, no_subst(),
+            @ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt], fd.ret_id)
+        @body.append(";\n")
     }
 }
 
@@ -372,7 +378,7 @@ fn Emitter mut @emit_file(file Node) -> () {
 fn decl_name(f Node) -> str {
     ro kids = branch_children(f)
     leaf_text(kids[decl_name_at(kids) ?? ice_at(
-        "novac/src/emit_c/emit_c.nv:374",
+        "novac/src/emit_c/emit_c.nv:380",
         "emit: a declaration without a name reached the emitter")])
 }
 
@@ -391,7 +397,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
     // wrapping its answer in `FnRow(..)` again is E_NEWTYPE_CTOR_SELF (D52
     // amendment 2026-10-02).
     ro fn_row = decl_fn_row(f, @ctx) ?? ice_at(
-        "novac/src/emit_c/emit_c.nv:393",
+        "novac/src/emit_c/emit_c.nv:399",
         "emit: a declaration with no row in the callable table")
     // The TYPES come from the ROW, as a VIEW: the registry decided them while
     // collecting, and asking `defs` again was a second door to one decision
@@ -521,7 +527,7 @@ fn Emitter mut @emit_signature(f Node, name str, row FnRow, subst []TyId, ptypes
         // The name by its DOOR, not by index zero: `mut v int` puts the mode
         // there, and the emitter used to print the mode as the parameter name.
         ro pname = leaf_text(pk[param_name_at(pk) ?? ice_at(
-            "novac/src/emit_c/emit_c.nv:523",
+            "novac/src/emit_c/emit_c.nv:529",
             "emit: a parameter without a name reached the emitter")])
         // Position is the whole mapping: plan 273 §4.4 fixes a parameter's
         // slot, and the count is asserted after the loop rather than assumed.
@@ -598,7 +604,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     @lo.ir.end_body()
     ro lowered = @lo.ir.finish()
     if lowered.blocks.len() == 0 {
-        ice_at("novac/src/emit_c/emit_c.nv:601", "emit: a finished body without its entry block")
+        ice_at("novac/src/emit_c/emit_c.nv:607", "emit: a finished body without its entry block")
     }
     // THE BODY IS PRINTED HERE, IN ONE WALK (M2b-2 step 3b): the graph is sealed, so
     // printing no longer depends on the order in which it was built. Everything above

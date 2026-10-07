@@ -127,6 +127,24 @@ refuse_case "различие внутри продолжения макроса
 { common_head; common_tail; } | sed 's/$/\r/' > "$T/l.c"
 refuse_case "CR во входе" "contains CR"
 
+# --- 8. Управляющий байт в литерале -> трёхзначный восьмеричный escape ----
+# (задача #22: оракул пишет `"\b"` / `"\f"` из json-экранирования сырыми 0x08 /
+# 0x0c, и check-no-control-chars краснел на шаблоне). Цифра сразу за байтом —
+# нарочно: escape обязан быть ровно трёхзначным, иначе C съест её в код байта.
+{ common_head; printf 'static const char s[] = "\010\0147";\n'; common_tail; } > "$T/w8.c"
+cp "$T/w8.c" "$T/l8.c"
+if "$PY" "$M" "$T/w8.c" "$T/l8.c" "$T/o8.c" > /dev/null 2>&1; then
+    if grep -qP '[\x00-\x08\x0b\x0c\x0e-\x1f]' "$T/o8.c"; then
+        bad "в шаблоне остался сырой управляющий байт"
+    elif ! grep -qF 'static const char s[] = "\010\0147";' "$T/o8.c"; then
+        bad "байты не переписаны в \\010 / \\014: [$(grep 'char s' "$T/o8.c")]"
+    else
+        ok "управляющие байты литерала — восьмеричные escape, цифра за ними цела"
+    fi
+else
+    bad "эмиссия с управляющим байтом отвергнута"
+fi
+
 if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
     exit 1

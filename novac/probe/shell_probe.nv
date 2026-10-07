@@ -18,6 +18,10 @@ import std.encoding.utf16.{is_high_surrogate, is_low_surrogate, decode_surrogate
 // NovaVtable_Fs at all -- measured 2026-09-30, question 1 of E.9.
 import std.fs.{read, read_dir, real_fs}
 import std.os.{args, env, exit_process, real_os}
+// Task #14 step 5 (274.5 3-pred64): the serde surface of the self-build
+// carrier -- novac/src/diag/diag.nv calls `json_encode` over its
+// `#impl(Serialize)` DTOs.
+import std.encoding.serde.{json_encode}
 
 fn main() {
     // E1 surface: str literals, int printing, checked arithmetic (all four
@@ -167,6 +171,52 @@ fn main() {
     // that instance alive in the shell, which otherwise carries HashMap only as
     // stubs (274.5 P4, a type applied to arguments).
     println("hm = ", name_map_probe("k"))
+
+    // Task #14 step 5 (274.5 3-pred64): `json_encode` over a record and a sum
+    // that derive `Serialize` -- every field kind of D341 (str, int, bool, f64,
+    // Option, a nested record) and every externally tagged variant form of
+    // D345 (unit, single, tuple, record). Keeps `JsonSerializer` (its
+    // constructor and every `Serializer` method), `JsonValue @to_str` and the
+    // `Result[(), SerError]` / `Result[str, SerError]` instances alive: the
+    // non-generic serde layer novac links into; the generic instances over
+    // novac's own DTOs it makes from std's bodies.
+    println("js = ", serde_probe())
+}
+
+/// A nested record of the serde probe (task #14 step 5).
+#impl(Serialize)
+type ProbeSpan {
+    file str
+    start int
+}
+
+/// The variant forms of D345's external tagging (task #14 step 5).
+#impl(Serialize)
+type ProbeShape enum
+    | PsDot
+    | PsCircle(int)
+    | PsRect(int, int)
+    | PsNamed { title str, w int }
+
+/// One record with every field kind of D341 (task #14 step 5).
+#impl(Serialize)
+type ProbeDto {
+    id str
+    n int
+    ok bool
+    ratio f64
+    tag Option[str]
+    none Option[str]
+    span ProbeSpan
+    shapes []ProbeShape
+}
+
+/// The serde surface of the shell (task #14 step 5).
+fn serde_probe() -> str {
+    ro shapes = []ProbeShape.of(PsDot, PsCircle(5), PsRect(1, 2), PsNamed { title: "q", w: 3 })
+    ro dto = ProbeDto { id: "a\"b", n: 7, ok: true, ratio: 1.5, tag: Some("t"), none: None,
+                        span: ProbeSpan { file: "f", start: 1 }, shapes }
+    json_encode(dto) ?? "fail"
 }
 
 /// The four operations of `names.NameTable` on `HashMap[str, int]` (274.5 P4).
