@@ -1,0 +1,17 @@
+module two_callers.loc
+
+// A MODULE OF THE PROGRAM that declares an EXPORTED generic of its own and
+// instantiates it over `geo.Pt` (registry 1794): the instance's body is a
+// declaration of this unit inside its `export` wrapper, and it has to be found
+// there -- not taken for a body handed from outside.
+
+import ../geo.{Pt, first}
+
+/// How many elements `xs` holds, doubled -- a generic of THIS module.
+export fn tally[T](xs []T) -> int => xs.len() * 2
+
+/// `tally[Pt]`, declared and instantiated in this module over `geo`'s type.
+export fn wrap_local(ps []Pt) -> int => tally[Pt](ps)
+
+/// `geo.first[Pt]` -- also made by `mid`: the program keeps one body.
+export fn head_y(ps []Pt) -> int => first[Pt](ps).y

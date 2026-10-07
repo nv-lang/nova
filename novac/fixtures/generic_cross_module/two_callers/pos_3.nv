@@ -1,0 +1,23 @@
+module two_callers.pos_3
+
+// NOVAC_PROGRAM
+// A generic of `geo` over `geo.Pt`, instantiated by TWO modules that are not
+// the entry -- `mid` (`head_x`) and `loc` (`head_y`) both make `first[Pt]`,
+// and `mid` makes `count[Pt]` which the entry makes too. Each unit prints the
+// instances it makes; the program keeps one body per C name, so the C file
+// links, and every value below comes out of the one `first[Pt]`.
+
+import ./geo.{Pt, count, first}
+import ./mid.{wrap, head_x}
+import ./loc.{wrap_local, head_y}
+
+fn main() {
+    mut xs = []Pt.new()
+    xs.push(Pt { x: 7, y: 8 })
+    xs.push(Pt { x: 9, y: 10 })
+    println(head_x(xs))
+    println(head_y(xs))
+    println(first[Pt](xs).x + first[Pt](xs).y)
+    println(wrap(xs) + count[Pt](xs))
+    println(wrap_local(xs))
+}
