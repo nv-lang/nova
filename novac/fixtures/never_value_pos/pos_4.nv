@@ -1,0 +1,47 @@
+module never_value_pos.pos_4
+
+// A `-> never` CALL AS A VARIANT'S PAYLOAD ARGUMENT (registry 221.1 #1792):
+// the call form `Shape.Named(boom(..))` -- the maker's parameter is a
+// `nova_str`, and the call's `nova_int` was passed to it -- and the record
+// form `Shape.Rec { text: boom(..) }`, whose field temporary is declared by
+// the payload type. No diverging argument runs.
+//
+// The oracle compiles the call form to the same wrong C ("passing 'nova_int'
+// to parameter of incompatible type 'nova_str'", registry 221.1 #1819), so
+// the run is compared against the twin, which writes an unreachable value
+// after the call instead.
+
+// NOVAC_TWIN twin/pos_4.nv
+
+type Shape enum
+    | Named(str)
+    | Rec { text str, size int }
+    | Blank
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn describe(s Shape) -> str => match s {
+    Named(t) => t
+    Rec { text, size } => "${text}/${size}"
+    Blank => "blank"
+}
+
+fn named(n int) -> Shape {
+    ro s = if n > 100 { Shape.Named(boom("named")) } else { Shape.Named("named ok") }
+    s
+}
+
+fn rec(n int) -> Shape {
+    if n > 100 {
+        return Shape.Rec { text: boom("rec"), size: n }
+    }
+    Shape.Rec { text: "rec ok", size: n }
+}
+
+fn main() {
+    println(describe(named(1)))
+    println(describe(rec(2)))
+    println(describe(Shape.Blank))
+}

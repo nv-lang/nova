@@ -3,8 +3,10 @@ module consume_diverging_call.pos_1
 // A DIVERGING CALL AFTER THE VALUE IS CONSUMED (registry 221.1 #1762): nothing is owned
 // where it leaves, so the exit is clean -- as a statement, inside the arm of an `if`
 // statement and of an `if` value. The calls are not reached at run time. (A `never` call as
-// the VALUE of an arm, or as an interpolation slot, is checked by the same door but not yet
-// emitted by novac -- registry 221.1 #TBD; the negative fixtures hold those positions.)
+// the VALUE of an arm, or as an interpolation slot, is checked by the same door; the
+// negative fixtures hold those positions. novac emits them since registry 221.1 #1792 --
+// novac/fixtures/never_value_pos. The unreachable value below stays: this cell is about
+// the consume path, and the statement form is what it pins.)
 
 fn boom(msg str) -> never {
     println(msg)

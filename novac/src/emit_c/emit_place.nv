@@ -172,7 +172,10 @@ fn Emitter mut @emit_assign(a AssignStmt) -> () {
             }
             match built {
                 Some(t) => @body.append(t)
-                None => @emit_expr(e)
+                // A DIVERGING value (registry 1792) -- an arm, a binding, a `??`
+                // fallback, a tail -- through the one door: the call runs, the
+                // local gets its own type's zero, never the call's `nova_int`.
+                None => @emit_value_at(e, d.ty)
             }
             @hoist_root = no_node()
             @body.append(if wrap { ");\n" } else { ";\n" })
@@ -304,7 +307,7 @@ fn Emitter @operand_name(op Operand) -> str {
     match op {
         Place(src) => @lo.ir.decl_of(src).name
         Tree(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:306",
+            "novac/src/emit_c/emit_place.nv:309",
             "emit_c: an operand of the tree reached emit_assign -- the bridge is Rvalue.Expr")
     }
 }
@@ -438,7 +441,7 @@ fn Emitter mut @emit_element_store(st StoreStmt, built Option[str]) -> () {
     ro rt = @out.type_if_known(kids[0].id_of())
     if !is_ty(rt) {
         ice_at(
-            "novac/src/emit_c/emit_place.nv:440",
+            "novac/src/emit_c/emit_place.nv:443",
             "emit: an element store whose receiver type the checker did not record")
     } else {
         // Decided: the receiver's temporary is typed from it.
@@ -560,9 +563,11 @@ fn Emitter mut @emit_variant_ctor(e Node, v VariantRow, ty TyId) -> str {
         ro tmp = "_novac_tmp_t${@fresh_uniq()}"
         if fk.len() > 1 { @hoist_array_lits(fk[2]) } else { // Punning hoists nothing.
         }
-        @body.append("    ${c_type(@ctx, @ctx.payload_types[vr.payload_off + at])} ${tmp} = ")
+        ro slot_t = @ctx.payload_types[vr.payload_off + at]
+        @body.append("    ${c_type(@ctx, slot_t)} ${tmp} = ")
         if fk.len() > 1 {
-            @emit_expr(fk[2])
+            // A diverging field value takes the slot's own type (registry 1792).
+            @emit_value_at(fk[2], slot_t)
         } else {
             match fk[0] {
                 // Punning `{ id }` stores the local of that name.

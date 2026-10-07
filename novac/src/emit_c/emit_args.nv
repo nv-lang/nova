@@ -64,7 +64,12 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
             // about an ARGUMENT, and this is where an argument is printed.
             ro anode = call_arg_at(kids, from, if recv_slot { at - 1 } else { at })
             ro hl = @lo.ir.local_of_node(anode.id_of())
-            if hl != no_local() {
+            if @diverges(anode) {
+                // A DIVERGING ARGUMENT (registry 1792): the slot's own type, not
+                // the `nova_int` of `never` -- laid down in a local or not, the
+                // door prints the read the same way `@emit_expr` does.
+                @emit_value_at(anode, @arg_slot_ty(id, s))
+            } else if hl != no_local() {
                 @body.append(@lo.ir.decl_of(hl).name)
             } else {
                 @emit_expr(anode)
@@ -86,7 +91,7 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
 /// anything at all would invent a value. So it ices.
 fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
     if raw_row(row) < 0 {
-        ice_at("novac/src/emit_c/emit_args.nv:89", "emit_c: a call with no callable row left a slot to a default")
+        ice_at("novac/src/emit_c/emit_args.nv:94", "emit_c: a call with no callable row left a slot to a default")
     } else {
         // A callable row: its declaration is what says the value.
     }
@@ -94,7 +99,7 @@ fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
     match slot_default_of(@ctx.fns.params, fd.param_off, s) {
         Some(d) => @emit_expr(d)
         None => ice_at(
-            "novac/src/emit_c/emit_args.nv:96",
+            "novac/src/emit_c/emit_args.nv:101",
             "emit_c: a call left a slot to a default its declaration does not write")
     }
 }

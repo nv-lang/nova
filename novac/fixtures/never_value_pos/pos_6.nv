@@ -1,0 +1,38 @@
+module never_value_pos.pos_6
+
+// A `-> never` CALL AS THE INITIALIZER OF A BINDING (registry 221.1 #1792):
+// typed `ro s str = boom(..)` and inferred `ro t = boom(..)` beside a
+// `return` of a `str`, and the TAIL and a `return` of a `-> str` function --
+// the return place is the slot there. No diverging initializer runs.
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn typed(n int) -> str {
+    if n > 100 {
+        ro s str = boom("typed")
+        return s
+    }
+    "typed ok"
+}
+
+fn tail(n int) -> str {
+    if n > 0 {
+        return "tail ok"
+    }
+    boom("tail")
+}
+
+fn early(n int) -> str {
+    if n > 100 {
+        return boom("early")
+    }
+    "early ok"
+}
+
+fn main() {
+    println(typed(1))
+    println(tail(2))
+    println(early(3))
+}
