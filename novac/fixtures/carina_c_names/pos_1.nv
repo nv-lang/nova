@@ -1,6 +1,6 @@
 module carina_c_names.pos_1
 
-// A SOURCE NAME THAT IS A C WORD (221.1 #1787, plan 274.5 §3-пред73): the fields
+// A SOURCE NAME THAT IS A C WORD (221.1 #1787, plan 274.5 §3-пред74): the fields
 // `signed`, `default`, `register` of a record, a local `union`, parameters `auto`
 // and `volatile`. C would reject `nova_int signed;` ("cannot be signed or
 // unsigned") and read `auto` / `volatile` as its own keywords; the door

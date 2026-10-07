@@ -27,7 +27,7 @@ module novac.sem
 import ../builtins.{TypeKind, RESULT_SUM}
 import ../types.{TyId}
 
-// THE DOOR "Nova name -> C identifier" (221.1 #1787, plan 274.5 §3-пред73). A
+// THE DOOR "Nova name -> C identifier" (221.1 #1787, plan 274.5 §3-пред74). A
 // source name a field, a local or a parameter carries becomes a C token here,
 // ONCE, where the emitter prints it. The rule is the oracle's (compiler-codegen
 // `codegen/emit_c/c_name.rs`, `c_ident`), word for word: escape as `nv_` + name

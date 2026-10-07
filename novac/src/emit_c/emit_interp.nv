@@ -175,7 +175,7 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
     @body.append("(\", .len=${escaped_byte_len(td.name) + 1}});\n")
     match field_range_of(td) {
         None => ice_at(
-            "novac/src/emit_c/emit_interp.nv:176",
+            "novac/src/emit_c/emit_interp.nv:177",
             "emit: a synthesized display for a type with no field rows -- the judge admits a record with at least one field")
         Some((first, cnt)) => {
             for i in 0..cnt {
@@ -187,7 +187,7 @@ fn Emitter mut @emit_synth_display(c Node, st TyId, sb str) -> () {
                 ro fd = @ctx.fields.rows[raw_frow(first) + i]
                 match prim_row_of(@ctx.tys, fd.type_id) {
                     None => ice_at(
-                        "novac/src/emit_c/emit_interp.nv:188",
+                        "novac/src/emit_c/emit_interp.nv:189",
                         "emit: a synthesized display over a non-primitive field -- the judge admits primitives only")
                     Some(row) => {
                         ro call = display_call_of(row)
@@ -241,16 +241,16 @@ fn display_call_of(row BuiltinType) -> DisplayCall {
             // (refused by name in the checker: the runtime has no entry).
             if !row.signed && row.bits == 64 {
                 ice_at(
-                    "novac/src/emit_c/emit_interp.nv:242",
+                    "novac/src/emit_c/emit_interp.nv:243",
                     "emit_c: an unsigned 64-bit interpolation slot passed the checker -- the runtime has no display for it")
             }
             DisplayCall { head: "${sb_ns}16int_display_spec", cast: "(nova_int)",
                           tail: "((nova_int)0LL), ((nova_int)10LL), false, false, false, false, nova_make_Align_Left(), (nova_char)(32U)" }
         }
-        PfUnit => ice_at("novac/src/emit_c/emit_interp.nv:249", "emit_c: a unit interpolation slot passed the checker")
-        PfAny => ice_at("novac/src/emit_c/emit_interp.nv:250", "emit_c: an any interpolation slot passed the checker")
+        PfUnit => ice_at("novac/src/emit_c/emit_interp.nv:250", "emit_c: a unit interpolation slot passed the checker")
+        PfAny => ice_at("novac/src/emit_c/emit_interp.nv:251", "emit_c: an any interpolation slot passed the checker")
         PfNever => ice_at(
-            "novac/src/emit_c/emit_interp.nv:251",
+            "novac/src/emit_c/emit_interp.nv:252",
             "emit_c: a never interpolation slot passed the checker -- it has no value")
     }
 }

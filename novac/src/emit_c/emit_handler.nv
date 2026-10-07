@@ -63,7 +63,7 @@ fn Emitter @lit_number(lit Node) -> int {
         if @hlits[i].id_of() == lit.id_of() { return i }
     }
     ice_at(
-        "novac/src/emit_c/emit_handler.nv:64",
+        "novac/src/emit_c/emit_handler.nv:65",
         "emit: a handler literal outside the reached functions reached the emitter")
 }
 
@@ -106,7 +106,7 @@ fn Emitter @op_sig_at(schema EffectDef, op Node) -> int {
 /// The schema of the effect a literal handles.
 fn Emitter @lit_schema(lit Node) -> EffectDef =>
     @ctx.effects.def_of(lit_effect(lit)) ?? ice_at(
-        "novac/src/emit_c/emit_handler.nv:107",
+        "novac/src/emit_c/emit_handler.nv:108",
         "emit: a handler literal of an effect with no schema")
 
 /// The C signature of one operation function, without the trailing `;`/`{`.
@@ -133,7 +133,7 @@ fn op_param_names(op Node) -> []str {
         if p.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(p)
         out.push(leaf_text(pk[param_name_at(pk) ?? ice_at(
-            "novac/src/emit_c/emit_handler.nv:134",
+            "novac/src/emit_c/emit_handler.nv:135",
             "emit: a handler op parameter without a name")]))
     }
     out

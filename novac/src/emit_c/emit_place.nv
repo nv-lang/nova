@@ -93,7 +93,7 @@ fn Emitter mut @emit_last_stmt() -> () => @print_stmt(@lo.ir.last_stmt())
 fn Emitter mut @emit_decl(l Local) -> () {
     ro d = @lo.ir.decl_of(l)
     if d.decl_at != DeclAt.Zeroed {
-        ice_at("novac/src/emit_c/emit_place.nv:95", "emit: a Decl statement for a local that is not zero-initialised")
+        ice_at("novac/src/emit_c/emit_place.nv:96", "emit: a Decl statement for a local that is not zero-initialised")
     }
     @body.append("    ${c_type(@ctx, d.ty)} ${d.name} = (${c_type(@ctx, d.ty)}){0};\n")
 }
@@ -105,40 +105,40 @@ fn Emitter @expr_of(rv Rvalue) -> Node {
     match rv {
         Expr(n) => n
         Use(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:106",
+            "novac/src/emit_c/emit_place.nv:107",
             "emit_c: an operand rvalue reached the printer before M2 lowers one")
         SomePayload(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:109",
+            "novac/src/emit_c/emit_place.nv:110",
             "emit_c: a payload read reached expr_of -- only an assignment prints it")
         IndexPayload(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:112",
+            "novac/src/emit_c/emit_place.nv:113",
             "emit_c: an element read reached expr_of -- only an assignment prints it")
         IndexConst(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:115",
+            "novac/src/emit_c/emit_place.nv:116",
             "emit_c: a constant-index element read reached expr_of -- only an assignment prints it")
         IndexFromEnd(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:118",
+            "novac/src/emit_c/emit_place.nv:119",
             "emit_c: a from-the-end element read reached expr_of -- only an assignment prints it")
         CallNext(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:121",
+            "novac/src/emit_c/emit_place.nv:122",
             "emit_c: an iterator's `next` reached expr_of -- only an assignment prints it")
         VariantField(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:124",
+            "novac/src/emit_c/emit_place.nv:125",
             "emit_c: a variant field read reached expr_of -- only an assignment prints it")
         Read(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:127",
+            "novac/src/emit_c/emit_place.nv:128",
             "emit_c: a place read reached expr_of -- only an assignment prints it")
         AnyData(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:130",
+            "novac/src/emit_c/emit_place.nv:131",
             "emit_c: an unboxing reached expr_of -- only an assignment prints it")
         Bool(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:133",
+            "novac/src/emit_c/emit_place.nv:134",
             "emit_c: a flag constant reached expr_of -- only an assignment prints it")
         NoneOf => ice_at(
-            "novac/src/emit_c/emit_place.nv:136",
+            "novac/src/emit_c/emit_place.nv:137",
             "emit_c: a `None` of the destination's type reached expr_of -- only an assignment prints it")
         ErrOf(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:139",
+            "novac/src/emit_c/emit_place.nv:140",
             "emit_c: an `Err` of the destination's type reached expr_of -- only an assignment prints it")
     }
 }
@@ -305,7 +305,7 @@ fn Emitter @operand_name(op Operand) -> str {
     match op {
         Place(src) => @lo.ir.decl_of(src).name
         Tree(_) => ice_at(
-            "novac/src/emit_c/emit_place.nv:306",
+            "novac/src/emit_c/emit_place.nv:307",
             "emit_c: an operand of the tree reached emit_assign -- the bridge is Rvalue.Expr")
     }
 }
@@ -439,7 +439,7 @@ fn Emitter mut @emit_element_store(st StoreStmt, built Option[str]) -> () {
     ro rt = @out.type_if_known(kids[0].id_of())
     if !is_ty(rt) {
         ice_at(
-            "novac/src/emit_c/emit_place.nv:440",
+            "novac/src/emit_c/emit_place.nv:441",
             "emit: an element store whose receiver type the checker did not record")
     } else {
         // Decided: the receiver's temporary is typed from it.
