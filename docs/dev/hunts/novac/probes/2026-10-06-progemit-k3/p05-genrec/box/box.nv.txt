@@ -1,9 +1,0 @@
-module p05_genrec.box
-
-export type Box[T] {
-    val T
-}
-
-export fn make[T](v T) -> Box[T] => { val: v }
-
-export fn unwrap[T](b Box[T]) -> T => b.val

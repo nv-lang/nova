@@ -1,0 +1,13 @@
+module p06_tuple_fence.main
+
+// NOVAC_PROGRAM
+// `Color` stands only as a tuple component in module `tup`.
+
+import ./pal.{Color, color_name, next_color}
+import ./tup.{tagged}
+
+fn main() {
+    println(color_name(next_color(Color.Green)))
+    ro (c, k) = tagged(3)
+    println("${color_name(c)} ${k}")
+}

@@ -1,3 +1,0 @@
-module p01_leafgen.libm
-
-export fn last[T](xs []T) -> T => xs[xs.len() - 1]

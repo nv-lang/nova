@@ -1,0 +1,29 @@
+module p08_std_heap_sum_by_value.main
+
+// NOVAC_PROGRAM
+// std's payload-free Align, CharError and RangeError are heap sums in the
+// shell; this program holds none in an application -- by value only.
+
+import std.runtime.fmt_buf.{Align}
+
+fn align_name(a Align) -> str => match a {
+    Left => "left"
+    Right => "right"
+    Center => "center"
+}
+
+fn main() {
+    ro a = Align.Center
+    println(align_name(a))
+    ro c = CharError.Invalid
+    match c {
+        AboveMax => println("above")
+        BelowMin => println("below")
+        Invalid => println("invalid")
+    }
+    ro r = RangeError.BelowMin
+    match r {
+        AboveMax => println("above")
+        BelowMin => println("below")
+    }
+}

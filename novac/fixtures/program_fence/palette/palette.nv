@@ -1,0 +1,41 @@
+module program_fence.palette
+
+// A MODULE OF THE PROGRAM (`pos_1.nv` one directory up is the entry): it owns
+// two payload-free sums. `Color` stands as an argument nowhere HERE -- read
+// alone, this unit would lay it out by value -- while `../bag` holds it in a
+// `[]Color`. `Mode` is the other way round: this module wraps it in an option,
+// `../bag` only matches it. The oracle's A4 fence is a fact of the PROGRAM, so
+// both sums are on the heap in every unit (registry 221.1 #1813).
+
+/// A colour: no variant carries a payload; `==` compares its tags (D363).
+#impl(Equal)
+export type Color enum
+    | Red
+    | Green
+    | Blue
+
+/// A speed: no payload either, and fenced by THIS module (`pick_mode`).
+export type Mode enum
+    | Fast
+    | Slow
+
+/// The colour's word -- a match over the sum in its own module.
+export fn color_name(c Color) -> str => match c {
+    Red => "red"
+    Green => "green"
+    Blue => "blue"
+}
+
+/// The colour after `c`, round the circle: built and returned by value here.
+export fn next_color(c Color) -> Color {
+    if c == Color.Red { return Color.Green }
+    if c == Color.Green { return Color.Blue }
+    Color.Red
+}
+
+/// A speed from a code, or none: this module's own option over its own sum.
+export fn pick_mode(code int) -> Option[Mode] {
+    if code == 0 { return Some(Mode.Fast) }
+    if code == 1 { return Some(Mode.Slow) }
+    None
+}

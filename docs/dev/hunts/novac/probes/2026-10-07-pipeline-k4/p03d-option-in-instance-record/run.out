@@ -1,0 +1,34 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p03d_option_in_instance_record.main
+     2	
+     3	// `Option[Pt]` stands only inside the body of `pick[Pt]`, an instance; `Pt`
+     4	// is a plain record. Unit mode -- no program root.
+     5	
+     6	/// A point.
+     7	type Pt {
+     8	    x int
+     9	}
+    10	
+    11	/// `a` when `first`, else `b` -- through an option only the instance holds.
+    12	fn pick[T](a T, b T, first bool) -> T {
+    13	    ro o = if first { Some(a) } else { None }
+    14	    match o {
+    15	        Some(x) => x
+    16	        None => b
+    17	    }
+    18	}
+    19	
+    20	fn main() {
+    21	    println(pick[Pt](Pt { x: 1 }, Pt { x: 2 }, true).x)
+    22	    println(pick[Pt](Pt { x: 1 }, Pt { x: 2 }, false).x)
+    23	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — clang -c упал: <smoke>/body.c:12274:5: error: unknown type name 'NovaOpt_Nova_Pt_p'; did you mean 'NovaOpt_Nova_Vec_p'?
+ 12274 |     NovaOpt_Nova_Pt_p _novac_l2 = (NovaOpt_Nova_Pt_p){0};
+       |     ^~~~~~~~~~~~~~~~~
+       |     NovaOpt_Nova_Vec_p
+<smoke>/body.c:844:56: note: 'NovaOpt_Nova_Vec_p' declared here
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Pt: NovaValue_Pt 0, Nova_Pt* 17

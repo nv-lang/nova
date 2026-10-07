@@ -1,8 +1,0 @@
-module p09_chain.geo
-
-export type Pt {
-    x int
-    y int
-}
-
-export fn count[T](xs []T) -> int => xs.len()

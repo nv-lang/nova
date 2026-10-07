@@ -1,0 +1,11 @@
+module p02_std_sum_fenced_elsewhere.bag
+
+import std.fs.{PathStyle}
+
+/// Both styles, in a vector -- the fence.
+export fn styles() -> []PathStyle {
+    mut xs = []PathStyle.new()
+    xs.push(PathStyle.Posix)
+    xs.push(PathStyle.Windows)
+    xs
+}
