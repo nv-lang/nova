@@ -1,0 +1,23 @@
+module never_value_pos.pos_5
+
+// A `-> never` CALL AS THE RIGHT OPERAND OF `??` over an `Option[str]`
+// (registry 221.1 #1792): the fallback is assigned to the `??`'s result
+// local, a `nova_str`. THIS CELL DIVERGES: the last call finds `None`, and
+// the fallback runs -- the panic's message, the throw-site line and exit
+// code 101 are compared with the oracle's.
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn name_of(o Option[str]) -> str {
+    ro v = o ?? boom("no name")
+    v
+}
+
+fn main() {
+    println(name_of(Some("ada")))
+    println("${name_of(Some("bob"))}!")
+    println(name_of(None))
+    println("not reached")
+}

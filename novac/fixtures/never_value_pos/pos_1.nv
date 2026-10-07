@@ -1,0 +1,40 @@
+module never_value_pos.pos_1
+
+// A `-> never` CALL AS THE VALUE OF AN `if` ARM, in slots whose C type is NOT the
+// `nova_int` `never` stands for (registry 221.1 #1792): a `str`, a `bool`, a
+// value record. The value `if` lowers to a join local and each arm assigns it;
+// the diverging arm used to assign the call's `nova_int` to the `nova_str`
+// local -- clang: "assigning to 'nova_str' from incompatible type 'nova_int'".
+// The arm on either side of the `else`. No diverging arm runs: the output is
+// the values of the other arms.
+
+type Pair value {
+    a int
+    b int
+}
+
+fn boom(msg str) -> never {
+    panic("boom: ${msg}")
+}
+
+fn label(n int) -> str {
+    ro t = if n > 100 { boom("too big") } else { "small" }
+    t
+}
+
+fn sign(n int) -> bool {
+    ro pos = if n >= 0 { true } else { boom("negative") }
+    pos
+}
+
+fn pair(n int) -> Pair {
+    ro p = if n > 100 { boom("pair") } else { Pair { a: n, b: n * 2 } }
+    p
+}
+
+fn main() {
+    println(label(5))
+    println("${sign(3)}")
+    ro p = pair(4)
+    println("${p.a} ${p.b}")
+}
