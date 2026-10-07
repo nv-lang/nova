@@ -865,7 +865,7 @@ fn Lowerer mut @lower_println(call Node) -> () {
                     // position (#870), so a branch here is a broken invariant rather than
                     // a shape to skip -- the silent fallout this arm replaces printed `ab`
                     // for `a20b`.
-                    ice_at("novac/src/lower/lowering.nv:826", "emit_c: an argument form the checker let through (#870)")
+                    ice_at("novac/src/lower/lowering.nv:868", "emit_c: an argument form the checker let through (#870)")
                 }
             }
         }
