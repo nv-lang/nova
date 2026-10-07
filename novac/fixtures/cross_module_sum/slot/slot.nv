@@ -1,0 +1,49 @@
+module cross_module_sum.slot
+
+// A MODULE OF THE PROGRAM over another one (`../shape`): it builds variants of
+// that module's sum (with and without a payload), matches on them, and holds
+// `Option[Shape]` in a field of its own record. Every tag and maker it names is
+// the OWNER's (`shape`), never the shell's: the shell has no `Shape`.
+
+import ../shape.{Shape, Circle, Rect, Blank, area}
+
+/// A labelled place that may hold a figure.
+export type Holder {
+    label str
+    held Option[Shape]
+}
+
+/// A figure from a code: a constructor of another module's sum per variant.
+export fn make(code int) -> Shape {
+    if code == 1 { return Circle(2) }
+    if code == 2 { return Rect(3, 4) }
+    Blank
+}
+
+/// The figure's name, by a match over another module's sum.
+export fn name(s Shape) -> str => match s {
+    Circle(_) => "circle"
+    Rect(_, _) => "rect"
+    Blank => "empty"
+}
+
+/// The figure's widest extent: a match that binds the payloads.
+export fn width(s Shape) -> int => match s {
+    Circle(r) => r + r
+    Rect(w, _) => w
+    Blank => 0
+}
+
+/// A slot holding the figure of `code`, or nothing for code 0.
+export fn holder_of(label str, code int) -> Holder {
+    if code == 0 {
+        return Holder { label, held: None }
+    }
+    Holder { label, held: Some(make(code)) }
+}
+
+/// What the slot holds, spelled: the option field matched, then the sum.
+export fn describe(s Holder) -> str => match s.held {
+    Some(f) => "${s.label}: ${name(f)} ${area(f)}"
+    None => "${s.label}: nothing"
+}

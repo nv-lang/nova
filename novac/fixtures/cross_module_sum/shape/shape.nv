@@ -1,0 +1,31 @@
+module cross_module_sum.shape
+
+// A MODULE OF THE PROGRAM (`pos_1.nv` one directory up is the entry): it
+// declares a sum that the OTHER modules match, build and wrap in an option.
+// Its tags and makers are printed by this unit under this module's name, and
+// every other unit must name the same constants (registry 221.1 #1786).
+
+/// A figure: two variants carry a payload, one does not.
+export type Shape enum
+    | Circle(int)
+    | Rect(int, int)
+    | Blank
+
+/// The area, rounded the integer way -- a match over the sum in its own module.
+export fn area(s Shape) -> int => match s {
+    Circle(r) => 3 * r * r
+    Rect(w, h) => w * h
+    Blank => 0
+}
+
+/// The first figure that is not `Blank`, if any: this module's own option over
+/// its own sum.
+export fn first_solid(xs []Shape) -> Option[Shape] {
+    for s in xs {
+        match s {
+            Blank => {}
+            Circle(_) | Rect(_, _) => return Some(s)
+        }
+    }
+    None
+}

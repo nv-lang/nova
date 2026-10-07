@@ -1,0 +1,46 @@
+module cross_module_sum.pos_1
+
+// NOVAC_PROGRAM
+// A SUM OF ONE MODULE USED BY THE OTHERS (registry 221.1 #1786, #1790 (a)):
+// `shape/` declares `Shape` (two variants with a payload, one without), `slot/`
+// builds and matches it and holds `Option[Shape]` in a record field, and this
+// entry does all three again. In a program another module's type is HANDED to a
+// unit, yet it is the program's, not the shell's: its tags and makers carry its
+// owner's module. Spelled by the shell's names (`NOVA_TAG_Shape_Circle`,
+// `nova_make_Shape_Rect`) the C named constants and functions nobody declares.
+// Each line prints a value that depends on which variant was taken.
+
+import ./shape.{Shape, Circle, Rect, Blank, area, first_solid}
+import ./slot.{Holder, make, name, width, holder_of, describe}
+
+fn main() {
+    for code in 0..3 {
+        ro s = make(code)
+        println("${code} ${name(s)} ${width(s)} ${area(s)}")
+    }
+    ro mine = Rect(5, 6)
+    match mine {
+        Circle(r) => println(r)
+        Rect(w, h) => println(w * 100 + h)
+        Blank => println(0 - 1)
+    }
+    println(name(Circle(7)))
+    println(describe(holder_of("a", 1)))
+    println(describe(holder_of("b", 0)))
+    println(describe(holder_of("c", 2)))
+    ro own = Holder { label: "d", held: Some(Blank) }
+    println(describe(own))
+    mut xs = []Shape.new()
+    xs.push(Blank)
+    xs.push(make(2))
+    xs.push(Circle(1))
+    match first_solid(xs) {
+        Some(f) => println(name(f))
+        None => println("none")
+    }
+    ro blanks = []Shape.of(Blank, Blank)
+    match first_solid(blanks) {
+        Some(f) => println(name(f))
+        None => println("none")
+    }
+}
