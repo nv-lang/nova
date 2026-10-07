@@ -440,7 +440,7 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
         TkRecord => { if fwd_only { @emit_type_fwd(t) } else { @emit_record_decl(t) } }
         TkSum => { if fwd_only { @emit_type_fwd(t) } else { @emit_sum_decl(t) } }
         TkApp => ice_at(
-            "novac/src/emit_c/emit_decls.nv:446",
+            "novac/src/emit_c/emit_decls.nv:442",
             "emit_c: declaration of an applied type — instances are emitted by mono, E2-b2")
             // A type parameter DECLARES nothing: it has no layout until a
             // substitution names one, and the instance that carries the
@@ -462,15 +462,15 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
             // ice, not a fallback (E4 wave). An effect declares OPERATION rows, not
             // a C struct; its emission arrives with the Effect-type stage.
         TkPtr => ice_at(
-            "novac/src/emit_c/emit_decls.nv:462",
+            "novac/src/emit_c/emit_decls.nv:464",
             "emit_c: declaration of a POINTER type — a pointer is a structural term, nothing declares one")
         TkEffect => ice_at(
-            "novac/src/emit_c/emit_decls.nv:465",
+            "novac/src/emit_c/emit_decls.nv:467",
             "emit_c: declaration of an EFFECT type — an effect owns operations, not a C layout; with-doors refuse non-handler values (E4 wave)")
             // A tuple is a structural TERM: nothing ever declares one, so a
             // registry row with this kind is a harvest bug, not a decl to emit.
         TkTuple => ice_at(
-            "novac/src/emit_c/emit_decls.nv:479",
+            "novac/src/emit_c/emit_decls.nv:472",
             "emit_c: a structural term among declarations — a structural term declares nothing")
     }
 }
