@@ -1,0 +1,52 @@
+module emit_order.pos_3
+
+// A FIELD OF THE FILE'S OWN TYPE IS AN `Option` OF ANOTHER OF ITS TYPES. The
+// option's struct lies in the holder BY VALUE (`NovaOpt_Nova_Addr_p home;`),
+// and novac wrote every such typedef after the last body, so the holder was
+// `unknown type name 'NovaOpt_Nova_Addr_p'` in clang while the oracle built the
+// file (E2-b3 step 6: a derived DTO with an optional record). A pointer-shaped
+// option now follows the names, a value-shaped one its payload's body. The
+// cells: an option of a heap record, of a value record declared BELOW the
+// holder, and of a sum. An option inside a sum's payload (`Tagged(Option[Addr])`)
+// is not read by novac's parser yet, so it is not a cell.
+
+type Addr {
+    city str
+}
+
+type User {
+    name str
+    home Option[Addr]
+    spot Option[Spot]
+    mood Option[Mood]
+}
+
+type Mood enum
+    | Calm
+    | Loud(int)
+
+type Spot value {
+    x int
+    y int
+}
+
+fn main() {
+    // The value record is bound first: built inside `Some(..)` in a field of a
+    // literal it is an ice of novac's emitter (registry 221.1 #1800).
+    ro sp = Spot { x: 1, y: 2 }
+    ro ad = Addr { city: "Oslo" }
+    ro u = User { name: "ann", home: Some(ad), spot: Some(sp), mood: Some(Mood.Loud(3)) }
+    match u.home {
+        Some(a) => println(a.city)
+        None => println("none")
+    }
+    match u.spot {
+        Some(s) => println(s.x + s.y)
+        None => println("none")
+    }
+    match u.mood {
+        Some(Calm) => println("calm")
+        Some(Loud(n)) => println(n)
+        None => println("none")
+    }
+}

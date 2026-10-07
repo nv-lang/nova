@@ -1,0 +1,55 @@
+module serde_encode.twin_5
+
+// THE TWIN OF pos_5, WRITTEN OUT: each inner vector of pos_5 is a record whose
+// hand-written `@serialize` frames it exactly as std's `[]T @serialize` does --
+// `begin_seq(len)`, every element's own `@serialize`, `end_seq()` -- so the
+// outer level is `[]T @serialize` over a non-generic element, which the oracle
+// builds, and its output is the output novac gives pos_5 (plan 274.12). The
+// oracle refuses pos_5 itself in C (registry 221.1 #1801). Not a `pos_*`: the
+// differential reads it only as pos_5's twin.
+
+import std.encoding.serde.{Serialize, Serializer, SerError, json_encode}
+
+type IntRow {
+    items []int
+}
+
+fn IntRow @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+    s.begin_seq(@items.len())?
+    for v in @items {
+        v.serialize(s)?
+    }
+    s.end_seq()
+}
+
+type StrRow {
+    items []str
+}
+
+fn StrRow @serialize[S Serializer](mut s S) -> Result[(), SerError] {
+    s.begin_seq(@items.len())?
+    for v in @items {
+        v.serialize(s)?
+    }
+    s.end_seq()
+}
+
+#impl(Serialize)
+type Table {
+    title str
+    rows []IntRow
+    words []StrRow
+}
+
+fn main() {
+    ro r0 = IntRow { items: []int.of(1, 2) }
+    ro r1 = IntRow { items: []int.new() }
+    ro r2 = IntRow { items: []int.of(-3) }
+    ro w0 = StrRow { items: []str.of("a", "b\"c") }
+    ro w1 = StrRow { items: []str.new() }
+    ro t = Table { title: "t", rows: [r0, r1, r2], words: [w0] }
+    println(json_encode(t) ?? "fail")
+    ro e = Table { title: "", rows: [r1], words: [w1] }
+    println(json_encode(e) ?? "fail")
+    println(json_encode(t.rows) ?? "fail")
+}
