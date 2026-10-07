@@ -1568,6 +1568,17 @@ single word added here is *observable*, and it is not decoration: without it the
 rule reads as a hint to the compiler, which it is free to ignore. The norm and
 its price: [D484](decisions/03-syntax.md#d484).
 
+**Operator operands follow the same rule** (D484 section 6, 2026-10-07): by D46,
+`a + b` is `a.plus(b)`, that is `plus(a, b)` -- the operands are the arguments of
+one call, so the left one is evaluated before the right one, observably, for every
+type, built-in ones included. Compound assignment `a op= b`, `&&`/`||`/`??` (the
+right side runs only if needed, never before the left) and the receiver of a method
+call `x.m(...)` go the same way.
+
+```nova
+mark("p", 1) + mark("q", 2)   // "p" first, then "q"
+```
+
 ### One internal form -- `@` as the receiver's type variable (D458)
 The sugar above (`fn Type mut @job(a int) -> @`) is unchanged -- it stays
 the only DECLARATION form for a method. D458 (2026-08-12, implementation --
