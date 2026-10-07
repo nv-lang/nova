@@ -426,15 +426,18 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 } else {
                     // Not a constant: an ordinary name, and `nova_bool` IS C
                     // `bool`, so the literals are the C keywords -- the same
-                    // shape the oracle emits.
-                    @body.append(c_ident(expr_leaf_name(e)))
+                    // shape the oracle emits. A bool literal is a C keyword by
+                    // its spelling, not a name: the door (`c_ident`, which
+                    // escapes C23 `true`/`false`) must not see it.
+                    ro nm = expr_leaf_name(e)
+                    @body.append(if is_bool_literal(nm) { nm } else { c_ident(nm) })
                 }
             }
         }
     } else if k == NodeKind.InterpStr {
         ro itmp2 = @lit_tmp[raw_node(e.id_of())]
         if itmp2 == "" {
-            ice_at("novac/src/emit_c/emit_expr.nv:437", "emit_c: an interpolated string the hoist never built (I2)")
+            ice_at("novac/src/emit_c/emit_expr.nv:440", "emit_c: an interpolated string the hoist never built (I2)")
         }
         @body.append(itmp2)
     } else if k == NodeKind.Coalesce || k == NodeKind.Try {
@@ -443,7 +446,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // IS that name.
         ro qtmp = @lit_tmp[raw_node(e.id_of())]
         if qtmp == "" {
-            ice_at("novac/src/emit_c/emit_expr.nv:446", "emit_c: a `??` the hoist never built (coalesce wave)")
+            ice_at("novac/src/emit_c/emit_expr.nv:449", "emit_c: a `??` the hoist never built (coalesce wave)")
         }
         @body.append(qtmp)
     } else if k == NodeKind.SelfExpr {
@@ -486,7 +489,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     return
                 }
                 CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
-                    ice_at("novac/src/emit_c/emit_expr.nv:489", "emit: a field access resolved to a non-variant callee")
+                    ice_at("novac/src/emit_c/emit_expr.nv:492", "emit: a field access resolved to a non-variant callee")
             }
         } else {
             // An ordinary field access: the shapes below own it.
@@ -563,7 +566,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 // An ordinary method call: the row below is the decision.
             }
             CalleeSynthDisplay(_) => ice_at(
-                "novac/src/emit_c/emit_expr.nv:565",
+                "novac/src/emit_c/emit_expr.nv:568",
                 "emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
             CalleeEffectOp(op) => {
                 // `Os.arg_count()` (E.9 step 2): the shell's dispatcher, which
@@ -665,10 +668,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // its C 2026-09-03), never a call to a C function that exists
             // nowhere. One expression, so nothing is hoisted (274.6 V2b).
             CalleeSynthDisplay(_) => ice_at(
-                "novac/src/emit_c/emit_expr.nv:667",
+                "novac/src/emit_c/emit_expr.nv:670",
                 "emit: a call hoist for a synthesized display -- the synthesis is a slot, not a written call")
             CalleeEffectOp(_) => ice_at(
-                "novac/src/emit_c/emit_expr.nv:670",
+                "novac/src/emit_c/emit_expr.nv:673",
                 "emit: a call hoist for an effect operation -- an operation call is a method-call form, printed by its own arm")
             CalleeFn(row) => {
                 ro rt = @ctx.fns.rows[raw_row(row)].ret_id
@@ -751,7 +754,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro kids = branch_children(e)
         if kids.len() < 3 {
             ice_at(
-                "novac/src/emit_c/emit_expr.nv:753",
+                "novac/src/emit_c/emit_expr.nv:756",
                 "emit: an index with fewer than a receiver, `[` and an operand reached emission")
         } else {
             // The three children the checker judged.
@@ -763,7 +766,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ro rt = @out.type_if_known(kids[0].id_of())
             if !is_ty(rt) {
                 ice_at(
-                    "novac/src/emit_c/emit_expr.nv:765",
+                    "novac/src/emit_c/emit_expr.nv:768",
                     "emit: an index whose receiver type the checker did not record reached emission")
             } else {
                 // The receiver's type decides the symbol, below.
@@ -816,7 +819,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         if neg_int && !@arith_row(carrier).signed {
             ice_at(
-                "novac/src/emit_c/emit_expr.nv:818",
+                "novac/src/emit_c/emit_expr.nv:821",
                 "emit_c: unary minus on an unsigned operand passed the checker -- spec/conversions.md defines it for signed types only")
         }
         if neg_int {
@@ -942,7 +945,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(")")
         }
     } else {
-        ice_at("novac/src/emit_c/emit_expr.nv:945", "emit: expression kind outside the subset")
+        ice_at("novac/src/emit_c/emit_expr.nv:948", "emit: expression kind outside the subset")
     }
 }
 
@@ -968,7 +971,7 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
         // of step 3b. A dead printer that restores retired behaviour is worse than none -- it
         // turns a hole into a silent divergence.
         ice_at(
-            "novac/src/emit_c/emit_expr.nv:970",
+            "novac/src/emit_c/emit_expr.nv:973",
             "emit_c: a println reached the call-statement door -- it is lowered, not printed (M3a)")
     } else {
         // An ordinary call: the lines below own it.

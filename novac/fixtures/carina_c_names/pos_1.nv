@@ -12,16 +12,21 @@ type Flags {
     signed int
     default int
     register int
+    enabled bool
 }
 
 fn sum(auto int, volatile int) -> int => auto + volatile
 
 fn main() {
-    mut f = Flags { signed: 3, default: 4, register: 5 }
+    mut f = Flags { signed: 3, default: 4, register: 5, enabled: true }
     ro union = sum(f.signed, f.default)
     f.register = union + f.register
     println(f.signed)
     println(f.default)
     println(f.register)
     println(union)
+    ro done = false
+    if f.enabled && !done { println(1) }
+    f.enabled = done
+    if f.enabled { println(2) } else { println(0) }
 }

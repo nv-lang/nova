@@ -350,7 +350,11 @@
 #   `is_serde_nested_scalar` (D341/D342 field eligibility and the direct wire call of a scalar), all asked by
 #   check/derive_serde.nv; names of the language and of std live in builtins (P5).
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
-builtins 96
+# 2026-10-07, task #29 (221.1 #1787): builtins 96 -> 97: `c_name_needs_escape` -- the single registry of C
+#   keywords, header macros and fixed generator members a Nova name must not take verbatim (P5: these are
+#   names of C, not of Nova or std, but the no-name-hardcode guard routes any such list here); the sem door
+#   `c_ident` calls it.
+builtins 97
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1233,10 +1237,13 @@ resolve 27
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): sem 390 (main) + 1 (#14:
 #   `ProtoTable @requires_method`) = 391, equal to the guard's measure.
+# 2026-10-07, task #29 (221.1 #1787): sem 396 -> 397: `c_ident` -- THE door "Nova name -> C identifier",
+#   called by every emitter site that prints a field, a local, a parameter or a capture; it must be
+#   reachable from emit_c, which imports the sem door, not the file.
 # 2026-10-06, task #23 (274.11 E.10 step 2b): sem 391 -> 395: `CNames`, `CNames.new`, `@add`, `@has` --
 #   a set of OUR C identifiers (what one unit wants another to print, what an earlier unit printed),
 #   asked by mono, the emitter and the pipeline; beside InteropTable and kept apart from it.
-sem 396
+sem 397
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
