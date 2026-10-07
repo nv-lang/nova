@@ -1,0 +1,15 @@
+module p03b_fence_in_instance_option.main
+
+// NOVAC_PROGRAM
+// `Color` (module pal) is used by value everywhere it is written; the only
+// `Option[Color]` is inside the body of `gen.pick[Color]`, an instance.
+
+import ./pal.{Color, color_name, next_color}
+import ./gen.{pick}
+
+fn main() {
+    ro c = next_color(Color.Red)
+    println(color_name(c))
+    println(color_name(pick[Color](c, Color.Blue, true)))
+    println(color_name(pick[Color](c, Color.Blue, false)))
+}

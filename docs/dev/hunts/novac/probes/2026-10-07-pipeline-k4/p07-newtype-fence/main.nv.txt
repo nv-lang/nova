@@ -1,0 +1,13 @@
+module p07_newtype_fence.main
+
+// NOVAC_PROGRAM
+// `Color` stands only as a newtype's representation in module `nt`.
+
+import ./pal.{Color, color_name, next_color}
+import ./nt.{shade_of, Shade}
+
+fn main() {
+    println(color_name(next_color(Color.Red)))
+    ro s = shade_of(2)
+    println(color_name(Color(s)))
+}

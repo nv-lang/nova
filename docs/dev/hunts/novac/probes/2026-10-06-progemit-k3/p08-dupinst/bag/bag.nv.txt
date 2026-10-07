@@ -1,5 +1,0 @@
-module p08_dupinst.bag
-
-import ../geo.{dbl}
-
-export fn twice(n int) -> int => dbl[int](n)
