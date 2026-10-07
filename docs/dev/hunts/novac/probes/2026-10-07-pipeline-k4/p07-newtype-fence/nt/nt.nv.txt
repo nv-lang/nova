@@ -1,0 +1,12 @@
+module p07_newtype_fence.nt
+
+import ../pal.{Color}
+
+/// A distinct type over a colour.
+export type Shade Color
+
+/// A shade for a code.
+export fn shade_of(k int) -> Shade {
+    if k == 2 { return Shade(Color.Blue) }
+    Shade(Color.Red)
+}

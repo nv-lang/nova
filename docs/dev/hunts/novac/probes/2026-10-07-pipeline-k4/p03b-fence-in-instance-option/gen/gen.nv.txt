@@ -1,0 +1,10 @@
+module p03b_fence_in_instance_option.gen
+
+/// `a` when `first`, else `b` -- through an option only the instance holds.
+export fn pick[T](a T, b T, first bool) -> T {
+    ro o = if first { Some(a) } else { None }
+    match o {
+        Some(x) => x
+        None => b
+    }
+}

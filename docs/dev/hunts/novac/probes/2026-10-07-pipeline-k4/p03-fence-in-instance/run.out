@@ -1,0 +1,58 @@
+=== PROGRAM
+--- ./gen/gen.nv
+     1	module p03_fence_in_instance.gen
+     2	
+     3	/// How many of two values were packed -- the vector is an instance's only.
+     4	export fn two[T](a T, b T) -> int {
+     5	    mut xs = []T.new()
+     6	    xs.push(a)
+     7	    xs.push(b)
+     8	    xs.len()
+     9	}
+--- ./main.nv
+     1	module p03_fence_in_instance.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// `Color` (module pal) is used by value everywhere it is written; the only
+     5	// `[]Color` is the body of `gen.two[Color]`, an instance.
+     6	
+     7	import ./pal.{Color, color_name, next_color}
+     8	import ./gen.{two}
+     9	
+    10	fn main() {
+    11	    ro c = next_color(Color.Red)
+    12	    println(color_name(c))
+    13	    println(two[Color](c, Color.Blue))
+    14	}
+--- ./pal/pal.nv
+     1	module p03_fence_in_instance.pal
+     2	
+     3	// The owner of a payload-free sum. It uses `Color` by value only: alone, this
+     4	// unit would lay it out as NovaValue_Color.
+     5	
+     6	/// A colour: no variant carries a payload.
+     7	#impl(Equal)
+     8	export type Color enum
+     9	    | Red
+    10	    | Green
+    11	    | Blue
+    12	
+    13	/// The colour's name -- a match in the owner.
+    14	export fn color_name(c Color) -> str => match c {
+    15	    Red => "red"
+    16	    Green => "green"
+    17	    Blue => "blue"
+    18	}
+    19	
+    20	/// The next colour round the wheel -- `==` in the owner.
+    21	export fn next_color(c Color) -> Color {
+    22	    if c == Color.Red { return Color.Green }
+    23	    if c == Color.Green { return Color.Blue }
+    24	    Color.Red
+    25	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — novac emit упал: stderr «»; диагностики из stdout (1 шт.): "message":"in the instance of `two`: outside the subset: novac does not know this element type yet (274.5 P3)" 
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<tmp>/p03_fence_in_instance/gen/gen.nv","start":159,"end":161},"message":"in the instance of `two`: outside the subset: novac does not know this element type yet (274.5 P3)","poisoned_by":null}
+Color: NovaValue_Color 0, Nova_Color* 0

@@ -1,0 +1,27 @@
+module program_fence.bag
+
+// A MODULE OF THE PROGRAM over `../palette`: it FENCES that module's `Color`
+// (a `[]Color`, an application's argument) and reads its `Mode` by a match
+// only. Every unit must spell both sums as the whole program lays them out --
+// one C type per sum, whichever unit is printed first (registry 221.1 #1813).
+
+import ../palette.{Color, Red, Green, Blue, Mode, Fast, Slow}
+
+/// Every colour, in order: the vector that fences `Color` for the program.
+export fn all_colors() -> []Color => []Color.of(Red, Green, Blue)
+
+/// How many times `c` occurs in `xs` -- the tag of another module's sum
+/// compared and read in this one.
+export fn count_of(xs []Color, c Color) -> int {
+    mut n = 0
+    for x in xs {
+        if x == c { n += 1 }
+    }
+    n
+}
+
+/// The speed's word: a match over a sum another module fences.
+export fn mode_name(m Mode) -> str => match m {
+    Fast => "fast"
+    Slow => "slow"
+}

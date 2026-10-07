@@ -1,0 +1,38 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p08_std_heap_sum_by_value.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// std's payload-free Align, CharError and RangeError are heap sums in the
+     5	// shell; this program holds none in an application -- by value only.
+     6	
+     7	import std.runtime.fmt_buf.{Align}
+     8	
+     9	fn align_name(a Align) -> str => match a {
+    10	    Left => "left"
+    11	    Right => "right"
+    12	    Center => "center"
+    13	}
+    14	
+    15	fn main() {
+    16	    ro a = Align.Center
+    17	    println(align_name(a))
+    18	    ro c = CharError.Invalid
+    19	    match c {
+    20	        AboveMax => println("above")
+    21	        BelowMin => println("below")
+    22	        Invalid => println("invalid")
+    23	    }
+    24	    ro r = RangeError.BelowMin
+    25	    match r {
+    26	        AboveMax => println("above")
+    27	        BelowMin => println("below")
+    28	    }
+    29	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke ok: <tmp>/p08_std_heap_sum_by_value/main.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+Align: NovaValue_Align 0, Nova_Align* 35
+CharError: NovaValue_CharError 0, Nova_CharError* 16
+RangeError: NovaValue_RangeError 0, Nova_RangeError* 31

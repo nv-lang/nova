@@ -1,0 +1,33 @@
+=== PROGRAM
+--- ./main.nv
+     1	module p01_std_sum_fenced.main
+     2	
+     3	// NOVAC_PROGRAM
+     4	// A std payload-free sum, laid out by value in the shell, fenced by THIS
+     5	// program: `[]PathStyle`. The shell's C is fixed; does the unit follow it?
+     6	
+     7	import std.fs.{PathStyle}
+     8	
+     9	fn style_name(s PathStyle) -> str => match s {
+    10	    Posix => "posix"
+    11	    Windows => "windows"
+    12	}
+    13	
+    14	fn main() {
+    15	    mut xs = []PathStyle.new()
+    16	    xs.push(PathStyle.Posix)
+    17	    xs.push(PathStyle.Windows)
+    18	    for s in xs {
+    19	        println(style_name(s))
+    20	    }
+    21	    println(xs.len())
+    22	}
+=== SMOKE: oracle build and run, Carina's one C file, compiled and run
+novac-e1-smoke: FAIL — clang -c упал: <smoke>/body.c:12258:5: error: unknown type name 'Nova_PathStyle'; did you mean 'Nova_PathStyle_Tag'?
+ 12258 |     Nova_PathStyle** data;
+       |     ^~~~~~~~~~~~~~
+       |     Nova_PathStyle_Tag
+<smoke>/body.c:37:3: note: 'Nova_PathStyle_Tag' declared here
+--- Carina's emission alone: its exit code, diagnostics, layouts of the probe's sums
+novac emit rc=0
+PathStyle: NovaValue_PathStyle 18, Nova_PathStyle* 23

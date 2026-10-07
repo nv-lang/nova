@@ -1,5 +1,0 @@
-module p02_newtype.libn
-
-export type Row int
-
-export fn mk_row(v int) -> Row => Row(v)

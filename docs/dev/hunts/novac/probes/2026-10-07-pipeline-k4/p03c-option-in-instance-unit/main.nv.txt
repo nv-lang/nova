@@ -1,0 +1,30 @@
+module p03c_option_in_instance_unit.main
+
+// `Option[Color]` stands only inside the body of `pick[Color]`, an instance.
+// Unit mode -- no program root.
+
+/// A colour: no variant carries a payload.
+type Color enum
+    | Red
+    | Green
+    | Blue
+
+fn color_name(c Color) -> str => match c {
+    Red => "red"
+    Green => "green"
+    Blue => "blue"
+}
+
+/// `a` when `first`, else `b` -- through an option only the instance holds.
+fn pick[T](a T, b T, first bool) -> T {
+    ro o = if first { Some(a) } else { None }
+    match o {
+        Some(x) => x
+        None => b
+    }
+}
+
+fn main() {
+    println(color_name(pick[Color](Color.Green, Color.Blue, true)))
+    println(color_name(pick[Color](Color.Green, Color.Blue, false)))
+}

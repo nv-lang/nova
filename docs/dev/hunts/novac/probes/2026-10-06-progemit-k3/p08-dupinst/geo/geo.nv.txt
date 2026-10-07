@@ -1,3 +1,0 @@
-module p08_dupinst.geo
-
-export fn dbl[T](x T) -> T => x + x

@@ -1,0 +1,28 @@
+module program_fence.pos_1
+
+// NOVAC_PROGRAM
+// THE A4 FENCE IS THE PROGRAM'S (registry 221.1 #1813): a payload-free sum is
+// laid out by value only when it stands as an argument NOWHERE in the program.
+// `palette/` owns `Color` and uses it by value; `bag/` holds it in a `[]Color`.
+// `palette/` fences its own `Mode` (an option); `bag/` only matches it. Judged
+// unit by unit, the owner declared `NovaValue_Color` while `bag` read it through
+// `Nova_Color*` -- and `bag` read `Mode` by `.` where its owner declared a heap
+// struct. Each line prints a value that depends on the variant taken.
+
+import ./palette.{Blue, color_name, next_color, pick_mode}
+import ./bag.{all_colors, count_of, mode_name}
+
+fn main() {
+    for c in all_colors() {
+        println("${color_name(c)} -> ${color_name(next_color(c))}")
+    }
+    ro xs = all_colors()
+    println(count_of(xs, Blue))
+    println(count_of(xs, next_color(Blue)))
+    for code in 0..3 {
+        match pick_mode(code) {
+            Some(m) => println("${code} ${mode_name(m)}")
+            None => println("${code} none")
+        }
+    }
+}

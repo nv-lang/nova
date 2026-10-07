@@ -1,0 +1,19 @@
+module p04_option_fence.main
+
+// NOVAC_PROGRAM
+// `Color` fenced only by `Option[Color]` in module `opt`'s signature.
+
+import ./pal.{Color, color_name, next_color}
+import ./opt.{maybe}
+
+fn main() {
+    println(color_name(next_color(Color.Blue)))
+    match maybe(1) {
+        Some(c) => println(color_name(c))
+        None => println("none")
+    }
+    match maybe(0) {
+        Some(c) => println(color_name(c))
+        None => println("none")
+    }
+}

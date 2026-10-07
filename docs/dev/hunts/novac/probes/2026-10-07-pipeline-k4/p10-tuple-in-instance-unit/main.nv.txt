@@ -1,0 +1,21 @@
+module p10_tuple_in_instance_unit.main
+
+// `(T, T)` stands only inside the body of `second[Pt]`, an instance; `Pt` is
+// a plain record. The same door as p03d (the unit's own channel), asked for a
+// tuple instead of an option. Unit mode -- no program root.
+
+/// A point.
+type Pt {
+    x int
+}
+
+/// `b` -- through a pair only the instance holds.
+fn second[T](a T, b T) -> T {
+    ro p = (a, b)
+    p.1
+}
+
+fn main() {
+    println(second[Pt](Pt { x: 1 }, Pt { x: 2 }).x)
+    println(second[int](3, 4))
+}

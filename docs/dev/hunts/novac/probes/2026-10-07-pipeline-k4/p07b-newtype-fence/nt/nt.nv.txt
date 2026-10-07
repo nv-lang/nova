@@ -1,0 +1,16 @@
+module p07b_newtype_fence.nt
+
+import ../pal.{Color}
+
+/// A distinct type over a colour.
+type Shade Color
+
+/// Builds `k` shades and answers how many it built.
+export fn shade_count(k int) -> int {
+    mut n = 0
+    for i in 0..k {
+        ro s = if i % 2 == 0 { Shade(Color.Blue) } else { Shade(Color.Red) }
+        n += 1
+    }
+    n
+}

@@ -1,0 +1,22 @@
+module p01_std_sum_fenced.main
+
+// NOVAC_PROGRAM
+// A std payload-free sum, laid out by value in the shell, fenced by THIS
+// program: `[]PathStyle`. The shell's C is fixed; does the unit follow it?
+
+import std.fs.{PathStyle}
+
+fn style_name(s PathStyle) -> str => match s {
+    Posix => "posix"
+    Windows => "windows"
+}
+
+fn main() {
+    mut xs = []PathStyle.new()
+    xs.push(PathStyle.Posix)
+    xs.push(PathStyle.Windows)
+    for s in xs {
+        println(style_name(s))
+    }
+    println(xs.len())
+}
