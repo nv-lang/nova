@@ -1683,6 +1683,9 @@ static void _worker_main(void* arg) {
     nova_fiber_arena_unregister_native_stack();
     nova_fiber_arena_thread_exit();
 #endif
+    /* 221.1 №1857: this thread's handler slots leave the GC roots before its TLS
+     * block does (effects.h, "THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS"). */
+    nova_effect_roots_retract();
 
 #ifdef NOVA_GC_THREADS_REGISTER
     GC_unregister_my_thread();

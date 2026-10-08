@@ -95,6 +95,19 @@ jobs:
           if ! grep -Eq '^PASS: [1-9]' smoke.out; then echo "FAIL: no test passed - filter matched nothing"; exit 1; fi
           exit $rc
 
+      # Реестр 221.1 №1857: Windows-половина release-яруса (Linux — nova-gate.yml,
+      # шаг «Release-mode guard»). Обработчик `with` в TLS-слоте, которого Boehm
+      # на Windows не сканирует ни у одного потока; красная сторона p1857_*-фикстур
+      # видна только в оптимизированной сборке. Пустой фильтр — красный.
+      - name: nova test spec_tests p1857_ --mode release (${{ matrix.toolchain }})
+        shell: bash
+        run: |
+          echo "running: nova test spec_tests --filter p1857_ --mode release --toolchain ${{ matrix.toolchain }}"
+          ./nova-cli/target/release/nova test spec_tests --filter p1857_ --mode release --toolchain ${{ matrix.toolchain }} --timeout 300 2>&1 | tee p1857.out
+          rc=${PIPESTATUS[0]}
+          if ! grep -Eq '^PASS: [1-9]' p1857.out; then echo "FAIL: no test passed - filter matched nothing"; exit 1; fi
+          exit $rc
+
       # `std/src/os` собирается КАК ОДИН модуль (папка-модуль: все `*_test.nv` — пиры),
       # поэтому фильтр по имени одного файла (`os/d453`) не находит ничего: первый
       # прогон дал `PASS: 0 FAIL: 0` и зелёный. Пустой зелёный — не вердикт, шаг
