@@ -1,0 +1,38 @@
+module discard_binding.pos_1
+
+// A DISCARDING BINDING `ro _ = e` IS NOT ONE C NAME (registry 1816). Two of
+// them in the same block each want to declare the SAME C variable `_`: clang
+// reads the second as a redefinition. The side effect of `e` still has to
+// run -- a discard binding is not `(void)e`, it is a binding nobody reads --
+// so the fixture's values depend on both pops actually happening, not on the
+// declaration being dropped.
+fn main() {
+    mut xs = []int.new()
+    xs.push(1)
+    xs.push(2)
+    ro _ = xs.pop()
+    ro _ = xs.pop()
+    println("${xs.len()}")
+
+    // A SECOND discard binding of a DIFFERENT type in the same function body
+    // (not just the same block): the generated C name must not collide with
+    // the first pair's either.
+    mut ys = []str.new()
+    ys.push("a")
+    ro _ = ys.pop()
+
+    // `mut _` -- the discard form of a mutable binding, same C hazard.
+    mut zs = []int.new()
+    zs.push(10)
+    zs.push(20)
+    mut _ = zs.pop()
+    println("${zs.len()}")
+
+    // `for _ in ..` -- a discard of the loop variable itself; the single
+    // per-iteration local must not collide with the pairs above.
+    mut total = 0
+    for _ in 0..3 {
+        total = total + 1
+    }
+    println("${total}")
+}
