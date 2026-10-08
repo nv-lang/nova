@@ -24,4 +24,6 @@ cp control_test.nv.txt <dir2>/control_test.nv && nova test <dir2>  --toolchain c
 **Носитель в std.** `real_proc` (`std/src/os/proc.nv`, ветка #50 на базе t44): тела `child_wait` /
 `child_try_wait` / `child_wait_ms` объявляют `mut sig = 0`, ниже `pty_kill(pty PtyChild, sig Signal)` →
 `Signal.Kill` доходил до `proc_pty_kill` как 2 → `Err(Unsupported)`, PTY-F красный. Обход в #50 —
-параметр назван `signal` (комментарий со ссылкой на №1870). Чинится чекер отдельной задачей класса.
+параметр назван `signal`. После слияния t44 (граница `Proc` по D456, тела обработчика только передают
+вызов переводчикам `real_*`) локалов в телах нет, триггер ушёл, параметр снова `sig`; комментарий у
+`pty_kill` называет правило со ссылкой на №1870. Чинится чекер отдельной задачей класса.
