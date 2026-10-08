@@ -190,7 +190,7 @@ POSIX: группа процессов. Windows: Job Object по результ�
 `nova_rt/process.{h,c}`: `proc_child_kill`, `proc_child_wait_ms`, `proc_kill_pid`, бит `Tree.Group` в `stdio_modes`
 (POSIX — `UV_PROCESS_DETACHED` = `setsid`, `kill(-pgid)`; Windows — Job Object с `KILL_ON_JOB_CLOSE`,
 `TerminateJobObject`; `kill_pid(tree: true)` на Windows — потомки `pid` одним снимком таблицы процессов).
-Фикстуры — `std/src/os/proc_control_test.nv`: S3 (+S3b «без `Group` внук жив»), S7, S8 (+S8b), S9a–S9d, `wait_timeout`
+Фикстуры — `std/src/os/proc_control/proc_control_test.nv`: S3 (+S3b «без `Group` внук жив»), S7, S8 (+S8b), S9a–S9d, `wait_timeout`
 (W1, W2), края `kill`/`kill_pid` (K1–K5), регрессия R1 (№1862). Отступления от наброска, решённые по ходу:
 * **Windows: назначение в Job Object сразу после `uv_spawn`**, а не `CREATE_SUSPENDED` из D492 — libuv не даёт
   вклиниться; окно гонки настоящее (проба Ф.0 с задержкой 100 мс: 30 из 30 побегов), сознательное упрощение

@@ -8884,7 +8884,7 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 необязательное (не в `REQUIRED`), и его шаг `std/src/os` пока `continue-on-error` (№1850; риск R9 плана):
 прогон на Windows приложен в отчёте задачи.
 
-**Приёмка Ф.2** — `std/src/os/proc_control_test.nv`: `kill_pid` с деревом гасит потомка и внука (S3), без `Group` —
+**Приёмка Ф.2** — `std/src/os/proc_control/proc_control_test.nv`: `kill_pid` с деревом гасит потомка и внука (S3), без `Group` —
 только потомка (S3b), таймаут `supervised` вокруг `wait()` гасит дерево (S7), `stop(grace)` у потомка, глухого к
 `Terminate`, — пауза и `Kill` (S8), послушного — сразу (S8b), отмена и выход из scope гасят потомка (S9a, S9b) и
 дерево (S9c), `cleanup` после `wait()` ничего не делает (S9d), `wait_timeout` (W1, W2), края `kill` / `kill_pid`

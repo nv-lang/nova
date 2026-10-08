@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/os/proc_control_test.nv — Plan 294 F.2 (D492): process control.
+// std/os/proc_control/proc_control_test.nv — Plan 294 F.2 (D492): process control.
 //
 // Scenarios S3, S7, S8, S9 of docs/plans/294-process-streams-pty.md §5, plus the pieces they
 // stand on: `Child.kill`, `Child.stop`, `Child.wait_timeout`, `Tree.Group`, `kill_pid`, `cleanup`.
@@ -12,10 +12,15 @@
 // The children are platform tools present on every CI image (`sh` + coreutils on POSIX,
 // `powershell` on Windows), as in proc_streams_test.nv. Every loop a child runs is BOUNDED
 // (about 10 s), so a fixture that fails cannot leave a process running for ever.
+//
+// Its own directory and module, like proc_streams/: `nova test` folds every `module std.os` file of
+// std/src/os into ONE unit, so a red peer there would hide these fixtures under its name. They use
+// only the public `std.os` surface, as a user would.
 
-module std.os
+module proc_control.proc_control_test
 
-import std.io.{read_to_end}
+import std.os.{Command, Child, ChildStdout, Stdio, Tree, Signal, ExitStatus, kill_pid}
+import std.io.{IoError, ErrorKind, read_to_end}
 import std.time.duration
 
 fn ctl_child(r Result[Child, IoError], what str) -> Child {
