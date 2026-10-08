@@ -8770,6 +8770,17 @@ export fn ChildStdout mut @read(mut buf []u8) Proc -> Result[int, IoError]   // 
 export fn ChildStdout consume @close() Proc                                  // ChildStderr — так же
 export type Output value { ro status ExitStatus, ro stdout []u8, ro stderr []u8 }
 export fn ExitStatus @signal() -> Option[int]                                // аддитивно к D453
+
+// Ф.2 — управление процессом (реализовано задачей #44)
+export type Signal enum
+    | Interrupt | Terminate | Kill | Hangup | Other(int)
+export type Tree enum
+    | Single | Group                             // умолчание — Single (поведение D453)
+export fn Command mut @tree(t Tree) -> @
+export fn Child mut @kill(sig Signal) Proc -> Result[(), IoError]            // Ok и для уже завершившегося
+export fn Child mut @stop(grace Duration) Proc -> Result[ExitStatus, IoError] // Terminate → grace → Kill
+export fn Child mut @wait_timeout(d Duration) Proc -> Result[Option[ExitStatus], IoError]  // None = жив, НЕ убит
+export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 ```
 
 Отступления от наброска плана (имена и места, где язык сказал «нет»):
@@ -8778,8 +8789,34 @@ export fn ExitStatus @signal() -> Option[int]                                // 
   эффекта им быть не может (проба: `expected identifier, got spawn`). Экранирования ключевых слов в языке нет.
 * `Child.pid()` несёт `Proc` — иначе его нельзя подменить в `mock_proc`.
 * `ExitStatus` получает поле `sig` (приватный смысл) и метод `signal()`; конструируется только в `os.nv`.
-* `Command.stderr_to_stdout()` и `Tree`/`Signal`/`kill`/`stop`/`wait_timeout`/`kill_pid`/PTY в Ф.1 **не реализованы**
-  (Ф.2–Ф.4); их сигнатуры в плане остаются проектом, а не частью принятого здесь.
+* `Command.stderr_to_stdout()` и PTY **не реализованы** (Ф.3–Ф.4); их сигнатуры в плане остаются проектом, а не
+  частью принятого здесь. `Tree`/`Signal`/`kill`/`stop`/`wait_timeout`/`kill_pid` — реализованы в Ф.2 (выше).
+
+**Управление процессом (Ф.2, нормативно):**
+
+* `kill` не ждёт и не помечает потомка отменённым: `wait()` после него — `Ok(status)` с настоящей причиной смерти,
+  не `Err`. `Ok` и для уже завершившегося потомка (идемпотентно).
+* `stop(grace)` = `Terminate`, ожидание до `grace`, затем `Kill` и ожидание выхода. Потомок, ушедший по `Terminate`,
+  отдаёт свой статус; не послушавший — смерть от сигнала 9 (POSIX). На Windows `Terminate` уже окончателен, и
+  `grace` не тратится.
+* `wait_timeout(d)` — `Ok(None)`, если срок вышел, а потомок жив; **не убивает** (решает вызывающий).
+* `Tree.Group`: POSIX — потомок лидер своей сессии (`setsid`), сигнал идёт всей группе (`kill(-pgid)`); Windows —
+  потомок в своём Job Object с `KILL_ON_JOB_CLOSE`, сигнал = `TerminateJobObject`. С `Group` дерево бьют `kill`,
+  `stop`, отмена scope и `cleanup`.
+* **Windows: назначение в Job Object — сразу после `uv_spawn`**, не `CREATE_SUSPENDED`, как решено ниже по пробе
+  (б): libuv не даёт вклиниться между созданием процесса и его запуском. Гарантия на Windows поэтому такая:
+  **внук, порождённый потомком в окне между `CreateProcess` и `AssignProcessToJobObject`, остаётся вне
+  задания**. Окно узкое, но настоящее (строка (б) таблицы ниже). Сознательное упрощение
+  `[M-294-win-job-suspended]`, условие снятия — свой `CreateProcess(CREATE_SUSPENDED)` под Windows.
+* `kill_pid(pid, sig, tree)`: `pid <= 0` — `Err(InvalidInput)` (никогда «своя группа» / «все процессы»); нет
+  такого процесса — `Err(NotFound)`. `tree`: POSIX — группа с лидером `pid`; Windows — `pid` и его потомки по
+  одному снимку таблицы процессов (best effort: pid мог быть переиспользован, риск R6 плана).
+* `Child.cleanup` живого потомка: `Terminate` → пауза **500 мс** (`NOVA_PROC_RELEASE_GRACE_MS`, константа рантайма,
+  не настройка) → `Kill` (дерево при `Group`) и возврат только после того, как процесс ушёл; уже завершённый —
+  только освобождение дескриптора (и добивание отставших членов группы).
+* Сигналы на Windows: только `Kill` и `Terminate` (оба — завершение процесса); остальные — `Err(Unsupported)`, не
+  тихая подмена. `ExitStatus.signal()` на Windows всегда `None`, в том числе после нашего `kill`: код — тот,
+  что оставил `TerminateProcess` (1).
 
 ### 3. Семантика потоков (нормативно)
 
@@ -8796,7 +8833,8 @@ export fn ExitStatus @signal() -> Option[int]                                // 
 5. **Ожидание паркует волокно, не поток ОС.** Отмена `supervised(timeout:)`/`(cancel:)` убивает потомка и
    даёт `Err(Interrupted)` (тот же выбор, что D453).
 6. **`Child.cleanup`** не оставляет живого потомка: убивает ещё идущий процесс и закрывает все пайпы, которые
-   вызывающий не забрал. В Ф.1 это немедленный `Kill`; Ф.2 заменяет его на `stop(grace)` и убийство дерева.
+   вызывающий не забрал. В Ф.1 это был немедленный `Kill`; с Ф.2 — `Terminate` → 500 мс → `Kill`, дерево при
+   `Tree.Group` (раздел «Управление процессом» выше).
 7. **Закрытие.** `ChildStdin.close` — конец ввода потомку. `ChildStdout.close` при живом потомке не трогает
    сам процесс: `wait` продолжает ждать его; потомок, пишущий дальше, получает сломанный пайп. Закрытие
    потомком своего stdout при живом процессе даёт читателю `Ok(0)`, а `try_wait` — `None`, пока процесс жив.
@@ -8806,6 +8844,12 @@ export fn ExitStatus @signal() -> Option[int]                                // 
    `-13` EACCES, `-20` ENOTDIR, `-32` EPIPE, `-4` прервано), `IoError.from_os` читает их как есть. Новых
    вариантов `ErrorKind` нет.
 10. **Не вводится:** глобального состояния, `select`, пула потоков под ввод-вывод, терминального эмулятора.
+11. **Закрытый поток — `Err(NotConnected)`, не `Interrupted`** (амендмент Ф.2, №1862). Чтение или запись в поток,
+    закрытый нами или отменой scope (отмена закрывает поток, п. 5), а также операция из уже отменённого scope
+    отвечают `NotConnected` — и так на каждый следующий вызов. `Interrupted` в `std.io` значит «временно,
+    повтори» (EINTR): помощники `read_to_end` / `read_exact` / `write_all` его повторяют, и мёртвый поток с
+    ответом `Interrupted` зацикливал их без парковки. `wait()` после отмены остаётся `Err(Interrupted)` (п. 5):
+    его никто не повторяет в цикле.
 
 ### 4. Результаты проб Ф.0 и принятые по ним решения
 
@@ -8814,7 +8858,7 @@ export fn ExitStatus @signal() -> Option[int]                                // 
 | проба | замер | решение |
 |---|---|---|
 | (а) `uv_spawn` + `UV_CREATE_PIPE`, тянущее чтение | давление назад подтверждено на Windows и Linux (п. 3.2) | дизайн п. 3.2 принят |
-| (б) Windows: Job Object **поверх** `uv_spawn` | `Assign` сразу после `uv_spawn`: 0 побегов из 30; с задержкой 100 мс: **30 из 30** внуков уже вне задания — окно гонки настоящее. Вложенное задание (у libuv свой job) назначается без ошибки | Ф.2: `Tree.Group` на Windows идёт путём `CreateProcess(CREATE_SUSPENDED)` + `Assign` + `ResumeThread` (0 побегов из 30), а не вставкой после `uv_spawn` |
+| (б) Windows: Job Object **поверх** `uv_spawn` | `Assign` сразу после `uv_spawn`: 0 побегов из 30; с задержкой 100 мс: **30 из 30** внуков уже вне задания — окно гонки настоящее. Вложенное задание (у libuv свой job) назначается без ошибки | решено: `Tree.Group` на Windows — путь `CreateProcess(CREATE_SUSPENDED)` + `Assign` + `ResumeThread` (0 побегов из 30). **Ф.2 (задача #44) сделала иначе**: libuv не даёт вклиниться, поэтому `Assign` идёт сразу после `uv_spawn` — гарантия ослаблена до «внук, порождённый до `Assign`, вне задания»; строка с задержкой 100 мс (30 из 30) доказывает, что окно настоящее. Упрощение `[M-294-win-job-suspended]` |
 | (б) POSIX: дерево | `UV_PROCESS_DETACHED` (= `setsid`) + `kill(-pid)` убивает внука; обычный `kill(pid)` оставляет внука жить | Ф.2: `Group` — явный, `Single` — умолчание (как в плане) |
 | (в) PTY POSIX | `forkpty`: мастер открывается `uv_pipe_open`, читается `uv_read_start`; эхо и `\n`→`\r\n` ядром; `TIOCSWINSZ` виден потомку (`40 120`); конец — `EIO` (−5), не `EOF` | Ф.3: `EIO` переводится в `Ok(0)`, как в плане |
 | (в) PTY Windows | `CreatePseudoConsole` работает; код выхода 3 сохранён; поток вывода закрывается (`ERROR_BROKEN_PIPE`, 109) **только после** `ClosePseudoConsole`; перед текстом — служебные последовательности (`ESC[?9001h`, `ESC[2J`, заголовок окна) | Ф.4: допустимы префикс/суффикс (PTY-2 принимает вхождение подстроки); `close` сначала вычитывает вывод. Открыто для Ф.4: в пробе `hello` ушёл в stdout РОДИТЕЛЯ, а не в псевдоконсоль (родитель без консоли) — выяснить до реализации |
@@ -8833,6 +8877,13 @@ export fn ExitStatus @signal() -> Option[int]                                // 
 взаимной блокировки (S6), отказы (нет программы / не исполняемое / нет папки / запись после смерти), отмена и
 `cleanup`. **Приёмка глазами, потому что** CI-задания под Windows нет (риск R9 плана): прогон на Windows
 приложен в отчёте задачи, на Linux — CI.
+
+**Приёмка Ф.2** — `std/src/os/proc_control_test.nv`: `kill_pid` с деревом гасит потомка и внука (S3), без `Group` —
+только потомка (S3b), таймаут `supervised` вокруг `wait()` гасит дерево (S7), `stop(grace)` у потомка, глухого к
+`Terminate`, — пауза и `Kill` (S8), послушного — сразу (S8b), отмена и выход из scope гасят потомка (S9a, S9b) и
+дерево (S9c), `cleanup` после `wait()` ничего не делает (S9d), `wait_timeout` (W1, W2), края `kill` / `kill_pid`
+(K1–K5), закрытый поток не зацикливает `read_to_end` (R1). Windows — прогон в отчёте задачи #44 (и в
+Windows-задании #40, когда оно появится).
 
 **Связи:** D453 (`process_run`, `Command.run` — остаются) · D456 (граница эффекта) · D188/D432 (`Cleanup`) ·
 D93/D439 (отмена и `supervised`) · план [294](../../docs/plans/294-process-streams-pty.md) · план [176](../../docs/plans/176-io-fs-os.md).

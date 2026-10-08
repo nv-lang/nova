@@ -150,7 +150,15 @@ nova_int proc_child_wait_ms(void* child, nova_int ms, nova_int* out_code, nova_i
  * 0, NOVA_PROC_NO_SUCH, -1 (EPERM), -22, NOVA_PROC_UNSUPPORTED. */
 nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree);
 
-/* read: n > 0 bytes, 0 = end of stream, < 0 = -errno. */
+/* A read or write on a stream that is closed — by our own close, or by the scope
+ * cancellation that closed it (D492 rule 3.11) — or issued from an already cancelled
+ * scope. Deliberately NOT -EINTR: std.io's loop helpers (read_to_end, write_all, ...)
+ * retry Interrupted, and a dead stream answers every retry the same way, so -EINTR
+ * here spun those helpers for ever (found by plan 294 F.2, registry entry TBD).
+ * std/os/proc.nv maps it to ErrorKind.NotConnected (std/net's `Closed` precedent). */
+#define NOVA_PROC_CLOSED ((nova_int)-100002)
+
+/* read: n > 0 bytes, 0 = end of stream, < 0 = -errno or NOVA_PROC_CLOSED. */
 nova_int proc_pipe_read(void* pipe, uint8_t* buf, nova_int cap);
 /* write: whole buffer or < 0 = -errno (-32 = EPIPE: the child closed its end). */
 nova_int proc_pipe_write(void* pipe, const uint8_t* buf, nova_int len);

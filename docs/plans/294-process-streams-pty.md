@@ -1,7 +1,8 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 # План 294 — std: потоки дочернего процесса, управление процессом, PTY
 
-**Статус:** 📝 ЗАПЛАНИРОВАН 2026-10-08 — этап 1 (изучение и план), реализация НЕ начата. Слово владельца
+**Статус:** 🟡 В РАБОТЕ 2026-10-08 — Ф.0 + Ф.1 (задача #43) и Ф.2 (задача #44, см. «Сделано» в Ф.2) реализованы;
+Ф.3 (PTY POSIX), Ф.4 (ConPTY), Ф.5 (закрытие) впереди. Слово владельца
 2026-10-08: сервис запуска кодовых агентов переносится с Go на Nova, ему нужны эти три вещи. Номер плана — 294
 (последний на `main` — [293](293-consume-pattern-auto-move.md)); D-блок получил номер D492 (выдан интегратором 2026-10-08).
 
@@ -184,6 +185,23 @@ POSIX: группа процессов. Windows: Job Object по результ�
 *Тесты:* потомок порождает внука, оба пишут в файл-метку; убитое дерево — оба мертвы; таймаут `supervised` убивает
 оба; `kill_pid` по pid без `Child`. Windows — тот же набор.
 
+*Сделано (задача #44, 2026-10-08).* `std/src/os/proc.nv`: `Signal`, `Tree`, `Command.tree`, `Child.kill`,
+`Child.stop(grace)`, `Child.wait_timeout`, `kill_pid`; `Child.cleanup` теперь `Terminate` → пауза
+`NOVA_PROC_RELEASE_GRACE_MS` (500 мс) → `Kill` (дерево при `Group`) и возвращается только после смерти процесса.
+`nova_rt/process.{h,c}`: `proc_child_kill`, `proc_child_wait_ms`, `proc_kill_pid`, бит `Tree.Group` в `stdio_modes`
+(POSIX — `UV_PROCESS_DETACHED` = `setsid`, `kill(-pgid)`; Windows — Job Object с `KILL_ON_JOB_CLOSE`,
+`TerminateJobObject`; `kill_pid(tree: true)` на Windows — потомки `pid` одним снимком таблицы процессов).
+Фикстуры — `std/src/os/proc_control_test.nv`: S3 (+S3b «без `Group` внук жив»), S7, S8 (+S8b), S9a–S9d, `wait_timeout`
+(W1, W2), края `kill`/`kill_pid` (K1–K5), регрессия R1 (№1862). Отступления от наброска, решённые по ходу:
+* **Windows: назначение в Job Object сразу после `uv_spawn`**, а не `CREATE_SUSPENDED` из D492 — libuv не даёт
+  вклиниться; окно гонки настоящее (проба Ф.0 с задержкой 100 мс: 30 из 30 побегов), сознательное упрощение
+  `[M-294-win-job-suspended]` (решение интегратора 2026-10-08, вариант «А»).
+* **Windows: `signal()` всегда `None`.** libuv сообщает о собственном `uv_process_kill` как о «сигнале 9»; рантайм
+  обнуляет его, и смерть от `kill` выглядит одинаково с `TerminateProcess` извне: `code() == 1`, `signal() == None`.
+* **Закрытый или отменённый поток — `Err(NotConnected)`, не `Interrupted`** (№1862): `Interrupted` помощники
+  `std.io` повторяют, а мёртвый поток отвечает на каждый повтор тем же — вечный цикл.
+* `wait_timeout` ждёт шагами по 5 мс (волокно паркуется, поток ОС свободен), а не отдельным таймером.
+
 **Ф.3. PTY на POSIX** (`forkpty`, `resize`, EOF, `close`). Первым — POSIX: CI целиком на Linux, значит единственный
 этап, где PTY-семантика получает автоматический вердикт; она же задаёт форму API, под которую подгоняется ConPTY, а
 не наоборот. Свой `fork`+`exec` в многопоточном процессе (Boehm GC, M:N-планировщик): в потомке до `exec` — только
@@ -299,4 +317,12 @@ D-блок потребует). Каждая фикстура утверждае
 ## 10. Followups
 
 Плана-носителя пока нет; плавающие хвосты (если появятся) — строки
-[backlog-followups.md](backlog-followups.md). Реестр дефектов — [221.1](221.1-bug-sweep.md) (№TBD).
+[backlog-followups.md](backlog-followups.md). Реестр дефектов — [221.1](221.1-bug-sweep.md).
+
+* `[M-294-win-job-suspended]` (Ф.2) — Windows `Tree.Group` назначает Job Object сразу после `uv_spawn`; снять —
+  свой `CreateProcess(CREATE_SUSPENDED)` + `Assign` + `ResumeThread`, подробно в
+  [simplifications.md](../dev/simplifications.md).
+* №1862 (Ф.2 нашла) — отменённая потоковая операция отвечала `Interrupted`, помощники `std.io` зацикливались;
+  носитель `std/os` починен в Ф.2, `std/net` (`Cancelled → Interrupted`) не проверен.
+* №1863 (Ф.2 нашла) — компилятор: `consume`-значение после `mut`-аргумента, возвращённое из функции, получает
+  `cleanup` дважды. Обход в фикстуре S9c; чинит отдельное окно на класс.

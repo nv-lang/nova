@@ -131,9 +131,18 @@ export type ChildStderr consume value priv { handle *() }
 #stable(since = "0.1")
 export type Output value { ro status ExitStatus, ro stdout []u8, ro stderr []u8 }
 
-// Mirrors NOVA_PROC_UNSUPPORTED / NOVA_PROC_NO_SUCH in nova_rt/process.h.
+// Mirrors NOVA_PROC_UNSUPPORTED / NOVA_PROC_NO_SUCH / NOVA_PROC_CLOSED in nova_rt/process.h.
 const PROC_UNSUPPORTED = 0 - 100001
 const PROC_NO_SUCH = 0 - 3
+const PROC_CLOSED = 0 - 100002
+
+// A stream op result. A closed (or scope-cancelled) stream is NotConnected, never Interrupted:
+// std.io loop helpers retry Interrupted, and a dead stream would answer every retry the same.
+fn stream_result(n int, op str) -> Result[int, IoError] {
+    if n == PROC_CLOSED { Err(IoError.new(ErrorKind.NotConnected, op)) }
+    else if n < 0 { Err(proc_io_err(n, op)) }
+    else { Ok(n) }
+}
 
 fn signal_result(rc int, op str) -> Result[(), IoError] {
     if rc == 0 { Ok(()) }
@@ -307,8 +316,7 @@ fn Child consume @release() Proc { Proc.child_release(@handle) }
 /// has closed its stdin or exited yields `Err(BrokenPipe)`.
 #stable(since = "0.1")
 export fn ChildStdin mut @write(data []u8) Proc -> Result[int, IoError] {
-    ro n = Proc.pipe_write(@handle, data)
-    if n < 0 { Err(proc_io_err(n, "write child stdin")) } else { Ok(n) }
+    stream_result(Proc.pipe_write(@handle, data), "write child stdin")
 }
 
 /// `io.Write` conformance: writes reach the pipe directly — `flush` is a no-op.
@@ -328,8 +336,7 @@ export fn ChildStdin consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
 /// stdout); data is never lost to it. Parks the fiber until bytes arrive.
 #stable(since = "0.1")
 export fn ChildStdout mut @read(mut buf []u8) Proc -> Result[int, IoError] {
-    ro n = Proc.pipe_read(@handle, buf)
-    if n < 0 { Err(proc_io_err(n, "read child stdout")) } else { Ok(n) }
+    stream_result(Proc.pipe_read(@handle, buf), "read child stdout")
 }
 
 /// Close our end. A still-running child that writes more gets a broken pipe;
@@ -343,8 +350,7 @@ export fn ChildStdout consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
 /// See `ChildStdout.read`.
 #stable(since = "0.1")
 export fn ChildStderr mut @read(mut buf []u8) Proc -> Result[int, IoError] {
-    ro n = Proc.pipe_read(@handle, buf)
-    if n < 0 { Err(proc_io_err(n, "read child stderr")) } else { Ok(n) }
+    stream_result(Proc.pipe_read(@handle, buf), "read child stderr")
 }
 
 #stable(since = "0.1")

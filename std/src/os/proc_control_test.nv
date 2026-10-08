@@ -147,17 +147,50 @@ fn refused_signal_kind() -> ErrorKind => ErrorKind.Unsupported
 fn refused_signal_kind() -> ErrorKind => ErrorKind.InvalidInput
 
 // Drains `rx` to its end inside a time box. The end of the stream means nobody holds the write end any more.
+// True ONLY for a real end of stream: a timeout closes the stream (NotConnected) and is false.
 fn drained_within(mut rx ChildStdout, secs int) -> bool {
-    ro r = with Fail[TimeoutError] = |_e| { 0 } {
+    mut eof = false
+    with Fail[TimeoutError] = |_e| { () } {
         supervised(timeout: secs.to_seconds()) {
-            ctl_io(read_to_end(rx), "drain")
+            match read_to_end(rx) {
+                Ok(_) => { eof = true }
+                Err(e) => if e.kind != ErrorKind.NotConnected { panic("drain: ${e}") }  // the timeout closed the stream
+            }
         }
-        1
     }
-    r == 1
+    eof
 }
 
 // ─── S3: stop by pid, with the tree ──
+
+// Registry entry TBD (found here): a pipe read cut by a scope cancellation used to report Interrupted,
+// which read_to_end / read_exact / write_all retry - and the closed stream answered every retry the
+// same way, so the helper spun for ever. Now it is NotConnected and the helper returns.
+test "p294 R1: read_to_end cut by supervised(timeout:) returns NotConnected - no endless retry" {
+    consume child = ctl_child(ctl_sleep(30).stdout(Stdio.Piped).start(), "start")
+    consume rx = ctl_stdout(child.take_stdout())
+    ro t0 = Timestamp.now().unix_millis()
+    mut kind = ErrorKind.Other(0)
+    with Fail[TimeoutError] = |_e| { () } {
+        supervised(timeout: 500.to_millis()) {
+            match read_to_end(rx) {
+                Ok(_) => panic("a sleeping child closed nothing: no end of stream expected")
+                Err(e) => { kind = e.kind }
+            }
+        }
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(kind == ErrorKind.NotConnected)           // the read was cut, not retried for ever
+    assert(elapsed >= 400)                           // ... by the timeout, not by an early failure
+    assert(elapsed < 5000)
+    // The stream stays dead: one more read is the same error at once, not a hang.
+    mut buf []u8 = []u8.new()
+    buf.resize(16, 0 as u8)
+    match rx.read(buf) {
+        Ok(n) => panic("read on a cancelled stream gave ${n} bytes")
+        Err(e) => assert(e.kind == ErrorKind.NotConnected)
+    }
+}
 
 test "p294 S3: kill_pid(child.pid(), Kill, tree: true) ends the child AND its grandchild" {
     consume child = ctl_child(tree_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start tree")
@@ -285,18 +318,51 @@ test "p294 S9b: leaving the scope without wait() reaps the child before the bloc
     }
 }
 
-fn start_tree_and_drop() -> ChildStdout {
-    consume child = ctl_child(tree_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start tree")
-    consume rx = ctl_stdout(child.take_stdout())
-    assert(both_writers_alive(rx))
-    rx
-}                                                    // Child.cleanup runs here, the stream goes on
+// The child and the grandchild each write ONE mark and then sleep (they never write again, so
+// closing the pipe at the end of the block cannot kill them by a broken pipe and hide the result).
+#cfg(target_os = "windows")
+fn quiet_tree_cmd() -> Command =>
+    ctl_ps("Start-Process -NoNewWindow -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','[Console]::Out.Write(''g'');[Console]::Out.Flush();Start-Sleep -Seconds 30'; [Console]::Out.Write('c');[Console]::Out.Flush();Start-Sleep -Seconds 30")
+
+#cfg(!target_os = "windows")
+fn quiet_tree_cmd() -> Command => ctl_sh("(printf g; exec sleep 30) & printf c; exec sleep 30")
+
+// True once nothing is left of the group led by `pid`. POSIX: signal 0 only asks whether any
+// member exists (the dead leader may take a moment to be reaped by init). Windows: `pid` plus its
+// descendants from one process snapshot - a live grandchild would be killed AND reported as Ok.
+#cfg(target_os = "windows")
+fn group_gone(pid int) -> bool {
+    match kill_pid(pid, Signal.Kill, true) {
+        Ok(_) => false
+        Err(e) => e.kind == ErrorKind.NotFound
+    }
+}
+
+#cfg(!target_os = "windows")
+fn group_gone(pid int) -> bool {
+    mut tries = 0
+    while tries < 30 {
+        match kill_pid(pid, Signal.Other(0), true) {
+            Ok(_) => { 100.to_millis().sleep() }
+            Err(e) => return e.kind == ErrorKind.NotFound
+        }
+        tries += 1
+    }
+    false
+}
 
 test "p294 S9c: cleanup of a Tree.Group child takes the grandchild with it" {
+    mut pid = 0
     ro t0 = Timestamp.now().unix_millis()
-    consume rx = start_tree_and_drop()
-    assert(drained_within(rx, 8))                    // nobody holds the pipe: both are dead
-    assert(Timestamp.now().unix_millis() - t0 < 6000)
+    {
+        consume child = ctl_child(quiet_tree_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start tree")
+        pid = child.pid()
+        consume rx = ctl_stdout(child.take_stdout())
+        assert(both_writers_alive(rx))               // the grandchild exists before the scope ends
+    }                                                // Child.cleanup runs here
+    assert(pid > 0)
+    assert(group_gone(pid))                          // neither the child nor the grandchild is left
+    assert(Timestamp.now().unix_millis() - t0 < 8000)
 }
 
 test "p294 S9d: cleanup after a completed wait() does not touch anything and costs nothing" {

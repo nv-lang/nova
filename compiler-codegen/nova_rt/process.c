@@ -258,7 +258,7 @@ static nova_int _proc_neg_errno(int uv) {
         case UV_EPERM:     return -1;
         case UV_ENOENT:    return -2;
         case UV_EINTR:     return -4;
-        case UV_ECANCELED: return -4;   /* surfaces as Interrupted, like D453 */
+        case UV_ECANCELED: return NOVA_PROC_CLOSED;   /* a stream op cut short by close / cancel */
         case UV_EIO:       return -5;
         case UV_EAGAIN:    return -11;
         case UV_ENOMEM:    return -12;
@@ -403,14 +403,14 @@ nova_int proc_pipe_read(void* pv, uint8_t* buf, nova_int cap) {
     nova_int result;
     _pp_acquire(p);
 
-    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = -4; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = NOVA_PROC_CLOSED; goto out; }
     if (cap <= 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/os: pipe read outside scope\n"); abort(); }
     NovaFiberQueue* cancel_sc = _proc_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
 
     p->read_ptr = buf; p->read_cap = cap; p->read_n = 0; p->read_eof = 0; p->read_err = 0;
     nova_aint_store(&p->read_done, 0);
@@ -432,8 +432,8 @@ nova_int proc_pipe_read(void* pv, uint8_t* buf, nova_int cap) {
     nova_sched_unregister_pending(scope, slot);
     p->read_ptr = NULL;   /* do not root the caller's buffer through an uncollectable struct */
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
-    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = NOVA_PROC_CLOSED; goto out; }
     if (p->read_err != 0) { result = _proc_neg_errno(p->read_err); goto out; }
     if (p->read_eof)      { result = 0; goto out; }
     result = p->read_n;
@@ -475,14 +475,14 @@ nova_int proc_pipe_write(void* pv, const uint8_t* buf, nova_int len) {
     nova_int result;
     _pp_acquire(p);
 
-    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = -4; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = NOVA_PROC_CLOSED; goto out; }
     if (len <= 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/os: pipe write outside scope\n"); abort(); }
     NovaFiberQueue* cancel_sc = _proc_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
 
     uv_buf_t ubuf = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
     ProcWriteIssueCtx wctx = { p, ubuf };
@@ -509,8 +509,8 @@ nova_int proc_pipe_write(void* pv, const uint8_t* buf, nova_int len) {
     nova_sched_unregister_pending(scope, slot);
     memset(&p->write_req, 0, sizeof(p->write_req));   /* drop the pointer to the caller's buffer */
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
-    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = NOVA_PROC_CLOSED; goto out; }
     if (p->write_err != 0) { result = _proc_neg_errno(p->write_err); goto out; }
     result = p->write_n;
 out:
@@ -560,7 +560,15 @@ static void _pc_close_cb(uv_handle_t* h) {
 static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal) {
     NovaProcChild* c = (NovaProcChild*)proc->data;
     c->exit_status = exit_status;
+#ifdef _WIN32
+    /* Windows has no signals: libuv reports its own uv_process_kill as "signal 9", while a
+     * TerminateProcess from anywhere else is a plain exit code. Report both the same way —
+     * the code TerminateProcess left (1), signal() == None (D492 table 3.4). */
+    (void)term_signal;
+    c->term_signal = 0;
+#else
     c->term_signal = term_signal;
+#endif
     nova_aint_store(&c->exited, 1);
     NovaFiberQueue* sc = c->wait_scope; int sl = c->wait_slot;
     c->wait_scope = NULL;
@@ -601,8 +609,11 @@ static int64_t _proc_now_ms(void) { return (int64_t)(uv_hrtime() / 1000000ULL); 
 
 #ifdef _WIN32
 /* Tree.Group on Windows: put the just-spawned child into its own Job Object.
- * Assigned right after uv_spawn: probe (b) of plan 294 measured no escapes for an
- * immediate assignment (see docs/dev/simplifications.md, "Windows Tree.Group").
+ * Assigned right after uv_spawn, so there IS a race window: a grandchild started
+ * before the Assign stays outside the job (probe (b) of plan 294: 0/30 escapes for an
+ * immediate assignment, 30/30 with a 100 ms delay). D492 wants CreateProcess
+ * (CREATE_SUSPENDED) + Assign + ResumeThread, which libuv cannot do — deliberate
+ * simplification [M-294-win-job-suspended], docs/dev/simplifications.md.
  * KILL_ON_JOB_CLOSE: the tree dies with our handle even if the parent crashes. */
 static void _pc_assign_job(NovaProcChild* c) {
     HANDLE j = CreateJobObjectW(NULL, NULL);
