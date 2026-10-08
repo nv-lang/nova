@@ -233,8 +233,18 @@ static int _nova_fw_slot_probe_on(void) {
     return v;
 }
 
+/* 221.1 №1857: effects.c -- the handler TLS slots of every thread (effects.h,
+ * "THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS"). Declared here, not by
+ * including effects.h: this TU stays off nova_rt.h. */
+void nova_effect_roots_push(void (*push)(void* lo, void* hi));
+static void _nova_fw_push_eager(void* lo, void* hi) {
+    GC_push_all_eager((char*)lo, (char*)hi);
+}
+
 static void _nova_fw_gc_push_other_roots(void) {
     size_t pushed = 0, arenas = 0;
+    /* №1857: the installed effect handlers -- TLS is not scanned by Boehm. */
+    nova_effect_roots_push(_nova_fw_push_eager);
     /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
      * сборки (она создаётся лениво на первом mco_create главного потока). Если
      * ни одна из арен в списке не принадлежит главному потоку, его native-стек
