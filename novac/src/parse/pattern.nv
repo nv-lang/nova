@@ -109,7 +109,11 @@ fn Cursor mut @pattern_primary() -> Node {
 /// positional partial form and reads here too.
 fn Cursor mut @variant_pattern(mut kids []Node) -> Node {
     kids.push(@take()) // the `(`
-    while !@at_eof() && @peek() != TokenKind.RParen {
+    // PROGRESS: a closer that is NOT this form's own (`}` of the match, `]` in a
+    // `(`) makes @pattern() answer a zero-width marker and take nothing, so the loop
+    // must stop on ANY terminator -- it spun and allocated forever on `R(w,` +
+    // newline + `}` (registry 1856). The enclosing form re-reads the closer.
+    while !@at_eof() && @peek() != TokenKind.RParen && !is_terminator(@peek()) {
         if @peek() == TokenKind.DotDot {
             kids.push(@take())
         } else {
@@ -126,7 +130,11 @@ fn Cursor mut @variant_pattern(mut kids []Node) -> Node {
 /// binding spelled as the DotDot leaf followed by its binder subpattern).
 fn Cursor mut @seq_pattern(close TokenKind) -> Node {
     mut kids = []Node.of(@take()) // the opener
-    while !@at_eof() && @peek() != close {
+    // PROGRESS: a closer that is NOT this form's own (`}` of the match, `]` in a
+    // `(`) makes @pattern() answer a zero-width marker and take nothing, so the loop
+    // must stop on ANY terminator -- it spun and allocated forever on `R(w,` +
+    // newline + `}` (registry 1856). The enclosing form re-reads the closer.
+    while !@at_eof() && @peek() != close && !is_terminator(@peek()) {
         if @peek() == TokenKind.DotDot {
             kids.push(@take())
         } else {
