@@ -80,7 +80,7 @@ fn read_step(f Path, round int) -> bool {
     with Fs = fs.real_fs() {
         ro n = churn(round)
         gc.collect()
-        ro text = match fs.read_text(f) { Ok(s) => s, Err(_) => "" }
+        ro text = fs.read_text(f) ?? ""
         text == "abc" && n == 2000
     }
 }
