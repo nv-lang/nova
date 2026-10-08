@@ -276,6 +276,7 @@ export type Command value priv {
     stdin_mode Stdio
     stdout_mode Stdio
     stderr_mode Stdio
+    tree_mode Tree
 }
 
 /// A fresh command running `program` with no arguments, inheriting the
@@ -283,7 +284,8 @@ export type Command value priv {
 #stable(since = "0.1")
 export fn Command.new(program str) -> Command =>
     { program, args: [], envs: [], clear_env: false, dir: None,
-      stdin_mode: Stdio.Null, stdout_mode: Stdio.Null, stderr_mode: Stdio.Null }
+      stdin_mode: Stdio.Null, stdout_mode: Stdio.Null, stderr_mode: Stdio.Null,
+      tree_mode: Tree.Single }
 
 /// Append one argument.
 #stable(since = "0.1")

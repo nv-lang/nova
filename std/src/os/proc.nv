@@ -33,6 +33,7 @@ module std.os
 
 import std.io.{IoError, ErrorKind}
 import std.io.{read_to_end}
+import std.time.duration.{Duration}
 
 // ─── Stdio selection ──
 
@@ -43,6 +44,32 @@ import std.io.{read_to_end}
 #stable(since = "0.1")
 export type Stdio enum
     | Null | Inherit | Piped
+
+/// A signal to deliver to a child (`Child.kill`, `kill_pid`). POSIX sends the real signal;
+/// Windows has none: `Kill` and `Terminate` both end the process at once, every other value
+/// is `Err(Unsupported)` there (plan 294, table 3.4), never silently mapped to something else.
+#stable(since = "0.1")
+export type Signal enum
+    | Interrupt | Terminate | Kill | Hangup | Other(int)
+
+/// How far `kill` and scope cancellation reach.
+///   * `Single` - the child process only (the default, as in D453).
+///   * `Group`  - the child leads its own process group (POSIX: `setsid`) / Job Object
+///     (Windows); every kill, `stop`, cancellation and `cleanup` hits the whole tree.
+///     POSIX note: a `Group` child loses the parent's controlling terminal.
+#stable(since = "0.1")
+export type Tree enum
+    | Single | Group
+
+fn signal_number(s Signal) -> int {
+    match s {
+        Interrupt => 2
+        Terminate => 15
+        Kill => 9
+        Hangup => 1
+        Other(n) => n
+    }
+}
 
 fn stdio_code(s Stdio) -> int {
     match s {
@@ -70,6 +97,11 @@ export type Proc effect {
     // rc 0 exited, 1 still running.
     fn child_try_wait(child *()) -> (int, int, int)
     fn child_release(child *()) -> ()
+    // Plan 294 F.2. rc 0 ok (also for a child already gone), < 0 = -errno / unsupported.
+    fn child_kill(child *(), sig int) -> int
+    // (rc, code, signal): rc 0 exited, 1 still running after `ms` (the child is NOT killed).
+    fn child_wait_ms(child *(), ms int) -> (int, int, int)
+    fn kill_pid(pid int, sig int, tree bool) -> int
     fn pipe_read(pipe *(), mut buf []u8) -> int
     fn pipe_write(pipe *(), data []u8) -> int
     fn pipe_close(pipe *()) -> ()
@@ -99,11 +131,26 @@ export type ChildStderr consume value priv { handle *() }
 #stable(since = "0.1")
 export type Output value { ro status ExitStatus, ro stdout []u8, ro stderr []u8 }
 
+// Mirrors NOVA_PROC_UNSUPPORTED / NOVA_PROC_NO_SUCH in nova_rt/process.h.
+const PROC_UNSUPPORTED = 0 - 100001
+const PROC_NO_SUCH = 0 - 3
+
+fn signal_result(rc int, op str) -> Result[(), IoError] {
+    if rc == 0 { Ok(()) }
+    else if rc == PROC_UNSUPPORTED { Err(IoError.new(ErrorKind.Unsupported, op)) }
+    else if rc == PROC_NO_SUCH { Err(IoError.new(ErrorKind.NotFound, op)) }
+    else { Err(proc_io_err(rc, op)) }
+}
+
 fn ptr_is_null(p *()) -> bool => (0 as *()) == p
 
 fn proc_io_err(neg_errno int, op str) -> IoError => IoError.from_os(0 - neg_errno, op)
 
 // ─── Command: stream configuration + spawn ──
+
+/// How far kill / cancellation reach (default `Tree.Single`). See `Tree`.
+#stable(since = "0.1")
+export fn Command mut @tree(t Tree) -> @ { @tree_mode = t }
 
 /// Connect the child's stdin (default `Stdio.Null`).
 #stable(since = "0.1")
@@ -132,7 +179,11 @@ export fn Command @start() Proc -> Result[Child, IoError] {
         Some(p) => p.os_bytes()
         None => []u8.new()
     }
-    ro modes = stdio_code(@stdin_mode) + 4 * stdio_code(@stdout_mode) + 16 * stdio_code(@stderr_mode)
+    ro tree_bit = match @tree_mode {
+        Single => 0
+        Group => 64
+    }
+    ro modes = stdio_code(@stdin_mode) + 4 * stdio_code(@stdout_mode) + 16 * stdio_code(@stderr_mode) + tree_bit
     ro (err, h) = Proc.launch(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes, modes)
     if err < 0 { Err(proc_io_err(err, "spawn")) }
     else { Ok(Child { handle: h }) }
@@ -192,8 +243,58 @@ export fn Child mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
     else { Err(proc_io_err(rc, "child try_wait")) }
 }
 
-/// `Cleanup[never]` (D188): a child still running when its scope ends is killed, and
-/// pipes never taken are closed. After a completed `wait()` this only releases the handle.
+/// Send `sig` to the child, to its whole tree after `Command.tree(Tree.Group)`. `Ok` also for a
+/// child that has already exited (idempotent). Does not wait and does not mark the child as
+/// cancelled: `wait()` afterwards reports the real status (`signal() == Some(9)` after `Kill`).
+/// Windows: only `Kill` / `Terminate`; anything else is `Err(Unsupported)`.
+#stable(since = "0.1")
+export fn Child mut @kill(sig Signal) Proc -> Result[(), IoError] {
+    signal_result(Proc.child_kill(@handle, signal_number(sig)), "child kill")
+}
+
+/// Wait up to `d` for the child to exit. `Ok(None)` = the time ran out and the child is STILL
+/// RUNNING: this never kills (the caller decides). Parks the fiber in short steps (a few
+/// milliseconds), so an exit is noticed within that granularity. A cancelled scope unwinds
+/// the wait like any sleep.
+#stable(since = "0.1")
+export fn Child mut @wait_timeout(d Duration) Proc -> Result[Option[ExitStatus], IoError] {
+    ro (rc, code, sig) = Proc.child_wait_ms(@handle, d.millis() as int)
+    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
+    else if rc == 1 { Ok(None) }
+    else { Err(proc_io_err(rc, "child wait_timeout")) }
+}
+
+/// Graceful stop: `Terminate`, wait up to `grace`, then `Kill`, then wait for the exit. A child
+/// that leaves on `Terminate` reports its own status; one that ignores it dies by signal 9
+/// (`signal() == Some(9)`). Windows has no gentler signal: `Terminate` ends the process at
+/// once and `grace` is never spent. With `Tree.Group` both steps reach the whole tree.
+#stable(since = "0.1")
+export fn Child mut @stop(grace Duration) Proc -> Result[ExitStatus, IoError] {
+    @kill(Signal.Terminate)?
+    match @wait_timeout(grace)? {
+        Some(st) => Ok(st)
+        None => {
+            @kill(Signal.Kill)?
+            @wait()
+        }
+    }
+}
+
+/// Signal a process this program holds no `Child` for (a pid read from a file, a service that
+/// restarted). `tree`: the whole process group LED by `pid` on POSIX (a child started with
+/// `Tree.Group`), and `pid` plus its descendants (one snapshot of the process table) on Windows.
+/// `Err(NotFound)` when there is no such process / group, `Err(PermissionDenied)` when it is not
+/// ours. Best effort: a pid can be reused by an unrelated process after its owner died; prefer
+/// `Child.kill` whenever you still hold the `Child`.
+#stable(since = "0.1")
+export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError] {
+    signal_result(Proc.kill_pid(pid, signal_number(sig), tree), "kill_pid")
+}
+
+/// `Cleanup[never]` (D188): a child still running when its scope ends gets `Terminate`, a short
+/// grace (500 ms) and then `Kill` (the whole tree with `Tree.Group`), and the call returns only
+/// once the process is gone; pipes never taken are closed. After a completed `wait()` this only
+/// releases the handle (and sweeps the stragglers of a group).
 #stable(since = "0.1")
 export fn Child consume @cleanup(_outcome ScopeOutcome) -> () { @release() }
 
@@ -262,7 +363,8 @@ fn output_missing(what str) -> IoError => IoError.new(ErrorKind.InvalidInput, wh
 #stable(since = "0.1")
 export fn Command @output() Proc -> Result[Output, IoError] {
     ro piped Command = { @program, @args, @envs, @clear_env, @dir,
-                         stdin_mode: Stdio.Null, stdout_mode: Stdio.Piped, stderr_mode: Stdio.Piped }
+                         stdin_mode: Stdio.Null, stdout_mode: Stdio.Piped, stderr_mode: Stdio.Piped,
+                         @tree_mode }
     consume child = piped.start()?
     consume so = match child.take_stdout() {
         Some(consume s) => s
@@ -316,6 +418,14 @@ export fn real_proc() -> Effect[Proc] {
             (rc, code, sig)
         }
         child_release(child *()) -> () { unsafe { proc_child_release(child) } }
+        child_kill(child *(), sig int) -> int => unsafe { proc_child_kill(child, sig) }
+        child_wait_ms(child *(), ms int) -> (int, int, int) {
+            mut code = 0
+            mut sig = 0
+            ro rc = unsafe { proc_child_wait_ms(child, ms, &code, &sig) }
+            (rc, code, sig)
+        }
+        kill_pid(pid int, sig int, tree bool) -> int => unsafe { proc_kill_pid(pid, sig, tree) }
         pipe_read(pipe *(), mut buf []u8) -> int => unsafe { proc_pipe_read(pipe, buf.ptr(), buf.len()) }
         pipe_write(pipe *(), data []u8) -> int => unsafe { proc_pipe_write(pipe, data.ptr(), data.len()) }
         pipe_close(pipe *()) -> () { unsafe { proc_pipe_close(pipe) } }
