@@ -1,0 +1,138 @@
+// EXPECT_STDOUT fs 120 ok | 121 ok | 200 ok | 300 answered | probe 21 rounds ok
+//
+// Registry 221.1 #1857: a release binary died on its first file call with
+// "fiber stack overflow in slot 0 (access violation in fiber arena)" (Windows
+// 0xC0000005, Linux exit 139), seen by an application whose log path was
+// longer than ~120 characters. The path length was not the cause: it only
+// moved WHEN the collector ran. The cause: a handler installed by
+// `with X = h { .. }` lives in a thread-local slot `_nova_handler_X`, Boehm
+// does not scan TLS, and the stack "pin" local the codegen keeps beside the
+// TLS store is dead after the store, so -O2/-O3 drop it. A collection inside
+// the block freed the live handler; the next `X.op()` jumped through a reused
+// vtable. Fixed in the runtime: every thread's registered handler slots are
+// GC roots (effects.h, nova_effect_roots_*).
+//
+// What this program pins: each operation runs in a FRESH `with Fs` block whose
+// handler is reachable only through the slot, after heap churn and an explicit
+// collection -- on absolute paths of 120, 121, 200 and 300 characters for
+// create_dir / metadata / write (open) / read / remove_file / remove_dir --
+// and the same for a user effect whose handler captures a local (its vtable
+// is a heap object, not a static table).
+//
+// 300 characters is past Windows MAX_PATH (260) for a libuv path without the
+// \\?\ prefix: there the calls return an IoError (entity not found) instead of
+// succeeding, on Linux they succeed. Either way the program must get an answer
+// back, so 300 reports "answered", not "ok".
+//
+// THE RED SIDE NEEDS AN OPTIMIZED BUILD: `nova test` builds -O0, where the
+// pin local stays on the stack and the handler survives with or without the
+// fix. With the runtime fix reverted, `nova test spec_tests --filter p1857
+// --mode release` dies with the line above (measured on Windows, 5 of 5).
+module standalone.p1857_long_path_fs_ops
+
+import std.fs
+import std.os
+import std.runtime.gc
+
+type P1857Probe effect {
+    fn read() -> int
+}
+
+fn churn(round int) -> int {
+    mut xs = []str.new()
+    for i in 0..2000 { xs.push("churn-${round}-${i}") }
+    xs.len()
+}
+
+fn pad(n int) -> str {
+    mut s = ""
+    for _ in 0..n { s = "${s}x" }
+    s
+}
+
+// One step = one fresh handler, a collection inside its block, then the call.
+fn mkdir_step(dir Path, round int) -> bool {
+    with Fs = fs.real_fs() {
+        ro n = churn(round)
+        gc.collect()
+        fs.create_dir(dir).is_ok() && n == 2000
+    }
+}
+
+fn write_step(f Path, round int) -> bool {
+    with Fs = fs.real_fs() {
+        ro n = churn(round)
+        gc.collect()
+        fs.write(f, "abc").is_ok() && n == 2000
+    }
+}
+
+fn stat_step(f Path, round int) -> bool {
+    with Fs = fs.real_fs() {
+        ro n = churn(round)
+        gc.collect()
+        ro len = match fs.metadata(f) { Ok(m) => m.len(), Err(_) => 0 - 1 }
+        len == 3 && n == 2000
+    }
+}
+
+fn read_step(f Path, round int) -> bool {
+    with Fs = fs.real_fs() {
+        ro n = churn(round)
+        gc.collect()
+        ro text = fs.read_text(f) ?? ""
+        text == "abc" && n == 2000
+    }
+}
+
+fn remove_step(dir Path, f Path, round int) -> bool {
+    with Fs = fs.real_fs() {
+        ro n = churn(round)
+        gc.collect()
+        ro a = fs.remove_file(f).is_ok()
+        ro b = fs.remove_dir(dir).is_ok()
+        a && b && n == 2000
+    }
+}
+
+fn probe(base str, total int) -> bool {
+    ro want = total - base.byte_len() - 3
+    ro dir = "${base}/${pad(want)}".to_path()
+    ro f = dir.join("f")
+    ro a = mkdir_step(dir, total)
+    ro b = write_step(f, total + 1)
+    ro c = stat_step(f, total + 2)
+    ro d = read_step(f, total + 3)
+    ro e = remove_step(dir, f, total + 4)
+    a && b && c && d && e
+}
+
+fn user_effect_round(round int) -> bool {
+    ro offset = round * 10
+    with P1857Probe = effect P1857Probe {
+        read() -> int { return offset + 1 }
+    } {
+        ro n = churn(round)
+        gc.collect()
+        P1857Probe.read() == round * 10 + 1 && n == 2000
+    }
+}
+
+fn main() Io -> () {
+    mut base = ""
+    with Os = os.real_os() {
+        base = match os.cwd() { Ok(p) => p.display(), Err(_) => "" }
+    }
+    mut line = "fs"
+    for n in [120, 121, 200] {
+        ro verdict = if probe(base, n) { "ok" } else { "FAIL" }
+        line = if n == 120 { "${line} ${n} ${verdict}" } else { "${line} | ${n} ${verdict}" }
+    }
+    ro _ = probe(base, 300)
+    line = "${line} | 300 answered"
+    mut ok = 0
+    for r in 0..21 {
+        if user_effect_round(r) { ok += 1 }
+    }
+    println("${line} | probe ${ok} rounds ok")
+}

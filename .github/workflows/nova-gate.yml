@@ -494,6 +494,23 @@ jobs:
           fi
           exit "${code}"
 
+      # ── Release-ярус: дефекты, видимые только в оптимизированной сборке ──
+      # Реестр 221.1 №1857: обработчик `with` живёт в TLS-слоте, которого Boehm
+      # не сканирует; локальная копия, державшая его в -O0, в -O2/-O3 мертва.
+      # Шаг выше собирает -O0, где откат фикса не виден, — красная сторона
+      # p1857_*-фикстур (сборка мусора внутри `with Fs` / `with Fail[E]`) есть
+      # только здесь. Пустой фильтр — красный: зелёный без прогона не вердикт.
+      - name: Release-mode guard — spec_tests p1857_* (registry 221.1 #1857)
+        run: |
+          set -uo pipefail
+          ./nova-cli/target/release/nova test spec_tests --filter p1857_ \
+              --mode release --timeout 300 2>&1 | tee p1857.out
+          code=${PIPESTATUS[0]}
+          if ! grep -Eq '^PASS: [1-9]' p1857.out; then
+            echo "FAIL: no p1857_ fixture ran (filter matched nothing)"; exit 1
+          fi
+          exit "${code}"
+
       # ── Флагман-examples — app-регрессии, которые conformance не ловит ─
       # examples/nova.toml -> `http = { path = "../../nova-http" }` требует
       # физического сиблинга на диске (см. header-комментарий выше).
