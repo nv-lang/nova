@@ -168,7 +168,7 @@ fn drained_within(mut rx ChildStdout, secs int) -> bool {
 
 // ─── S3: stop by pid, with the tree ──
 
-// Registry entry TBD (found here): a pipe read cut by a scope cancellation used to report Interrupted,
+// Registry 1862 (found here): a pipe read cut by a scope cancellation used to report Interrupted,
 // which read_to_end / read_exact / write_all retry - and the closed stream answered every retry the
 // same way, so the helper spun for ever. Now it is NotConnected and the helper returns.
 test "p294 R1: read_to_end cut by supervised(timeout:) returns NotConnected - no endless retry" {
@@ -374,6 +374,30 @@ test "p294 S9c: cleanup of a Tree.Group child takes the grandchild with it" {
     assert(pid > 0)
     assert(group_gone(pid))                          // neither the child nor the grandchild is left
     assert(Timestamp.now().unix_millis() - t0 < 8000)
+}
+
+// The leader starts a grandchild that writes 'g' and sleeps 30 s, waits a little, writes 'c' and EXITS
+// by itself with code 0 - nobody kills it.
+#cfg(target_os = "windows")
+fn leaving_leader_cmd() -> Command =>
+    ctl_ps("Start-Process -NoNewWindow -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','[Console]::Out.Write(''g'');[Console]::Out.Flush();Start-Sleep -Seconds 30'; Start-Sleep -Milliseconds 1500; [Console]::Out.Write('c');[Console]::Out.Flush()")
+
+#cfg(!target_os = "windows")
+fn leaving_leader_cmd() -> Command => ctl_sh("(printf g; exec sleep 30) & sleep 1; printf c")
+
+// Registry 1866: a Tree.Group does not outlive its leader. The stragglers die the moment the leader's
+// exit is known - not later from kill / cleanup, when the group's number may already belong to a
+// stranger. After the exit nothing is signalled any more, and kill is Ok.
+test "p294 S9e: a Tree.Group leader that exits by itself takes the grandchild with it; kill afterwards is Ok" {
+    consume child = ctl_child(leaving_leader_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start")
+    ro pid = child.pid()
+    consume rx = ctl_stdout(child.take_stdout())
+    assert(both_writers_alive(rx))                   // the grandchild exists before the leader leaves
+    ro st = ctl_io(child.wait(), "wait")
+    assert(st.code() == 0)                           // the leader left by itself
+    assert(group_gone(pid))                          // ... and the grandchild did not stay behind
+    ctl_io(child.kill(Signal.Kill), "kill after exit")
+    ctl_io(child.kill(Signal.Terminate), "terminate after exit")
 }
 
 test "p294 S9d: cleanup after a completed wait() does not touch anything and costs nothing" {

@@ -57,6 +57,9 @@ export type Signal enum
 ///   * `Single` - the child process only (the default, as in D453).
 ///   * `Group`  - the child leads its own process group (POSIX: `setsid`) / Job Object
 ///     (Windows); every kill, `stop`, cancellation and `cleanup` hits the whole tree.
+///     The tree does not outlive its leader: when the leader exits (for any reason, even
+///     by itself with code 0) the members left are killed at once. A grandchild the
+///     leader left running as a "daemon" therefore does not keep the pipes open.
 ///     POSIX note: a `Group` child loses the parent's controlling terminal.
 #stable(since = "0.1")
 export type Tree enum
@@ -254,7 +257,8 @@ export fn Child mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
 }
 
 /// Send `sig` to the child, to its whole tree after `Command.tree(Tree.Group)`. `Ok` also for a
-/// child that has already exited (idempotent). Does not wait and does not mark the child as
+/// child that has already exited (idempotent) - and then NOTHING is sent: the number of an exited
+/// process (or group) may belong to an unrelated one by now. Does not wait and does not mark the child as
 /// cancelled: `wait()` afterwards reports the real status (`signal() == Some(9)` after `Kill`).
 /// Windows: only `Kill` / `Terminate`; anything else is `Err(Unsupported)`.
 #stable(since = "0.1")
@@ -295,7 +299,9 @@ export fn Child mut @stop(grace Duration) Proc -> Result[ExitStatus, IoError] {
 /// `Tree.Group`), and `pid` plus its descendants (one snapshot of the process table) on Windows.
 /// `Err(NotFound)` when there is no such process / group, `Err(PermissionDenied)` when it is not
 /// ours. Best effort: a pid can be reused by an unrelated process after its owner died; prefer
-/// `Child.kill` whenever you still hold the `Child`.
+/// `Child.kill` whenever you still hold the `Child`. On Windows every process of the tree is killed
+/// through an open handle and only if it was created before the snapshot (a descendant: not before
+/// its parent), so a number reused while the call runs is never hit.
 #stable(since = "0.1")
 export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError] {
     signal_result(Proc.kill_pid(pid, signal_number(sig), tree), "kill_pid")
@@ -303,8 +309,8 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError] {
 
 /// `Cleanup[never]` (D188): a child still running when its scope ends gets `Terminate`, a short
 /// grace (500 ms) and then `Kill` (the whole tree with `Tree.Group`), and the call returns only
-/// once the process is gone; pipes never taken are closed. After a completed `wait()` this only
-/// releases the handle (and sweeps the stragglers of a group).
+/// once the process is gone; pipes never taken are closed. After the child exited this only
+/// releases the handle and signals nothing (a group's stragglers died with its leader).
 #stable(since = "0.1")
 export fn Child consume @cleanup(_outcome ScopeOutcome) -> () { @release() }
 

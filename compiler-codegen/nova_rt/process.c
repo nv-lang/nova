@@ -569,6 +569,22 @@ static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal
 #else
     c->term_signal = term_signal;
 #endif
+    /* Tree.Group: the tree does not outlive its leader — stragglers die HERE, the moment
+     * the leader's exit is known, and never later. On POSIX this is the only safe moment:
+     * the group id stays reserved only while some member lives, so once the group is empty
+     * the number is free and the OS may hand it to an unrelated process that leads its own
+     * group; a later kill(-pgid) — from Child.kill or cleanup, maybe hours afterwards —
+     * would SIGKILL that stranger (registry 1866). Here the leader has just been reaped:
+     * a non-empty group still holds the id, an empty one leaves at most the microseconds
+     * since waitpid. Windows: the Job Object handle cannot be reused; same rule for the
+     * same behaviour on both systems. After this point nothing is ever signalled. */
+    if (c->group) {
+#ifdef _WIN32
+        if (c->job) TerminateJobObject(c->job, 1);
+#else
+        (void)kill(-(pid_t)c->pid, SIGKILL);
+#endif
+    }
     nova_aint_store(&c->exited, 1);
     NovaFiberQueue* sc = c->wait_scope; int sl = c->wait_slot;
     c->wait_scope = NULL;
@@ -577,20 +593,25 @@ static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal
 }
 
 /* Deliver `sig` to the child, or to its whole tree with Tree.Group. 0 also when
- * there is nothing left to signal; < 0 = -errno or NOVA_PROC_UNSUPPORTED. */
+ * there is nothing left to signal; < 0 = -errno or NOVA_PROC_UNSUPPORTED.
+ * Once the child has exited NOTHING is sent, single or group: its pid / pgid may
+ * already belong to another process (registry 1866; a group's stragglers were
+ * swept by _pc_exit_cb). The remaining window — libuv's waitpid has reaped the
+ * child but its exit_cb has not stored `exited` yet — is the same one libuv's
+ * own uv_process_kill has. */
 static nova_int _pc_send(NovaProcChild* c, int sig) {
 #ifdef _WIN32
     if (sig != 9 && sig != 15) return NOVA_PROC_UNSUPPORTED;   /* no signals on Windows */
-    if (c->job) { TerminateJobObject(c->job, 1); return 0; }
     if (nova_aint_load(&c->exited) != 0) return 0;
+    if (c->job) { TerminateJobObject(c->job, 1); return 0; }
     int rc = uv_process_kill(&c->proc, SIGKILL);
     return (rc == 0 || rc == UV_ESRCH) ? 0 : _proc_neg_errno(rc);
 #else
+    if (nova_aint_load(&c->exited) != 0) return 0;
     int r;
     if (c->group) {
         r = kill(-(pid_t)c->pid, sig);     /* the child is its group's leader (setsid) */
     } else {
-        if (nova_aint_load(&c->exited) != 0) return 0;
         r = kill((pid_t)c->pid, sig);
     }
     if (r == 0 || errno == ESRCH) return 0;
@@ -805,8 +826,8 @@ nova_int proc_child_wait_ms(void* cv, nova_int ms, nova_int* out_code, nova_int*
  * until the OS has really reaped the process — callers (and kill_pid) must find it gone. */
 static void _pc_reap(NovaProcChild* c) {
     int alive = nova_aint_load(&c->exited) == 0;
-    if (!alive && !c->group) return;
-    if (alive) {
+    if (!alive) return;            /* gone: its stragglers were swept at exit (_pc_exit_cb) */
+    {
         (void)_pc_send(c, 15);
         NovaFiberQueue* scope = _nova_active_scope;
         int64_t deadline = _proc_now_ms() + NOVA_PROC_RELEASE_GRACE_MS;
@@ -819,8 +840,8 @@ static void _pc_reap(NovaProcChild* c) {
             (void)time_sleep_ms(2);
         }
     }
-    (void)_pc_send(c, 9);          /* leader still alive, or grandchildren that outlived it */
-    if (alive && nova_aint_load(&c->exited) == 0) {
+    (void)_pc_send(c, 9);          /* still alive after the grace (a no-op once it exited) */
+    if (nova_aint_load(&c->exited) == 0) {
         NovaFiberQueue* scope = _nova_active_scope;
         int slot = _nova_active_slot;
         if (scope) {
@@ -874,7 +895,15 @@ nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree) {
     if (sig != 9 && sig != 15) return NOVA_PROC_UNSUPPORTED;
     if (!tree) return _win_terminate_pid((DWORD)pid);
     /* One snapshot of the process table, then every descendant of `pid` (parent-id links) and
-     * `pid` itself. A parent id can be stale (pid reuse, plan 294 R6): best effort, documented. */
+     * `pid` itself. Between the snapshot and the kill a listed process may die and its number go to
+     * a stranger, and a parent id in the snapshot may itself be stale (registry 1866, plan 294 R6).
+     * So every kill goes through a HANDLE (a number cannot be reused while a handle is open) and is
+     * checked by creation time first: everything must predate the snapshot, and a descendant must be
+     * younger than the parent it was listed under. What stays best effort: when `pid` itself is
+     * already gone, its listed children cannot be told from children of an earlier holder of the
+     * same number — they are taken if they predate the snapshot (documented in D492). */
+    FILETIME t0_ft; GetSystemTimeAsFileTime(&t0_ft);
+    ULONGLONG t0 = ((ULONGLONG)t0_ft.dwHighDateTime << 32) | t0_ft.dwLowDateTime;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return _win_terminate_pid((DWORD)pid);
     size_t cap = 256, n = 0;
@@ -891,22 +920,46 @@ nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree) {
     }
     CloseHandle(snap);
     DWORD* set = (DWORD*)malloc((n + 1) * sizeof(DWORD));
+    size_t* parent = (size_t*)malloc((n + 1) * sizeof(size_t));
     size_t m = 0;
-    set[m++] = (DWORD)pid;
+    set[m] = (DWORD)pid; parent[m] = (size_t)-1; m++;
     for (size_t i = 0; i < m; i++)                 /* breadth first; m grows while we walk */
         for (size_t j = 0; j < n; j++)
             if (ppids[j] == set[i] && pids[j] != set[i]) {
                 int seen = 0;
                 for (size_t k = 0; k < m; k++) if (set[k] == pids[j]) { seen = 1; break; }
-                if (!seen && m <= n) set[m++] = pids[j];
+                if (!seen && m <= n) { set[m] = pids[j]; parent[m] = i; m++; }
             }
-    nova_int result = NOVA_PROC_NO_SUCH;
-    for (size_t i = m; i-- > 0;) {                 /* descendants first, the root last */
-        nova_int r = _win_terminate_pid(set[i]);
-        if (r == 0) result = 0;
-        else if (r != NOVA_PROC_NO_SUCH && result != 0) result = r;
+    /* Open everything first (handles pin the numbers), then judge by creation time. */
+    HANDLE* hs = (HANDLE*)calloc(m, sizeof(HANDLE));
+    ULONGLONG* ct = (ULONGLONG*)calloc(m, sizeof(ULONGLONG));
+    nova_int root_err = NOVA_PROC_NO_SUCH;
+    for (size_t i = 0; i < m; i++) {
+        hs[i] = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, set[i]);
+        if (!hs[i]) {
+            if (i == 0 && GetLastError() == ERROR_ACCESS_DENIED) root_err = -1;
+            continue;
+        }
+        FILETIME c_ft, x_ft, k_ft, u_ft;
+        if (GetProcessTimes(hs[i], &c_ft, &x_ft, &k_ft, &u_ft))
+            ct[i] = ((ULONGLONG)c_ft.dwHighDateTime << 32) | c_ft.dwLowDateTime;
     }
-    free(pids); free(ppids); free(set);
+    nova_int result = root_err;
+    for (size_t i = m; i-- > 0;) {                 /* descendants first, the root last */
+        if (!hs[i]) continue;
+        int ours = ct[i] != 0 && ct[i] < t0;       /* not born after the snapshot */
+        if (ours && parent[i] != (size_t)-1 && hs[parent[i]] && ct[parent[i]] != 0)
+            ours = ct[i] >= ct[parent[i]];         /* a child is never older than its parent */
+        if (ours) {
+            if (TerminateProcess(hs[i], 1)) result = 0;
+            else {
+                DWORD code = 0;
+                if (!(GetExitCodeProcess(hs[i], &code) && code != STILL_ACTIVE) && result != 0) result = -1;
+            }
+        }
+        CloseHandle(hs[i]);
+    }
+    free(pids); free(ppids); free(set); free(parent); free(hs); free(ct);
     return result;
 #else
     int r = tree ? kill(-(pid_t)pid, (int)sig) : kill((pid_t)pid, (int)sig);
