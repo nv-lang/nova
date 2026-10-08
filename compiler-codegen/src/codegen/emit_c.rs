@@ -12803,6 +12803,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "_nova_handler_Fail_{m} = {vt};",
                             m = mangled_e, vt = per_e_vt_var
                         ));
+                        // Registry 221.1 #1857: the per-E slot is thread-local and
+                        // Boehm does not scan TLS; `{vt}` above is a dead local after
+                        // the store under -O2/-O3. The slot is not effect storage
+                        // (not in the fiber snapshot), so it is recorded as a GC-only
+                        // root of THIS thread -- the one whose slot was just written.
+                        self.line(&format!(
+                            "nova_effect_register_root((void**)&_nova_handler_Fail_{m});",
+                            m = mangled_e
+                        ));
                         // Push в saves с special effect_name `Fail_<E>` для
                         // restore. handler_val содержит per-E vtable.
                         saves.push((
