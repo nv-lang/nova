@@ -142,6 +142,13 @@ fn must[T](r Result[T, IoError], what str) -> T {
 fn size(rows int, cols int) -> PtySize => { rows, cols }
 
 // Index of `needle` in `hay` at or after `from`, or -1.
+// `find_bytes` for a text needle (a literal argument is passed as `str`, not `.bytes()`: D429 R6,
+// and a literal coerced to `[]u8` at the call fails in emit_c on Windows, registry #1850).
+fn find_text(hay []u8, text str, from int) -> int => find_bytes(hay, text.bytes(), from)
+
+// Types `keys` on the terminal's keyboard.
+fn type_keys(mut pty PtyChild, keys str) Proc -> Result[int, IoError] => pty.write(keys.bytes())
+
 fn find_bytes(hay []u8, needle []u8, from int) -> int {
     mut i = from
     while i + needle.len() <= hay.len() {
@@ -163,7 +170,8 @@ fn csi(tail str) -> []u8 {
 }
 
 // Appends the screen to `out` until it holds `needle`, the terminal ends, or `secs` pass.
-fn screen_until(mut pty PtyChild, mut out []u8, needle []u8, secs int) {
+fn screen_until(mut pty PtyChild, mut out []u8, text str, secs int) {
+    ro needle = text.bytes()
     mut buf []u8 = []u8.new()
     buf.resize(4096, 0 as u8)
     with Fail[TimeoutError] = |_e| { () } {
@@ -235,10 +243,10 @@ fn wait_within(mut pty PtyChild, secs int) -> Option[ExitStatus] {
 test "p294 PTY-1: abc + Enter typed on the terminal comes back upper-cased; the child exits 0" {
     if on_pty("PTY-1") {
         consume pty = must_pty(upper_cmd().start_pty(size(24, 80)), "start")
-        assert(must(pty.write("abc\r".bytes()), "write") == 4)
+        assert(must(type_keys(pty, "abc\r"), "write") == 4)
         ro (screen, eof) = screen_to_end(pty, 20)
-        assert(find_bytes(screen, "abc".bytes(), 0) >= 0)          // the terminal echoed the typing
-        assert(find_bytes(screen, "<ABC>".bytes(), 0) >= 0)        // the child read the line
+        assert(find_text(screen, "abc", 0) >= 0)          // the terminal echoed the typing
+        assert(find_text(screen, "<ABC>", 0) >= 0)        // the child read the line
         assert(eof)
         match wait_within(pty, 10) {
             Some(st) => assert(st.code() == 0)
@@ -257,7 +265,7 @@ test "p294 PTY-2: ESC[31m red ESC[0m ESC[2J from the child reach the screen, in 
         consume pty = must_pty(colours_cmd().start_pty(size(24, 80)), "start")
         ro (screen, eof) = screen_to_end(pty, 20)
         assert(eof)
-        ro red = find_bytes(screen, "red".bytes(), 0)
+        ro red = find_text(screen, "red", 0)
         assert(red >= 0)
         ro colour = find_bytes(screen, csi("31m"), 0)
         assert(colour >= 0 && colour < red)                        // coloured before the text
@@ -266,7 +274,7 @@ test "p294 PTY-2: ESC[31m red ESC[0m ESC[2J from the child reach the screen, in 
         assert(reset_m >= 0 || reset_0m >= 0)                      // reset after it (ESC[m == ESC[0m)
         ro clear = find_bytes(screen, csi("2J"), red)
         assert(clear >= 0)                                         // the clear came after the text
-        assert(find_bytes(screen, "end".bytes(), clear) >= 0)      // and the text after the clear
+        assert(find_text(screen, "end", clear) >= 0)      // and the text after the clear
         match wait_within(pty, 10) {
             Some(st) => assert(st.code() == 0)
             None => panic("PTY-2: the child did not exit")
@@ -279,21 +287,21 @@ test "p294 PTY-2: ESC[31m red ESC[0m ESC[2J from the child reach the screen, in 
 test "p294 PTY-3: the child sees 24x80 from start_pty, then 40x120 after resize" {
     if on_pty("PTY-3") {
         consume pty = must_pty(size_cmd().start_pty(size(24, 80)), "start")
-        must(pty.write("\r".bytes()), "enter")
+        must(type_keys(pty, "\r"), "enter")
         mut screen []u8 = []u8.new()
-        screen_until(pty, screen, "<24x80>".bytes(), 20)
-        assert(find_bytes(screen, "<24x80>".bytes(), 0) >= 0)
+        screen_until(pty, screen, "<24x80>", 20)
+        assert(find_text(screen, "<24x80>", 0) >= 0)
         must(pty.resize(size(40, 120)), "resize")
         // The resize and the keyboard are separate channels of the terminal: ask until the child
         // reports the new size (a few tries at most), but never accept the old one forever.
         mut tries = 0
-        while find_bytes(screen, "<40x120>".bytes(), 0) < 0 && tries < 10 {
-            must(pty.write("\r".bytes()), "enter")
-            screen_until(pty, screen, "<40x120>".bytes(), 1)
+        while find_text(screen, "<40x120>", 0) < 0 && tries < 10 {
+            must(type_keys(pty, "\r"), "enter")
+            screen_until(pty, screen, "<40x120>", 1)
             tries += 1
         }
-        assert(find_bytes(screen, "<40x120>".bytes(), 0) >= 0)
-        must(pty.write("q\r".bytes()), "quit")
+        assert(find_text(screen, "<40x120>", 0) >= 0)
+        must(type_keys(pty, "q\r"), "quit")
         ro (_rest, eof) = screen_to_end(pty, 20)
         assert(eof)
         match wait_within(pty, 10) {
@@ -314,7 +322,7 @@ test "p294 PTY-4a: a child that exits by itself - every byte, then Ok(0), then i
     if on_pty("PTY-4a") {
         consume pty = must_pty(bye_cmd().start_pty(size(24, 80)), "start")
         ro (screen, eof) = screen_to_end(pty, 20)
-        assert(find_bytes(screen, "bye".bytes(), 0) >= 0)
+        assert(find_text(screen, "bye", 0) >= 0)
         assert(eof)                                                // Ok(0) after the last byte, no hang
         match wait_within(pty, 10) {
             Some(st) => assert(st.code() == 3)
@@ -353,8 +361,8 @@ test "p294 PTY-5: the byte 3 typed on the terminal is Ctrl-C - the child ends as
     if on_pty("PTY-5") {
         consume pty = must_pty(ctrl_c_cmd().start_pty(size(24, 80)), "start")
         mut screen []u8 = []u8.new()
-        screen_until(pty, screen, "127.0.0.1".bytes(), 20)
-        assert(find_bytes(screen, "127.0.0.1".bytes(), 0) >= 0)    // the child is running
+        screen_until(pty, screen, "127.0.0.1", 20)
+        assert(find_text(screen, "127.0.0.1", 0) >= 0)    // the child is running
         mut ctrl_c []u8 = []u8.new()
         ctrl_c.push(3 as u8)
         ro t0 = Timestamp.now().unix_millis()

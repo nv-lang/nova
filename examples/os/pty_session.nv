@@ -28,9 +28,11 @@ const BUDGET_SECONDS = 30
 
 // Type the session, then show the screen until the terminal ends, then the exit code.
 fn session(mut pty PtyChild) Proc Io -> Result[int, IoError] {
-    write_all(pty, "echo hello\r".bytes())?
+    ro first = "echo hello\r".bytes()
+    write_all(pty, first)?
     pty.resize(PtySize { rows: 30, cols: 100 })?
-    write_all(pty, "exit\r".bytes())?
+    ro last = "exit\r".bytes()
+    write_all(pty, last)?
     mut buf []u8 = []u8.new()
     buf.resize(4096, 0 as u8)
     loop {
@@ -49,10 +51,7 @@ fn session(mut pty PtyChild) Proc Io -> Result[int, IoError] {
 fn run(program str, extra []str) Proc Io -> Result[int, IoError] {
     ro size = PtySize { rows: 24, cols: 80 }
     match Command.new(program).args(extra).start_pty(size) {
-        Ok(consume started) => {
-            consume pty = started            // owns the terminal: leaving this scope closes it
-            session(pty)
-        }
+        Ok(consume pty) => session(pty)      // owns the terminal: leaving this scope closes it
         Err(e) => Err(e)
     }
 }
@@ -63,12 +62,7 @@ fn main() {
         println("usage: pty_session <program> [args...]")
         return
     }
-    mut extra []str = []
-    mut i = 2
-    while i < argv.len() {
-        extra.push(argv[i])
-        i += 1
-    }
+    ro extra = argv[2..]
     mut outcome = "not run"
     ro timed_out = with Fail[TimeoutError] = |_e| { true } {
         supervised(timeout: BUDGET_SECONDS.to_seconds()) {
