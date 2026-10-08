@@ -1044,12 +1044,53 @@ static int _pty_api_ready(void) {
 }
 
 /* "This process ignores CTRL+C": bit 0 of RTL_USER_PROCESS_PARAMETERS.ConsoleFlags, what
- * SetConsoleCtrlHandler(NULL, TRUE) sets and CreateProcess copies into every child. There is
- * no documented getter; winternl.h exposes the field as Reserved2[1]. */
-static int _pty_ctrl_c_ignored(void) {
+ * SetConsoleCtrlHandler(NULL, TRUE) sets and CreateProcess copies into every child. The field
+ * is UNDOCUMENTED and there is no documented getter; winternl.h declares the structure with it
+ * hidden in Reserved2[1] (x64 offset 0x18; measured on Windows 10.0.26300.9550). Reading it
+ * cannot fault or corrupt anything: the slot lies inside the structure winternl.h declares,
+ * whatever it holds. What a WRONG reading could do is worse — clear and then re-set a flag the
+ * process never had, leaving a parent that took Ctrl-C ignoring it, silently. So the layout is
+ * confirmed once before the flag is ever trusted (_pty_flag_layout_ok), and when it is not, the
+ * flag is never touched: the child then inherits the parent's state, as with any CreateProcess. */
+#ifndef NOVA_PTY_CONSOLE_FLAGS_SLOT
+#  define NOVA_PTY_CONSOLE_FLAGS_SLOT 1
+#endif
+
+static RTL_USER_PROCESS_PARAMETERS* _pty_params(void) {
     PEB* peb = (PEB*)NtCurrentTeb()->ProcessEnvironmentBlock;
-    if (!peb || !peb->ProcessParameters) return 0;
-    return ((ULONG)(ULONG_PTR)peb->ProcessParameters->Reserved2[1] & 1u) != 0;
+    return peb ? peb->ProcessParameters : NULL;
+}
+
+static int _pty_flag_read(void) {
+    RTL_USER_PROCESS_PARAMETERS* pp = _pty_params();
+    return pp && ((ULONG)(ULONG_PTR)pp->Reserved2[NOVA_PTY_CONSOLE_FLAGS_SLOT] & 1u) != 0;
+}
+
+/* -1 = not decided yet, 0 = rejected (never touch the flag), 1 = confirmed. Decided ONCE, by the
+ * first start_pty, under the exclusive _proc_spawn_lock (so no process is created meanwhile). */
+static int _pty_flag_layout = -1;
+
+static int _pty_flag_layout_ok(void) {
+    if (_pty_flag_layout >= 0) return _pty_flag_layout;
+    int ok = 0;
+    RTL_USER_PROCESS_PARAMETERS* pp = _pty_params();
+    /* 1. Without touching anything: the neighbours are fields documented calls return.
+     *    CommandLine (declared by winternl.h) is GetCommandLineW's buffer, and the three slots
+     *    after ConsoleFlags are StandardInput / Output / Error, which GetStdHandle reads. */
+    if (pp && pp->CommandLine.Buffer == GetCommandLineW() &&
+        pp->Reserved2[NOVA_PTY_CONSOLE_FLAGS_SLOT + 1] == GetStdHandle(STD_INPUT_HANDLE) &&
+        pp->Reserved2[NOVA_PTY_CONSOLE_FLAGS_SLOT + 2] == GetStdHandle(STD_OUTPUT_HANDLE) &&
+        pp->Reserved2[NOVA_PTY_CONSOLE_FLAGS_SLOT + 3] == GetStdHandle(STD_ERROR_HANDLE)) {
+        /* 2. The bit must follow SetConsoleCtrlHandler both ways: flip, read, flip back, read. */
+        int b = _pty_flag_read();
+        SetConsoleCtrlHandler(NULL, b ? FALSE : TRUE);
+        int flipped = _pty_flag_read();
+        SetConsoleCtrlHandler(NULL, b ? TRUE : FALSE);
+        int back = _pty_flag_read();
+        ok = flipped == !b && back == b;
+    }
+    _pty_flag_layout = ok;
+    return ok;
 }
 
 /* --- UTF-16 command line / environment ---------------------------------- */
@@ -1352,9 +1393,11 @@ void* proc_pty_spawn(const uint8_t* program, nova_int program_len,
             /* A fresh terminal starts with Ctrl-C ON (POSIX: libuv's child resets every signal to
              * SIG_DFL). The "ignore Ctrl-C" flag of THIS process would otherwise be copied into
              * the child, and 0x03 written to the terminal would do nothing (measured: a test run
-             * under a shell that ignores Ctrl-C). Cleared just around CreateProcess, then put back. */
+             * under a shell that ignores Ctrl-C). Cleared just around CreateProcess, then put back
+             * - and only when the flag's layout is confirmed (_pty_flag_layout_ok); otherwise the
+             * child inherits our state and Ctrl-C may not reach it if we ignore it. */
             AcquireSRWLockExclusive(&_proc_spawn_lock);
-            int ignored = _pty_ctrl_c_ignored();
+            int ignored = _pty_flag_layout_ok() && _pty_flag_read();
             if (ignored) SetConsoleCtrlHandler(NULL, FALSE);
             ok = CreateProcessW(NULL, cmdline, NULL, NULL, FALSE,
                                 EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,

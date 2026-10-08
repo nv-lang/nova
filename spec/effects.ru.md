@@ -11,7 +11,8 @@
 (`std.os`, `Command.new(...).run()` — Plan 265 Ф.1, [D453](decisions/04-effects.md#d453); живой потомок с
 байтовыми потоками stdin/stdout/stderr, `Command.new(...).start()`, и управление им — `kill`,
 `stop(grace)`, `wait_timeout`, целое дерево процессов через `Tree.Group`, `kill_pid`; потомок на псевдотерминале,
-`Command.new(...).start_pty(size)` с `read`/`write`/`resize` — отдельный эффект `Proc`,
+`Command.new(...).start_pty(size)` с `read`/`write`/`resize` (Windows 10 1809+ через ConPTY; POSIX — следующая фаза,
+до неё `Err(Unsupported)`) — отдельный эффект `Proc`,
 план 294, [D492](decisions/04-effects.md#d492)) — в Nova это
 всё **эффекты**. Функция объявляет в сигнатуре те эффекты, которые
 использует сама; вызовы других функций не тащат свои эффекты вверх
