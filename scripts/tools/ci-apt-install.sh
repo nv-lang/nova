@@ -34,29 +34,35 @@ if [ "$#" -eq 0 ]; then
     exit 2
 fi
 
-export CI_APT_PKGS="$*"
+PKGS="$*"
 OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120)
 
 # Одна попытка: update и install под ОДНИМ пределом, чтобы три попытки уложились в предел шага.
+# Пакеты идут ПОЗИЦИОННЫМИ аргументами после "--": sudo (env_reset) сбрасывает окружение, и переменная с пакетами
+# терялась — `apt-get install -y` без пакетов завершается 0 и не ставит НИЧЕГО.
 one_attempt() {
-    # shellcheck disable=SC2086
     $SUDO env DEBIAN_FRONTEND=noninteractive timeout -k 10 "$LIMIT" \
-        bash -c 'g="$1"; shift; "$g" "$@" update && "$g" "$@" install -y $CI_APT_PKGS' _ "$APT_GET" "${OPTS[@]}"
+        bash -c 'g="$1"; n="$2"; shift 2; o=("${@:1:n}"); shift "$n"; "$g" "${o[@]}" update && "$g" "${o[@]}" install -y "$@"' \
+        _ "$APT_GET" "${#OPTS[@]}" "${OPTS[@]}" "$@"
+    rc=$?
+    # rc=124 -- СНЯТ ПРЕДЕЛОМ (137 -- убит после -k): попытка не вердикт о пакетах, её повторяют.
+    [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] && echo "ci-apt-install: СНЯТ ПРЕДЕЛОМ ${LIMIT}с" >&2
+    return "$rc"
 }
 
 attempt=1
 while [ "$attempt" -le "$MAX" ]; do
-    echo "ci-apt-install: попытка $attempt из $MAX (предел $LIMIT с): $CI_APT_PKGS"
-    one_attempt
+    echo "ci-apt-install: попытка $attempt из $MAX (предел $LIMIT с): $PKGS"
+    one_attempt "$@"
     rc=$?
     if [ "$rc" -eq 0 ]; then
         echo "ci-apt-install ok: попытка $attempt"
         exit 0
     fi
-    echo "ci-apt-install: попытка $attempt не удалась (rc=$rc; 124/137 — предел)" >&2
+    echo "ci-apt-install: попытка $attempt не удалась (rc=$rc)" >&2
     $SUDO "$DPKG" --configure -a >/dev/null 2>&1 || true
     attempt=$((attempt + 1))
     [ "$attempt" -le "$MAX" ] && sleep "$PAUSE"
 done
-echo "ci-apt-install: FAIL — $MAX попытки исчерпаны: $CI_APT_PKGS" >&2
+echo "ci-apt-install: FAIL — $MAX попытки исчерпаны: $PKGS" >&2
 exit 1

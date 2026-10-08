@@ -69,6 +69,23 @@ EOF
 out=$(CI_APT_SUDO="" CI_APT_GET="$T/flaky.sh" CI_APT_DPKG=true CI_APT_ATTEMPT_TIMEOUT=5 CI_APT_PAUSE=0 CI_APT_COUNT="$T/count" bash "$TOOL" pkg 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'попытка 2'; then ok "8: сбой, затем успех на 2-й попытке"; else bad "8: rc=$rc: $out"; fi
 
+# 9: настоящий sudo сбрасывает окружение (env_reset); пакеты обязаны дойти до `apt-get install` аргументами.
+# Фейковый sudo чистит окружение, как настоящий; фейковый apt-get пишет свои аргументы в файл с вшитым путём.
+cat > "$T/sudo.sh" <<'EOF'
+#!/bin/sh
+exec env -i PATH="$PATH" "$@"
+EOF
+cat > "$T/rec.sh" <<EOF
+#!/bin/sh
+echo "\$*" >> "$T/argv"
+exit 0
+EOF
+chmod +x "$T/sudo.sh" "$T/rec.sh"
+: > "$T/argv"
+out=$(CI_APT_SUDO="$T/sudo.sh" CI_APT_GET="$T/rec.sh" CI_APT_DPKG=true CI_APT_ATTEMPT_TIMEOUT=5 CI_APT_PAUSE=0 bash "$TOOL" libgc-dev clang 2>&1); rc=$?
+if [ "$rc" -eq 0 ] && grep -q 'install -y libgc-dev clang$' "$T/argv" && grep -q ' update$' "$T/argv"; then ok "9: sudo сбросил окружение, пакеты дошли до apt-get install"
+else bad "9: rc=$rc argv=[$(cat "$T/argv")] $out"; fi
+
 if [ "$FAILS" -gt 0 ]; then
     echo "test-check-workflow-apt-step: FAIL ($FAILS из $CASES)"
     exit 1
