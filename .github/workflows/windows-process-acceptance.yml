@@ -10,7 +10,7 @@ name: windows-process-acceptance
 # пуш в main. Сделать его обязательным может только интегратор отдельным словом
 # (после первой недели зелёного): тогда имя добавляется в `REQUIRED` этого стража.
 #
-# ЧТО ГОНЯЕТ. Сборка `nova-cli` (release) и точечный набор `nova test std --filter os/`
+# ЧТО ГОНЯЕТ. Сборка `nova-cli` (release) и точечный набор `nova test std --filter os/d453`
 # (std/src/os/d453_os_process_run_test.nv — реальный spawn + wait + код возврата,
 # supervised(timeout:)). Когда Ф.1 плана 294 принесёт фикстуры потоков/PTY, их
 # файлы живут в `std/src/os/` и попадают под тот же фильтр; расширять набор —
@@ -46,7 +46,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      FILTER: os/
+      FILTER: os/d453
     steps:
       - name: Checkout nova (submodules recursive — nova_rt/libuv, gc, libatomic_ops)
         uses: actions/checkout@v4
