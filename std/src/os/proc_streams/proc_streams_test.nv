@@ -27,14 +27,10 @@ const BLOCK63 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_
 fn blocks_ok(data []u8, n int) -> bool {
     if data.len() != n * 64 { return false }
     ro want = "${BLOCK63}\n".bytes()
-    mut b = 0
-    while b < n {
-        mut j = 0
-        while j < 64 {
+    for b in 0..n {
+        for j in 0..64 {
             if data[b * 64 + j] != want[j] { return false }
-            j += 1
         }
-        b += 1
     }
     true
 }
@@ -357,7 +353,8 @@ test "p294 F2: a directory is not runnable -> Err (PermissionDenied or the platf
 }
 
 test "p294 F3: a directory that does not exist -> Err(NotFound) or Err(NotADirectory)" {
-    ro bad = Path.from_bytes("nova-p294-no-such-dir-xyz/inner".bytes())
+    ro bad_bytes = "nova-p294-no-such-dir-xyz/inner".bytes()   // see #1850: no literal argument
+    ro bad = Path.from_bytes(bad_bytes)
     match echo_cmd().dir(bad).start() {
         Ok(consume c) => { c.release(); panic("expected Err") }
         Err(e) => {

@@ -65,53 +65,38 @@ export type Signal enum
 export type Tree enum
     | Single | Group
 
-fn signal_number(s Signal) -> int {
-    match s {
-        Interrupt => 2
-        Terminate => 15
-        Kill => 9
-        Hangup => 1
-        Other(n) => n
-    }
-}
-
-fn stdio_code(s Stdio) -> int {
-    match s {
-        Null => 0
-        Inherit => 1
-        Piped => 2
-    }
-}
-
 // ─── The Proc plumbing effect ──
 
 /// Ambient child-process access. Internal dispatch point — user code uses
 /// `Command.start` / `Child` / `ChildStdout` ..., not these operations.
 ///
-/// Thin by design, like `Os`: raw `int` / handle results; every `Result` / `Option` is
-/// built in this file OUTSIDE the effect boundary. Errors are negative errno numbers.
+/// The boundary speaks Nova (D456): the launch is described by the `Command` record itself,
+/// handles are named types (`Child`, `ChildPipe`), failures are `IoError` values. The C forms
+/// (NUL-joined argv, counts, negative errno, raw pointers) live in `proc_ffi.nv` and inside
+/// `real_proc` only — a handler is a translator, so a test handler never sees them.
 #stable(since = "0.1")
 export type Proc effect {
-    // (err, child): err is 0 on success, a negative errno otherwise (then child is null).
-    fn launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, modes int) -> (int, *())
-    fn child_pipe(child *(), which int) -> *()
-    fn child_pid(child *()) -> int
-    // (rc, code, signal): rc 0 exited, PROCESS_CANCELLED cancelled, < 0 error.
-    fn child_wait(child *()) -> (int, int, int)
-    // rc 0 exited, 1 still running.
-    fn child_try_wait(child *()) -> (int, int, int)
-    fn child_release(child *()) -> ()
-    // Plan 294 F.2. rc 0 ok (also for a child already gone), < 0 = -errno / unsupported.
-    fn child_kill(child *(), sig int) -> int
-    // (rc, code, signal): rc 0 exited, 1 still running after `ms` (the child is NOT killed).
-    fn child_wait_ms(child *(), ms int) -> (int, int, int)
-    fn kill_pid(pid int, sig int, tree bool) -> int
-    fn pipe_read(pipe *(), mut buf []u8) -> int
-    fn pipe_write(pipe *(), data []u8) -> int
-    fn pipe_close(pipe *()) -> ()
-    // Plan 294 F.4 — pseudo terminal (pty.nv). The boundary speaks Nova (D456): the launch is
-    // the `Command` plus a `PtySize`, the handle is `PtyChild`, failures are `IoError`; the C
-    // forms live in proc_ffi.nv and in pty.nv's `real_pty_*` translators only.
+    fn launch(cmd Command) -> Result[Child, IoError]
+    // Each pipe is handed out once, and only for a stream configured `Stdio.Piped`.
+    fn take_stdin(child Child) -> Option[ChildPipe]
+    fn take_stdout(child Child) -> Option[ChildPipe]
+    fn take_stderr(child Child) -> Option[ChildPipe]
+    fn child_pid(child Child) -> int
+    // Cancelled by the enclosing `supervised(timeout:)` / `(cancel:)`: the child is killed,
+    // `Err(Interrupted)`.
+    fn child_wait(child Child) -> Result[ExitStatus, IoError]
+    fn child_try_wait(child Child) -> Result[Option[ExitStatus], IoError]
+    fn child_release(child Child) -> ()
+    // Plan 294 F.2. `Ok` also for a child already gone - and then nothing is sent.
+    fn child_kill(child Child, sig Signal) -> Result[(), IoError]
+    // `Ok(None)` = still running after `d`; the child is NOT killed.
+    fn child_wait_timeout(child Child, d Duration) -> Result[Option[ExitStatus], IoError]
+    fn kill_pid(pid int, sig Signal, tree bool) -> Result[(), IoError]
+    fn pipe_read(pipe ChildPipe, mut buf []u8) -> Result[int, IoError]
+    fn pipe_write(pipe ChildPipe, data []u8) -> Result[int, IoError]
+    fn pipe_close(pipe ChildPipe) -> ()
+    // Plan 294 F.4 — pseudo terminal (pty.nv). Same form: the launch is the `Command` plus a
+    // `PtySize`, the handle is `PtyChild`; the C forms live in pty.nv's `real_pty_*` translators.
     // `Err(Unsupported)`: no pseudo terminal on this system (Windows before 10 1809, POSIX until F.3).
     fn pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError]
     fn pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError]
@@ -133,45 +118,26 @@ export type Proc effect {
 #stable(since = "0.1")
 export type Child consume value priv { handle *() }
 
+/// One parent-side pipe end of a child, as the `Proc` effect sees it. Opaque: user code
+/// holds `ChildStdin` / `ChildStdout` / `ChildStderr`, which own one each.
+#stable(since = "0.1")
+export type ChildPipe value priv { handle *() }
+
 /// The write end of the child's stdin (`io.Write`). `close()` delivers end-of-input.
 #stable(since = "0.1")
-export type ChildStdin consume value priv { handle *() }
+export type ChildStdin consume value priv { pipe ChildPipe }
 
 /// The read end of the child's stdout (`io.Read`); `Ok(0)` = end of stream.
 #stable(since = "0.1")
-export type ChildStdout consume value priv { handle *() }
+export type ChildStdout consume value priv { pipe ChildPipe }
 
 /// The read end of the child's stderr (`io.Read`); `Ok(0)` = end of stream.
 #stable(since = "0.1")
-export type ChildStderr consume value priv { handle *() }
+export type ChildStderr consume value priv { pipe ChildPipe }
 
 /// Everything a finished child produced: see `Command.output()`.
 #stable(since = "0.1")
 export type Output value { ro status ExitStatus, ro stdout []u8, ro stderr []u8 }
-
-// Mirrors NOVA_PROC_UNSUPPORTED / NOVA_PROC_NO_SUCH / NOVA_PROC_CLOSED in nova_rt/process.h.
-const PROC_UNSUPPORTED = 0 - 100001
-const PROC_NO_SUCH = 0 - 3
-const PROC_CLOSED = 0 - 100002
-
-// A stream op result. A closed (or scope-cancelled) stream is NotConnected, never Interrupted:
-// std.io loop helpers retry Interrupted, and a dead stream would answer every retry the same.
-fn stream_result(n int, op str) -> Result[int, IoError] {
-    if n == PROC_CLOSED { Err(IoError.new(ErrorKind.NotConnected, op)) }
-    else if n < 0 { Err(proc_io_err(n, op)) }
-    else { Ok(n) }
-}
-
-fn signal_result(rc int, op str) -> Result[(), IoError] {
-    if rc == 0 { Ok(()) }
-    else if rc == PROC_UNSUPPORTED { Err(IoError.new(ErrorKind.Unsupported, op)) }
-    else if rc == PROC_NO_SUCH { Err(IoError.new(ErrorKind.NotFound, op)) }
-    else { Err(proc_io_err(rc, op)) }
-}
-
-fn ptr_is_null(p *()) -> bool => (0 as *()) == p
-
-fn proc_io_err(neg_errno int, op str) -> IoError => IoError.from_os(0 - neg_errno, op)
 
 // ─── Command: stream configuration + spawn ──
 
@@ -197,56 +163,39 @@ export fn Command mut @stderr(s Stdio) -> @ { @stderr_mode = s }
 /// `dir`), `PermissionDenied`, `NotADirectory`, ... with the raw OS code in `raw_os`.
 /// The same argument / environment / directory rules as `Command.run()`.
 #stable(since = "0.1")
-export fn Command @start() Proc -> Result[Child, IoError] {
-    ro argv = join_nul(@args)?
-    ro use_env = @clear_env || !@envs.is_empty()
-    ro deduped = dedupe_envs(@envs)
-    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
-    ro cwd_bytes = match @dir {
-        Some(p) => p.os_bytes()
-        None => []u8.new()
-    }
-    ro tree_bit = match @tree_mode {
-        Single => 0
-        Group => 64
-    }
-    ro modes = stdio_code(@stdin_mode) + 4 * stdio_code(@stdout_mode) + 16 * stdio_code(@stderr_mode) + tree_bit
-    ro (err, h) = Proc.launch(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes, modes)
-    if err < 0 { Err(proc_io_err(err, "spawn")) }
-    else { Ok(Child { handle: h }) }
-}
+export fn Command @start() Proc -> Result[Child, IoError] => Proc.launch(@)
 
 // ─── Child ──
 
 /// The OS process id.
 #stable(since = "0.1")
-export fn Child @pid() Proc -> int { Proc.child_pid(@handle) }
+export fn Child @pid() Proc -> int => Proc.child_pid(@)
 
 /// The child's stdin writer. `Some` once, and only when spawned with `Stdio.Piped`.
 #stable(since = "0.1")
 export fn Child mut @take_stdin() Proc -> Option[ChildStdin] {
-    ro h = Proc.child_pipe(@handle, 0)
-    if ptr_is_null(h) { None } else { Some(ChildStdin { handle: h }) }
+    match Proc.take_stdin(@) {
+        Some(p) => Some(ChildStdin { pipe: p })
+        None => None
+    }
 }
 
 /// The child's stdout reader. `Some` once, and only when spawned with `Stdio.Piped`.
 #stable(since = "0.1")
 export fn Child mut @take_stdout() Proc -> Option[ChildStdout] {
-    ro h = Proc.child_pipe(@handle, 1)
-    if ptr_is_null(h) { None } else { Some(ChildStdout { handle: h }) }
+    match Proc.take_stdout(@) {
+        Some(p) => Some(ChildStdout { pipe: p })
+        None => None
+    }
 }
 
 /// The child's stderr reader. `Some` once, and only when spawned with `Stdio.Piped`.
 #stable(since = "0.1")
 export fn Child mut @take_stderr() Proc -> Option[ChildStderr] {
-    ro h = Proc.child_pipe(@handle, 2)
-    if ptr_is_null(h) { None } else { Some(ChildStderr { handle: h }) }
-}
-
-fn exit_status_of(code int, sig int) -> ExitStatus {
-    // A signal death reports `128 + signal` in `code()` (shell convention, as D453) and
-    // the signal itself in `signal()`.
-    if sig != 0 { ExitStatus { code: 128 + sig, sig } } else { ExitStatus { code, sig: 0 } }
+    match Proc.take_stderr(@) {
+        Some(p) => Some(ChildStderr { pipe: p })
+        None => None
+    }
 }
 
 /// Wait for the child to exit. Parks the calling fiber, not the OS thread. Output the
@@ -254,21 +203,11 @@ fn exit_status_of(code int, sig int) -> ExitStatus {
 /// `supervised(timeout:)` / `(cancel:)` fires first, the child is killed and the result is
 /// `Err(Interrupted)` (D453, same choice).
 #stable(since = "0.1")
-export fn Child mut @wait() Proc -> Result[ExitStatus, IoError] {
-    ro (rc, code, sig) = Proc.child_wait(@handle)
-    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "child wait")) }
-    else if rc < 0 { Err(proc_io_err(rc, "child wait")) }
-    else { Ok(exit_status_of(code, sig)) }
-}
+export fn Child mut @wait() Proc -> Result[ExitStatus, IoError] => Proc.child_wait(@)
 
 /// Non-blocking: `Ok(Some(status))` if the child has exited, `Ok(None)` while it runs.
 #stable(since = "0.1")
-export fn Child mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
-    ro (rc, code, sig) = Proc.child_try_wait(@handle)
-    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
-    else if rc == 1 { Ok(None) }
-    else { Err(proc_io_err(rc, "child try_wait")) }
-}
+export fn Child mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] => Proc.child_try_wait(@)
 
 /// Send `sig` to the child, to its whole tree after `Command.tree(Tree.Group)`. `Ok` also for a
 /// child that has already exited (idempotent) - and then NOTHING is sent: the number of an exited
@@ -276,21 +215,14 @@ export fn Child mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
 /// cancelled: `wait()` afterwards reports the real status (`signal() == Some(9)` after `Kill`).
 /// Windows: only `Kill` / `Terminate`; anything else is `Err(Unsupported)`.
 #stable(since = "0.1")
-export fn Child mut @kill(sig Signal) Proc -> Result[(), IoError] {
-    signal_result(Proc.child_kill(@handle, signal_number(sig)), "child kill")
-}
+export fn Child mut @kill(sig Signal) Proc -> Result[(), IoError] => Proc.child_kill(@, sig)
 
 /// Wait up to `d` for the child to exit. `Ok(None)` = the time ran out and the child is STILL
 /// RUNNING: this never kills (the caller decides). Parks the fiber in short steps (a few
 /// milliseconds), so an exit is noticed within that granularity. A cancelled scope unwinds
 /// the wait like any sleep.
 #stable(since = "0.1")
-export fn Child mut @wait_timeout(d Duration) Proc -> Result[Option[ExitStatus], IoError] {
-    ro (rc, code, sig) = Proc.child_wait_ms(@handle, d.millis() as int)
-    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
-    else if rc == 1 { Ok(None) }
-    else { Err(proc_io_err(rc, "child wait_timeout")) }
-}
+export fn Child mut @wait_timeout(d Duration) Proc -> Result[Option[ExitStatus], IoError] => Proc.child_wait_timeout(@, d)
 
 /// Graceful stop: `Terminate`, wait up to `grace`, then `Kill`, then wait for the exit. A child
 /// that leaves on `Terminate` reports its own status; one that ignores it dies by signal 9
@@ -317,9 +249,7 @@ export fn Child mut @stop(grace Duration) Proc -> Result[ExitStatus, IoError] {
 /// through an open handle and only if it was created before the snapshot (a descendant: not before
 /// its parent), so a number reused while the call runs is never hit.
 #stable(since = "0.1")
-export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError] {
-    signal_result(Proc.kill_pid(pid, signal_number(sig), tree), "kill_pid")
-}
+export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError] => Proc.kill_pid(pid, sig, tree)
 
 /// `Cleanup[never]` (D188): a child still running when its scope ends gets `Terminate`, a short
 /// grace (500 ms) and then `Kill` (the whole tree with `Tree.Group`), and the call returns only
@@ -329,16 +259,14 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError] {
 export fn Child consume @cleanup(_outcome ScopeOutcome) -> () { @release() }
 
 // Raw effect ops need `Proc` declared (D62); `cleanup` itself is `-> ()` like TcpStream's.
-fn Child consume @release() Proc { Proc.child_release(@handle) }
+fn Child consume @release() Proc { Proc.child_release(@) }
 
 // ─── ChildStdin (io.Write) ──
 
 /// Write `data`; returns `Ok(n)` bytes accepted (the whole buffer on success). A child that
 /// has closed its stdin or exited yields `Err(BrokenPipe)`.
 #stable(since = "0.1")
-export fn ChildStdin mut @write(data []u8) Proc -> Result[int, IoError] {
-    stream_result(Proc.pipe_write(@handle, data), "write child stdin")
-}
+export fn ChildStdin mut @write(data []u8) Proc -> Result[int, IoError] => Proc.pipe_write(@pipe, data)
 
 /// `io.Write` conformance: writes reach the pipe directly — `flush` is a no-op.
 #stable(since = "0.1")
@@ -346,7 +274,7 @@ export fn ChildStdin mut @flush() -> Result[(), IoError] => Ok(())
 
 /// Close the pipe: the child sees end-of-input. Idempotent by ownership (`consume`).
 #stable(since = "0.1")
-export fn ChildStdin consume @close() Proc { Proc.pipe_close(@handle) }
+export fn ChildStdin consume @close() Proc { Proc.pipe_close(@pipe) }
 
 #stable(since = "0.1")
 export fn ChildStdin consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
@@ -356,26 +284,22 @@ export fn ChildStdin consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
 /// Read up to `buf.len()` bytes. `Ok(0)` = the child closed its end (it exited or closed
 /// stdout); data is never lost to it. Parks the fiber until bytes arrive.
 #stable(since = "0.1")
-export fn ChildStdout mut @read(mut buf []u8) Proc -> Result[int, IoError] {
-    stream_result(Proc.pipe_read(@handle, buf), "read child stdout")
-}
+export fn ChildStdout mut @read(mut buf []u8) Proc -> Result[int, IoError] => Proc.pipe_read(@pipe, buf)
 
 /// Close our end. A still-running child that writes more gets a broken pipe;
 /// the process itself is untouched — `wait()` still waits for it.
 #stable(since = "0.1")
-export fn ChildStdout consume @close() Proc { Proc.pipe_close(@handle) }
+export fn ChildStdout consume @close() Proc { Proc.pipe_close(@pipe) }
 
 #stable(since = "0.1")
 export fn ChildStdout consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
 
 /// See `ChildStdout.read`.
 #stable(since = "0.1")
-export fn ChildStderr mut @read(mut buf []u8) Proc -> Result[int, IoError] {
-    stream_result(Proc.pipe_read(@handle, buf), "read child stderr")
-}
+export fn ChildStderr mut @read(mut buf []u8) Proc -> Result[int, IoError] => Proc.pipe_read(@pipe, buf)
 
 #stable(since = "0.1")
-export fn ChildStderr consume @close() Proc { Proc.pipe_close(@handle) }
+export fn ChildStderr consume @close() Proc { Proc.pipe_close(@pipe) }
 
 #stable(since = "0.1")
 export fn ChildStderr consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
@@ -403,32 +327,155 @@ export fn Command @output() Proc -> Result[Output, IoError] {
     }
     // The stderr fiber reports through two plain channels (bytes, raw OS code): a
     // `Channel[Result[[]u8, IoError]]` corrupted the received value (registry #1858).
-    ro err_bytes = Channel[[]u8].new(1)
-    ro err_code = Channel[int].new(1)
+    // The canonical `(tx, rx)` destructuring: the sender is captured `ro` by the fiber.
+    ro (bytes_tx, bytes_rx) = Channel[[]u8].new(1)
+    ro (code_tx, code_rx) = Channel[int].new(1)
     mut out_res Result[[]u8, IoError] = Err(output_missing("output: not read"))
     supervised {
         spawn consume e = se {
             match read_to_end(e) {
-                Ok(b) => { err_bytes.tx.send(b); err_code.tx.send(0) }
-                Err(x) => { err_bytes.tx.send([]u8.new()); err_code.tx.send(if x.raw_os == 0 { 5 } else { x.raw_os }) }
+                Ok(b) => { bytes_tx.send(b); code_tx.send(0) }
+                Err(x) => { bytes_tx.send([]u8.new()); code_tx.send(if x.raw_os == 0 { 5 } else { x.raw_os }) }
             }
         }
         out_res = read_to_end(so)
     }
-    ro stderr_bytes = match err_bytes.rx.recv() {
-        Some(b) => b
-        None => []u8.new()
-    }
-    ro stderr_code = match err_code.rx.recv() {
-        Some(c) => c
-        None => 5
-    }
+    ro stderr_bytes = bytes_rx.recv() ?? []u8.new()
+    ro stderr_code = code_rx.recv() ?? 5
     ro status = child.wait()?
     if stderr_code != 0 { return Err(IoError.from_os(stderr_code, "read child stderr")) }
     Ok(Output { status, stdout: out_res?, stderr: stderr_bytes })
 }
 
 // ─── real_proc — the production Proc handler over nova_rt/process.c ──
+//
+// The translation from the Nova boundary to the C one lives in these private functions,
+// not in the handler body: `Result` / `Option` variants are built in regular functions
+// (the `real_net` precedent, `std/src/net/tcp.nv`).
+
+fn ptr_is_null(p *()) -> bool => (0 as *()) == p
+
+fn proc_io_err(neg_errno int, op str) -> IoError => IoError.from_os(0 - neg_errno, op)
+
+// Mirrors NOVA_PROC_UNSUPPORTED / NOVA_PROC_NO_SUCH / NOVA_PROC_CLOSED in nova_rt/process.h.
+const PROC_UNSUPPORTED = 0 - 100001
+const PROC_NO_SUCH = 0 - 3
+const PROC_CLOSED = 0 - 100002
+
+// A stream op result. A closed (or scope-cancelled) stream is NotConnected, never Interrupted:
+// std.io loop helpers retry Interrupted, and a dead stream would answer every retry the same.
+fn stream_result(n int, op str) -> Result[int, IoError] {
+    if n == PROC_CLOSED { Err(IoError.new(ErrorKind.NotConnected, op)) }
+    else if n < 0 { Err(proc_io_err(n, op)) }
+    else { Ok(n) }
+}
+
+fn signal_result(rc int, op str) -> Result[(), IoError] {
+    if rc == 0 { Ok(()) }
+    else if rc == PROC_UNSUPPORTED { Err(IoError.new(ErrorKind.Unsupported, op)) }
+    else if rc == PROC_NO_SUCH { Err(IoError.new(ErrorKind.NotFound, op)) }
+    else { Err(proc_io_err(rc, op)) }
+}
+
+fn signal_number(s Signal) -> int {
+    match s {
+        Interrupt => 2
+        Terminate => 15
+        Kill => 9
+        Hangup => 1
+        Other(n) => n
+    }
+}
+
+fn stdio_code(s Stdio) -> int {
+    match s {
+        Null => 0
+        Inherit => 1
+        Piped => 2
+    }
+}
+
+fn tree_code(t Tree) -> int {
+    match t {
+        Single => 0
+        Group => 64
+    }
+}
+
+fn exit_status_of(code int, sig int) -> ExitStatus {
+    // A signal death reports `128 + signal` in `code()` (shell convention, as D453) and
+    // the signal itself in `signal()`.
+    if sig != 0 { ExitStatus { code: 128 + sig, sig } } else { ExitStatus { code, sig: 0 } }
+}
+
+fn real_launch(cmd Command) -> Result[Child, IoError] {
+    ro argv = join_nul(cmd.args)?
+    ro use_env = cmd.clear_env || !cmd.envs.is_empty()
+    ro deduped = dedupe_envs(cmd.envs)
+    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
+    ro cwd_bytes = match cmd.dir {
+        Some(p) => p.os_bytes()
+        None => []u8.new()
+    }
+    ro streams = stdio_code(cmd.stdin_mode) + 4 * stdio_code(cmd.stdout_mode) + 16 * stdio_code(cmd.stderr_mode)
+    ro modes = streams + tree_code(cmd.tree_mode)
+    ro program = cmd.program.bytes()
+    mut err = 0
+    ro h = unsafe {
+        proc_spawn(program.ptr(), program.len(), argv.ptr(), argv.len(), cmd.args.len(),
+                   env_blob.ptr(), env_blob.len(), deduped.len(), use_env,
+                   cwd_bytes.ptr(), cwd_bytes.len(), modes, &err)
+    }
+    if err < 0 { Err(proc_io_err(err, "spawn")) } else { Ok(Child { handle: h }) }
+}
+
+fn real_take_pipe(child Child, which int) -> Option[ChildPipe] {
+    ro h = unsafe { proc_child_pipe(child.handle, which) }
+    if ptr_is_null(h) { None } else { Some(ChildPipe { handle: h }) }
+}
+
+fn real_wait(child Child) -> Result[ExitStatus, IoError] {
+    mut code = 0
+    mut sig = 0
+    ro rc = unsafe { proc_child_wait(child.handle, &code, &sig) }
+    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "child wait")) }
+    else if rc < 0 { Err(proc_io_err(rc, "child wait")) }
+    else { Ok(exit_status_of(code, sig)) }
+}
+
+fn real_try_wait(child Child) -> Result[Option[ExitStatus], IoError] {
+    mut code = 0
+    mut sig = 0
+    ro rc = unsafe { proc_child_try_wait(child.handle, &code, &sig) }
+    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
+    else if rc == 1 { Ok(None) }
+    else { Err(proc_io_err(rc, "child try_wait")) }
+}
+
+fn real_wait_timeout(child Child, d Duration) -> Result[Option[ExitStatus], IoError] {
+    mut code = 0
+    mut sig = 0
+    ro rc = unsafe { proc_child_wait_ms(child.handle, d.millis() as int, &code, &sig) }
+    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
+    else if rc == 1 { Ok(None) }
+    else { Err(proc_io_err(rc, "child wait_timeout")) }
+}
+
+fn real_child_kill(child Child, sig Signal) -> Result[(), IoError] {
+    signal_result(unsafe { proc_child_kill(child.handle, signal_number(sig)) }, "child kill")
+}
+
+fn real_kill_pid(pid int, sig Signal, tree bool) -> Result[(), IoError] {
+    signal_result(proc_kill_pid(pid, signal_number(sig), tree), "kill_pid")
+}
+
+fn real_pipe_read(pipe ChildPipe, mut buf []u8) -> Result[int, IoError] {
+    stream_result(unsafe { proc_pipe_read(pipe.handle, buf.ptr(), buf.len()) }, "read child pipe")
+}
+
+fn real_pipe_write(pipe ChildPipe, data []u8) -> Result[int, IoError] {
+    stream_result(unsafe { proc_pipe_write(pipe.handle, data.ptr(), data.len()) }, "write child stdin")
+}
 
 /// Concrete `Proc` handler dispatching to the native libuv-backed child-process layer.
 /// `#default_handler`: `Proc` auto-constructs on first use with no enclosing `with Proc = …`.
@@ -436,37 +483,20 @@ export fn Command @output() Proc -> Result[Output, IoError] {
 #default_handler
 export fn real_proc() -> Effect[Proc] {
     effect Proc {
-        launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, modes int) -> (int, *()) {
-            mut err = 0
-            ro h = unsafe { proc_spawn(program.ptr(), program.len(), argv.ptr(), argv.len(), argc, env.ptr(), env.len(), envc, use_env, cwd.ptr(), cwd.len(), modes, &err) }
-            (err, h)
-        }
-        child_pipe(child *(), which int) -> *() => unsafe { proc_child_pipe(child, which) }
-        child_pid(child *()) -> int => unsafe { proc_child_pid(child) }
-        child_wait(child *()) -> (int, int, int) {
-            mut code = 0
-            mut sig = 0
-            ro rc = unsafe { proc_child_wait(child, &code, &sig) }
-            (rc, code, sig)
-        }
-        child_try_wait(child *()) -> (int, int, int) {
-            mut code = 0
-            mut sig = 0
-            ro rc = unsafe { proc_child_try_wait(child, &code, &sig) }
-            (rc, code, sig)
-        }
-        child_release(child *()) -> () { unsafe { proc_child_release(child) } }
-        child_kill(child *(), sig int) -> int => unsafe { proc_child_kill(child, sig) }
-        child_wait_ms(child *(), ms int) -> (int, int, int) {
-            mut code = 0
-            mut sig = 0
-            ro rc = unsafe { proc_child_wait_ms(child, ms, &code, &sig) }
-            (rc, code, sig)
-        }
-        kill_pid(pid int, sig int, tree bool) -> int => unsafe { proc_kill_pid(pid, sig, tree) }
-        pipe_read(pipe *(), mut buf []u8) -> int => unsafe { proc_pipe_read(pipe, buf.ptr(), buf.len()) }
-        pipe_write(pipe *(), data []u8) -> int => unsafe { proc_pipe_write(pipe, data.ptr(), data.len()) }
-        pipe_close(pipe *()) -> () { unsafe { proc_pipe_close(pipe) } }
+        launch(cmd Command) -> Result[Child, IoError] => real_launch(cmd)
+        take_stdin(child Child) -> Option[ChildPipe] => real_take_pipe(child, 0)
+        take_stdout(child Child) -> Option[ChildPipe] => real_take_pipe(child, 1)
+        take_stderr(child Child) -> Option[ChildPipe] => real_take_pipe(child, 2)
+        child_pid(child Child) -> int => unsafe { proc_child_pid(child.handle) }
+        child_wait(child Child) -> Result[ExitStatus, IoError] => real_wait(child)
+        child_try_wait(child Child) -> Result[Option[ExitStatus], IoError] => real_try_wait(child)
+        child_release(child Child) -> () { unsafe { proc_child_release(child.handle) } }
+        child_kill(child Child, sig Signal) -> Result[(), IoError] => real_child_kill(child, sig)
+        child_wait_timeout(child Child, d Duration) -> Result[Option[ExitStatus], IoError] => real_wait_timeout(child, d)
+        kill_pid(pid int, sig Signal, tree bool) -> Result[(), IoError] => real_kill_pid(pid, sig, tree)
+        pipe_read(pipe ChildPipe, mut buf []u8) -> Result[int, IoError] => real_pipe_read(pipe, buf)
+        pipe_write(pipe ChildPipe, data []u8) -> Result[int, IoError] => real_pipe_write(pipe, data)
+        pipe_close(pipe ChildPipe) -> () { unsafe { proc_pipe_close(pipe.handle) } }
         pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError] => real_pty_launch(cmd, size)
         pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError] => real_pty_read(pty, buf)
         pty_write(pty PtyChild, data []u8) -> Result[int, IoError] => real_pty_write(pty, data)
@@ -474,9 +504,9 @@ export fn real_proc() -> Effect[Proc] {
         pty_pid(pty PtyChild) -> int => unsafe { proc_pty_pid(pty.handle) }
         pty_wait(pty PtyChild) -> Result[ExitStatus, IoError] => real_pty_wait(pty)
         pty_try_wait(pty PtyChild) -> Result[Option[ExitStatus], IoError] => real_pty_try_wait(pty)
-        // Not `sig`: a local of an earlier operation body (`mut sig = 0` above) retypes a later
-        // parameter of the same name in the checker - Signal.Kill arrived as Other(2) (registry #1870).
-        pty_kill(pty PtyChild, signal Signal) -> Result[(), IoError] => real_pty_kill(pty, signal)
+        // The handler bodies above declare no locals: a local named like a later parameter would
+        // retype it in the checker (registry #1870 - `mut sig = 0` here once made Kill arrive as Other(2)).
+        pty_kill(pty PtyChild, sig Signal) -> Result[(), IoError] => real_pty_kill(pty, sig)
         pty_close(pty PtyChild) -> () { unsafe { proc_pty_close(pty.handle) } }
     }
 }
