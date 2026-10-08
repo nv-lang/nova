@@ -1,0 +1,27 @@
+module option_tuple.pos_2
+
+// THE SAME DOOR AS pos_1, WITH A COMPONENT THAT IS A VALUE (registry 221.1
+// #1840). `Spot` is a `value` record, so the tuple `(Spot, Spot)` embeds two
+// COMPLETE bodies and the option over it embeds the tuple by value. The holder
+// embeds the option by value, and is declared ABOVE `Spot`. The option's
+// typedef was released only in the tail after the structural pass (pass 3),
+// while the holder's body was already printed in pass 2 right after `Spot`'s:
+// clang "unknown type name 'NovaOpt_...'" while the oracle compiled the file.
+// The release now follows the body that completes the payload's components.
+
+type Holder { pair Option[(Spot, Spot)] }
+
+type Spot value {
+    x int
+    y int
+}
+
+fn main() {
+    ro a = Spot { x: 1, y: 2 }
+    ro b = Spot { x: 3, y: 4 }
+    ro h = Holder { pair: Some((a, b)) }
+    match h.pair {
+        Some(p) => println(p.0.x + p.0.y + p.1.x + p.1.y)
+        None => println(0)
+    }
+}
