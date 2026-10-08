@@ -24,11 +24,27 @@
 #ifdef _WIN32
 #  include <windows.h>
 #  include <tlhelp32.h>
+#  include <winternl.h>
+#  include <io.h>
 #else
 #  include <unistd.h>
 #endif
 
 /* ─── Cancel-scope helper (same pattern as net.c's _nn2_cancel_scope) ───── */
+
+/* Windows: every process creation of this file holds this lock — uv_spawn SHARED (they may run
+ * side by side), the pseudo terminal's CreateProcess EXCLUSIVE, because it briefly clears this
+ * process's "ignore Ctrl-C" flag, which CreateProcess copies into every child (plan 294 F.4,
+ * D492). Holding it shared here keeps a concurrent Child.start / Command.run from inheriting the
+ * cleared value. */
+#ifdef _WIN32
+static SRWLOCK _proc_spawn_lock = SRWLOCK_INIT;
+#  define PROC_SPAWN_SHARED_BEGIN() AcquireSRWLockShared(&_proc_spawn_lock)
+#  define PROC_SPAWN_SHARED_END()   ReleaseSRWLockShared(&_proc_spawn_lock)
+#else
+#  define PROC_SPAWN_SHARED_BEGIN() ((void)0)
+#  define PROC_SPAWN_SHARED_END()   ((void)0)
+#endif
 
 static inline NovaFiberQueue* _proc_cancel_scope(NovaFiberQueue* scope) {
     mco_coro* rc = mco_running();
@@ -186,7 +202,9 @@ nova_int os_process_run(const uint8_t* program, nova_int program_len,
     req->wait_slot  = slot;
     nova_sched_register_pending(scope, slot, req, _proc_stop_cb);
 
+    PROC_SPAWN_SHARED_BEGIN();
     int rc = uv_spawn(loop, &req->proc, &opts);
+    PROC_SPAWN_SHARED_END();
 
     /* uv_spawn (posix_spawn/fork+exec on Unix, CreateProcess on Windows) has
      * consumed file/args/env/cwd SYNCHRONOUSLY by the time it returns — libuv
@@ -722,7 +740,9 @@ void* proc_spawn(const uint8_t* program, nova_int program_len,
     if (c->group) opts.flags |= UV_PROCESS_DETACHED;
 #endif
 
+    PROC_SPAWN_SHARED_BEGIN();
     int rc = uv_spawn(loop, &c->proc, &opts);
+    PROC_SPAWN_SHARED_END();
 
     free(progz); free(cwdz);
     _proc_free_str_elems(&args[1], argc);
@@ -967,3 +987,570 @@ nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree) {
     return errno == ESRCH ? NOVA_PROC_NO_SUCH : -(nova_int)errno;
 #endif
 }
+
+/* ===========================================================================
+ * Plan 294 F.4 (D492): pseudo terminal. Windows: ConPTY.
+ *
+ * Shape (process.h has the contract):
+ *   - two uv_pipe pairs; ConPTY gets the blocking ends, we keep the overlapped
+ *     ones and open them with uv_pipe_open as two NovaProcPipe (read = the
+ *     child's screen, write = its keyboard): the F.1 pull-style read / parked
+ *     write code serves the terminal unchanged;
+ *   - our own CreateProcessW (libuv cannot attach a pseudo console), started
+ *     CREATE_SUSPENDED, put into its Job Object, then resumed: the tree has no
+ *     window to escape through (plan 294 probe (b));
+ *   - one watcher thread per terminal: waits for the child's exit (or a hang-up
+ *     request), kills the stragglers, closes the console. The output pipe ends
+ *     only after ClosePseudoConsole (probe (c)), and that call may wait until the
+ *     output is drained (R8), so it never runs on a loop thread. The watcher
+ *     reports to the loop through a uv_async_t; nothing else crosses threads.
+ *
+ * Refcount: Nova owner (proc_pty_close) + watcher (released when the async
+ * handle is closed, after the watcher thread has ended). Freed on the loop.
+ * =========================================================================== */
+
+#ifdef _WIN32
+
+typedef void* NovaHPCON;
+typedef HRESULT (WINAPI *NovaPtyCreateFn)(COORD, HANDLE, HANDLE, DWORD, NovaHPCON*);
+typedef HRESULT (WINAPI *NovaPtyResizeFn)(NovaHPCON, COORD);
+typedef void    (WINAPI *NovaPtyCloseFn)(NovaHPCON);
+#ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
+#  define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 0x00020016
+#endif
+
+/* Looked up at run time: ConPTY exists from Windows 10 1809; older systems get
+ * NOVA_PROC_UNSUPPORTED instead of a loader failure of the whole program. */
+static NovaPtyCreateFn _pty_create_fn;
+static NovaPtyResizeFn _pty_resize_fn;
+static NovaPtyCloseFn  _pty_close_fn;
+static INIT_ONCE       _pty_api_once = INIT_ONCE_STATIC_INIT;
+
+
+static BOOL CALLBACK _pty_api_init(PINIT_ONCE once, PVOID param, PVOID* ctx) {
+    (void)once; (void)param; (void)ctx;
+    HMODULE k = GetModuleHandleW(L"kernel32.dll");
+    if (k) {
+        _pty_create_fn = (NovaPtyCreateFn)(void*)GetProcAddress(k, "CreatePseudoConsole");
+        _pty_resize_fn = (NovaPtyResizeFn)(void*)GetProcAddress(k, "ResizePseudoConsole");
+        _pty_close_fn  = (NovaPtyCloseFn)(void*)GetProcAddress(k, "ClosePseudoConsole");
+    }
+    return TRUE;
+}
+
+static int _pty_api_ready(void) {
+    InitOnceExecuteOnce(&_pty_api_once, _pty_api_init, NULL, NULL);
+    return _pty_create_fn && _pty_resize_fn && _pty_close_fn;
+}
+
+/* "This process ignores CTRL+C": bit 0 of RTL_USER_PROCESS_PARAMETERS.ConsoleFlags, what
+ * SetConsoleCtrlHandler(NULL, TRUE) sets and CreateProcess copies into every child. There is
+ * no documented getter; winternl.h exposes the field as Reserved2[1]. */
+static int _pty_ctrl_c_ignored(void) {
+    PEB* peb = (PEB*)NtCurrentTeb()->ProcessEnvironmentBlock;
+    if (!peb || !peb->ProcessParameters) return 0;
+    return ((ULONG)(ULONG_PTR)peb->ProcessParameters->Reserved2[1] & 1u) != 0;
+}
+
+/* --- UTF-16 command line / environment ---------------------------------- */
+
+typedef struct { wchar_t* p; size_t n, cap; } NovaWBuf;
+
+static void _wb_put(NovaWBuf* b, const wchar_t* s, size_t n) {
+    if (b->n + n + 1 > b->cap) {
+        size_t cap = b->cap ? b->cap : 256;
+        while (b->n + n + 1 > cap) cap *= 2;
+        b->p = (wchar_t*)realloc(b->p, cap * sizeof(wchar_t));
+        b->cap = cap;
+    }
+    if (n) memcpy(b->p + b->n, s, n * sizeof(wchar_t));
+    b->n += n;
+    b->p[b->n] = 0;
+}
+static void _wb_ch(NovaWBuf* b, wchar_t c) { _wb_put(b, &c, 1); }
+
+/* UTF-8 bytes -> malloc'd NUL-terminated UTF-16. */
+static wchar_t* _pty_wide(const uint8_t* s, nova_int len) {
+    int n = len > 0 ? MultiByteToWideChar(CP_UTF8, 0, (const char*)s, (int)len, NULL, 0) : 0;
+    wchar_t* w = (wchar_t*)malloc(((size_t)n + 1) * sizeof(wchar_t));
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, (const char*)s, (int)len, w, n);
+    w[n] = 0;
+    return w;
+}
+
+/* One argument, quoted the way CommandLineToArgvW / the MSVC CRT split it back
+ * (backslashes double only before a quote). */
+static void _pty_quote_arg(NovaWBuf* b, const wchar_t* a) {
+    if (a[0] && !wcspbrk(a, L" \t\n\v\"")) { _wb_put(b, a, wcslen(a)); return; }
+    _wb_ch(b, L'"');
+    for (const wchar_t* p = a;; p++) {
+        size_t bs = 0;
+        while (*p == L'\\') { bs++; p++; }
+        if (!*p) { for (size_t i = 0; i < 2 * bs; i++) _wb_ch(b, L'\\'); break; }
+        if (*p == L'"') { for (size_t i = 0; i < 2 * bs + 1; i++) _wb_ch(b, L'\\'); }
+        else { for (size_t i = 0; i < bs; i++) _wb_ch(b, L'\\'); }
+        _wb_ch(b, *p);
+    }
+    _wb_ch(b, L'"');
+}
+
+static wchar_t* _pty_cmdline(const uint8_t* program, nova_int program_len,
+                             const uint8_t* blob, nova_int blob_len, nova_int argc) {
+    NovaWBuf b = { NULL, 0, 0 };
+    wchar_t* w = _pty_wide(program, program_len);
+    _pty_quote_arg(&b, w);
+    free(w);
+    nova_int pos = 0;
+    for (nova_int i = 0; i < argc; i++) {
+        nova_int start = pos;
+        while (pos < blob_len && blob[pos] != 0) pos++;
+        w = _pty_wide(blob + start, pos - start);
+        _wb_ch(&b, L' ');
+        _pty_quote_arg(&b, w);
+        free(w);
+        if (pos < blob_len) pos++;
+    }
+    return b.p;
+}
+
+static int _pty_env_cmp(const void* x, const void* y) {
+    return CompareStringOrdinal(*(const wchar_t* const*)x, -1, *(const wchar_t* const*)y, -1, TRUE) - 2;
+}
+
+/* The explicit environment as a sorted UTF-16 block. Like libuv's uv_spawn (so Command.start
+ * and start_pty see the same thing), the variables Windows programs cannot start without are
+ * copied from our own environment when the caller left them out. */
+static wchar_t* _pty_env_block(const uint8_t* blob, nova_int blob_len, nova_int envc) {
+    static const wchar_t* required[] = { L"HOMEDRIVE", L"HOMEPATH", L"LOGONSERVER", L"PATH",
+        L"SYSTEMDRIVE", L"SYSTEMROOT", L"TEMP", L"USERDOMAIN", L"USERNAME", L"USERPROFILE", L"WINDIR" };
+    size_t nreq = sizeof required / sizeof required[0];
+    wchar_t** ents = (wchar_t**)malloc(((size_t)envc + nreq + 1) * sizeof(wchar_t*));
+    size_t n = 0;
+    nova_int pos = 0;
+    for (nova_int i = 0; i < envc; i++) {
+        nova_int start = pos;
+        while (pos < blob_len && blob[pos] != 0) pos++;
+        ents[n++] = _pty_wide(blob + start, pos - start);
+        if (pos < blob_len) pos++;
+    }
+    for (size_t r = 0; r < nreq; r++) {
+        size_t klen = wcslen(required[r]);
+        int have = 0;
+        for (size_t i = 0; i < n && !have; i++)
+            have = _wcsnicmp(ents[i], required[r], klen) == 0 && ents[i][klen] == L'=';
+        if (have) continue;
+        DWORD vlen = GetEnvironmentVariableW(required[r], NULL, 0);
+        if (vlen == 0) continue;
+        wchar_t* e = (wchar_t*)malloc((klen + 1 + vlen) * sizeof(wchar_t));
+        memcpy(e, required[r], klen * sizeof(wchar_t));
+        e[klen] = L'=';
+        GetEnvironmentVariableW(required[r], e + klen + 1, vlen);
+        ents[n++] = e;
+    }
+    qsort(ents, n, sizeof(wchar_t*), _pty_env_cmp);
+    NovaWBuf b = { NULL, 0, 0 };
+    for (size_t i = 0; i < n; i++) { _wb_put(&b, ents[i], wcslen(ents[i]) + 1); free(ents[i]); }
+    _wb_ch(&b, 0);                       /* the block ends with an empty string */
+    if (n == 0) _wb_ch(&b, 0);
+    free(ents);
+    return b.p;
+}
+
+/* --- The terminal handle -------------------------------------------------- */
+
+typedef struct NovaPtyChild {
+    uv_async_t      notify;          /* must be first: watcher thread -> loop */
+    uv_loop_t*      loop;
+    nova_atomic_int refcount;        /* Nova owner + watcher */
+    nova_atomic_int exit_seen;       /* the watcher saw the exit (any thread may read) */
+    nova_atomic_int exited;          /* published on the loop; wait() parks on it */
+    nova_atomic_int watch_done;      /* the watcher is about to end */
+    nova_atomic_int notify_closing;
+    nova_atomic_int killing;         /* a kill on purpose (scope cancellation) */
+    nova_atomic_int release_done;
+    nova_atomic_int console_closed;
+    int64_t         exit_status;
+    int             pid;
+    NovaFiberQueue* wait_scope;
+    int             wait_slot;
+    NovaProcPipe*   in;              /* our write end: the child's keyboard */
+    NovaProcPipe*   out;             /* our read end: the child's screen */
+    HANDLE          process;
+    HANDLE          job;
+    HANDLE          hangup;          /* event: close the console now */
+    HANDLE          watcher;
+    NovaHPCON       hpc;
+    SRWLOCK         hpc_lock;
+} NovaPtyChild;
+
+static inline void _pty_release(NovaPtyChild* c) {
+    if (nova_aint_fetch_sub_release(&c->refcount) == 1) {
+        nova_thread_fence_acquire();
+        nova_free_uncollectable(c);
+    }
+}
+
+static nova_bool _pty_exited(void* ctx) { return nova_aint_load(&((NovaPtyChild*)ctx)->exited) != 0; }
+
+/* ClosePseudoConsole exactly once. Any thread; may wait until the output is drained. */
+static void _pty_close_console(NovaPtyChild* c) {
+    int32_t zero = 0;
+    if (!nova_aint_cas(&c->console_closed, &zero, 1)) return;
+    AcquireSRWLockExclusive(&c->hpc_lock);
+    NovaHPCON h = c->hpc;
+    c->hpc = NULL;
+    ReleaseSRWLockExclusive(&c->hpc_lock);
+    if (h) _pty_close_fn(h);
+}
+
+static void _pty_notify_close_cb(uv_handle_t* h) {
+    NovaPtyChild* c = (NovaPtyChild*)h->data;
+    if (c->watcher) { CloseHandle(c->watcher); c->watcher = NULL; }
+    if (c->process) { CloseHandle(c->process); c->process = NULL; }
+    if (c->hangup)  { CloseHandle(c->hangup); c->hangup = NULL; }
+    if (c->job)     { CloseHandle(c->job); c->job = NULL; }   /* the tree is already dead */
+    _pty_release(c);                                          /* watcher unit */
+}
+
+static void _pty_notify_cb(uv_async_t* a) {
+    NovaPtyChild* c = (NovaPtyChild*)a->data;
+    if (nova_aint_load(&c->exit_seen) != 0 && nova_aint_load(&c->exited) == 0) {
+        nova_aint_store(&c->exited, 1);
+        NovaFiberQueue* sc = c->wait_scope; int sl = c->wait_slot;
+        c->wait_scope = NULL;
+        if (sc) nova_sched_wake(sc, sl);
+    }
+    int32_t zero = 0;
+    if (nova_aint_load(&c->watch_done) != 0 && nova_aint_cas(&c->notify_closing, &zero, 1)) {
+        /* The watcher's last act is one more uv_async_send: let it finish, so that send is
+         * either delivered or pending (libuv closes a handle with a pending send safely). */
+        WaitForSingleObject(c->watcher, INFINITE);
+        uv_close((uv_handle_t*)a, _pty_notify_close_cb);
+    }
+}
+
+static DWORD WINAPI _pty_watch(LPVOID arg) {
+    NovaPtyChild* c = (NovaPtyChild*)arg;
+    HANDLE hs[2] = { c->process, c->hangup };
+    DWORD n = 2;
+    for (;;) {
+        DWORD r = WaitForMultipleObjects(n, hs, FALSE, INFINITE);
+        if (n == 2 && r == WAIT_OBJECT_0 + 1) { _pty_close_console(c); n = 1; continue; }
+        break;                                   /* the child exited (or the wait failed) */
+    }
+    DWORD code = 0;
+    GetExitCodeProcess(c->process, &code);
+    c->exit_status = (int64_t)code;
+    if (c->job) TerminateJobObject(c->job, 1);   /* the tree does not outlive its leader */
+    nova_aint_store(&c->exit_seen, 1);
+    uv_async_send(&c->notify);                   /* wait() returns now, even if the close below waits */
+    _pty_close_console(c);                       /* the reader gets end of stream after the last byte */
+    nova_aint_store(&c->watch_done, 1);
+    uv_async_send(&c->notify);
+    return 0;
+}
+
+/* Kill / Terminate: the whole tree (Job Object), or the child alone when the job could not be
+ * set up. Nothing is sent once the child has exited. */
+static nova_int _pty_send(NovaPtyChild* c, int sig) {
+    if (sig != 9 && sig != 15) return NOVA_PROC_UNSUPPORTED;
+    if (nova_aint_load(&c->exit_seen) != 0) return 0;
+    if (c->job) { TerminateJobObject(c->job, 1); return 0; }
+    if (TerminateProcess(c->process, 1)) return 0;
+    DWORD code = 0;
+    return (GetExitCodeProcess(c->process, &code) && code != STILL_ACTIVE) ? 0 : -1;
+}
+
+static void _pty_kill(NovaPtyChild* c) {
+    int32_t was = __atomic_exchange_n((volatile int32_t*)&c->killing, 1, __ATOMIC_ACQ_REL);
+    if (!was) (void)_pty_send(c, 9);
+}
+
+static NovaStopMode _pty_stop_cb(void* handle) {
+    _pty_kill((NovaPtyChild*)handle);
+    return NOVA_STOP_ASYNC;              /* the wake comes from the watcher's notify */
+}
+
+/* A pipe that never reached Nova: close it and drop the Nova unit too. */
+static void _pty_drop_pipe(NovaProcPipe* p) {
+    if (!p) return;
+    nova_aint_store(&p->stage, PP_CLOSING);
+    uv_close((uv_handle_t*)&p->handle, _pp_close_cb);
+    int32_t zero = 0;
+    if (nova_aint_cas(&p->user_release_done, &zero, 1)) _pp_release(p);
+}
+
+/* uv_pipe_open owns the fd from here on, except for fds 0..2, which libuv duplicates
+ * and leaves to us. */
+static int _pty_open_pipe(NovaProcPipe* p, uv_file fd) {
+    int rc = uv_pipe_open(&p->handle, fd);
+    if (rc != 0 || fd <= 2) _close(fd);
+    return rc;
+}
+
+void* proc_pty_spawn(const uint8_t* program, nova_int program_len,
+                     const uint8_t* argv_blob, nova_int argv_blob_len, nova_int argc,
+                     const uint8_t* env_blob, nova_int env_blob_len, nova_int envc,
+                     nova_bool use_env,
+                     const uint8_t* cwd, nova_int cwd_len,
+                     nova_int rows, nova_int cols, nova_int* out_err) {
+    if (out_err) *out_err = 0;
+    if (rows < 1 || cols < 1 || rows > 32767 || cols > 32767) { if (out_err) *out_err = -22; return NULL; }
+    if (!_pty_api_ready()) { if (out_err) *out_err = NOVA_PROC_UNSUPPORTED; return NULL; }
+    uv_loop_t* loop = nova_current_loop();
+
+    /* Keyboard: ConPTY reads in_fd[0], we write in_fd[1]. Screen: ConPTY writes out_fd[1],
+     * we read out_fd[0]. Only our ends are overlapped (UV_NONBLOCK_PIPE). */
+    uv_file in_fd[2] = { -1, -1 }, out_fd[2] = { -1, -1 };
+    int rc = uv_pipe(in_fd, 0, UV_NONBLOCK_PIPE);
+    if (rc != 0) { if (out_err) *out_err = _proc_neg_errno(rc); return NULL; }
+    rc = uv_pipe(out_fd, UV_NONBLOCK_PIPE, 0);
+    if (rc != 0) {
+        _close(in_fd[0]); _close(in_fd[1]);
+        if (out_err) *out_err = _proc_neg_errno(rc);
+        return NULL;
+    }
+
+    NovaProcPipe* pin = _pp_new(loop);
+    NovaProcPipe* pout = _pp_new(loop);
+    uv_pipe_init(loop, &pin->handle, 0);
+    uv_pipe_init(loop, &pout->handle, 0);
+    rc = _pty_open_pipe(pin, in_fd[1]);
+    int rc2 = _pty_open_pipe(pout, out_fd[0]);
+    if (rc == 0) rc = rc2;
+
+    NovaHPCON hpc = NULL;
+    if (rc == 0) {
+        COORD sz = { (SHORT)cols, (SHORT)rows };
+        HRESULT hr = _pty_create_fn(sz, (HANDLE)uv_get_osfhandle(in_fd[0]),
+                                    (HANDLE)uv_get_osfhandle(out_fd[1]), 0, &hpc);
+        if (FAILED(hr)) { hpc = NULL; rc = (hr == E_INVALIDARG) ? UV_EINVAL : UV_EIO; }
+    }
+
+    PROCESS_INFORMATION pi;
+    memset(&pi, 0, sizeof pi);
+    if (rc == 0) {
+        wchar_t* cmdline = _pty_cmdline(program, program_len, argv_blob, argv_blob_len, argc);
+        wchar_t* envw = use_env ? _pty_env_block(env_blob, env_blob_len, envc) : NULL;
+        wchar_t* cwdw = cwd_len > 0 ? _pty_wide(cwd, cwd_len) : NULL;
+        STARTUPINFOEXW si;
+        memset(&si, 0, sizeof si);
+        si.StartupInfo.cb = sizeof si;
+        /* Without STARTF_USESTDHANDLES a child of a process whose own stdio is redirected
+         * inherits those handles and writes PAST the terminal (plan 294 probe (c): "hello"
+         * landed in the parent's stdout). Empty handles = the pseudo console's. */
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        SIZE_T alen = 0;
+        InitializeProcThreadAttributeList(NULL, 1, 0, &alen);
+        si.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(alen);
+        BOOL ok = InitializeProcThreadAttributeList(si.lpAttributeList, 1, 0, &alen);
+        int list_ready = ok;
+        if (ok) ok = UpdateProcThreadAttribute(si.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                                               hpc, sizeof hpc, NULL, NULL);
+        DWORD err = ok ? 0 : GetLastError();
+        if (ok) {
+            /* A fresh terminal starts with Ctrl-C ON (POSIX: libuv's child resets every signal to
+             * SIG_DFL). The "ignore Ctrl-C" flag of THIS process would otherwise be copied into
+             * the child, and 0x03 written to the terminal would do nothing (measured: a test run
+             * under a shell that ignores Ctrl-C). Cleared just around CreateProcess, then put back. */
+            AcquireSRWLockExclusive(&_proc_spawn_lock);
+            int ignored = _pty_ctrl_c_ignored();
+            if (ignored) SetConsoleCtrlHandler(NULL, FALSE);
+            ok = CreateProcessW(NULL, cmdline, NULL, NULL, FALSE,
+                                EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+                                envw, cwdw, &si.StartupInfo, &pi);
+            err = ok ? 0 : GetLastError();
+            if (ignored) SetConsoleCtrlHandler(NULL, TRUE);
+            ReleaseSRWLockExclusive(&_proc_spawn_lock);
+        }
+        if (list_ready) DeleteProcThreadAttributeList(si.lpAttributeList);
+        free(si.lpAttributeList);
+        free(cmdline); free(envw); free(cwdw);
+        if (!ok) rc = uv_translate_sys_error((int)err);
+    }
+    /* ConPTY holds its own copies of its pipe ends; ours must go, or the screen never ends. */
+    _close(in_fd[0]);
+    _close(out_fd[1]);
+
+    if (rc != 0) {
+        if (hpc) _pty_close_fn(hpc);
+        _pty_drop_pipe(pin);
+        _pty_drop_pipe(pout);
+        if (out_err) *out_err = _proc_neg_errno(rc);
+        return NULL;
+    }
+
+    NovaPtyChild* c = (NovaPtyChild*)nova_alloc_uncollectable(sizeof(NovaPtyChild));
+    memset(c, 0, sizeof(*c));
+    nova_aint_init(&c->refcount, 2);
+    nova_aint_init(&c->exit_seen, 0);
+    nova_aint_init(&c->exited, 0);
+    nova_aint_init(&c->watch_done, 0);
+    nova_aint_init(&c->notify_closing, 0);
+    nova_aint_init(&c->killing, 0);
+    nova_aint_init(&c->release_done, 0);
+    nova_aint_init(&c->console_closed, 0);
+    InitializeSRWLock(&c->hpc_lock);
+    c->loop = loop;
+    c->in = pin;
+    c->out = pout;
+    c->hpc = hpc;
+    c->process = pi.hProcess;
+    c->pid = (int)pi.dwProcessId;
+
+    /* The Job Object is assigned while the child is still suspended: no grandchild can be born
+     * outside it (the window [M-294-win-job-suspended] leaves open for Child does not exist here). */
+    HANDLE j = CreateJobObjectW(NULL, NULL);
+    if (j) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION li;
+        memset(&li, 0, sizeof li);
+        li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (SetInformationJobObject(j, JobObjectExtendedLimitInformation, &li, sizeof li) &&
+            AssignProcessToJobObject(j, pi.hProcess)) c->job = j;
+        else CloseHandle(j);           /* degrades to a single-process kill */
+    }
+
+    uv_async_init(loop, &c->notify, _pty_notify_cb);
+    c->notify.data = c;
+    c->hangup = CreateEventW(NULL, TRUE, FALSE, NULL);
+    c->watcher = c->hangup ? CreateThread(NULL, 64 * 1024, _pty_watch, c, 0, NULL) : NULL;
+    if (!c->watcher) {
+        /* Cannot watch it: do not leave it running. */
+        TerminateProcess(pi.hProcess, 1);
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+        WaitForSingleObject(pi.hProcess, 5000);
+        _pty_close_console(c);
+        if (c->hangup) CloseHandle(c->hangup);
+        c->hangup = NULL;
+        CloseHandle(c->process);
+        c->process = NULL;
+        if (c->job) { CloseHandle(c->job); c->job = NULL; }
+        _pty_drop_pipe(pin);
+        _pty_drop_pipe(pout);
+        nova_aint_store(&c->notify_closing, 1);
+        uv_close((uv_handle_t*)&c->notify, NULL);
+        /* the struct is leaked on purpose: the closing async handle still points into it */
+        if (out_err) *out_err = -12;
+        return NULL;
+    }
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    return c;
+}
+
+nova_int proc_pty_read(void* pv, uint8_t* buf, nova_int cap) {
+    return proc_pipe_read(((NovaPtyChild*)pv)->out, buf, cap);
+}
+
+nova_int proc_pty_write(void* pv, const uint8_t* buf, nova_int len) {
+    return proc_pipe_write(((NovaPtyChild*)pv)->in, buf, len);
+}
+
+nova_int proc_pty_resize(void* pv, nova_int rows, nova_int cols) {
+    NovaPtyChild* c = (NovaPtyChild*)pv;
+    if (rows < 1 || cols < 1 || rows > 32767 || cols > 32767) return -22;
+    nova_int r;
+    AcquireSRWLockShared(&c->hpc_lock);
+    if (!c->hpc) r = NOVA_PROC_CLOSED;
+    else {
+        COORD sz = { (SHORT)cols, (SHORT)rows };
+        r = SUCCEEDED(_pty_resize_fn(c->hpc, sz)) ? 0 : -5;
+    }
+    ReleaseSRWLockShared(&c->hpc_lock);
+    return r;
+}
+
+nova_int proc_pty_pid(void* pv) { return (nova_int)((NovaPtyChild*)pv)->pid; }
+
+nova_int proc_pty_try_wait(void* pv, nova_int* out_code, nova_int* out_signal) {
+    NovaPtyChild* c = (NovaPtyChild*)pv;
+    if (nova_aint_load(&c->exited) == 0) return 1;
+    if (out_code) *out_code = (nova_int)c->exit_status;
+    if (out_signal) *out_signal = 0;   /* Windows: never a signal (D492 table 3.4) */
+    return 0;
+}
+
+nova_int proc_pty_wait(void* pv, nova_int* out_code, nova_int* out_signal) {
+    NovaPtyChild* c = (NovaPtyChild*)pv;
+    NovaFiberQueue* scope = _nova_active_scope;
+    int slot = _nova_active_slot;
+    if (!scope) { fprintf(stderr, "nova/os: pty wait outside scope\n"); abort(); }
+    NovaFiberQueue* cancel_sc = _proc_cancel_scope(scope);
+    if (nova_aint_load(&c->exited) == 0) {
+        if (nova_abool_load(&cancel_sc->cancel_requested)) { _pty_kill(c); return NOVA_PROCESS_CANCELLED; }
+        c->wait_scope = scope; c->wait_slot = slot;
+        nova_sched_register_pending(scope, slot, c, _pty_stop_cb);
+        nova_sched_park_until(scope, slot, _pty_exited, c);
+        nova_sched_unregister_pending(scope, slot);
+        c->wait_scope = NULL;
+        if (nova_abool_load(&cancel_sc->cancel_requested) || nova_aint_load(&c->killing) != 0)
+            return NOVA_PROCESS_CANCELLED;
+    }
+    if (out_code) *out_code = (nova_int)c->exit_status;
+    if (out_signal) *out_signal = 0;
+    return 0;
+}
+
+nova_int proc_pty_kill(void* pv, nova_int sig) { return _pty_send((NovaPtyChild*)pv, (int)sig); }
+
+void proc_pty_close(void* pv) {
+    NovaPtyChild* c = (NovaPtyChild*)pv;
+    if (!c) return;
+    int32_t zero = 0;
+    if (!nova_aint_cas(&c->release_done, &zero, 1)) return;
+    /* Our ends first: a console whose output nobody drains would hold the hang-up (R8). */
+    _pp_user_close(c->in);
+    _pp_user_close(c->out);
+    if (nova_aint_load(&c->exited) == 0) {
+        SetEvent(c->hangup);                 /* hang up: the console goes, its processes are told */
+        NovaFiberQueue* scope = _nova_active_scope;
+        int64_t deadline = _proc_now_ms() + NOVA_PROC_RELEASE_GRACE_MS;
+        while (nova_aint_load(&c->exited) == 0 && _proc_now_ms() < deadline) {
+            if (!scope || !mco_running()) break;
+            if (nova_cancel_mask_active() == 0 &&
+                nova_abool_load(&_proc_cancel_scope(scope)->cancel_requested)) break;
+            (void)time_sleep_ms(2);
+        }
+        (void)_pty_send(c, 9);               /* still there after the grace */
+        if (nova_aint_load(&c->exited) == 0) {
+            scope = _nova_active_scope;
+            int slot = _nova_active_slot;
+            if (scope) {
+                c->wait_scope = scope; c->wait_slot = slot;
+                nova_sched_park_until(scope, slot, _pty_exited, c);   /* not cancellable */
+                c->wait_scope = NULL;
+            }
+        }
+    }
+    _pty_release(c);                         /* Nova unit */
+}
+
+#else  /* POSIX: forkpty is the next task (plan 294 F.3); the surface exists and says so. */
+
+void* proc_pty_spawn(const uint8_t* program, nova_int program_len,
+                     const uint8_t* argv_blob, nova_int argv_blob_len, nova_int argc,
+                     const uint8_t* env_blob, nova_int env_blob_len, nova_int envc,
+                     nova_bool use_env,
+                     const uint8_t* cwd, nova_int cwd_len,
+                     nova_int rows, nova_int cols, nova_int* out_err) {
+    (void)program; (void)program_len; (void)argv_blob; (void)argv_blob_len; (void)argc;
+    (void)env_blob; (void)env_blob_len; (void)envc; (void)use_env; (void)cwd; (void)cwd_len;
+    (void)rows; (void)cols;
+    if (out_err) *out_err = NOVA_PROC_UNSUPPORTED;
+    return NULL;
+}
+nova_int proc_pty_read(void* pv, uint8_t* buf, nova_int cap) { (void)pv; (void)buf; (void)cap; return NOVA_PROC_CLOSED; }
+nova_int proc_pty_write(void* pv, const uint8_t* buf, nova_int len) { (void)pv; (void)buf; (void)len; return NOVA_PROC_CLOSED; }
+nova_int proc_pty_resize(void* pv, nova_int rows, nova_int cols) { (void)pv; (void)rows; (void)cols; return NOVA_PROC_UNSUPPORTED; }
+nova_int proc_pty_pid(void* pv) { (void)pv; return 0; }
+nova_int proc_pty_wait(void* pv, nova_int* out_code, nova_int* out_signal) {
+    (void)pv; (void)out_code; (void)out_signal; return NOVA_PROC_UNSUPPORTED;
+}
+nova_int proc_pty_try_wait(void* pv, nova_int* out_code, nova_int* out_signal) {
+    (void)pv; (void)out_code; (void)out_signal; return NOVA_PROC_UNSUPPORTED;
+}
+nova_int proc_pty_kill(void* pv, nova_int sig) { (void)pv; (void)sig; return NOVA_PROC_UNSUPPORTED; }
+void proc_pty_close(void* pv) { (void)pv; }
+
+#endif

@@ -1,0 +1,85 @@
+// pty_session.nv - drive an interactive program through a pseudo terminal (Plan 294 F.4, D492).
+//
+//     pty_session <program> [args...]
+//
+// What it shows, all in fiber-friendly calls (nothing blocks an OS thread):
+//   * start the program on a terminal of a given size (it believes a person is typing);
+//   * type lines on its keyboard - Enter is "\r", as a real keyboard sends;
+//   * resize the window while it runs;
+//   * stream its screen back in pieces until the terminal ends (Ok(0));
+//   * give the whole session a budget: `supervised(timeout:)` kills the program's tree on overrun;
+//   * report its exit status.
+//
+// The screen is the TERMINAL's bytes: echo of the typing and terminal sequences, on Windows a screen
+// ConPTY re-renders (the same picture, not the same bytes). Print it to a terminal to see it as meant.
+//
+// Systems: Windows 10 1809+ (ConPTY). POSIX: `start_pty` is `Err(Unsupported)` until plan 294 F.3,
+// and the example says so.
+//
+// Try it:  pty_session cmd          (Windows: types `echo hello`, then `exit`)
+
+module os.pty_session
+
+import std.io.{IoError, write_all}
+import std.os.{args, Command, PtyChild, PtySize}
+import std.time.duration
+
+const BUDGET_SECONDS = 30
+
+// Type the session, then show the screen until the terminal ends, then the exit code.
+fn session(mut pty PtyChild) Proc Io -> Result[int, IoError] {
+    write_all(pty, "echo hello\r".bytes())?
+    pty.resize(PtySize { rows: 30, cols: 100 })?
+    write_all(pty, "exit\r".bytes())?
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    loop {
+        match pty.read(buf) {
+            Ok(0) => break                   // the program exited and its screen is drained
+            Ok(n) => print(unsafe { buf[..n].to_str_unchecked() })
+            Err(e) => return Err(e)
+        }
+    }
+    match pty.wait() {
+        Ok(st) => Ok(st.code())
+        Err(e) => Err(e)
+    }
+}
+
+fn run(program str, extra []str) Proc Io -> Result[int, IoError] {
+    ro size = PtySize { rows: 24, cols: 80 }
+    match Command.new(program).args(extra).start_pty(size) {
+        Ok(consume started) => {
+            consume pty = started            // owns the terminal: leaving this scope closes it
+            session(pty)
+        }
+        Err(e) => Err(e)
+    }
+}
+
+fn main() {
+    ro argv = args()
+    if argv.len() < 2 {
+        println("usage: pty_session <program> [args...]")
+        return
+    }
+    mut extra []str = []
+    mut i = 2
+    while i < argv.len() {
+        extra.push(argv[i])
+        i += 1
+    }
+    mut outcome = "not run"
+    ro timed_out = with Fail[TimeoutError] = |_e| { true } {
+        supervised(timeout: BUDGET_SECONDS.to_seconds()) {
+            match run(argv[1], extra) {
+                Ok(code) => { outcome = "program exited with code ${code}" }
+                Err(e) => { outcome = "session failed: ${e}" }
+            }
+        }
+        false
+    }
+    if timed_out { outcome = "budget of ${BUDGET_SECONDS}s exceeded; the program's tree was killed" }
+    println("")
+    println(outcome)
+}

@@ -1,0 +1,403 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/pty/pty_test.nv — Plan 294 F.4 (D492): a child on a pseudo terminal.
+//
+// Scenarios PTY-1..PTY-5 of docs/plans/294-process-streams-pty.md §5 plus the refusals:
+//   PTY-1  keyboard: "abc" + Enter in, the child's upper-cased line out;
+//   PTY-2  terminal sequences from the child reach the screen;
+//   PTY-3  resize: the child sees 24x80, then 40x120;
+//   PTY-4  end: a child that exits by itself - every byte, then Ok(0), then its code (4a);
+//          close() of a live child - returns, and the process is gone (4b);
+//   PTY-5  Ctrl-C typed on the keyboard ends the child the way Ctrl-C does.
+//
+// Systems. Windows: ConPTY; the children are `powershell` / `ping` (on every Windows image).
+// POSIX: the pseudo terminal is the next task (plan 294 F.3) and `start_pty` answers
+// `Err(Unsupported)` there. The runner has no run-time skip, so on POSIX every fixture checks
+// exactly that refusal and prints `SKIP PTY-n: POSIX PTY - next task (plan 294 F.3)`; when F.3
+// lands, `start_pty` succeeds and the same fixtures run (the `sh` children are written already).
+//
+// What a terminal sends is the TERMINAL's bytes, not the child's: echo, "\r\n", and on Windows a
+// screen ConPTY renders and re-encodes (D492, table 3.4). So the fixtures look for what the child
+// SHOWS (substrings in order), never for an exact byte string. Enter is "\r" on both systems.
+//
+// Every wait is time-boxed: a broken terminal fails the fixture instead of hanging it.
+//
+// Its own directory and module, like proc_streams/ and proc_control/: only the public `std.os` surface.
+
+module pty.pty_test
+
+import std.os.{Command, PtyChild, PtySize, Signal, ExitStatus, kill_pid}
+import std.io.{IoError, ErrorKind}
+import std.time.duration
+
+const SKIP_REASON = "POSIX PTY - next task (plan 294 F.3)"
+
+// ─── Platform helpers ──
+
+// Does this system give us a pseudo terminal today?
+#cfg(target_os = "windows")
+fn pty_expected() -> bool => true
+
+#cfg(!target_os = "windows")
+fn pty_expected() -> bool => false
+
+#cfg(target_os = "windows")
+fn ps(script str) -> Command =>
+    Command.new("powershell").arg("-NoProfile").arg("-NonInteractive").arg("-Command").arg(script)
+
+#cfg(!target_os = "windows")
+fn sh(script str) -> Command => Command.new("sh").arg("-c").arg(script)
+
+// Reads one line, prints it upper-cased between < and >.
+#cfg(target_os = "windows")
+fn upper_cmd() -> Command => ps("$l=[Console]::ReadLine();[Console]::Out.Write('<'+$l.ToUpper()+'>')")
+
+#cfg(!target_os = "windows")
+fn upper_cmd() -> Command => sh("read l; printf '<%s>' \"$(printf %s \"$l\" | tr a-z A-Z)\"")
+
+// ESC[31m red ESC[0m ESC[2J end
+#cfg(target_os = "windows")
+fn colours_cmd() -> Command =>
+    ps("$e=[char]27;[Console]::Out.Write($e+'[31mred'+$e+'[0m'+$e+'[2J'+'end')")
+
+#cfg(!target_os = "windows")
+fn colours_cmd() -> Command => sh("printf '\\033[31mred\\033[0m\\033[2Jend'")
+
+// On every Enter prints <rows x cols>; "q" + Enter ends it with 0.
+#cfg(target_os = "windows")
+fn size_cmd() -> Command =>
+    ps("while(($l=[Console]::ReadLine()) -ne 'q'){[Console]::Out.Write('<'+[Console]::WindowHeight+'x'+[Console]::WindowWidth+'>')}")
+
+#cfg(!target_os = "windows")
+fn size_cmd() -> Command => sh("while read l && [ \"$l\" != q ]; do set -- $(stty size); printf '<%sx%s>' $1 $2; done")
+
+// Prints "bye" and exits with 3 at once.
+#cfg(target_os = "windows")
+fn bye_cmd() -> Command => ps("[Console]::Out.Write('bye');exit 3")
+
+#cfg(!target_os = "windows")
+fn bye_cmd() -> Command => sh("printf bye; exit 3")
+
+// Sleeps about 30 s, prints nothing.
+#cfg(target_os = "windows")
+fn sleeper_cmd() -> Command => ps("Start-Sleep -Seconds 30")
+
+#cfg(!target_os = "windows")
+fn sleeper_cmd() -> Command => sh("sleep 30")
+
+// Prints its start line (containing 127.0.0.1), then runs about 30 s unless Ctrl-C ends it.
+#cfg(target_os = "windows")
+fn ctrl_c_cmd() -> Command => Command.new("ping").arg("-n").arg("30").arg("127.0.0.1")
+
+#cfg(!target_os = "windows")
+fn ctrl_c_cmd() -> Command => sh("echo 127.0.0.1; sleep 30")
+
+// Ended by Ctrl-C: Windows - STATUS_CONTROL_C_EXIT (0xC000013A) as the exit code, no signal;
+// POSIX - SIGINT.
+#cfg(target_os = "windows")
+fn ended_by_ctrl_c(st ExitStatus) -> bool => st.code() == 3221225786 && st.signal() == None
+
+#cfg(!target_os = "windows")
+fn ended_by_ctrl_c(st ExitStatus) -> bool => st.signal() == Some(2)
+
+// Signals the OS has no terminal form for.
+#cfg(target_os = "windows")
+fn interrupt_kill_kind() -> Option[ErrorKind] => Some(ErrorKind.Unsupported)
+
+#cfg(!target_os = "windows")
+fn interrupt_kill_kind() -> Option[ErrorKind] => None
+
+// ─── Helpers ──
+
+// True when this system has a terminal for us. Otherwise checks that the refusal is the documented
+// one (Unsupported) and prints the skip line.
+fn on_pty(id str) -> bool {
+    if pty_expected() { return true }
+    match bye_cmd().start_pty(size(24, 80)) {
+        Ok(consume p) => {
+            p.close()
+            true
+        }
+        Err(e) => {
+            assert(e.kind == ErrorKind.Unsupported)
+            print("SKIP ${id}: ${SKIP_REASON}")
+            false
+        }
+    }
+}
+
+fn must_pty(r Result[PtyChild, IoError], what str) -> PtyChild {
+    match r {
+        Ok(consume p) => p
+        Err(e) => panic("pty: ${what}: ${e}")
+    }
+}
+
+fn must[T](r Result[T, IoError], what str) -> T {
+    match r {
+        Ok(v) => v
+        Err(e) => panic("pty: ${what}: ${e}")
+    }
+}
+
+fn size(rows int, cols int) -> PtySize => { rows, cols }
+
+// Index of `needle` in `hay` at or after `from`, or -1.
+fn find_bytes(hay []u8, needle []u8, from int) -> int {
+    mut i = from
+    while i + needle.len() <= hay.len() {
+        mut j = 0
+        while j < needle.len() && hay[i + j] == needle[j] { j += 1 }
+        if j == needle.len() { return i }
+        i += 1
+    }
+    0 - 1
+}
+
+// ESC [ + tail
+fn csi(tail str) -> []u8 {
+    mut b []u8 = []u8.new()
+    b.push(27 as u8)
+    b.push(91 as u8)
+    b.append(tail.bytes())
+    b
+}
+
+// Appends the screen to `out` until it holds `needle`, the terminal ends, or `secs` pass.
+fn screen_until(mut pty PtyChild, mut out []u8, needle []u8, secs int) {
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    with Fail[TimeoutError] = |_e| { () } {
+        supervised(timeout: secs.to_seconds()) {
+            mut done = find_bytes(out, needle, 0) >= 0
+            while !done {
+                match pty.read(buf) {
+                    Ok(n) => {
+                        if n == 0 { done = true }
+                        else {
+                            out.append(buf[..n])
+                            done = find_bytes(out, needle, 0) >= 0
+                        }
+                    }
+                    Err(e) => {
+                        if e.kind != ErrorKind.NotConnected { panic("read pty: ${e}") }   // NotConnected: the time box closed it
+                        done = true
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Reads the screen to its end (Ok(0)) within `secs`: (bytes, reached the end).
+fn screen_to_end(mut pty PtyChild, secs int) -> ([]u8, bool) {
+    mut out []u8 = []u8.new()
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    mut eof = false
+    with Fail[TimeoutError] = |_e| { () } {
+        supervised(timeout: secs.to_seconds()) {
+            mut done = false
+            while !done {
+                match pty.read(buf) {
+                    Ok(n) => {
+                        if n == 0 {
+                            eof = true
+                            done = true
+                        } else { out.append(buf[..n]) }
+                    }
+                    Err(e) => {
+                        if e.kind != ErrorKind.NotConnected { panic("read pty: ${e}") }
+                        done = true
+                    }
+                }
+            }
+        }
+    }
+    (out, eof)
+}
+
+// wait() within `secs`; None when the time ran out (the child is then killed by the cancellation).
+fn wait_within(mut pty PtyChild, secs int) -> Option[ExitStatus] {
+    mut got Option[ExitStatus] = None
+    with Fail[TimeoutError] = |_e| { () } {
+        supervised(timeout: secs.to_seconds()) {
+            match pty.wait() {
+                Ok(st) => { got = Some(st) }
+                Err(e) => if e.kind != ErrorKind.Interrupted { panic("pty wait: ${e}") }
+            }
+        }
+    }
+    got
+}
+
+// ─── PTY-1: the keyboard ──
+
+test "p294 PTY-1: abc + Enter typed on the terminal comes back upper-cased; the child exits 0" {
+    if on_pty("PTY-1") {
+        consume pty = must_pty(upper_cmd().start_pty(size(24, 80)), "start")
+        assert(must(pty.write("abc\r".bytes()), "write") == 4)
+        ro (screen, eof) = screen_to_end(pty, 20)
+        assert(find_bytes(screen, "abc".bytes(), 0) >= 0)          // the terminal echoed the typing
+        assert(find_bytes(screen, "<ABC>".bytes(), 0) >= 0)        // the child read the line
+        assert(eof)
+        match wait_within(pty, 10) {
+            Some(st) => assert(st.code() == 0)
+            None => panic("PTY-1: the child did not exit")
+        }
+    }
+}
+
+// ─── PTY-2: terminal sequences ──
+
+// POSIX passes the child's bytes through; ConPTY renders a screen and re-encodes it (ESC[0m arrives as
+// ESC[m, a clear repaints). Both must SHOW the same: red in colour 31, the attributes reset after it,
+// the screen cleared after it, then "end".
+test "p294 PTY-2: ESC[31m red ESC[0m ESC[2J from the child reach the screen, in order" {
+    if on_pty("PTY-2") {
+        consume pty = must_pty(colours_cmd().start_pty(size(24, 80)), "start")
+        ro (screen, eof) = screen_to_end(pty, 20)
+        assert(eof)
+        ro red = find_bytes(screen, "red".bytes(), 0)
+        assert(red >= 0)
+        ro colour = find_bytes(screen, csi("31m"), 0)
+        assert(colour >= 0 && colour < red)                        // coloured before the text
+        ro reset_m = find_bytes(screen, csi("m"), red)
+        ro reset_0m = find_bytes(screen, csi("0m"), red)
+        assert(reset_m >= 0 || reset_0m >= 0)                      // reset after it (ESC[m == ESC[0m)
+        ro clear = find_bytes(screen, csi("2J"), red)
+        assert(clear >= 0)                                         // the clear came after the text
+        assert(find_bytes(screen, "end".bytes(), clear) >= 0)      // and the text after the clear
+        match wait_within(pty, 10) {
+            Some(st) => assert(st.code() == 0)
+            None => panic("PTY-2: the child did not exit")
+        }
+    }
+}
+
+// ─── PTY-3: window size ──
+
+test "p294 PTY-3: the child sees 24x80 from start_pty, then 40x120 after resize" {
+    if on_pty("PTY-3") {
+        consume pty = must_pty(size_cmd().start_pty(size(24, 80)), "start")
+        must(pty.write("\r".bytes()), "enter")
+        mut screen []u8 = []u8.new()
+        screen_until(pty, screen, "<24x80>".bytes(), 20)
+        assert(find_bytes(screen, "<24x80>".bytes(), 0) >= 0)
+        must(pty.resize(size(40, 120)), "resize")
+        // The resize and the keyboard are separate channels of the terminal: ask until the child
+        // reports the new size (a few tries at most), but never accept the old one forever.
+        mut tries = 0
+        while find_bytes(screen, "<40x120>".bytes(), 0) < 0 && tries < 10 {
+            must(pty.write("\r".bytes()), "enter")
+            screen_until(pty, screen, "<40x120>".bytes(), 1)
+            tries += 1
+        }
+        assert(find_bytes(screen, "<40x120>".bytes(), 0) >= 0)
+        must(pty.write("q\r".bytes()), "quit")
+        ro (_rest, eof) = screen_to_end(pty, 20)
+        assert(eof)
+        match wait_within(pty, 10) {
+            Some(st) => assert(st.code() == 0)
+            None => panic("PTY-3: the child did not exit")
+        }
+        // A size outside 1..32767 is refused before it reaches the terminal.
+        match pty.resize(size(0, 80)) {
+            Ok(_) => panic("PTY-3: a zero-row window was accepted")
+            Err(e) => assert(e.kind == ErrorKind.InvalidInput)
+        }
+    }
+}
+
+// ─── PTY-4: the end of the terminal ──
+
+test "p294 PTY-4a: a child that exits by itself - every byte, then Ok(0), then its exit code" {
+    if on_pty("PTY-4a") {
+        consume pty = must_pty(bye_cmd().start_pty(size(24, 80)), "start")
+        ro (screen, eof) = screen_to_end(pty, 20)
+        assert(find_bytes(screen, "bye".bytes(), 0) >= 0)
+        assert(eof)                                                // Ok(0) after the last byte, no hang
+        match wait_within(pty, 10) {
+            Some(st) => assert(st.code() == 3)
+            None => panic("PTY-4a: the child did not exit")
+        }
+        // The terminal is gone with the child: a resize says so.
+        match pty.resize(size(30, 90)) {
+            Ok(_) => panic("PTY-4a: resize of a closed terminal succeeded")
+            Err(e) => assert(e.kind == ErrorKind.NotConnected)
+        }
+    }
+}
+
+test "p294 PTY-4b: close() of a live child hangs it up - close returns, the process is gone" {
+    if on_pty("PTY-4b") {
+        consume pty = must_pty(sleeper_cmd().start_pty(size(24, 80)), "start")
+        ro pid = pty.pid()
+        assert(pid > 0)
+        match must(pty.try_wait(), "try_wait") {
+            Some(_) => panic("PTY-4b: the sleeper ended by itself")
+            None => ()
+        }
+        ro t0 = Timestamp.now().unix_millis()
+        pty.close()
+        assert(Timestamp.now().unix_millis() - t0 < 5000)          // not the child's 30 s
+        match kill_pid(pid, Signal.Kill, false) {
+            Ok(_) => panic("PTY-4b: the child outlived close()")
+            Err(e) => assert(e.kind == ErrorKind.NotFound)
+        }
+    }
+}
+
+// ─── PTY-5: Ctrl-C ──
+
+test "p294 PTY-5: the byte 3 typed on the terminal is Ctrl-C - the child ends as Ctrl-C ends it" {
+    if on_pty("PTY-5") {
+        consume pty = must_pty(ctrl_c_cmd().start_pty(size(24, 80)), "start")
+        mut screen []u8 = []u8.new()
+        screen_until(pty, screen, "127.0.0.1".bytes(), 20)
+        assert(find_bytes(screen, "127.0.0.1".bytes(), 0) >= 0)    // the child is running
+        mut ctrl_c []u8 = []u8.new()
+        ctrl_c.push(3 as u8)
+        ro t0 = Timestamp.now().unix_millis()
+        assert(must(pty.write(ctrl_c), "ctrl-c") == 1)
+        match wait_within(pty, 15) {
+            Some(st) => assert(ended_by_ctrl_c(st))
+            None => panic("PTY-5: Ctrl-C did not end the child")
+        }
+        assert(Timestamp.now().unix_millis() - t0 < 10000)         // not its own ~30 s
+    }
+}
+
+// ─── Refusals ──
+
+test "p294 PTY-F: refusals - no program, a bad size, a signal the OS has no form for" {
+    if on_pty("PTY-F") {
+        match Command.new("nova-nonexistent-pty-xyz").start_pty(size(24, 80)) {
+            Ok(consume p) => {
+                p.close()
+                panic("PTY-F: a missing program started")
+            }
+            Err(e) => assert(e.kind == ErrorKind.NotFound)
+        }
+        match bye_cmd().start_pty(size(24, 0)) {
+            Ok(consume p) => {
+                p.close()
+                panic("PTY-F: a zero-column window was accepted")
+            }
+            Err(e) => assert(e.kind == ErrorKind.InvalidInput)
+        }
+        consume pty = must_pty(sleeper_cmd().start_pty(size(24, 80)), "start")
+        match interrupt_kill_kind() {
+            Some(kind) => match pty.kill(Signal.Interrupt) {
+                Ok(_) => panic("PTY-F: Interrupt has no Windows form, kill must refuse it")
+                Err(e) => assert(e.kind == kind)
+            }
+            None => ()
+        }
+        must(pty.kill(Signal.Kill), "kill")
+        match wait_within(pty, 10) {
+            Some(st) => assert(st.code() != 0 || st.signal() == Some(9))
+            None => panic("PTY-F: Kill did not end the child")
+        }
+        must(pty.kill(Signal.Kill), "kill after exit")             // idempotent, nothing sent
+    }
+}

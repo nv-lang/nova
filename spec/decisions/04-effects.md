@@ -8781,6 +8781,21 @@ export fn Child mut @kill(sig Signal) Proc -> Result[(), IoError]            // 
 export fn Child mut @stop(grace Duration) Proc -> Result[ExitStatus, IoError] // Terminate → grace → Kill
 export fn Child mut @wait_timeout(d Duration) Proc -> Result[Option[ExitStatus], IoError]  // None = жив, НЕ убит
 export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
+
+// Ф.4 — псевдотерминал (реализовано задачей #50 на Windows / ConPTY; POSIX — Ф.3, пока Err(Unsupported))
+export type PtySize value { ro rows int, ro cols int }                      // 1..32767 каждое
+export fn Command @start_pty(size PtySize) Proc -> Result[PtyChild, IoError]
+export type PtyChild consume value priv { handle *() }
+export fn PtyChild mut @read(mut buf []u8) Proc -> Result[int, IoError]    // io.Read: экран; Ok(0) = терминала нет
+export fn PtyChild mut @write(data []u8) Proc -> Result[int, IoError]      // io.Write: клавиатура
+export fn PtyChild mut @flush() -> Result[(), IoError]
+export fn PtyChild mut @resize(size PtySize) Proc -> Result[(), IoError]
+export fn PtyChild @pid() Proc -> int
+export fn PtyChild mut @wait() Proc -> Result[ExitStatus, IoError]
+export fn PtyChild mut @try_wait() Proc -> Result[Option[ExitStatus], IoError]
+export fn PtyChild mut @kill(sig Signal) Proc -> Result[(), IoError]       // всегда всё дерево
+export fn PtyChild consume @close() Proc                                    // повесить трубку → 500 мс → Kill дерева
+export fn PtyChild consume @cleanup(outcome ScopeOutcome) -> ()             // = close
 ```
 
 Отступления от наброска плана (имена и места, где язык сказал «нет»):
@@ -8793,8 +8808,12 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
   Тестового обработчика `Proc` пока нет; фикстуры Ф.1 гоняют настоящие процессы, риск R10 плана
   (расхождение подмены и реальности) не возникает, пока подмены нет.
 * `ExitStatus` получает поле `sig` (приватный смысл) и метод `signal()`; конструируется только в `os.nv`.
-* `Command.stderr_to_stdout()` и PTY **не реализованы** (Ф.3–Ф.4); их сигнатуры в плане остаются проектом, а не
-  частью принятого здесь. `Tree`/`Signal`/`kill`/`stop`/`wait_timeout`/`kill_pid` — реализованы в Ф.2 (выше).
+* `Command.stderr_to_stdout()` **не реализован**; его сигнатура в плане остаётся проектом, а не частью принятого
+  здесь. `Tree`/`Signal`/`kill`/`stop`/`wait_timeout`/`kill_pid` — реализованы в Ф.2 (выше); PTY — в Ф.4 (ниже).
+* **PTY (Ф.4): `spawn_pty` → `start_pty`**, по той же причине и для пары с `start`. `PtySize` конструируется
+  пользователем (`PtySize { rows: 24, cols: 80 }`). `PtyChild` получил `try_wait` (как `Child`). Разделения
+  `PtyChild` на читателя и писателя для двух волокон нет (в рантайме слоты независимы, в Nova — одно
+  `consume`-значение): маркер `[M-294-pty-split]` в плане 294.
 
 **Управление процессом (Ф.2, нормативно):**
 
@@ -8830,6 +8849,37 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 * Сигналы на Windows: только `Kill` и `Terminate` (оба — завершение процесса); остальные — `Err(Unsupported)`, не
   тихая подмена. `ExitStatus.signal()` на Windows всегда `None`, в том числе после нашего `kill`: код — тот,
   что оставил `TerminateProcess` (1).
+
+**Псевдотерминал (Ф.4, нормативно; одинаково на обеих ОС, кроме оговорённого в §5):**
+
+* Один дуплексный байтовый канал (`read` — экран, `write` — клавиатура) + размер окна + жизнь потомка. Чтение и
+  запись — тот же тянущий / паркующий код, что у потоков §3 (п. 2–4, 11): давление назад, `NotConnected` для
+  закрытого.
+* **Байты — терминала, не потомка.** Эхо набранного и `\n` → `\r\n` делает терминал. Побайтовой прозрачности вывода
+  спека НЕ обещает: ConPTY перерисовывает экран своими последовательностями (§5). Нормативна эквивалентность
+  ЭКРАНА; фикстуры сверяют подстроки в порядке появления.
+* **Enter — `\r`** (на POSIX `ICRNL` даёт то же; ConPTY по `\n` строку не завершает — замер Ф.4).
+* **Ctrl-C — байт 3** в `write`: потомок получает SIGINT / `CTRL_C_EVENT`. Потомок на PTY стартует с включённой
+  обработкой Ctrl-C, даже если родитель её игнорирует (как сброс диспозиций сигналов в потомке на POSIX).
+  `kill(Interrupt)` на Windows — `Err(Unsupported)`, как у `Child`: Ctrl-C идёт через клавиатуру.
+  **Как это сделано на Windows и какое окно остаётся.** Флаг «игнорировать Ctrl-C» — состояние ПРОЦЕССА, и
+  `CreateProcess` копирует его в потомка. Рантайм читает его (бит 0 `ConsoleFlags` в параметрах процесса; другого
+  способа прочесть нет), и если он стоит — снимает (`SetConsoleCtrlHandler(NULL, FALSE)`), создаёт потомка и
+  возвращает ПРЕЖНЕЕ значение; не стоит — ничего не трогает. Всё это — под одним замком рантайма в
+  исключительном режиме, а каждый `uv_spawn` (`Command.run`, `Command.start`) держит тот же замок в общем режиме:
+  ни один потомок, созданный в это время из другого потока, не унаследует снятый флаг. **Окно** — время одного
+  `CreateProcess`, когда сам родитель (если он игнорировал Ctrl-C) Ctrl-C НЕ игнорирует: Ctrl-C, пришедший в ЕГО
+  консоль именно тогда, обработается по умолчанию (завершит родителя). Вне этого окна состояние родителя не
+  меняется.
+* **Потомок — лидер своего дерева всегда**: `kill`, отмена scope и `close` бьют по всему дереву. **Дерево и терминал
+  не переживают потомка**: при его выходе оставшиеся члены дерева убиваются, терминал закрывается, и `read` после
+  последнего байта отдаёт `Ok(0)`. `wait()` возвращается по выходу потомка, не дожидаясь вычитки экрана.
+* `resize` — `Err(InvalidInput)` вне 1..32767, `Err(NotConnected)` после закрытия терминала.
+* `close` (и `cleanup`): наши концы закрываются первыми (иначе невычитанный экран держит закрытие консоли, R8),
+  затем терминал вешается (POSIX: SIGHUP; Windows: `ClosePseudoConsole`), пауза 500 мс
+  (`NOVA_PROC_RELEASE_GRACE_MS`), `Kill` дерева, возврат — когда потомка нет. Невычитанный вывод теряется.
+* Нет терминала на этой ОС (Windows старше 10 1809; POSIX до Ф.3) — `start_pty` даёт `Err(Unsupported)`; наличие
+  ConPTY проверяется во время выполнения, а не загрузчиком.
 
 ### 3. Семантика потоков (нормативно)
 
@@ -8874,7 +8924,7 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 | (б) Windows: Job Object **поверх** `uv_spawn` | `Assign` сразу после `uv_spawn`: 0 побегов из 30; с задержкой 100 мс: **30 из 30** внуков уже вне задания — окно гонки настоящее. Вложенное задание (у libuv свой job) назначается без ошибки | решено: `Tree.Group` на Windows — путь `CreateProcess(CREATE_SUSPENDED)` + `Assign` + `ResumeThread` (0 побегов из 30). **Ф.2 (задача #44) сделала иначе**: libuv не даёт вклиниться, поэтому `Assign` идёт сразу после `uv_spawn` — гарантия ослаблена до «внук, порождённый до `Assign`, вне задания»; строка с задержкой 100 мс (30 из 30) доказывает, что окно настоящее. Упрощение `[M-294-win-job-suspended]` |
 | (б) POSIX: дерево | `UV_PROCESS_DETACHED` (= `setsid`) + `kill(-pid)` убивает внука; обычный `kill(pid)` оставляет внука жить | Ф.2: `Group` — явный, `Single` — умолчание (как в плане) |
 | (в) PTY POSIX | `forkpty`: мастер открывается `uv_pipe_open`, читается `uv_read_start`; эхо и `\n`→`\r\n` ядром; `TIOCSWINSZ` виден потомку (`40 120`); конец — `EIO` (−5), не `EOF` | Ф.3: `EIO` переводится в `Ok(0)`, как в плане |
-| (в) PTY Windows | `CreatePseudoConsole` работает; код выхода 3 сохранён; поток вывода закрывается (`ERROR_BROKEN_PIPE`, 109) **только после** `ClosePseudoConsole`; перед текстом — служебные последовательности (`ESC[?9001h`, `ESC[2J`, заголовок окна) | Ф.4: допустимы префикс/суффикс (PTY-2 принимает вхождение подстроки); `close` сначала вычитывает вывод. Открыто для Ф.4: в пробе `hello` ушёл в stdout РОДИТЕЛЯ, а не в псевдоконсоль (родитель без консоли) — выяснить до реализации |
+| (в) PTY Windows | `CreatePseudoConsole` работает; код выхода 3 сохранён; поток вывода закрывается (`ERROR_BROKEN_PIPE`, 109) **только после** `ClosePseudoConsole`; перед текстом — служебные последовательности (`ESC[?9001h`, `ESC[2J`, заголовок окна) | Ф.4: допустимы префикс/суффикс (PTY-2 принимает вхождение подстроки); `close` сначала вычитывает вывод. Открыто для Ф.4: в пробе `hello` ушёл в stdout РОДИТЕЛЯ, а не в псевдоконсоль (родитель без консоли) — выяснить до реализации. **Ф.4 (#50) выяснила:** без `STARTF_USESTDHANDLES` потомок наследует ПЕРЕНАПРАВЛЕННЫЕ std-дескрипторы родителя и пишет мимо терминала; с ним (пустые дескрипторы) — `hello` в псевдоконсоли. И замеры Ф.4: вывод потомка ConPTY перерисовывает (`ESC[0m` → `ESC[m`, `ESC[2J` — перерисовка; флаг `PSEUDOCONSOLE_PASSTHROUGH_MODE` (0x8) встроенный conhost игнорирует — замер на Windows 11, версия 10.0.26300.9550) — «неизменные байты» недостижимы, PTY-2 сверяет экран; Enter — `\r`; Ctrl-C доходит, только если потомок не унаследовал «игнорировать Ctrl-C» |
 | `Proc` как отдельный эффект | компилируется, `#default_handler`, дескрипторы `*()` и кортежи в операциях допустимы | п. 1 подтверждён |
 | macOS | **не проверялся** (нет машины) | не заявляется поддержанным |
 
@@ -8882,6 +8932,15 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 
 `Unsupported` — единственный способ сказать «этой ОС нельзя» (`Terminate`/`Interrupt` на Windows без
 консольной группы, ConPTY на Windows старше 1809). Подробности по строкам — в плане 294, п. 3.4.
+
+Дополнение Ф.4 к строкам PTY таблицы плана (нормативно):
+
+| вопрос | POSIX (Ф.3) | Windows (ConPTY, Ф.4) |
+|---|---|---|
+| вывод потомка | байты потомка проходят как есть (дисциплина линии добавляет эхо и `\r\n`) | **экран перерисовывается**: те же символы и атрибуты, но своими последовательностями (`ESC[0m` → `ESC[m`, очистка — полная перерисовка, служебный префикс `ESC[?9001h…`, заголовок окна) |
+| дерево | сессия потомка (`setsid`), `kill(-pgid)` | Job Object, назначенный ДО запуска потомка (`CREATE_SUSPENDED`): окна гонки `[M-294-win-job-suspended]` здесь нет |
+| `ExitStatus` после Ctrl-C | `signal() == Some(2)` | `code() == 0xC000013A` (обычно), `signal() == None` |
+| конец экрана | `EIO` мастера → `Ok(0)` | выходной пайп закрывается после `ClosePseudoConsole`, который рантайм зовёт сам при выходе потомка (в своём потоке: вызов может ждать вычитки экрана) |
 
 ### 6. Приёмка Ф.1 (что доказано машиной, а что глазами)
 
@@ -8899,6 +8958,18 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 дерево (S9c), `cleanup` после `wait()` ничего не делает (S9d), `wait_timeout` (W1, W2), края `kill` / `kill_pid`
 (K1–K5), закрытый поток не зацикливает `read_to_end` (R1). Windows — прогон в отчёте задачи #44 (и в
 Windows-задании #40, когда оно появится).
+
+**Приёмка Ф.4** — `std/src/os/pty/pty_test.nv`: клавиатура (PTY-1: `abc\r` → `<ABC>`, код 0), экран (PTY-2: атрибут 31
+перед `red`, сброс и очистка после, `end` после очистки), размер (PTY-3: 24×80, после `resize` 40×120; размер 0 —
+`InvalidInput`), конец (PTY-4a: `bye`, затем `Ok(0)`, код 3, `resize` после — `NotConnected`; PTY-4b: `close` живого
+потомка < 5 с, затем `kill_pid` — `NotFound`), Ctrl-C (PTY-5: байт 3 → код `0xC000013A` < 10 с), отказы (PTY-F: нет
+программы — `NotFound`, нулевой размер — `InvalidInput`, `Interrupt` — `Unsupported`, `Kill` идемпотентен). Windows
+(clang): 7/7, 20 повторов собранного теста из 20 без зависаний (2–3 с каждый). Саботаж: без `ResizePseudoConsole` —
+красный ровно PTY-3; без закрытия консоли при выходе потомка — PTY-1/2/3/4a (`eof` не наступает); без снятия
+флага Ctrl-C — ровно PTY-5; без `STARTF_USESTDHANDLES` — PTY-1/3/5 (вывод уходит мимо терминала). Машинный вердикт —
+отдельный шаг `std/src/os/pty` задания `windows-process-acceptance.yml` без `continue-on-error`. На POSIX до Ф.3 каждая
+фикстура проверяет `Err(Unsupported)` и печатает `SKIP PTY-n: POSIX PTY - next task (plan 294 F.3)` — у раннера нет
+пропуска во время выполнения, поэтому строка теста — PASS с этой пометкой.
 
 **Связи:** D453 (`process_run`, `Command.run` — остаются) · D456 (граница эффекта) · D188/D432 (`Cleanup`) ·
 D93/D439 (отмена и `supervised`) · план [294](../../docs/plans/294-process-streams-pty.md) · план [176](../../docs/plans/176-io-fs-os.md).

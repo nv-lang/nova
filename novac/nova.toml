@@ -572,7 +572,7 @@
 # 2026-10-08 (task #44): 181 -- D492's F.2 acceptance names the fixture's new directory; path only, no rule.
 # 2026-10-08 (task #44 round 2, registry 1866): 182 -- D492: a Tree.Group does not outlive its leader, nothing
 # is signalled after the exit, Windows kill_pid(tree) goes through handles. Library semantics, no language rule.
-#   spec-queue: 182
+#   spec-queue: 183
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

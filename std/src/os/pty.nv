@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/pty.nv — a child on a pseudo terminal (Plan 294 F.4, D492).
+//
+// One duplex byte channel (the terminal), its window size, and the life of the child attached
+// to it:
+//
+//     consume pty = Command.new("tool").start_pty(PtySize { rows: 24, cols: 80 })?
+//     pty.write("ls\r".bytes())?            // keyboard: Enter is "\r", as a real keyboard sends
+//     ro n = pty.read(buf)?                 // screen: echo, output, terminal sequences; Ok(0) = end
+//     pty.resize(PtySize { rows: 40, cols: 120 })?
+//     ro status = pty.wait()?
+//
+// The C side is nova_rt/process.c (`proc_pty_*`); reading and writing are the same pull-style /
+// parked operations as the `Child` pipes (proc.nv), with independent slots: a reader fiber and a
+// writer fiber need no `select`.
+//
+// **Systems.** Windows: ConPTY, Windows 10 1809 or newer (older: `Err(Unsupported)`). POSIX
+// (`forkpty`) is the next phase of plan 294; until then `start_pty` is `Err(Unsupported)` there.
+//
+// **Bytes are the terminal's, not the child's.** On POSIX the line discipline echoes input and
+// turns "\n" into "\r\n". ConPTY goes further: it RENDERS the child's output into a screen and
+// sends that screen as its own VT sequences — the same picture, not the same bytes (`ESC[0m`
+// arrives as `ESC[m`, a clear repaints the screen, a start-up prefix comes first). Match what
+// the child shows, never exact byte strings (D492, table 3.4).
+
+module std.os
+
+import std.io.{IoError, ErrorKind}
+
+/// A terminal window size in character cells (1..32767 each).
+#stable(since = "0.1")
+export type PtySize value { ro rows int, ro cols int }
+
+/// A child process attached to a pseudo terminal. `read` is its screen, `write` its keyboard.
+/// The child leads its own tree: `kill`, scope cancellation and `close` reach every process it
+/// started, and the tree and the terminal do not outlive the child — when it exits, the rest is
+/// killed and `read` returns `Ok(0)` after the last byte. `consume`: leaving the scope closes the
+/// terminal (`close`).
+#stable(since = "0.1")
+export type PtyChild consume value priv { handle *() }
+
+/// Start the child on a new pseudo terminal of `size`. `Err(Unsupported)` when this system has
+/// no pseudo terminal for us (Windows before 10 1809; POSIX until plan 294 F.3). Otherwise the
+/// errors of `Command.start`. The program, arguments, environment and directory are taken as
+/// `Command.start` takes them; the `stdin` / `stdout` / `stderr` / `tree` settings do not apply
+/// (the terminal is all three streams, and the tree is always the child's).
+#stable(since = "0.1")
+export fn Command @start_pty(size PtySize) Proc -> Result[PtyChild, IoError] {
+    ro argv = join_nul(@args)?
+    ro use_env = @clear_env || !@envs.is_empty()
+    ro deduped = dedupe_envs(@envs)
+    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
+    ro cwd_bytes = match @dir {
+        Some(p) => p.os_bytes()
+        None => []u8.new()
+    }
+    ro (err, h) = Proc.pty_launch(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes, size.rows, size.cols)
+    if err == PROC_UNSUPPORTED { Err(IoError.new(ErrorKind.Unsupported, "start_pty: no pseudo terminal on this system")) }
+    else if err < 0 { Err(proc_io_err(err, "start_pty")) }
+    else { Ok(PtyChild { handle: h }) }
+}
+
+/// Read what the terminal shows, up to `buf.len()` bytes. Parks the fiber until bytes arrive.
+/// `Ok(0)` = the terminal is gone (the child exited and everything it printed was read).
+#stable(since = "0.1")
+export fn PtyChild mut @read(mut buf []u8) Proc -> Result[int, IoError] {
+    stream_result(Proc.pty_read(@handle, buf), "read pty")
+}
+
+/// Type `data` on the terminal's keyboard: the whole buffer, or an error. Enter is "\r";
+/// the byte 3 is Ctrl-C (the child gets SIGINT / CTRL_C_EVENT).
+#stable(since = "0.1")
+export fn PtyChild mut @write(data []u8) Proc -> Result[int, IoError] {
+    stream_result(Proc.pty_write(@handle, data), "write pty")
+}
+
+/// `io.Write` conformance: writes reach the terminal directly — `flush` is a no-op.
+#stable(since = "0.1")
+export fn PtyChild mut @flush() -> Result[(), IoError] => Ok(())
+
+/// Change the window size; the child sees the new size (SIGWINCH / a console resize event).
+/// `Err(InvalidInput)` for a size outside 1..32767, `Err(NotConnected)` once the terminal is gone.
+#stable(since = "0.1")
+export fn PtyChild mut @resize(size PtySize) Proc -> Result[(), IoError] {
+    ro rc = Proc.pty_resize(@handle, size.rows, size.cols)
+    if rc == 0 { Ok(()) }
+    else if rc == PROC_CLOSED { Err(IoError.new(ErrorKind.NotConnected, "resize pty")) }
+    else { Err(proc_io_err(rc, "resize pty")) }
+}
+
+/// The OS process id of the child.
+#stable(since = "0.1")
+export fn PtyChild @pid() Proc -> int { Proc.pty_pid(@handle) }
+
+/// Wait for the child to exit; parks the fiber. A cancelled scope kills the tree and gives
+/// `Err(Interrupted)`, as `Child.wait`. Windows: `signal()` is always `None`; a child ended by
+/// Ctrl-C reports its code (usually 0xC000013A).
+#stable(since = "0.1")
+export fn PtyChild mut @wait() Proc -> Result[ExitStatus, IoError] {
+    ro (rc, code, sig) = Proc.pty_wait(@handle)
+    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "pty wait")) }
+    else if rc < 0 { Err(proc_io_err(rc, "pty wait")) }
+    else { Ok(exit_status_of(code, sig)) }
+}
+
+/// Non-blocking: `Ok(Some(status))` once the child has exited, `Ok(None)` while it runs.
+#stable(since = "0.1")
+export fn PtyChild mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
+    ro (rc, code, sig) = Proc.pty_try_wait(@handle)
+    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
+    else if rc == 1 { Ok(None) }
+    else { Err(proc_io_err(rc, "pty try_wait")) }
+}
+
+/// Send `sig` to the child's whole tree, as `Child.kill` with `Tree.Group`: `Ok` and nothing sent
+/// once the child has exited; Windows knows only `Kill` / `Terminate` (`Err(Unsupported)` for the
+/// rest — Ctrl-C goes through the keyboard, `write([3])`).
+#stable(since = "0.1")
+export fn PtyChild mut @kill(sig Signal) Proc -> Result[(), IoError] {
+    signal_result(Proc.pty_kill(@handle, signal_number(sig)), "pty kill")
+}
+
+/// Close the terminal. A child still running is hung up (POSIX: SIGHUP; Windows: the console is
+/// closed under it), gets 500 ms to leave, then its tree is killed; the call returns once it is
+/// gone. Unread output is dropped.
+#stable(since = "0.1")
+export fn PtyChild consume @close() Proc { Proc.pty_close(@handle) }
+
+/// `Cleanup[never]` (D188): leaving the scope closes the terminal, see `close`.
+#stable(since = "0.1")
+export fn PtyChild consume @cleanup(_outcome ScopeOutcome) -> () { @close() }

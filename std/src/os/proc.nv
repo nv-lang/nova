@@ -109,6 +109,16 @@ export type Proc effect {
     fn pipe_read(pipe *(), mut buf []u8) -> int
     fn pipe_write(pipe *(), data []u8) -> int
     fn pipe_close(pipe *()) -> ()
+    // Plan 294 F.4 — pseudo terminal (pty.nv). Same conventions as the child operations above.
+    fn pty_launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, rows int, cols int) -> (int, *())
+    fn pty_read(pty *(), mut buf []u8) -> int
+    fn pty_write(pty *(), data []u8) -> int
+    fn pty_resize(pty *(), rows int, cols int) -> int
+    fn pty_pid(pty *()) -> int
+    fn pty_wait(pty *()) -> (int, int, int)
+    fn pty_try_wait(pty *()) -> (int, int, int)
+    fn pty_kill(pty *(), sig int) -> int
+    fn pty_close(pty *()) -> ()
 }
 
 // ─── Types ──
@@ -453,5 +463,28 @@ export fn real_proc() -> Effect[Proc] {
         pipe_read(pipe *(), mut buf []u8) -> int => unsafe { proc_pipe_read(pipe, buf.ptr(), buf.len()) }
         pipe_write(pipe *(), data []u8) -> int => unsafe { proc_pipe_write(pipe, data.ptr(), data.len()) }
         pipe_close(pipe *()) -> () { unsafe { proc_pipe_close(pipe) } }
+        pty_launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, rows int, cols int) -> (int, *()) {
+            mut err = 0
+            ro h = unsafe { proc_pty_spawn(program.ptr(), program.len(), argv.ptr(), argv.len(), argc, env.ptr(), env.len(), envc, use_env, cwd.ptr(), cwd.len(), rows, cols, &err) }
+            (err, h)
+        }
+        pty_read(pty *(), mut buf []u8) -> int => unsafe { proc_pty_read(pty, buf.ptr(), buf.len()) }
+        pty_write(pty *(), data []u8) -> int => unsafe { proc_pty_write(pty, data.ptr(), data.len()) }
+        pty_resize(pty *(), rows int, cols int) -> int => unsafe { proc_pty_resize(pty, rows, cols) }
+        pty_pid(pty *()) -> int => unsafe { proc_pty_pid(pty) }
+        pty_wait(pty *()) -> (int, int, int) {
+            mut code = 0
+            mut sig = 0
+            ro rc = unsafe { proc_pty_wait(pty, &code, &sig) }
+            (rc, code, sig)
+        }
+        pty_try_wait(pty *()) -> (int, int, int) {
+            mut code = 0
+            mut sig = 0
+            ro rc = unsafe { proc_pty_try_wait(pty, &code, &sig) }
+            (rc, code, sig)
+        }
+        pty_kill(pty *(), sig int) -> int => unsafe { proc_pty_kill(pty, sig) }
+        pty_close(pty *()) -> () { unsafe { proc_pty_close(pty) } }
     }
 }
