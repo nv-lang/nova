@@ -573,14 +573,14 @@ export fn FnBuilder mut @temp(ty TyId) -> Local {
     @local(ty, LocalKind.Temp, name)
 }
 
-/// A local for the source binding `name` of type `ty`.
+/// A local for the source binding `name` of type `ty`; each discard `_` gets its own C name (registry 1816).
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {
     if name == "" {
         ice_at(
             "novac/src/lower/ir.nv:579",
             "lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
-    @local(ty, LocalKind.Binding, c_ident(name))
+    @local(ty, LocalKind.Binding, if name == "_" { "_novac_discard${@locals.len()}" } else { c_ident(name) })
 }
 
 /// Appends a local and returns its index -- the one place locals are created. A local is

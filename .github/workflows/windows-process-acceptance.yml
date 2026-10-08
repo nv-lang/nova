@@ -1,0 +1,116 @@
+name: windows-process-acceptance
+
+# ЗАЧЕМ. План 294 (потоки дочернего процесса / PTY), риск R9: все остальные
+# задания здесь на Linux, и Windows-половина приёмки (`cmd.exe`/`ping`-ветки
+# `#cfg(target_os = "windows")`, `uv_spawn`, потом ConPTY) не получала машинного
+# вердикта. Это задание его даёт. Слово владельца 2026-10-08 («да» на Windows-задание), задача #40.
+#
+# НЕ ОБЯЗАТЕЛЬНОЕ. Имя workflow НЕ входит в `REQUIRED` в
+# `scripts/guards/check-push-proven-by-ci.py`, поэтому красный прогон не блокирует
+# пуш в main. Сделать его обязательным может только интегратор отдельным словом
+# (после первой недели зелёного): тогда имя добавляется в `REQUIRED` этого стража.
+#
+# ЧТО ГОНЯЕТ. Сборка `nova-cli` (release), затем под clang и MSVC: (1) дымовая
+# фикстура `spec_tests` p1418_exit_process_immediate (обязательный шаг); (2) модуль
+# `std/src/os` целиком (в нём d453_os_process_run_test.nv — реальный spawn + wait +
+# код возврата, supervised(timeout:)); шаг (2) пока `continue-on-error`, см. ниже.
+# Когда Ф.1 плана 294 принесёт фикстуры потоков/PTY, они живут в `std/src/os/` и
+# попадают под шаг (2); расширять набор — правкой `FILTER`.
+#
+# GC и libuv. vcpkg НЕ нужен: при отсутствии `gc.lib` `nova` собирает bdwgc из
+# сабмодуля (~10 с, #269 Ф.2), libuv собирается из сабмодуля при первом `test`.
+# Тулчейны — clang (LLVM есть на windows-latest) и MSVC (VS 2022, vcvars через vswhere).
+# apt здесь нет и быть не должно (`scripts/tools/ci-apt-install.sh` — только Linux).
+#
+# ВРЕМЯ И КЭШИ. Холодный прогон: сборка nova-cli release ~8-12 мин на windows-latest,
+# libuv+bdwgc+rt-архив ~1-2 мин, фикстуры ~1-3 мин; предел задания 45 мин. Кэшируются
+# реестр/git cargo, `nova-cli/target` и `target/libuv-cache` (ключ — Cargo.lock);
+# тёплый прогон ожидается 3-6 мин. Цифры факта — в плане 294, раздел CI.
+
+on:
+  push:
+    branches: [integrate, 'integrate/**']
+  pull_request:
+    paths:
+      - ".github/workflows/windows-process-acceptance.yml"
+      - "std/src/os/**"
+      - "compiler-codegen/nova_rt/**"
+  workflow_dispatch:
+
+concurrency:
+  group: windows-process-acceptance-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows-process:
+    name: nova test std/os on windows-latest, ${{ matrix.toolchain }} (non-required)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # MSVC информационный: C2099 в сгенерированном C роняет всё, что тянет `std.os`
+    # (реестр 221.1 №1850); вердикт приёмки даёт clang. Убрать, когда MSVC позеленеет.
+    continue-on-error: ${{ matrix.toolchain == 'msvc' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [clang, msvc]
+    env:
+      FILTER: std/src/os
+    steps:
+      - name: Checkout nova (submodules recursive — nova_rt/libuv, gc, libatomic_ops)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Cache cargo registry + targets + libuv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nova-cli/target
+            target/libuv-cache
+          key: ${{ runner.os }}-windows-process-${{ hashFiles('nova-cli/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-windows-process-
+
+      - name: Build nova-cli (release)
+        shell: bash
+        run: |
+          echo "building nova-cli on $RUNNER_OS"
+          cargo build --release --manifest-path nova-cli/Cargo.toml
+
+      # Дымовая проверка Windows-половины: одиночная фикстура, выходящая через
+      # `std.os.exit_process` (EXPECT_EXIT_CODE 7, lane --exit). Шаг ОБЯЗАН быть зелёным.
+      - name: nova test spec_tests process smoke (${{ matrix.toolchain }})
+        shell: bash
+        run: |
+          echo "running: nova test spec_tests --exit --filter p1418_exit_process --toolchain ${{ matrix.toolchain }}"
+          ./nova-cli/target/release/nova test spec_tests --exit --filter p1418_exit_process --toolchain ${{ matrix.toolchain }} --timeout 120 2>&1 | tee smoke.out
+          rc=${PIPESTATUS[0]}
+          if ! grep -Eq '^PASS: [1-9]' smoke.out; then echo "FAIL: no test passed - filter matched nothing"; exit 1; fi
+          exit $rc
+
+      # `std/src/os` собирается КАК ОДИН модуль (папка-модуль: все `*_test.nv` — пиры),
+      # поэтому фильтр по имени одного файла (`os/d453`) не находит ничего: первый
+      # прогон дал `PASS: 0 FAIL: 0` и зелёный. Пустой зелёный — не вердикт, шаг
+      # ниже краснеет, если не прошёл ни один тест.
+      #
+      # `continue-on-error`: на 2026-10-08 модуль не собирается на Windows ни под
+      # clang, ни под MSVC (С не компилируется: `const nova_str` передан вместо
+      # `Nova_Vec____nova_byte *`, MSVC C2099/C2440, в `d324_os_env_args_cwd_test`;
+      # реестр 221.1 №1850). Красный шаг виден в прогоне, но не краснит задание;
+      # когда дефект закрыт — убрать `continue-on-error`.
+      - name: nova test std/src/os (${{ matrix.toolchain }})
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "running: nova test std --filter $FILTER --toolchain ${{ matrix.toolchain }}"
+          ./nova-cli/target/release/nova test std --filter "$FILTER" --toolchain ${{ matrix.toolchain }} --timeout 120 2>&1 | tee test.out
+          rc=${PIPESTATUS[0]}
+          if grep -Eq '^PASS: 0 ' test.out; then echo "FAIL: zero tests ran - filter matched nothing"; exit 1; fi
+          exit $rc
