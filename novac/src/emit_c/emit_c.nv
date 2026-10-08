@@ -308,7 +308,7 @@ fn Emitter mut @first_in_program(name str) -> bool {
 /// Emit every fn declaration of the file in source order.
 fn Emitter mut @emit_file(file Node) -> () {
     match file {
-        Leaf(_) => ice_at("novac/src/emit_c/emit_c.nv:310", "emit: file node must be a branch")
+        Leaf(_) => ice_at("novac/src/emit_c/emit_c.nv:311", "emit: file node must be a branch")
         Branch { kind, .. } => {
             assert(kind == NodeKind.File, "emit: root is not File")
             for c in @reached_fns(file) {
@@ -361,7 +361,7 @@ fn Emitter @reached_fns(file Node) -> []Node {
 fn Emitter mut @emit_file_protos(file Node) -> () {
     for c in @reached_fns(file) {
         ro row = decl_fn_row(c, @ctx) ?? ice_at(
-            "novac/src/emit_c/emit_c.nv:362",
+            "novac/src/emit_c/emit_c.nv:363",
             "emit: a reached declaration with no row in the callable table")
         if @ctx.fns.is_entry_row(row) { continue }
         ro fd = @ctx.fns.rows[raw_row(row)]
@@ -379,7 +379,7 @@ fn Emitter mut @emit_file_protos(file Node) -> () {
 fn decl_name(f Node) -> str {
     ro kids = branch_children(f)
     leaf_text(kids[decl_name_at(kids) ?? ice_at(
-        "novac/src/emit_c/emit_c.nv:380",
+        "novac/src/emit_c/emit_c.nv:381",
         "emit: a declaration without a name reached the emitter")])
 }
 
@@ -398,7 +398,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
     // wrapping its answer in `FnRow(..)` again is E_NEWTYPE_CTOR_SELF (D52
     // amendment 2026-10-02).
     ro fn_row = decl_fn_row(f, @ctx) ?? ice_at(
-        "novac/src/emit_c/emit_c.nv:399",
+        "novac/src/emit_c/emit_c.nv:400",
         "emit: a declaration with no row in the callable table")
     // The TYPES come from the ROW, as a VIEW: the registry decided them while
     // collecting, and asking `defs` again was a second door to one decision
@@ -528,7 +528,7 @@ fn Emitter mut @emit_signature(f Node, name str, row FnRow, subst []TyId, ptypes
         // The name by its DOOR, not by index zero: `mut v int` puts the mode
         // there, and the emitter used to print the mode as the parameter name.
         ro pname = leaf_text(pk[param_name_at(pk) ?? ice_at(
-            "novac/src/emit_c/emit_c.nv:529",
+            "novac/src/emit_c/emit_c.nv:530",
             "emit: a parameter without a name reached the emitter")])
         // Position is the whole mapping: plan 273 §4.4 fixes a parameter's
         // slot, and the count is asserted after the loop rather than assumed.
@@ -605,7 +605,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     @lo.ir.end_body()
     ro lowered = @lo.ir.finish()
     if lowered.blocks.len() == 0 {
-        ice_at("novac/src/emit_c/emit_c.nv:607", "emit: a finished body without its entry block")
+        ice_at("novac/src/emit_c/emit_c.nv:608", "emit: a finished body without its entry block")
     }
     // THE BODY IS PRINTED HERE, IN ONE WALK (M2b-2 step 3b): the graph is sealed, so
     // printing no longer depends on the order in which it was built. Everything above

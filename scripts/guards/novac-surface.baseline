@@ -1253,7 +1253,10 @@ resolve 27
 # 2026-10-06, task #23 (274.11 E.10 step 2b): sem 391 -> 395: `CNames`, `CNames.new`, `@add`, `@has` --
 #   a set of OUR C identifiers (what one unit wants another to print, what an earlier unit printed),
 #   asked by mono, the emitter and the pipeline; beside InteropTable and kept apart from it.
-sem 397
+# 2026-10-08, task #29, syncing main past task #22 (which had already moved the base to 397 on its
+#   own): sem 397 -> 398, same export as the 396 -> 397 note above (`c_ident`) -- that note named it
+#   against a base #22 later moved under it, during #29's rework rounds.
+sem 398
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

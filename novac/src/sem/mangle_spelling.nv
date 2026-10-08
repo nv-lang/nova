@@ -45,16 +45,18 @@ import ../types.{TyId}
 // read as a claimed Nova/std name, turning `if`/`void`/`return` in unrelated
 // files red. The door that owns these words is this one, not `builtins`.
 
-/// C keywords, C89..C23 and the extensions the supported compilers accept.
-/// The one C23 keyword for thread-local storage is NOT spelled here (274
-/// §8.1): it lives behind the atomics door and is asked separately below --
-/// this table may not carry it, by the same P5 reasoning as the paragraph
-/// above: a name confined to one door is not a second literal elsewhere.
-/// Four entries below are not literals: `char`/`int`/`bool` collide with
-/// Nova's own primitive spellings and `enum` with `SUM_MARKER` -- P5 gives
-/// each ONE home in `builtins.nv`, so the door asks for them rather than
-/// retyping them (a literal here would read as a second, unrelated claim to
-/// the same Nova name, which `check-novac-no-name-hardcode.py` polices).
+// C keywords, C89..C23 and the extensions the supported compilers accept.
+// The one C23 keyword for thread-local storage is NOT spelled here (274
+// §8.1): it lives behind the atomics door and is asked separately below --
+// this table may not carry it, by the same P5 reasoning as the paragraph
+// above: a name confined to one door is not a second literal elsewhere.
+// Four entries below are not literals: `char`/`int`/`bool` collide with
+// Nova's own primitive spellings and `enum` with `SUM_MARKER` -- P5 gives
+// each ONE home in `builtins.nv`, so the door asks for them rather than
+// retyping them (a literal here would read as a second, unrelated claim to
+// the same Nova name, which `check-novac-no-name-hardcode.py` polices).
+// (`///` was dropped here: Plan 45 Ф.3 ignores a doc-comment before a bare
+// module-level `ro` and nova lint flags the ignored comment -- P30.)
 ro C_NAME_KEYWORDS = []str.of("auto", "break", "case", CHAR_TYPE_NAME, "const", "continue", "default", "do",
     "double", "else", SUM_MARKER, "extern", "float", "for", "goto", "if",
     "inline", INT_TYPE_NAME, "long", "register", "restrict", "return", "short",
@@ -66,9 +68,9 @@ ro C_NAME_KEYWORDS = []str.of("auto", "break", "case", CHAR_TYPE_NAME, "const", 
     "_Generic", "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local",
     "asm", "fortran")
 
-/// Lower-case macros of the headers a generated unit includes (Windows and glibc / POSIX).
-/// `assert` is not a literal here either: it is Nova's own intrinsic name
-/// (`ASSERT_FN`, P5), which happens to be a glibc macro too.
+// Lower-case macros of the headers a generated unit includes (Windows and glibc / POSIX).
+// `assert` is not a literal here either: it is Nova's own intrinsic name
+// (`ASSERT_FN`, P5), which happens to be a glibc macro too.
 ro C_NAME_MACROS = []str.of("near", "far", "interface", "small", "hyper", "pascal", "cdecl", "min",
     "max", "linux", "unix", "i386", "alloca", ASSERT_FN, "errno", "stdin", "stdout", "stderr", "offsetof",
     "setjmp", "sigsetjmp", "h_addr", "h_errno", "fpclassify", "isfinite",
@@ -87,10 +89,10 @@ ro C_NAME_MACROS = []str.of("near", "far", "interface", "small", "hyper", "pasca
     "pthread_cleanup_pop",
     "s_addr", "s_host", "s_net", "s_imp", "s_impno", "s_lh")
 
-/// The fixed members the generator declares next to user-named members.
+// The fixed members the generator declares next to user-named members.
 ro C_NAME_MEMBERS = []str.of("ctx", "schedlink")
 
-/// The prefixes the generator and the runtime reserve, and the compiler's own namespaces inside `_`.
+// The prefixes the generator and the runtime reserve, and the compiler's own namespaces inside `_`.
 ro C_NAME_PREFIXES = []str.of("_", "nv_", "nova_", "Nova", "NOVA")
 ro C_NAME_NAMESPACES = []str.of("_nv_", "_nova_", "_at_", "__")
 

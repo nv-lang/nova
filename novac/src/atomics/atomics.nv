@@ -10,6 +10,8 @@
 // Used by: sem/mangle_spelling.nv (`c_ident`'s escape rule).
 // Guarded by: check-novac-atomics-door.py, check-novac-surface.py.
 
+module novac.atomics
+
 /// The C23 keyword a Nova name must not take verbatim in C (thread-local
 /// storage): `thread_local`. Asked by the C-name door instead of a literal
 /// in its own table, so the word lives behind this one door.
