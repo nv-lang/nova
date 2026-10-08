@@ -57,7 +57,8 @@ jobs:
           toolchain: "1.85"
 
       - name: Install system deps (docs/guide/linux-build.md recipe)
-        run: sudo apt-get update && sudo apt-get install -y clang cmake make libgc-dev build-essential
+        run: bash scripts/tools/ci-apt-install.sh clang cmake make libgc-dev build-essential
+        timeout-minutes: 15
 
       - name: Cache cargo registry + targets
         uses: actions/cache@v4

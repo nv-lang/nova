@@ -57,7 +57,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: nova lint --rule W_LEADING_BINOP_CONTINUATION nova_tests, excl. self-test fixtures (must be clean)
@@ -72,7 +73,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # Plan 185 Ф.3-хвост / Plan 212 №6 (2026-07-18): --deny включён — W→E,
@@ -89,7 +91,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # Plan 185 Ф.3-хвост / Plan 212 №6 (2026-07-18): --deny включён.
@@ -105,7 +108,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: conv_pos.nv must still trigger findings (registry fires)
@@ -131,7 +135,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       - name: nova lint nova_tests (excl. self-test fixtures; legacy debt, non-blocking)

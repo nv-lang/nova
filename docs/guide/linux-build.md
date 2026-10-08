@@ -250,3 +250,7 @@ PARALLEL_MARK=0` mitigation, needed for `--enable-threads=posix` Boehm
 builds under sanitizers). `[M-tsan-race-detector]` and
 `[M-83.11-f2-arm-tsan]` (both gated on this doc's closure) can now
 proceed.
+
+## CI note
+
+The CI workflows install these packages through `scripts/tools/ci-apt-install.sh` (same package set as the `apt install` line above; adds a per-attempt time limit, up to 3 attempts and apt-level network/lock timeouts, because an unbounded `apt-get` once hung a CI step for 84+ minutes). For a local install the plain `sudo apt install` line is unchanged.
