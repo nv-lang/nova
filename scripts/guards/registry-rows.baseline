@@ -1625,6 +1625,9 @@
 # 2026-10-07, integrator: rows 1805 (hook takes the role from the main branch) and 1811 (fuzzer timeout without a kept case) filed = 1739, max 1810 -> 1811; 1805 leaves gaps=.
 # 2026-10-07, integrator: row 1812 (ice guard lost its conditional half; selftest fixed) = 1740, max 1812.
 # 2026-10-07, task #28 merging main: rows 1813-1815 on top of main 1740 = 1743, max 1812 -> 1815.
+# 2026-10-08, task #35: row 1840 added (option-over-tuple typedef timing, registry #1788's
+#   follow-up residual); rows 1758 -> 1759, max 1831 -> 1840; 1832-1839 are task #31's own
+#   reserved-but-unused numbers (line below, 2026-10-07) and join gaps= until its rows land.
 # 2026-10-07, task #22 merging main 79d34a942 (#31: rows 1816, 1830-1831): rows 1755 + 3 = 1758,
 #   max 1819 -> 1831; 1816 leaves gaps=, 1820-1829 (other tasks) join it.
 # 2026-10-07, task #32: rows 1817-1819 (numbers from the integrator: #1792's checker and oracle halves) on top
@@ -1642,8 +1645,9 @@
 # 2026-10-08, task #34: row 1829 (self-test assumed a local main) = 1756, max 1831; 1829 leaves gaps=.
 # 2026-10-08, task #34 merging main (task #22 in): main 1758 + 1823-1829 (#34) = 1765, max 1831;
 #   1823-1829 leave gaps=, 1820-1822 stay; one rows=/max= pair (the merge had brought two).
-rows=1765
-max=1831
+# 2026-10-08, task #38 merging the #35 base: main 1765 (rows=/max= pair kept single) + row 1840 (#35) = 1766, max 1831 -> 1840; 1832-1839 stay in gaps=.
+rows=1766
+max=1840
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
@@ -2199,7 +2203,8 @@ stale_gaps=0
 # repro dir renamed to match #1281.
 # rows 1231->1233, max 1279->1281.
 # rows 1228->1229, max 1276->1277.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839
+# 2026-10-08, task #35: 1832-1839 join gaps= (task #31 reserved them, filed only 1830-1831).
 # 2026-10-07, task #22 merging main 79d34a942: 1816 has its row (task #31) and leaves gaps=; 1820-1829 are other tasks' numbers.
 # 2026-10-07, task #34: 1820-1822 added to gaps= (rows of other in-flight tasks, not in main yet); #34 owns 1823-1829 and adds 1823-1828.
 # 2026-10-07, task #32: 1816 added to gaps= (task #31's row, not in main yet).
