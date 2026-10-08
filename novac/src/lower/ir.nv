@@ -21,6 +21,7 @@ import ../tree.{Node, AssignOp, NodeId, raw_node}
 import ../types.{TyId}
 import ../diag.{ice_at}
 import ../sem.{VariantRow, FnRow}
+import ../sem.{c_ident}
 
 /// A local of the lowered body: `Local(0)` is the return place (rustc `_0`);
 /// every other index is a source binding or a temporary, in creation order.
@@ -576,10 +577,10 @@ export fn FnBuilder mut @temp(ty TyId) -> Local {
 export fn FnBuilder mut @named(ty TyId, name str) -> Local {
     if name == "" {
         ice_at(
-            "novac/src/lower/ir.nv:578",
+            "novac/src/lower/ir.nv:579",
             "lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
-    @local(ty, LocalKind.Binding, name)
+    @local(ty, LocalKind.Binding, c_ident(name))
 }
 
 /// Appends a local and returns its index -- the one place locals are created. A local is
@@ -598,7 +599,7 @@ fn FnBuilder mut @local(ty TyId, kind LocalKind, name str) -> Local {
 export fn FnBuilder mut @declare_zeroed(l Local) -> () {
     ro i = raw_local(l)
     if i < 0 || i >= @locals.len() {
-        ice_at("novac/src/lower/ir.nv:601", "lower: declaring a local the body never created")
+        ice_at("novac/src/lower/ir.nv:602", "lower: declaring a local the body never created")
     }
     ro d = @locals[i]
     @locals[i] = LocalDecl { ty: d.ty, kind: d.kind, name: d.name, decl_at: DeclAt.Zeroed }
@@ -610,7 +611,7 @@ export fn FnBuilder mut @declare_zeroed(l Local) -> () {
 export fn FnBuilder @decl_of(l Local) -> LocalDecl {
     ro i = raw_local(l)
     if i < 0 || i >= @locals.len() {
-        ice_at("novac/src/lower/ir.nv:613", "lower: asking the declaration of a local the body never created")
+        ice_at("novac/src/lower/ir.nv:614", "lower: asking the declaration of a local the body never created")
     }
     @locals[i]
 }
@@ -620,7 +621,7 @@ export fn FnBuilder @decl_of(l Local) -> LocalDecl {
 /// blocks. Asking with nothing recorded is a bug.
 export fn FnBuilder @last_stmt() -> Stmt {
     if @cur.len() == 0 {
-        ice_at("novac/src/lower/ir.nv:623", "lower: last_stmt asked before any statement was recorded")
+        ice_at("novac/src/lower/ir.nv:624", "lower: last_stmt asked before any statement was recorded")
     }
     @cur[@cur.len() - 1]
 }
@@ -720,17 +721,17 @@ export fn FnBuilder mut @store(target Node, op AssignOp, src Node) -> () {
 export fn FnBuilder mut @seal(b BlockId, term Terminator) -> () {
     ro i = raw_block(b)
     if i < 0 || i >= @blocks.len() {
-        ice_at("novac/src/lower/ir.nv:723", "lower: sealing a block that was never reserved")
+        ice_at("novac/src/lower/ir.nv:724", "lower: sealing a block that was never reserved")
     }
     match @blocks[i].term {
         Unreached => { } // the only legal state to seal from
-        Return => ice_at("novac/src/lower/ir.nv:727", "lower: a block sealed twice (it already returns)")
-        Goto(_) => ice_at("novac/src/lower/ir.nv:728", "lower: a block sealed twice (it already jumps)")
-        If(_) => ice_at("novac/src/lower/ir.nv:729", "lower: a block sealed twice (it already branches)")
-        Loop(_) => ice_at("novac/src/lower/ir.nv:730", "lower: a block sealed twice (it already loops)")
-        Switch(_) => ice_at("novac/src/lower/ir.nv:731", "lower: a block sealed twice (it already switches)")
-        Break => ice_at("novac/src/lower/ir.nv:732", "lower: a block sealed twice (it already breaks)")
-        Continue => ice_at("novac/src/lower/ir.nv:733", "lower: a block sealed twice (it already continues)")
+        Return => ice_at("novac/src/lower/ir.nv:728", "lower: a block sealed twice (it already returns)")
+        Goto(_) => ice_at("novac/src/lower/ir.nv:729", "lower: a block sealed twice (it already jumps)")
+        If(_) => ice_at("novac/src/lower/ir.nv:730", "lower: a block sealed twice (it already branches)")
+        Loop(_) => ice_at("novac/src/lower/ir.nv:731", "lower: a block sealed twice (it already loops)")
+        Switch(_) => ice_at("novac/src/lower/ir.nv:732", "lower: a block sealed twice (it already switches)")
+        Break => ice_at("novac/src/lower/ir.nv:733", "lower: a block sealed twice (it already breaks)")
+        Continue => ice_at("novac/src/lower/ir.nv:734", "lower: a block sealed twice (it already continues)")
     }
     @blocks[i] = Block { stmts: @cur, term }
     @cur = []Stmt.new()
@@ -789,7 +790,7 @@ fn FnBuilder mut @open_if(cond Cond, join BlockId, shape ElseShape) -> IfCtx {
 /// an `if` opened without an else branch is a compiler bug, named as such.
 export fn FnBuilder mut @begin_else(c IfCtx) -> () {
     if c.els == c.join {
-        ice_at("novac/src/lower/ir.nv:792", "lower: begin_else on an if that was opened without an else branch")
+        ice_at("novac/src/lower/ir.nv:793", "lower: begin_else on an if that was opened without an else branch")
     }
     @close(Terminator.Goto(c.join), c.els)
 }
@@ -877,10 +878,10 @@ export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
 /// compiler bug named as such.
 export fn FnBuilder mut @begin_arm(c SwitchCtx, pat Pattern, guard Option[Node]) -> () {
     if @cur_id != c.head {
-        ice_at("novac/src/lower/ir.nv:880", "lower: begin_arm while the previous arm of the match is still open")
+        ice_at("novac/src/lower/ir.nv:881", "lower: begin_arm while the previous arm of the match is still open")
     }
     if @arm_start.len() == 0 {
-        ice_at("novac/src/lower/ir.nv:883", "lower: begin_arm outside of a match")
+        ice_at("novac/src/lower/ir.nv:884", "lower: begin_arm outside of a match")
     }
     ro body = @reserve()
     @open_arms.push(SwitchArm { pat, guard, body, heads: []BlockId.new() })
@@ -896,7 +897,7 @@ export fn FnBuilder mut @end_arm(c SwitchCtx) -> () {
 /// collected, and what is placed next belongs to the join.
 export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
     if @arm_start.len() == 0 {
-        ice_at("novac/src/lower/ir.nv:899", "lower: end_switch without an open match")
+        ice_at("novac/src/lower/ir.nv:900", "lower: end_switch without an open match")
     }
     ro start = @arm_start[@arm_start.len() - 1]
     ro _ = @arm_start.pop()
@@ -954,7 +955,7 @@ export fn FnBuilder mut @continue_loop() -> () {
 /// The end of the body: the current block returns. After this `finish` holds.
 export fn FnBuilder mut @end_body() -> () {
     if @scopes.len() > 0 {
-        ice_at("novac/src/lower/ir.nv:957", "lower: a function body ended inside an open with scope")
+        ice_at("novac/src/lower/ir.nv:958", "lower: a function body ended inside an open with scope")
     }
     @seal(@cur_id, Terminator.Return)
 }
@@ -963,11 +964,11 @@ export fn FnBuilder mut @end_body() -> () {
 /// was reserved and never sealed, are compiler bugs, named as such.
 export fn FnBuilder @finish() -> Fn {
     if @cur.len() > 0 {
-        ice_at("novac/src/lower/ir.nv:966", "lower: statements were placed after the last sealed block")
+        ice_at("novac/src/lower/ir.nv:967", "lower: statements were placed after the last sealed block")
     }
     for i in 0..@blocks.len() {
         match @blocks[i].term {
-            Unreached => ice_at("novac/src/lower/ir.nv:970", "lower: a reserved block was never sealed")
+            Unreached => ice_at("novac/src/lower/ir.nv:971", "lower: a reserved block was never sealed")
             Return => { } // sealed
             Goto(_) => { } // sealed
             If(_) => { } // sealed

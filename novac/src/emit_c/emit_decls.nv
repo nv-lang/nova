@@ -20,6 +20,7 @@ module novac.emit_c
 import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_maker}
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
+import ../sem.{c_ident}
 import ../types.{TyId, is_ty, raw_ty}
 import ../sem.{decl_index_of_ty, carrier_of}
 import ../diag.{ice_at}
@@ -62,7 +63,7 @@ fn Emitter mut @emit_record_decl(rec_id int) -> () {
         @body.append("    ")
         @body.append(c_type(@ctx, fd.type_id))
         @body.append(" ")
-        @body.append(fd.name)
+        @body.append(c_ident(fd.name))
         @body.append(";\n")
     }
     @body.append("};\n\n")
@@ -229,7 +230,7 @@ fn Emitter mut @emit_type_decls() -> () {
         }
         if moved == 0 {
             ice_at(
-                "novac/src/emit_c/emit_decls.nv:231",
+                "novac/src/emit_c/emit_decls.nv:232",
                 "emit_c: a cycle of by-value fields -- a type of infinite size reached the emitter")
         }
     }
@@ -505,7 +506,7 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
         TkRecord => { if fwd_only { @emit_type_fwd(t) } else { @emit_record_decl(t) } }
         TkSum => { if fwd_only { @emit_type_fwd(t) } else { @emit_sum_decl(t) } }
         TkApp => ice_at(
-            "novac/src/emit_c/emit_decls.nv:507",
+            "novac/src/emit_c/emit_decls.nv:508",
             "emit_c: declaration of an applied type — instances are emitted by mono, E2-b2")
             // A type parameter DECLARES nothing: it has no layout until a
             // substitution names one, and the instance that carries the
@@ -521,21 +522,21 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
             // unreferenced typedef would be text nobody reads.
         TkNewtype => {}
         TkInfer => ice_at(
-            "novac/src/emit_c/emit_decls.nv:523",
+            "novac/src/emit_c/emit_decls.nv:524",
             "emit_c: declaration of an inference variable — a variable escaped its body")
             // TkEffect: unreachable while the with-doors refuse non-handler values;
             // ice, not a fallback (E4 wave). An effect declares OPERATION rows, not
             // a C struct; its emission arrives with the Effect-type stage.
         TkPtr => ice_at(
-            "novac/src/emit_c/emit_decls.nv:529",
+            "novac/src/emit_c/emit_decls.nv:530",
             "emit_c: declaration of a POINTER type — a pointer is a structural term, nothing declares one")
         TkEffect => ice_at(
-            "novac/src/emit_c/emit_decls.nv:532",
+            "novac/src/emit_c/emit_decls.nv:533",
             "emit_c: declaration of an EFFECT type — an effect owns operations, not a C layout; with-doors refuse non-handler values (E4 wave)")
             // A tuple is a structural TERM: nothing ever declares one, so a
             // registry row with this kind is a harvest bug, not a decl to emit.
         TkTuple => ice_at(
-            "novac/src/emit_c/emit_decls.nv:537",
+            "novac/src/emit_c/emit_decls.nv:538",
             "emit_c: a structural term among declarations — a structural term declares nothing")
     }
 }
