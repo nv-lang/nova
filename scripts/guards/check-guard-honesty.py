@@ -15,7 +15,13 @@
     нарушение правила;
   * файл, называющий `nova.exe`, знает и второе имя — через дверь
     `novac_find_oracle` или прямым запасным путём: иначе на Linux он не найдёт
-    оракула и ПРОМОЛЧИТ;
+    оракула и ПРОМОЛЧИТ. САМОТЕСТЫ (`selftest/`) судятся по этому правилу с
+    2026-10-07 и только в строках, ищущих бинарь НАСТОЯЩЕГО дерева (`$ROOT/`,
+    `$MAINROOT/`) вне тел heredoc и вне echo/printf: подделка `nova.exe` в
+    фикстуре законна. До того самотесты были изъяты целиком — и два из них
+    (shell-freshness, module-tests) знали одно имя: на Linux первый краснел
+    «живая половина мертва», второй молча пропускал живой случай (реестр
+    221.1 №1826, ночной ярус full красен с 2026-10-01);
   * апостроф в двойных кавычках у echo/printf: оболочка выполнит его как
     команду, символ пропадёт из текста, а в вывод упадёт «x: command not
     found» — и видно это только на КРАСНОЙ ветке, то есть ровно тогда, когда
@@ -96,6 +102,10 @@ RE_SAYS = re.compile(r"^[ \t\v\f]*(echo|printf|ok|bad)[ \t\v\f]")
 RE_EATEN = re.compile(r"tr[ \t\v\f]+-d[ \t\v\f]*'$")
 RE_PRINT = re.compile(r"(^|[^A-Za-z_.])print\(")
 RE_CHECK_PY = re.compile(r"check-[^/]*\.py$")
+# Самотест: путь в НАСТОЯЩЕЕ дерево (а не в фикстуру) и тело heredoc, где
+# живут тексты подделок, а не исполняемые строки самого самотеста.
+RE_REAL_TREE = re.compile(r"\$\{?(?:ROOT|MAINROOT)\}?/")
+RE_HEREDOC = re.compile(r"<<-?[ \t]*['\"]?([A-Za-z_]\w*)['\"]?")
 
 
 def read_lines(path):
@@ -170,14 +180,31 @@ def main():
 
     for p in sh_files:
         rel = rel_of(p)
-        skip = DOOR in rel or "/selftest/" in rel
+        skip = DOOR in rel
+        selftest = "/selftest/" in rel
         saw_exe = saw_door = saw_fallback = False
         lines = read_lines(p)
         judge_text(rel, lines, bad)
+        heredoc = None
         for line in lines:
             if skip:
                 break
-            if not RE_COMMENT.match(line) and RE_EXE.search(line):
+            if heredoc is not None:
+                if line.strip() == heredoc:
+                    heredoc = None
+                continue
+            m = RE_HEREDOC.search(line) if selftest else None
+            if m:
+                heredoc = m.group(1)
+            if RE_COMMENT.match(line) or not RE_EXE.search(line):
+                pass
+            elif not selftest:
+                saw_exe = True
+            elif RE_REAL_TREE.search(line) and not RE_SAYS.match(line):
+                # Самотест судится только там, где ищет НАСТОЯЩИЙ бинарь
+                # дерева: подделки `nova.exe` в фикстурах законны, а живая
+                # половина, знающая одно имя, на Linux умирает или молча
+                # пропускается (реестр 221.1 №1826, ночной full с 2026-10-01).
                 saw_exe = True
             if "novac_find_oracle" in line:
                 saw_door = True

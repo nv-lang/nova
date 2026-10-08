@@ -104,6 +104,11 @@ run_case "oracle absent"                        0 101 none "ORACLE-ABSENT"
 # либо молчит на настоящей панике (пропуск). Обе стороны проверяются здесь.
 extract_judge() {
     extract_door
+    # Обход судит бюджет каждым шагом (`fuzz_left_emit`). Без неё каждый шаг
+    # печатал «fuzz_left_emit: command not found» и «integer expression
+    # expected», и обход шёл дальше лишь потому, что упавший `[` не равен
+    # «бюджет кончился» (ночной лог CI 2026-10-07, реестр 221.1 №1827).
+    grep -m1 '^fuzz_left_emit()' "$TOOL"
     awk '/^judge_emit\(\)/,/^}/' "$TOOL"
 }
 
@@ -117,8 +122,11 @@ run_judge() {   # $1 имя, $2 emit-rc заглушки, $3 ожидаемый 
         NOVAC="$T/novac"
         ROOT="$ROOT"
         T="$T"
+        FUZZ_BUDGET=3600; FUZZ_T0=$(date +%s)
         novac_is_panic_rc() { [ "$1" -ge 128 ] || [ "$1" -eq 101 ]; }
         eval "$(extract_judge)"
+        # Бюджет обязан читаться числом: иначе обход судился бы мимо него.
+        [ "$(fuzz_left_emit 2>/dev/null)" -gt 0 ] 2>/dev/null || { echo "нет-бюджета"; exit 0; }
         judge_emit "$T/list.one"; echo $?
     )
     if [ "$got" = "$want" ]; then

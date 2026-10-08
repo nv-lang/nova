@@ -93,7 +93,10 @@ out=$(bash "$G" "$REAL" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "на настоящем дереве зелёный"; else bad "красный на настоящем дереве: $out"; fi
 
 # 12. Дверь на настоящем дереве отвечает на настоящий вопрос.
-out=$(bash "$REAL/scripts/tools/branch-absorbed.sh" main main 2>&1); rc=$?
+# HEAD, а не `main` (реестр №1829): ручной CI-прогон ветки выгружает только её,
+# локальной `main` там нет, и дверь честно отвечала «нет такой ветки: main» —
+# самотест краснел от формы выгрузки, а не от двери. Коммит — предок самого себя.
+out=$(cd "$REAL" && bash "$REAL/scripts/tools/branch-absorbed.sh" HEAD HEAD 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q "ВЛИТА"; then ok "branch-absorbed.sh работает"; else bad "дверь не отвечает (rc=$rc): $out"; fi
 
 # 13. Страж назван на странице правил.

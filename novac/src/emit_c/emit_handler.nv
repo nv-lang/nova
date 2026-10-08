@@ -24,6 +24,7 @@ import ../tree.{Node, NodeKind}
 import ../diag.{ice_at}
 import ../sem.{branch_children, leaf_text, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty}
 import ../sem.{effect_vtable_c, CaptureRow, EffectDef}
+import ../sem.{c_ident}
 import ../types.{TyId}
 import ../lower.{FnBuilder}
 
@@ -62,7 +63,7 @@ fn Emitter @lit_number(lit Node) -> int {
         if @hlits[i].id_of() == lit.id_of() { return i }
     }
     ice_at(
-        "novac/src/emit_c/emit_handler.nv:64",
+        "novac/src/emit_c/emit_handler.nv:65",
         "emit: a handler literal outside the reached functions reached the emitter")
 }
 
@@ -105,7 +106,7 @@ fn Emitter @op_sig_at(schema EffectDef, op Node) -> int {
 /// The schema of the effect a literal handles.
 fn Emitter @lit_schema(lit Node) -> EffectDef =>
     @ctx.effects.def_of(lit_effect(lit)) ?? ice_at(
-        "novac/src/emit_c/emit_handler.nv:107",
+        "novac/src/emit_c/emit_handler.nv:108",
         "emit: a handler literal of an effect with no schema")
 
 /// The C signature of one operation function, without the trailing `;`/`{`.
@@ -132,7 +133,7 @@ fn op_param_names(op Node) -> []str {
         if p.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(p)
         out.push(leaf_text(pk[param_name_at(pk) ?? ice_at(
-            "novac/src/emit_c/emit_handler.nv:134",
+            "novac/src/emit_c/emit_handler.nv:135",
             "emit: a handler op parameter without a name")]))
     }
     out
@@ -149,7 +150,7 @@ fn Emitter mut @emit_handler_protos() -> () {
             @body.append("typedef struct {\n")
             for c in caps {
                 ro star = if c.by_ref { "*" } else { "" }
-                @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c.name};\n")
+                @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c_ident(c.name)};\n")
             }
             @body.append("} novac_hctx_${@tag}${n};\n")
         } else {
@@ -230,7 +231,7 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
         @body.append("    ${vt}* ${v} = (${vt}*)${v}_blk;\n")
         @body.append("    ${cx}* ${v}_cx = (${cx}*)(${v}_blk + ${v}_off);\n")
         for c in caps {
-            @body.append("    ${v}_cx->${c.name} = ${@capture_source(c)};\n")
+            @body.append("    ${v}_cx->${c_ident(c.name)} = ${@capture_source(c)};\n")
         }
         @body.append("    ${v}->ctx = ${v}_cx;\n")
     }
@@ -251,10 +252,10 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
 /// the pointer (for `mut`) or the copy.
 fn Emitter @capture_source(c CaptureRow) -> str {
     for oc in @owner_captures() {
-        if oc.bind_row == c.bind_row { return "_novac_cap->${c.name}" }
+        if oc.bind_row == c.bind_row { return "_novac_cap->${c_ident(c.name)}" }
     }
-    if c.by_ref { return "&${c.name}" }
-    c.name
+    if c.by_ref { return "&${c_ident(c.name)}" }
+    c_ident(c.name)
 }
 
 /// The captures of the closure whose function is being emitted -- a literal's
@@ -269,8 +270,8 @@ fn Emitter @owner_captures() -> []CaptureRow {
 /// context -- the value for a copy, the pointee for a `mut` binding.
 fn Emitter mut @emit_capture_read(c CaptureRow) -> () {
     if c.by_ref {
-        @body.append("(*_novac_cap->${c.name})")
+        @body.append("(*_novac_cap->${c_ident(c.name)})")
     } else {
-        @body.append("_novac_cap->${c.name}")
+        @body.append("_novac_cap->${c_ident(c.name)}")
     }
 }

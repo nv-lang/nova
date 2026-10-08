@@ -24,8 +24,8 @@ BASE="$TMP/scripts/guards/diag-fixture-coverage.baseline"
 SRC="$TMP/compiler-codegen/src/diag.rs"
 FIX="$TMP/spec_tests/conformance/neg/probe_neg.nv"
 
-run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
-say() { sh "$G" "$TMP" 2>&1; }
+run() { bash "$G" "$TMP" >/dev/null 2>&1; echo $?; }
+say() { bash "$G" "$TMP" 2>&1; }
 
 echo "== check-diag-fixture-coverage selftest =="
 
