@@ -47,7 +47,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     # MSVC информационный: C2099 в сгенерированном C роняет всё, что тянет `std.os`
-    # (реестр 221.1 №TBD); вердикт приёмки даёт clang. Убрать, когда MSVC позеленеет.
+    # (реестр 221.1 №1850); вердикт приёмки даёт clang. Убрать, когда MSVC позеленеет.
     continue-on-error: ${{ matrix.toolchain == 'msvc' }}
     strategy:
       fail-fast: false
@@ -103,7 +103,7 @@ jobs:
       # `continue-on-error`: на 2026-10-08 модуль не собирается на Windows ни под
       # clang, ни под MSVC (С не компилируется: `const nova_str` передан вместо
       # `Nova_Vec____nova_byte *`, MSVC C2099/C2440, в `d324_os_env_args_cwd_test`;
-      # реестр 221.1 №TBD). Красный шаг виден в прогоне, но не краснит задание;
+      # реестр 221.1 №1850). Красный шаг виден в прогоне, но не краснит задание;
       # когда дефект закрыт — убрать `continue-on-error`.
       - name: nova test std/src/os (${{ matrix.toolchain }})
         continue-on-error: true
