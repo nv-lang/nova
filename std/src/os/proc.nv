@@ -1,0 +1,323 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/proc.nv — child-process streams (Plan 294 F.1, D492; continues D453).
+//
+// `Command.run()` / `Os.process_run` (D453) stay exactly as they are: one call, spawn +
+// wait + exit code, stdio on the null device. This file adds the other half — a live
+// `Child` handle and byte streams over its stdin / stdout / stderr:
+//
+//     consume child = Command.new("tool").arg("x").stdin(Stdio.Piped).stdout(Stdio.Piped).start()?
+//     consume tx = child.take_stdin()          // ChildStdin  — io.Write
+//     consume rx = child.take_stdout()         // ChildStdout — io.Read
+//     ...
+//     ro status = child.wait()?                // parks the FIBER, not the OS thread
+//
+// `Proc` is a plumbing effect (the `Net` / `Os` precedent): user code calls the methods
+// below, never the effect operations; production uses `real_proc()` (auto-installed,
+// `#default_handler`), tests install `mock_proc(state)`. It is a NEW effect next to `Os`
+// because D453 forbids widening `process_run` after the fact and `Os` carries no
+// handles.
+//
+// **Back pressure.** `ChildStdout.read` PULLS: libuv reads one chunk straight into the
+// caller's buffer and stops. Nothing is queued inside the runtime — a child writing faster
+// than the reader is blocked by the OS pipe (64 KiB on Linux, 4 KiB on Windows).
+//
+// **Deadlock rule.** A child filling stderr while you read only stdout blocks forever. Read
+// both from separate fibers (see `Command.output()`, which does exactly that) or send the
+// unused one to `Stdio.Null`.
+//
+// **Name.** The plan's `spawn` is a reserved word in Nova (it starts a fiber), so the method is `start`.
+//
+// **Bytes, not text.** Nothing is re-encoded, no newline is translated.
+
+module std.os
+
+import std.io.{IoError, ErrorKind}
+import std.io.{read_to_end}
+
+// ─── Stdio selection ──
+
+/// What the child's stdin / stdout / stderr is connected to.
+///   * `Null`    — the OS null device (the default, as in D453).
+///   * `Inherit` — the parent's own descriptor.
+///   * `Piped`   — a pipe whose parent end is taken with `Child.take_*`.
+#stable(since = "0.1")
+export type Stdio enum
+    | Null | Inherit | Piped
+
+fn stdio_code(s Stdio) -> int {
+    match s {
+        Null => 0
+        Inherit => 1
+        Piped => 2
+    }
+}
+
+// ─── The Proc plumbing effect ──
+
+/// Ambient child-process access. Internal dispatch point — user code uses
+/// `Command.start` / `Child` / `ChildStdout` ..., not these operations.
+///
+/// Thin by design, like `Os`: raw `int` / handle results; every `Result` / `Option` is
+/// built in this file OUTSIDE the effect boundary. Errors are negative errno numbers.
+#stable(since = "0.1")
+export type Proc effect {
+    // (err, child): err is 0 on success, a negative errno otherwise (then child is null).
+    fn launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, modes int) -> (int, *())
+    fn child_pipe(child *(), which int) -> *()
+    fn child_pid(child *()) -> int
+    // (rc, code, signal): rc 0 exited, PROCESS_CANCELLED cancelled, < 0 error.
+    fn child_wait(child *()) -> (int, int, int)
+    // rc 0 exited, 1 still running.
+    fn child_try_wait(child *()) -> (int, int, int)
+    fn child_release(child *()) -> ()
+    fn pipe_read(pipe *(), mut buf []u8) -> int
+    fn pipe_write(pipe *(), data []u8) -> int
+    fn pipe_close(pipe *()) -> ()
+}
+
+// ─── Types ──
+
+/// A running (or finished) child process. `consume`: leaving the scope without waiting
+/// KILLS a still-running child (no orphan outlives its owner, D492 rule 6) and closes
+/// every pipe that was never taken.
+#stable(since = "0.1")
+export type Child consume value priv { handle *() }
+
+/// The write end of the child's stdin (`io.Write`). `close()` delivers end-of-input.
+#stable(since = "0.1")
+export type ChildStdin consume value priv { handle *() }
+
+/// The read end of the child's stdout (`io.Read`); `Ok(0)` = end of stream.
+#stable(since = "0.1")
+export type ChildStdout consume value priv { handle *() }
+
+/// The read end of the child's stderr (`io.Read`); `Ok(0)` = end of stream.
+#stable(since = "0.1")
+export type ChildStderr consume value priv { handle *() }
+
+/// Everything a finished child produced: see `Command.output()`.
+#stable(since = "0.1")
+export type Output value { ro status ExitStatus, ro stdout []u8, ro stderr []u8 }
+
+fn ptr_is_null(p *()) -> bool => (0 as *()) == p
+
+fn proc_io_err(neg_errno int, op str) -> IoError => IoError.from_os(0 - neg_errno, op)
+
+// ─── Command: stream configuration + spawn ──
+
+/// Connect the child's stdin (default `Stdio.Null`).
+#stable(since = "0.1")
+export fn Command mut @stdin(s Stdio) -> @ { @stdin_mode = s }
+
+/// Connect the child's stdout (default `Stdio.Null`).
+#stable(since = "0.1")
+export fn Command mut @stdout(s Stdio) -> @ { @stdout_mode = s }
+
+/// Connect the child's stderr (default `Stdio.Null`).
+#stable(since = "0.1")
+export fn Command mut @stderr(s Stdio) -> @ { @stderr_mode = s }
+
+/// Start the child and return its live handle without waiting.
+///
+/// `Err` means the process never started: `NotFound` (no such program, or a bad
+/// `dir`), `PermissionDenied`, `NotADirectory`, ... with the raw OS code in `raw_os`.
+/// The same argument / environment / directory rules as `Command.run()`.
+#stable(since = "0.1")
+export fn Command @start() Proc -> Result[Child, IoError] {
+    ro argv = join_nul(@args)?
+    ro use_env = @clear_env || !@envs.is_empty()
+    ro deduped = dedupe_envs(@envs)
+    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
+    ro cwd_bytes = match @dir {
+        Some(p) => p.os_bytes()
+        None => []u8.new()
+    }
+    ro modes = stdio_code(@stdin_mode) + 4 * stdio_code(@stdout_mode) + 16 * stdio_code(@stderr_mode)
+    ro (err, h) = Proc.launch(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes, modes)
+    if err < 0 { Err(proc_io_err(err, "spawn")) }
+    else { Ok(Child { handle: h }) }
+}
+
+// ─── Child ──
+
+/// The OS process id.
+#stable(since = "0.1")
+export fn Child @pid() Proc -> int { Proc.child_pid(@handle) }
+
+/// The child's stdin writer. `Some` once, and only when spawned with `Stdio.Piped`.
+#stable(since = "0.1")
+export fn Child mut @take_stdin() Proc -> Option[ChildStdin] {
+    ro h = Proc.child_pipe(@handle, 0)
+    if ptr_is_null(h) { None } else { Some(ChildStdin { handle: h }) }
+}
+
+/// The child's stdout reader. `Some` once, and only when spawned with `Stdio.Piped`.
+#stable(since = "0.1")
+export fn Child mut @take_stdout() Proc -> Option[ChildStdout] {
+    ro h = Proc.child_pipe(@handle, 1)
+    if ptr_is_null(h) { None } else { Some(ChildStdout { handle: h }) }
+}
+
+/// The child's stderr reader. `Some` once, and only when spawned with `Stdio.Piped`.
+#stable(since = "0.1")
+export fn Child mut @take_stderr() Proc -> Option[ChildStderr] {
+    ro h = Proc.child_pipe(@handle, 2)
+    if ptr_is_null(h) { None } else { Some(ChildStderr { handle: h }) }
+}
+
+fn exit_status_of(code int, sig int) -> ExitStatus {
+    // A signal death reports `128 + signal` in `code()` (shell convention, as D453) and
+    // the signal itself in `signal()`.
+    if sig != 0 { ExitStatus { code: 128 + sig, sig } } else { ExitStatus { code, sig: 0 } }
+}
+
+/// Wait for the child to exit. Parks the calling fiber, not the OS thread. Output the
+/// child has produced stays readable from the pipes you hold. If the enclosing
+/// `supervised(timeout:)` / `(cancel:)` fires first, the child is killed and the result is
+/// `Err(Interrupted)` (D453, same choice).
+#stable(since = "0.1")
+export fn Child mut @wait() Proc -> Result[ExitStatus, IoError] {
+    ro (rc, code, sig) = Proc.child_wait(@handle)
+    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "child wait")) }
+    else if rc < 0 { Err(proc_io_err(rc, "child wait")) }
+    else { Ok(exit_status_of(code, sig)) }
+}
+
+/// Non-blocking: `Ok(Some(status))` if the child has exited, `Ok(None)` while it runs.
+#stable(since = "0.1")
+export fn Child mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
+    ro (rc, code, sig) = Proc.child_try_wait(@handle)
+    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
+    else if rc == 1 { Ok(None) }
+    else { Err(proc_io_err(rc, "child try_wait")) }
+}
+
+/// `Cleanup[never]` (D188): a child still running when its scope ends is killed, and
+/// pipes never taken are closed. After a completed `wait()` this only releases the handle.
+#stable(since = "0.1")
+export fn Child consume @cleanup(_outcome ScopeOutcome) -> () { @release() }
+
+// Raw effect ops need `Proc` declared (D62); `cleanup` itself is `-> ()` like TcpStream's.
+fn Child consume @release() Proc { Proc.child_release(@handle) }
+
+// ─── ChildStdin (io.Write) ──
+
+/// Write `data`; returns `Ok(n)` bytes accepted (the whole buffer on success). A child that
+/// has closed its stdin or exited yields `Err(BrokenPipe)`.
+#stable(since = "0.1")
+export fn ChildStdin mut @write(data []u8) Proc -> Result[int, IoError] {
+    ro n = Proc.pipe_write(@handle, data)
+    if n < 0 { Err(proc_io_err(n, "write child stdin")) } else { Ok(n) }
+}
+
+/// `io.Write` conformance: writes reach the pipe directly — `flush` is a no-op.
+#stable(since = "0.1")
+export fn ChildStdin mut @flush() -> Result[(), IoError] => Ok(())
+
+/// Close the pipe: the child sees end-of-input. Idempotent by ownership (`consume`).
+#stable(since = "0.1")
+export fn ChildStdin consume @close() Proc { Proc.pipe_close(@handle) }
+
+#stable(since = "0.1")
+export fn ChildStdin consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+// ─── ChildStdout / ChildStderr (io.Read) ──
+
+/// Read up to `buf.len()` bytes. `Ok(0)` = the child closed its end (it exited or closed
+/// stdout); data is never lost to it. Parks the fiber until bytes arrive.
+#stable(since = "0.1")
+export fn ChildStdout mut @read(mut buf []u8) Proc -> Result[int, IoError] {
+    ro n = Proc.pipe_read(@handle, buf)
+    if n < 0 { Err(proc_io_err(n, "read child stdout")) } else { Ok(n) }
+}
+
+/// Close our end. A still-running child that writes more gets a broken pipe;
+/// the process itself is untouched — `wait()` still waits for it.
+#stable(since = "0.1")
+export fn ChildStdout consume @close() Proc { Proc.pipe_close(@handle) }
+
+#stable(since = "0.1")
+export fn ChildStdout consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+/// See `ChildStdout.read`.
+#stable(since = "0.1")
+export fn ChildStderr mut @read(mut buf []u8) Proc -> Result[int, IoError] {
+    ro n = Proc.pipe_read(@handle, buf)
+    if n < 0 { Err(proc_io_err(n, "read child stderr")) } else { Ok(n) }
+}
+
+#stable(since = "0.1")
+export fn ChildStderr consume @close() Proc { Proc.pipe_close(@handle) }
+
+#stable(since = "0.1")
+export fn ChildStderr consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+// ─── output(): run to completion, collect both streams ──
+
+fn output_missing(what str) -> IoError => IoError.new(ErrorKind.InvalidInput, what)
+
+/// Run the command to completion and collect stdout and stderr (stdin is the null
+/// device). The two streams are drained by TWO fibers in parallel, so a child filling
+/// stderr while you wait on stdout cannot deadlock.
+#stable(since = "0.1")
+export fn Command @output() Proc -> Result[Output, IoError] {
+    ro piped Command = { @program, @args, @envs, @clear_env, @dir,
+                         stdin_mode: Stdio.Null, stdout_mode: Stdio.Piped, stderr_mode: Stdio.Piped }
+    consume child = piped.start()?
+    consume so = match child.take_stdout() {
+        Some(consume s) => s
+        None => return Err(output_missing("output: stdout pipe missing"))
+    }
+    consume se = match child.take_stderr() {
+        Some(consume s) => s
+        None => return Err(output_missing("output: stderr pipe missing"))
+    }
+    ro err_ch = Channel[Result[[]u8, IoError]].new(1)
+    mut out_res Result[[]u8, IoError] = Err(output_missing("output: not read"))
+    supervised {
+        spawn consume e = se {
+            err_ch.tx.send(read_to_end(e))
+        }
+        out_res = read_to_end(so)
+    }
+    ro err_res = match err_ch.rx.recv() {
+        Some(r) => r
+        None => Err(output_missing("output: stderr reader vanished"))
+    }
+    ro status = child.wait()?
+    Ok(Output { status, stdout: out_res?, stderr: err_res? })
+}
+
+// ─── real_proc — the production Proc handler over nova_rt/process.c ──
+
+/// Concrete `Proc` handler dispatching to the native libuv-backed child-process layer.
+/// `#default_handler`: `Proc` auto-constructs on first use with no enclosing `with Proc = …`.
+#stable(since = "0.1")
+#default_handler
+export fn real_proc() -> Effect[Proc] {
+    effect Proc {
+        launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, modes int) -> (int, *()) {
+            mut err = 0
+            ro h = unsafe { proc_spawn(program.ptr(), program.len(), argv.ptr(), argv.len(), argc, env.ptr(), env.len(), envc, use_env, cwd.ptr(), cwd.len(), modes, &err) }
+            (err, h)
+        }
+        child_pipe(child *(), which int) -> *() => unsafe { proc_child_pipe(child, which) }
+        child_pid(child *()) -> int => unsafe { proc_child_pid(child) }
+        child_wait(child *()) -> (int, int, int) {
+            mut code = 0
+            mut sig = 0
+            ro rc = unsafe { proc_child_wait(child, &code, &sig) }
+            (rc, code, sig)
+        }
+        child_try_wait(child *()) -> (int, int, int) {
+            mut code = 0
+            mut sig = 0
+            ro rc = unsafe { proc_child_try_wait(child, &code, &sig) }
+            (rc, code, sig)
+        }
+        child_release(child *()) -> () { unsafe { proc_child_release(child) } }
+        pipe_read(pipe *(), mut buf []u8) -> int => unsafe { proc_pipe_read(pipe, buf.ptr(), buf.len()) }
+        pipe_write(pipe *(), data []u8) -> int => unsafe { proc_pipe_write(pipe, data.ptr(), data.len()) }
+        pipe_close(pipe *()) -> () { unsafe { proc_pipe_close(pipe) } }
+    }
+}
