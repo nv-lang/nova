@@ -21,7 +21,7 @@ import ../sem.{Ctx, branch_children, c_type, c_struct, c_tag_enum, c_tag, c_make
 import ../sem.{VariantRow, variant_range_of, raw_vrow, is_value_sum, is_value_record}
 import ../sem.{field_range_of, no_frow, raw_frow, no_vrow}
 import ../types.{TyId, is_ty, raw_ty}
-import ../sem.{decl_index_of_ty, carrier_of}
+import ../sem.{decl_index_of_ty, carrier_of, shape_of, RecordShape}
 import ../diag.{ice_at}
 import ../builtins.{TypeKind}
 
@@ -174,14 +174,33 @@ fn Emitter mut @emit_type_decls() -> () {
     ro opts = @option_typedef_ids()
     mut opt_fwd = []str.new()
     mut opt_out = []bool.new()
+    // A placeholder "nothing of pass 2 is done yet" row, asked of a
+    // STRUCTURAL payload (registry #1788) to see whether its own components
+    // are satisfied by pass 1's forward names alone -- true for a tuple of
+    // pointers/primitives, same as this door already grants a pointer-shaped
+    // option below, false the moment one component needs a body pass 2 has
+    // not printed yet (that one still falls through to pass 2's own release).
+    mut none_done = []bool.new()
+    for _ in 0..@ctx.types.len() { none_done.push(false) }
     for i in 0..opts.len() {
+        ro payload = @ctx.tys.arg(TyId(opts[i]), 0)
         ro pointer = @option_payload_is_pointer(TyId(opts[i]))
+        ro structural_ready = decl_index_of_ty(@ctx, payload) < 0 && @dep_done(payload, none_done)
         if pointer {
             @emit_option_typedef(TyId(opts[i]), opt_fwd)
+            opt_out.push(true)
+        } else if structural_ready {
+            // A structural payload ready from forward names alone: its own
+            // typedef first (its body may not exist yet), then the option's.
+            @emit_one_structural_typedef(payload, opt_fwd)
+            @emit_option_typedef(TyId(opts[i]), opt_fwd)
+            opt_out.push(true)
         } else {
-            // value-shaped: written right after its payload's body, in pass 2
+            // value-shaped over a declared type: written right after its
+            // payload's body, in pass 2 -- or, for a structural payload not
+            // ready yet, in the tail loop after pass 3 (unchanged fallback).
+            opt_out.push(false)
         }
-        opt_out.push(pointer)
     }
     // PASS 2 -- the bodies, each AFTER every type it embeds by value.
     //
@@ -303,21 +322,29 @@ fn Emitter mut @emit_structural_typedefs() -> () {
     // in the measurement on novac itself. The forward typedef repeats legally.
     mut fwd = []str.new()
     for rid in ids {
-        ro t = TyId(rid)
-        ro name = c_struct(@ctx, t)
-        for i in 0..@ctx.tys.arg_count(t) {
-            @instance_forward_of(@ctx.tys.arg(t, i), fwd)
-        }
-        @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
-        @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
-        @body.append("typedef struct ${name} { ")
-        for i in 0..@ctx.tys.arg_count(t) {
-            @body.append(c_type(@ctx, @ctx.tys.arg(t, i)))
-            @body.append(" f${i}; ")
-        }
-        @body.append("} ${name};\n")
-        @body.append("#endif\n")
+        @emit_one_structural_typedef(TyId(rid), fwd)
     }
+}
+
+/// One structural term's typedef (see `@emit_structural_typedefs`'s doc for
+/// the guard and the forward-name rule) -- factored out so an OPTION over one
+/// of these terms (registry #1788) can ask for it EARLY, before this door's
+/// own pass runs, when the term's own components allow it (every component a
+/// pointer or a primitive needs only the forward names pass 1 already wrote).
+fn Emitter mut @emit_one_structural_typedef(t TyId, mut fwd []str) -> () {
+    ro name = c_struct(@ctx, t)
+    for i in 0..@ctx.tys.arg_count(t) {
+        @instance_forward_of(@ctx.tys.arg(t, i), fwd)
+    }
+    @body.append("#ifndef NOVA_TUPLE_TYPEDEF_${name}\n")
+    @body.append("#define NOVA_TUPLE_TYPEDEF_${name}\n")
+    @body.append("typedef struct ${name} { ")
+    for i in 0..@ctx.tys.arg_count(t) {
+        @body.append(c_type(@ctx, @ctx.tys.arg(t, i)))
+        @body.append(" f${i}; ")
+    }
+    @body.append("} ${name};\n")
+    @body.append("#endif\n")
 }
 
 /// The C typedef of every OPTION INSTANCE over a type THIS FILE declares
@@ -375,7 +402,15 @@ fn Emitter @option_typedef_ids() -> []int {
         // the type reader stopped flattening `Option[[]int]` into `Option[int]`.
         if pk != TypeKind.TkApp {
             ro declared = pk == TypeKind.TkRecord || pk == TypeKind.TkSum || pk == TypeKind.TkNewtype
-            if !declared { continue }
+            // A STRUCTURAL STACK TERM (registry #1788) answers `declared` false
+            // too, yet its body does print, through `emit_structural_typedefs`
+            // (pass 3) -- the same door `shape_of` already asks by the
+            // variant's own name (`is_value_record`'s comment: the word rule
+            // allows the compare, not a wrapper). Asked here instead of adding
+            // a kind arm, so the declaration question and the shape question
+            // stay two readings of one door, not a second match on the kind.
+            ro anon = shape_of(@ctx, payload) == RecordShape.AnonPositionalTuple
+            if !declared && !anon { continue }
             // A NEWTYPE OVER A PRIMITIVE spells its carrier's option
             // (`Option[Score]` is `NovaOpt_nova_int`), and the primitives'
             // options are the runtime's (`NOVA_ARRAY_DECL`, nova_rt/array.h) --
@@ -472,13 +507,19 @@ fn Emitter @dep_done(t TyId, done []bool) -> bool {
     // here and the word-rule guard caught it as growth (99 > 97) -- the second
     // match WAS the second door, and the word was only how it showed.
     if !is_value_record(@ctx, t) && !is_value_sum(@ctx, t) { return true }
-    // A STRUCTURAL term has no declaration to wait for: a mono tuple struct is
-    // emitted by its own channel, not by this pass. Named as an honest
-    // UNDER-approximation rather than a proof -- a tuple whose component is a
-    // record declared lower would not be ordered by this door. No probe of
-    // that shape exists yet, and inventing one is V3-2's work, not this fix's.
     ro d = decl_index_of_ty(@ctx, t)
-    if d < 0 { return true }
+    if d < 0 {
+        // A STRUCTURAL term has no declaration of its own to wait for, but its
+        // COMPONENTS may (registry #1788): each must be done before the term
+        // counts as done, same rule applied one level down. A component that
+        // is a pointer or a primitive answers true above without recursing
+        // further; one that is a declared value-shaped type waits on `done[d]`
+        // exactly as any other field does.
+        for i in 0..@ctx.tys.arg_count(t) {
+            if !@dep_done(@ctx.tys.arg(t, i), done) { return false }
+        }
+        return true
+    }
     done[d]
 }
 

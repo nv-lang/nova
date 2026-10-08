@@ -1,0 +1,24 @@
+module option_tuple.pos_1
+
+// An OPTION OVER A TUPLE (registry 221.1 #1788): the option door
+// (`emit_decls.nv` `@option_typedef_ids`) printed a typedef only for a
+// payload that NAMES A DECLARATION -- record, sum, newtype -- and skipped a
+// structural tuple payload outright, so `NovaOpt_<tuple name>` never got its
+// typedef at all: clang "unknown type name" on the whole-program emission
+// of novac (task #23's measurement). The fix reads the payload's SHAPE
+// (`shape_of`, the tuple door already uses it for the same type), not a
+// second kind-match naming the structural term.
+
+type Pt { x int }
+
+type Holder { pair Option[(Pt, Pt)] }
+
+fn main() {
+    ro a = Pt { x: 1 }
+    ro b = Pt { x: 2 }
+    ro h = Holder { pair: Some((a, b)) }
+    match h.pair {
+        Some(p) => println(p.0.x + p.1.x)
+        None => println(0)
+    }
+}
