@@ -1628,8 +1628,6 @@
 # 2026-10-08, task #35: row 1840 added (option-over-tuple typedef timing, registry #1788's
 #   follow-up residual); rows 1758 -> 1759, max 1831 -> 1840; 1832-1839 are task #31's own
 #   reserved-but-unused numbers (line below, 2026-10-07) and join gaps= until its rows land.
-rows=1759
-max=1840
 # 2026-10-07, task #22 merging main 79d34a942 (#31: rows 1816, 1830-1831): rows 1755 + 3 = 1758,
 #   max 1819 -> 1831; 1816 leaves gaps=, 1820-1829 (other tasks) join it.
 # 2026-10-07, task #32: rows 1817-1819 (numbers from the integrator: #1792's checker and oracle halves) on top
@@ -1647,8 +1645,9 @@ max=1840
 # 2026-10-08, task #34: row 1829 (self-test assumed a local main) = 1756, max 1831; 1829 leaves gaps=.
 # 2026-10-08, task #34 merging main (task #22 in): main 1758 + 1823-1829 (#34) = 1765, max 1831;
 #   1823-1829 leave gaps=, 1820-1822 stay; one rows=/max= pair (the merge had brought two).
-rows=1765
-max=1831
+# 2026-10-08, task #38 merging the #35 base: main 1765 (rows=/max= pair kept single) + row 1840 (#35) = 1766, max 1831 -> 1840; 1832-1839 stay in gaps=.
+rows=1766
+max=1840
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
