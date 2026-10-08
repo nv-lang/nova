@@ -12,7 +12,7 @@ GUARD="$(cd "$(dirname "$0")/.." && pwd)/check-marker-registry-sync.sh"
 [ -f "$GUARD" ] || { echo "SELFTEST FAIL: страж не найден: $GUARD" >&2; exit 1; }
 
 TMP="${TMPDIR:-/tmp}/mrs_selftest_$$"
-rm -rf "$TMP"; mkdir -p "$TMP/std/src" "$TMP/examples" "$TMP/spec_tests" "$TMP/docs/plans" "$TMP/scripts/guards"
+rm -rf "$TMP"; mkdir -p "$TMP/std/src" "$TMP/examples" "$TMP/spec_tests" "$TMP/docs/plans" "$TMP/docs/dev" "$TMP/scripts/guards"
 
 # Реестры (пустые, но существующие — как в настоящей репе).
 : > "$TMP/docs/plans/221.1-bug-sweep.md"

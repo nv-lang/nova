@@ -30,7 +30,7 @@ printf '%s\n' \
   'ccccccc|fix(#903): another landed fix' \
   'ddddddd|fix(#905) measure(#906): closes 905, only measures 906' > "$HIST"
 
-run() { sh "$G" "$TMP" "$HIST" >/dev/null 2>&1; echo $?; }
+run() { bash "$G" "$TMP" "$HIST" >/dev/null 2>&1; echo $?; }
 
 # Реестр пишется ПИТОНОМ, а не оболочкой: маркеры кириллические, и через
 # оболочку они уже уезжали перекодированными (реестр №590).

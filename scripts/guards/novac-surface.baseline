@@ -356,7 +356,15 @@
 #   `is_serde_nested_scalar` (D341/D342 field eligibility and the direct wire call of a scalar), all asked by
 #   check/derive_serde.nv; names of the language and of std live in builtins (P5).
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
-builtins 96
+# 2026-10-07, task #29 (221.1 #1787, round 3): builtins 96 -> 99: `INT_TYPE_NAME`, `BOOL_TYPE_NAME`,
+#   `CHAR_TYPE_NAME` -- Nova's own primitive spellings that collide with a C keyword, exported so the
+#   C-name escape door (sem/mangle_spelling.nv) asks for them instead of retyping them (check-novac-
+#   no-name-hardcode.py flags a second literal of a P5 name wherever it appears outside builtins.nv).
+builtins 99
+# 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
+#   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
+#   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.
+atomics 1
 # check 1 -> 2 (2026-08-20): `check_instance` -- one instance of a generic
 # body, typed under its substitution into its OWN channel (Go stenciling).
 # Наружу нужна потому, что зовёт её конвейер: он собирает инстансы и типизирует
@@ -1239,10 +1247,16 @@ resolve 27
 # merge of origin/main 0e5c83421 into task #14 (2026-10-06): main's number plus #14's growth over the merge base, equal to the guard's measure.
 # 2026-10-06, acceptor of task #14 (candidate on main c9b2d4c35, task #10 in): sem 390 (main) + 1 (#14:
 #   `ProtoTable @requires_method`) = 391, equal to the guard's measure.
+# 2026-10-07, task #29 (221.1 #1787): sem 396 -> 397: `c_ident` -- THE door "Nova name -> C identifier",
+#   called by every emitter site that prints a field, a local, a parameter or a capture; it must be
+#   reachable from emit_c, which imports the sem door, not the file.
 # 2026-10-06, task #23 (274.11 E.10 step 2b): sem 391 -> 395: `CNames`, `CNames.new`, `@add`, `@has` --
 #   a set of OUR C identifiers (what one unit wants another to print, what an earlier unit printed),
 #   asked by mono, the emitter and the pipeline; beside InteropTable and kept apart from it.
-sem 397
+# 2026-10-08, task #29, syncing main past task #22 (which had already moved the base to 397 on its
+#   own): sem 397 -> 398, same export as the 396 -> 397 note above (`c_ident`) -- that note named it
+#   against a base #22 later moved under it, during #29's rework rounds.
+sem 398
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

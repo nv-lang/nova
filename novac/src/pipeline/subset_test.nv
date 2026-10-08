@@ -712,7 +712,11 @@ fn main() {\n\
     assert(d.len() == 0)
     assert(c.contains("((nova_int)123LL)"))
     assert(c.contains("== 10LL"))
-    assert(!c.contains("0123"))
+    // The refusals name the verbatim SPELLING (`0123LL`), not the bare digits:
+    // the C here carries the shell, and since E2-b3 step 5 the shell holds an
+    // oracle constant `0x290123E9AAB23B68ULL` -- a check on "0123" judged the
+    // shell's text, not the literal.
+    assert(!c.contains("0123LL"))
     assert(!c.contains("010LL"))
 }
 

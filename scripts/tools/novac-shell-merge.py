@@ -32,12 +32,29 @@ as a plain #ifdef, which goes to the Carina window as a question instead:
   - a differing run that starts inside a macro continuation (the previous
     line ends with a backslash): an #ifdef there would cut the macro.
 
+CONTROL BYTES (2026-10-06, task #22). The oracle writes a string literal's
+bytes into C as they are, so `"\b"` and `"\f"` of std's JSON escaper reach the
+shell as raw 0x08 / 0x0c inside `"..."` -- check-no-control-chars reddens on
+the template. Every control byte but TAB/LF/CR is rewritten here to a
+three-digit octal escape: the same byte to the C compiler (an octal escape
+takes at most three digits, so a following digit is never swallowed), visible
+to a reader. A raw control byte is legal C only inside a literal or a comment,
+and in both the escape means the same; the template stays the oracle's
+emission up to spelling.
+
 Usage: novac-shell-merge.py WINDOWS.c LINUX.c OUT.c
 Exit: 0 written; 2 bad call; 4 refusal (reason on stderr).
 A summary line on stdout names the number of platform runs and their lines.
 """
 import difflib
+import re
 import sys
+
+CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def escape_controls(line):
+    return CONTROL.sub(lambda m: "\\%03o" % ord(m.group(0)), line)
 
 
 def read_lines(path):
@@ -98,6 +115,7 @@ def main(argv):
         win, win_nl = read_lines(argv[1])
         lin, lin_nl = read_lines(argv[2])
         out, runs = merge(win, lin)
+        out = [escape_controls(line) for line in out]
     except (OSError, ValueError) as e:
         sys.stderr.write("novac-shell-merge: REFUSED -- %s\n" % e)
         return 4

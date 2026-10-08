@@ -19,11 +19,11 @@ fails=0
 ok()  { echo "  ok: $1"; }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
-ORACLE="$ROOT/nova-cli/target/release/nova.exe"
-if [ ! -f "$ORACLE" ]; then
-    MAINROOT=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-    [ -n "$MAINROOT" ] && ORACLE="$MAINROOT/../nova-cli/target/release/nova.exe"
-fi
+# Оракул ищется ДВЕРЬЮ, а не своим списком имён: свой список знал только
+# `nova.exe`, и на Linux-раннере (бинарь `nova`) живой случай молча уходил в
+# «оракула нет — пропущен» (реестр 221.1 №1826, класс K-A).
+. "$GD/lib/novac.sh"
+ORACLE="$(novac_find_oracle "$ROOT" || true)"
 
 # ── 1. живое дерево — зелёный СО СТРОКОЙ ok: ───────────────────────────────
 if [ -f "$ORACLE" ]; then

@@ -71,7 +71,8 @@ jobs:
 
       - name: Install Boehm GC (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

@@ -1,0 +1,28 @@
+module self_fed.pos_1
+
+// NOVAC_PROGRAM
+// SELF-FED ENTRY (registry 221.1 #1814, замер (1)): a program root fed to
+// `NOVAC_SELF_PATH` includes the entry file itself (`read_decls` walks the
+// whole root directory), so the entry's own sum came back to it twice --
+// once as the file's own declaration, once as a handed row of the same name.
+// A bare variant of that sum (`Blank`) then counted two rows for one sum and
+// refused as "declared by more than one sum in scope", a program the oracle
+// and the unit-mode checker both accept. No import, no second module: the
+// file alone, checked under its own `NOVAC_SELF_PATH` root, is the whole
+// repro.
+
+type Cell enum
+    | Full(int)
+    | Blank
+
+fn describe(c Cell) -> int {
+    match c {
+        Full(n) => n
+        Blank => 0 - 1
+    }
+}
+
+fn main() {
+    ro c = Blank
+    println(describe(c))
+}

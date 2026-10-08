@@ -28,11 +28,11 @@ bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { sh "$G" "$@" > "$T/out" 2> "$T/err"; }
 
 TPL="$ROOT/novac/src/emit_c/shell.tpl.c"
-ORACLE="$ROOT/nova-cli/target/release/nova.exe"
-if [ ! -f "$ORACLE" ]; then
-    MAINROOT=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-    [ -n "$MAINROOT" ] && ORACLE="$MAINROOT/../nova-cli/target/release/nova.exe"
-fi
+# Оракул ищется ДВЕРЬЮ, а не своим списком имён: свой список знал только
+# `nova.exe`, и на Linux-раннере (бинарь `nova`) живая половина умирала —
+# ночной ярус full красен с 2026-10-01 (реестр 221.1 №1826, класс K-A).
+. "$GD/lib/novac.sh"
+ORACLE="$(novac_find_oracle "$ROOT" || true)"
 
 # --- 1. Чистое дерево: зелёный, одна строка ok: ---------------------------
 if run; then

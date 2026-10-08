@@ -1,0 +1,17 @@
+module serde_encode.neg_1
+// `json_encode[T Serialize]` OVER A TYPE THAT DOES NOT SERIALIZE (D72): `Plain`
+// has neither `#impl(Serialize)` nor `@serialize`, so std's bound is unmet at
+// the call. Both compilers refuse -- the oracle with E_BOUND_NOT_SATISFIED,
+// novac with the same code in a language error -- and no instance of std's
+// body is made for it.
+// NOVAC_EXPECT E_BOUND_NOT_SATISFIED
+import std.encoding.serde.{json_encode}
+
+type Plain {
+    n int
+}
+
+fn main() {
+    ro p = Plain { n: 1 }
+    println(json_encode(p) ?? "fail")
+}

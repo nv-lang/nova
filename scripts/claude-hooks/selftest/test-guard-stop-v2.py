@@ -151,6 +151,14 @@ def c_question_ok(tmp):
     return run(tmp, [(u"Две развилки, какую берём?\n\nСТОП: вопрос", 0)]), False
 
 
+def c_alt_stop_word_ok(tmp):
+    return run(tmp, [(u"Две развилки, какую берём?\n\nПРИЧИНА ОСТАНОВКИ: вопрос", 0)]), False
+
+
+def c_alt_stop_word_lies(tmp):
+    return run(tmp, [(u"Жду указаний.\n\nПРИЧИНА ОСТАНОВКИ: вопрос", 0)]), True
+
+
 def c_question_without_question(tmp):
     return run(tmp, [(u"Жду указаний.\n\nСТОП: вопрос", 0)]), True
 
@@ -471,6 +479,8 @@ for n, f in [
     (u"очередь-пуста, снимка нет", c_queue_missing),
     (u"очередь-пуста, снимок просрочен", c_queue_stale),
     (u"вопрос со знаком вопроса", c_question_ok),
+    (u"слова ПРИЧИНА ОСТАНОВКИ: вместо СТОП: принимаются", c_alt_stop_word_ok),
+    (u"слова ПРИЧИНА ОСТАНОВКИ: не освобождают от доказательства", c_alt_stop_word_lies),
     (u"вопрос без знака вопроса", c_question_without_question),
     (u"два вопроса подряд без работы", c_question_twice),
     (u"два вопроса, но между ними работа", c_question_twice_with_work),

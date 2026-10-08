@@ -1,0 +1,48 @@
+module emit_order.pos_1
+
+// A FUNCTION CALLS ONE DECLARED BELOW IT. novac wrote the file's functions in
+// source order with no prototypes, so the call named a symbol C had not seen:
+// clang took it for an implicit `int` declaration and refused the definition as
+// a conflicting type, while the oracle built the file. Every fixture before
+// this one happened to declare the callee first; novac's own `diag.nv` does not
+// (`to_json` calls `ice`, declared after it -- E2-b3 step 6). The cells: a
+// plain forward call, a mutual pair, a forward call returning a string, and a
+// forward call to a method.
+
+type Tally {
+    n int
+}
+
+fn first(n int) -> int {
+    second(n) + 1
+}
+
+fn is_even(n int) -> bool {
+    if n == 0 { true } else { is_odd(n - 1) }
+}
+
+fn is_odd(n int) -> bool {
+    if n == 0 { false } else { is_even(n - 1) }
+}
+
+fn greet(who str) -> str {
+    "${salute()} ${who}"
+}
+
+fn bump(a Tally) -> int {
+    a.twice() + 1
+}
+
+fn main() {
+    println(first(3))
+    println(is_even(10))
+    println(is_odd(7))
+    println(greet("you"))
+    println(bump(Tally { n: 4 }))
+}
+
+fn second(n int) -> int => n * 2
+
+fn salute() -> str => "hello"
+
+fn Tally @twice() -> int => @n * 2

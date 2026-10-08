@@ -5346,6 +5346,17 @@ pub fn detect_or_build_libuv(rt_dir: &Path, repo_root: &Path,
     let cache_dir = repo_root.join("target").join("libuv-cache").join(libuv_cache_key());
     let lib_name = if cfg!(target_os = "windows") { "libuv.lib" } else { "libuv.a" };
     let lib_file = cache_dir.join(lib_name);
+    // Registry 221.1 #1824: two `nova` processes on a cold cache both built
+    // into the one `obj/` (each `remove_dir_all`s it first) and could link a
+    // half-written archive. The OS lock is taken before the first look.
+    let lock_path = cache_dir.join(".nova-build.lock");
+    let _xproc = match crate::fs_lock::lock_exclusive(&lock_path) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            eprintln!("nova: warning: libuv build: lock {}: {:#}", lock_path.display(), e);
+            None
+        }
+    };
     if lib_file.is_file() {
         return Some(LibuvConfig {
             include_dir,
@@ -5673,6 +5684,15 @@ pub fn detect_or_build_boehm_fallback(
         let cache_dir = repo_root.join("target").join("gc-cache");
         let gc_lib = cache_dir.join("gc.lib");
         let cache_include = cache_dir.join("include");
+        // Registry 221.1 #1824: the same cross-process lock as libuv's.
+        let lock_path = cache_dir.join(".nova-build.lock");
+        let _xproc = match crate::fs_lock::lock_exclusive(&lock_path) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                eprintln!("nova: warning: bdwgc build: lock {}: {:#}", lock_path.display(), e);
+                None
+            }
+        };
         if gc_lib.is_file() && cache_include.join("gc.h").is_file()
             && cache_include.join("gc").join("gc.h").is_file()
         {

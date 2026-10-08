@@ -286,6 +286,40 @@ if python "$G" "$T/probeexe" > "$T/o20" 2>&1; then
 else
     bad "правило про имя бинаря уехало на пробы: [$(head -n 2 "$T/o20")]"
 fi
+
+# ── 21. самотест, ищущий НАСТОЯЩИЙ оракул одним именем, — красный ────────
+# Носитель (реестр 221.1 №1826): test-check-novac-shell-freshness.sh знал только
+# `nova.exe`, и на Linux-раннере ночной full краснел «живая половина мертва».
+mkdir -p "$T/stexe/scripts/guards/selftest"
+printf '#!/bin/sh\nexit 0\n' > "$T/stexe/scripts/guards/check-ok.sh"
+printf '#!/bin/sh\nORACLE="$ROOT/nova-cli/target/release/nova.exe"\n[ -f "$ORACLE" ] || exit 1\n' \
+    > "$T/stexe/scripts/guards/selftest/test-x.sh"
+if python "$G" "$T/stexe" > "$T/o21" 2> "$T/e21"; then
+    bad "самотест, знающий только .exe настоящего дерева, прошёл: [$(head -n 1 "$T/o21")]"
+else
+    grep -q "test-x.sh: знает только" "$T/e21" \
+        && ok "самотест со слепым поиском оракула — красный, файл назван" \
+        || bad "красный, но не про самотест: [$(head -n 2 "$T/e21")]"
+fi
+
+# ── 22. подделка nova.exe в фикстуре самотеста — зелёная ─────────────────
+# heredoc и printf пишут ДАННЫЕ подложки, а путь в подложку ($FIX, $R) — не
+# поиск бинаря дерева: краснеть здесь значило бы запретить подделки вовсе.
+mkdir -p "$T/stfake/scripts/guards/selftest"
+printf '#!/bin/sh\nexit 0\n' > "$T/stfake/scripts/guards/check-ok.sh"
+cat > "$T/stfake/scripts/guards/selftest/test-y.sh" <<'SH'
+#!/bin/sh
+ORACLE="$FIX/nova-cli/target/release/nova.exe"
+printf '#!/bin/sh\nNOVA="$ROOT/nova-cli/target/release/nova.exe"\n' > "$T/g.sh"
+cat > "$T/h.sh" <<'EOF'
+ORACLE="$ROOT/nova-cli/target/release/nova.exe"
+EOF
+SH
+if python "$G" "$T/stfake" > "$T/o22" 2>&1; then
+    ok "подделки .exe в фикстуре самотеста законны"
+else
+    bad "подделка в фикстуре покраснела: [$(head -n 2 "$T/o22")]"
+fi
 if [ "$fails" -ne 0 ]; then
     echo "итог: FAIL $fails" >&2
     exit 1

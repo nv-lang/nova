@@ -137,7 +137,7 @@ fi
 # 2026-09-22) — иначе номер, уже присвоенный интегратором на main, приходит
 # назад как второй №TBD той же находки. Не нуждается в файле сообщения.
 if [ -f "$ROOT/scripts/guards/check-tbd-branch-freshness.sh" ]; then
-    sh "$ROOT/scripts/guards/check-tbd-branch-freshness.sh" "$ROOT" || exit 1
+    bash "$ROOT/scripts/guards/check-tbd-branch-freshness.sh" "$ROOT" || exit 1
 fi
 echo "check-commit-hygiene ok: маркеры, авторство, запрет Co-Authored-By и язык сообщения проверены"
 exit 0

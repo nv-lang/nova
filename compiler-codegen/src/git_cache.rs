@@ -301,6 +301,27 @@ pub fn resolve_git_dep(
     Ok(res)
 }
 
+/// Межпроцессная блокировка ОДНОГО репозитория кэша (реестр 221.1 №1824).
+///
+/// `lock_for_key` выше сериализует только ПОТОКИ одного процесса. Несколько
+/// процессов `nova` на одном кэше (страж примеров гейта собирает их по четыре
+/// разом; `make -j`; две сборки в соседних терминалах) делили `db/<id>.git` без
+/// всякой защиты. Замер 2026-10-07: пустой `NOVA_HOME`, четыре параллельных
+/// `nova build examples/basics/*.nv` — три из четырёх падают «clone
+/// git-зависимости `.../nova-http`: destination path ... already exists and is
+/// not an empty directory»; ровно так ночной ярус full на CI (свежий раннер,
+/// пустой кэш) красен с 2026-10-01. Тот же класс у `fetch` (два процесса на
+/// одном bare-репозитории) и у `worktree add` (второй видит `co/<id>/<commit>`
+/// недостроенным и собирает из неполного дерева).
+///
+/// Сама блокировка — дверь `fs_lock` (ядро ОС; общая с vendored FFI, libuv и
+/// bdwgc), файл `locks/<id>.lock`.
+fn lock_repo(cache_root: &Path, url: &str) -> Result<crate::fs_lock::FileLock> {
+    let path = cache_root.join("locks").join(format!("{}.lock", repo_id(url)));
+    crate::fs_lock::lock_exclusive(&path)
+        .with_context(|| format!("не удалось взять блокировку кэша {}", path.display()))
+}
+
 /// Ядро `resolve_git_dep` с явным корнем кэша — без memo и без
 /// `git_cache_root()`. Прямой вызов — из тестов (изолированный
 /// temp-кэш, без глобального `NOVA_HOME`).
@@ -346,6 +367,7 @@ pub fn list_versions_in(
     cache_root: &Path,
     url: &str,
 ) -> Result<Vec<(crate::semver::Version, String)>> {
+    let _lock = lock_repo(cache_root, url)?;
     let (db, db_existed) = ensure_db(cache_root, url)?;
     // Новые теги могли появиться upstream.
     if db_existed && !offline() {
@@ -373,6 +395,8 @@ pub fn resolve_git_dep_in(
     locked_commit: Option<&str>,
 ) -> Result<GitResolution> {
     // --- 1. bare-клон репозитория (один раз) ---------------------------
+    // Клон, fetch и checkout — под одной межпроцессной блокировкой (№1824).
+    let _lock = lock_repo(cache_root, url)?;
     let (db, db_existed) = ensure_db(cache_root, url)?;
 
     // --- 2. определить целевой commit ---------------------------------
@@ -777,5 +801,53 @@ mod tests {
         unsafe { std::env::remove_var("NOVA_HOME"); }
         fs::remove_dir_all(&src).ok();
         fs::remove_dir_all(&home).ok();
+    }
+
+    /// Registry 221.1 #1824: the per-key lock above serializes THREADS of
+    /// one process only; separate `nova` processes on one cache (the gate's
+    /// examples guard builds four at once on a fresh CI runner) raced
+    /// `git clone --bare` into the same `db/<id>.git` — three of four died
+    /// with "destination path ... already exists". This test goes through
+    /// `list_versions_in` / `resolve_git_dep_in` directly, i.e. PAST the
+    /// in-process key lock and memo, so nothing but the cross-process OS lock
+    /// (`lock_repo`) stands between the racers: each thread opens its own
+    /// lock file handle, exactly as a separate process would.
+    #[test]
+    fn concurrent_resolve_in_shared_cache_bypassing_key_lock_no_race() {
+        let (src, commit) = make_source_repo("xproc");
+        let cache = temp_cache("xproc");
+        let url = src.to_string_lossy().to_string();
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let (url, cache, barrier) = (url.clone(), cache.clone(), barrier.clone());
+                std::thread::spawn(move || -> Result<String> {
+                    barrier.wait();
+                    if i % 2 == 0 {
+                        let vs = list_versions_in(&cache, &url)?;
+                        Ok(vs.last().map(|v| v.1.clone()).unwrap_or_default())
+                    } else {
+                        let r = resolve_git_dep_in(
+                            &cache, &url, &GitPin::Tag("v1.0.0".into()), None,
+                        )?;
+                        assert!(r.checkout.join("calc.nv").is_file());
+                        Ok(r.commit)
+                    }
+                })
+            })
+            .collect();
+        for (i, h) in handles.into_iter().enumerate() {
+            let r = h.join().unwrap();
+            let got = r.unwrap_or_else(|e| panic!("worker {} failed: {:#}", i, e));
+            if i % 2 == 0 {
+                assert_eq!(got, "v1.0.0");
+            } else {
+                assert_eq!(got, commit);
+            }
+        }
+
+        fs::remove_dir_all(&src).ok();
+        fs::remove_dir_all(&cache).ok();
     }
 }

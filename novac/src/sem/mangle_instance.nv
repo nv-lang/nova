@@ -348,7 +348,16 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
             ro nm = type_base(ctx, a)
             if is_value_record(ctx, a) { "NovaValue_${nm}" } else { "Nova_${nm}_p" }
         }
-        TkApp => "${instance_struct_name(ctx, a)}_p"
+        // An `Option`/`Result` instance is spelled by its FAMILY, as the oracle
+        // writes it inside a name: `Vec[Option[int]]` is `Nova_Vec____NovaOpt_nova_int`
+        // (measured 2026-10-06 on the kept C of `[]Option[int]`, E2-b3 step 6);
+        // `c_in_name` adds the `_p` of a family behind a pointer (Result) and none
+        // for Option. Asked of a record-shaped body, a sum was the ice below.
+        TkApp => if family_instance_name(ctx, a) != "" {
+            c_in_name(ctx, a)
+        } else {
+            "${instance_struct_name(ctx, a)}_p"
+        }
         TkSum => "Nova_${type_base(ctx, a)}_p"
         // A NEWTYPE inside an instance name is its REPRESENTATION (274.7 B7,
         // #940): `[Meters(1.0), Meters(2.0)]` with `type Meters f64` is
@@ -360,21 +369,21 @@ fn instance_arg_spelling(ctx Ctx, a TyId) -> str {
         // used to be the second answer, an ice after a green check.
         TkNewtype => instance_arg_spelling(ctx, representation_of(ctx, a))
         TkTuple => ice_at(
-            "novac/src/sem/mangle_instance.nv:362",
+            "novac/src/sem/mangle_instance.nv:371",
             "mangle: a structural term as an instance argument — its in-name spelling is not measured on the shell")
         TkPtr => ice_at(
-            "novac/src/sem/mangle_instance.nv:365",
+            "novac/src/sem/mangle_instance.nv:374",
             "mangle: a POINTER as an instance argument — its in-name spelling is not measured on the shell")
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). An effect has no in-name spelling.
         TkEffect => ice_at(
-            "novac/src/sem/mangle_instance.nv:370",
+            "novac/src/sem/mangle_instance.nv:379",
             "mangle: an EFFECT as an instance argument — an effect value reaches a generic instance only through a with-door bug (E4 wave)")
         TkParam => ice_at(
-            "novac/src/sem/mangle_instance.nv:373",
+            "novac/src/sem/mangle_instance.nv:382",
             "mangle: a type parameter as an instance argument — layout asked before substitution")
         TkInfer => ice_at(
-            "novac/src/sem/mangle_instance.nv:376",
+            "novac/src/sem/mangle_instance.nv:385",
             "mangle: an inference variable as an instance argument — a variable escaped its body")
     }
 }
