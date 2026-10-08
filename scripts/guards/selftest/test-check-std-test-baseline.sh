@@ -70,6 +70,46 @@ std/src/a/fixed_test   # №112 починен' "$RUN_OK"
 out=$(bash "$G" "$TMP" "$TMP/bin/nova" 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && echo "$out" | grep -q "почищено"; then ok "починенное имя — подсказка, не отказ"; else bad "неверно на почищенном (rc=$rc): $out"; fi
 
+# 6a. №1865: TIMEOUT вне базы — красный. Прежде регулярка знала только
+#     RUN-FAIL|CC-FAIL, и зависшая единица считалась зелёной.
+setup 'std/src/a/known_test   # №111 известный' \
+'RUN-FAIL       std/src/a/known_test  # bla
+TIMEOUT        std/src/c/hang_test  # killed after 187363ms
+PASS: 69  FAIL: 2  SKIP: 3 (skipped)'
+out=$(bash "$G" "$TMP" "$TMP/bin/nova" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "hang_test"; then ok "TIMEOUT вне базы — отказ с именем (№1865)"; else bad "TIMEOUT прошёл молча (rc=$rc): $out"; fi
+
+# 6b. №1865: CODEGEN-FAIL вне базы — красный.
+setup 'std/src/a/known_test   # №111 известный' \
+'RUN-FAIL       std/src/a/known_test  # bla
+CODEGEN-FAIL   std/src/d/gen_test  # [E_D78_MODULE_PATH_MISMATCH] bla
+PASS: 69  FAIL: 2  SKIP: 3 (skipped)'
+out=$(bash "$G" "$TMP" "$TMP/bin/nova" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "gen_test"; then ok "CODEGEN-FAIL вне базы — отказ с именем (№1865)"; else bad "CODEGEN-FAIL прошёл молча (rc=$rc): $out"; fi
+
+# 6c. №1865: NEG-метка (несовпадение ожидания) вне базы — красный.
+setup 'std/src/a/known_test   # №111 известный' \
+'RUN-FAIL       std/src/a/known_test  # bla
+NEG-WRONG-STDOUT std/src/e/out_test  # bla
+PASS: 69  FAIL: 2  SKIP: 3 (skipped)'
+out=$(bash "$G" "$TMP" "$TMP/bin/nova" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "out_test"; then ok "NEG-* вне базы — отказ с именем (№1865)"; else bad "NEG-* прошёл молча (rc=$rc): $out"; fi
+
+# 6d. TIMEOUT, записанный в базу, — норма (известный отказ любой метки).
+setup 'std/src/c/hang_test   # №222 известное зависание' \
+'TIMEOUT        std/src/c/hang_test  # killed after 187363ms
+PASS: 70  FAIL: 1  SKIP: 3 (skipped)'
+out=$(bash "$G" "$TMP" "$TMP/bin/nova" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "известный TIMEOUT проходит"; else bad "ложный отказ на известном TIMEOUT: $out"; fi
+
+# 6e. №1865, класс: метка, которой страж не знает, при FAIL: 1 — красный через
+#     сверку с итогом, а не молчание.
+setup 'std/src/a/known_test   # №111 известный' \
+'WEIRD-FAIL     std/src/f/new_label_test  # bla
+PASS: 70  FAIL: 1  SKIP: 3 (skipped)'
+out=$(bash "$G" "$TMP" "$TMP/bin/nova" 2>&1); rc=$?
+if [ "$rc" -eq 1 ] && echo "$out" | grep -q "не знает"; then ok "незнакомая метка ловится сверкой с FAIL: итога"; else bad "незнакомая метка прошла (rc=$rc): $out"; fi
+
 # 7. Страж назван на странице правил.
 REAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 if grep -q "check-std-test-baseline.sh" "$REAL/docs/dev/rules-for-agents.md" 2>/dev/null; then
