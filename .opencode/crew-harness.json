@@ -94,5 +94,92 @@
     "cargo test",
     "check-novac-differential",
     "check-novac-self-accepted"
-  ]
+  ],
+  "model_profiles": {
+    "claude": {
+      "heavy": {
+        "model": "claude-code/opus",
+        "context": 720000,
+        "output": 64000
+      },
+      "medium": {
+        "model": "claude-code/sonnet",
+        "context": 720000,
+        "output": 64000
+      },
+      "light": {
+        "model": "claude-code/haiku",
+        "context": 220000,
+        "output": 32000
+      }
+    },
+    "kimi": {
+      "heavy": {
+        "model": "kimi-code-plan-global/k3-256k",
+        "context": 220000,
+        "output": 131072
+      },
+      "medium": {
+        "model": "kimi-code-plan-global/k3-256k",
+        "context": 220000,
+        "output": 131072
+      },
+      "light": {
+        "model": "kimi-code-plan-global/k3-256k",
+        "context": 220000,
+        "output": 131072
+      }
+    },
+    "codex": {
+      "heavy": {
+        "model": "openai/gpt-5.5",
+        "context": 525000,
+        "input": 461000,
+        "output": 128000
+      },
+      "medium": {
+        "model": "openai/gpt-5.6-terra",
+        "context": 525000,
+        "input": 461000,
+        "output": 128000
+      },
+      "light": {
+        "model": "openai/gpt-6-luna",
+        "context": 525000,
+        "input": 461000,
+        "output": 128000
+      }
+    }
+  },
+  "profile_sets": {
+    "codex-kimi": {
+      "develop": {
+        "family": "codex",
+        "tier": "task"
+      },
+      "accept": {
+        "family": "kimi",
+        "tier": "task"
+      }
+    },
+    "kimi": {
+      "develop": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "accept": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "plan": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "plan_accept": {
+        "family": "kimi",
+        "tier": "task"
+      }
+    }
+  },
+  "profile_set": "kimi"
 }
