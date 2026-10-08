@@ -1,0 +1,28 @@
+module instance_terms_program.gen
+
+// A MODULE OF THE PROGRAM `pos_1.nv`, not a fixture of its own: generic bodies
+// whose structural terms exist only once a caller names `T` (registry #1831).
+
+/// `a` when `first`, else `b` -- through an option only the instance holds.
+export fn pick[T](a T, b T, first bool) -> T {
+    ro o = if first { Some(a) } else { None }
+    match o {
+        Some(x) => x
+        None => b
+    }
+}
+
+/// `b` -- through a pair only the instance holds.
+export fn second[T](a T, b T) -> T {
+    ro p = (a, b)
+    p.1
+}
+
+/// The pair's second when `some`, else `a` -- through an option over a pair.
+export fn pair_pick[T](a T, b T, some bool) -> T {
+    ro o = if some { Some((a, b)) } else { None }
+    match o {
+        Some(p) => p.1
+        None => a
+    }
+}
