@@ -93,10 +93,15 @@ if [ $DRY = 0 ] && [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=n
     die 2 "дерево $ROOT грязное (изменены отслеживаемые файлы): pre-push check-tree-matches-push откажет пушу зеркала. Запусти из чистого дерева (дерево задачи; у интегратора — временное \`git worktree add --detach\` от origin/main)"
 fi
 
+# Прогонов не узнали (gh снят пределом, код 124, или не ответил) — RUNS пуст: ни один хеш
+# не «завершён», зелёного нет, круг ждёт следующего опроса. Слово — своё, не «красный».
 refresh_runs() {
+    local rc
     RUNS=$(timeout 60 gh run list --limit 80 \
            --json workflowName,status,conclusion,headSha \
-           --jq '.[]|"\(.headSha) \(.workflowName) \(.status) \(.conclusion)"' 2>/dev/null || true)
+           --jq '.[]|"\(.headSha) \(.workflowName) \(.status) \(.conclusion)"' 2>/dev/null); rc=$?
+    if [ "$rc" -eq 124 ]; then RUNS=""; say "gh run list СНЯТ ПРЕДЕЛОМ 60с: прогонов не узнали, жду следующего опроса"
+    elif [ "$rc" -ne 0 ]; then RUNS=""; say "gh run list не ответил (rc=$rc): прогонов не узнали, жду следующего опроса"; fi
 }
 
 # Состояние CI хеша по прогонам ВСЕХ веток (страж судит любой event): pending — есть
