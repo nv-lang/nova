@@ -1,26 +1,36 @@
 module variant_scope_program.pos_2
 
 // NOVAC_PROGRAM
-// IMPORTED MODULE SUM vs STD'S CLOSED SUM (registry 221.1 #1814, замер (2)):
+// IMPORTED MODULE SUM vs STD'S PRELUDE SUM (registry 221.1 #1814, замер (2)):
 // `Empty` here is a variant of `variant_scope_program.shape`'s `Shape`, a
-// module of THIS program, named after an explicit import. It is not declared
-// by the entry file itself, so it carried no precedence over std's own prelude
-// sum of the same name (`ParseBoolError.Empty`, visible with no import at all)
-// -- the bare use refused as ambiguous, a program the oracle accepts (its
-// import resolves the name there; confirmed the oracle needs the same `Shape`
-// annotation novac does once a second candidate exists -- D478's door, not a
-// bare-inference gap). The program's own module must outrank std's
-// blanket-visible set, the same way the file's own declaration already
-// outranks every handed one.
+// module of THIS program, named after an explicit import, with NO type
+// annotation anywhere near the bare use -- `variant_named_in` (D478) never
+// enters the picture, so the ambiguity-count door (`variants_named`) is the
+// ONLY one asked. It is not declared by the entry file itself, so (pre-fix)
+// it carried no precedence over std's own prelude sum of the same name
+// (`ParseBoolError.Empty`, visible with no import at all) and the bare use
+// refused as ambiguous.
+//
+// CONFIRMED BY THREE BUILT BINARIES (registry #1814, rework round 1): the
+// self-collision fix alone (tier 1, `foreign_types_cnt`) leaves THIS probe
+// refused -- it is the self-dup fix for замер (1), orthogonal to this one.
+// Only with the program-module tier (tier 2, `ctx.interop.has_module`) does
+// it pass. The oracle, on this exact bare form, resolves `Empty` to its own
+// prelude `ParseBoolError.Empty` (confirmed directly, no annotation) and then
+// faults on the UNRELATED `E_MATCH_FOREIGN_VARIANT` the moment a `Circle` or
+// `Rect` arm is written against it -- so this fixture's `match` deliberately
+// does NOT pattern on `Shape`'s payload variants; it only asks "is this
+// Empty", which both sides answer the same way once ambiguity is resolved.
+// `area(...)` below exercises the import so no `unused-import` warning
+// stands between this probe and a clean oracle run.
 
-import ./shape.{Shape, Circle, Rect, Empty, area}
+import ./shape.{Circle, Rect, Empty, area}
 
 fn main() {
-    ro c Shape = Empty
+    ro c = Empty
     match c {
-        Circle(r) => println(r)
-        Rect(w, h) => println(w * h)
         Empty => println(0 - 1)
+        _ => println(0)
     }
     println(area(Rect(2, 3)))
     println(area(Circle(4)))
