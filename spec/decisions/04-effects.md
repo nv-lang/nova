@@ -8741,9 +8741,41 @@ type Cache effect {
 D453 запретил расширять `process_run` задним числом, а `Os` — «тонкий» эффект без дескрипторов. Поэтому всё
 живое — в эффекте `Proc` (`std/src/os/proc.nv`), по образцу `Net`: пользователь зовёт `Command.start`,
 `Child.wait`, `ChildStdout.read`, а не операции эффекта; рабочий обработчик `real_proc()` — `#default_handler`;
-в тестах — подменяемый. Операции тонкие (`int` / указатель-дескриптор), все `Result` и `Option` строятся в
-`.nv` ВНЕ границы эффекта (D456, правило границы). Пробой Ф.0 подтверждено: эффект объявляется отдельно,
-получает `#default_handler`, использует `*()`-дескрипторы и кортежи в сигнатурах операций.
+в тестах — подменяемый. **Граница говорит на Nova (D456):** запуск описывается самой записью `Command`
+(`launch(cmd Command) -> Result[Child, IoError]` — ни счётчиков `argc`/`envc`, ни позиционной простыни),
+дескрипторы — именованные непрозрачные типы (`Child`, `ChildPipe`), отказ — `IoError`, отмена ожидания —
+`Err(Interrupted)`:
+
+```nova
+export type Proc effect {
+    fn launch(cmd Command) -> Result[Child, IoError]
+    fn take_stdin(child Child) -> Option[ChildPipe]      // take_stdout, take_stderr — так же
+    fn child_pid(child Child) -> int
+    fn child_wait(child Child) -> Result[ExitStatus, IoError]
+    fn child_try_wait(child Child) -> Result[Option[ExitStatus], IoError]
+    fn child_release(child Child) -> ()
+    fn child_kill(child Child, sig Signal) -> Result[(), IoError]                          // Ф.2
+    fn child_wait_timeout(child Child, d Duration) -> Result[Option[ExitStatus], IoError]  // Ф.2
+    fn kill_pid(pid int, sig Signal, tree bool) -> Result[(), IoError]                     // Ф.2
+    fn pipe_read(pipe ChildPipe, mut buf []u8) -> Result[int, IoError]
+    fn pipe_write(pipe ChildPipe, data []u8) -> Result[int, IoError]
+    fn pipe_close(pipe ChildPipe) -> ()
+}
+```
+
+C-формы (склеенный через NUL `argv`, счётчики, отрицательный errno, сырые указатели) живут в `proc_ffi.nv`
+и в приватных функциях-переводчиках, которые зовёт `real_proc`; варианты `Result`/`Option` строятся в
+обычных функциях, а не в теле обработчика (прецедент `real_net`). Мок поэтому не видит ни одной C-формы.
+Операции Ф.2 (задача #44) — в той же форме: сигнал — значение `Signal`, срок — `Duration`; номер сигнала и
+миллисекунды появляются только в переводчиках. Закрытый поток (`NOVA_PROC_CLOSED`) переводчик чтения/записи
+отдаёт как `Err(NotConnected)` (п. 11 раздела 3).
+Пробой Ф.0 подтверждено: эффект объявляется отдельно и получает `#default_handler`.
+
+> **Амендмент 2026-10-08 (приёмка #43, круг 3).** Первая редакция этого пункта гласила «операции тонкие
+> (`int` / указатель-дескриптор), все `Result` и `Option` строятся ВНЕ границы» и ссылалась на D456 — то есть
+> называла правилом D456 ровно ту форму, которую D456 запрещает (§5 сырые ручки, §6 счётчики рядом с данными,
+> §8 позиционная простыня, §1 отрицательный errno). Страж `check-effect-boundary-shape.sh` насчитал на `Proc`
+> одиннадцать нарушений (R1 ×9, R3, R4); граница переписана, база стража не поднималась.
 
 ### 2. Поверхность (нормативна; Ф.1 — реализована, остальное — контракт для следующих фаз)
 
@@ -8875,7 +8907,7 @@ export fn kill_pid(pid int, sig Signal, tree bool) Proc -> Result[(), IoError]
 | (б) POSIX: дерево | `UV_PROCESS_DETACHED` (= `setsid`) + `kill(-pid)` убивает внука; обычный `kill(pid)` оставляет внука жить | Ф.2: `Group` — явный, `Single` — умолчание (как в плане) |
 | (в) PTY POSIX | `forkpty`: мастер открывается `uv_pipe_open`, читается `uv_read_start`; эхо и `\n`→`\r\n` ядром; `TIOCSWINSZ` виден потомку (`40 120`); конец — `EIO` (−5), не `EOF` | Ф.3: `EIO` переводится в `Ok(0)`, как в плане |
 | (в) PTY Windows | `CreatePseudoConsole` работает; код выхода 3 сохранён; поток вывода закрывается (`ERROR_BROKEN_PIPE`, 109) **только после** `ClosePseudoConsole`; перед текстом — служебные последовательности (`ESC[?9001h`, `ESC[2J`, заголовок окна) | Ф.4: допустимы префикс/суффикс (PTY-2 принимает вхождение подстроки); `close` сначала вычитывает вывод. Открыто для Ф.4: в пробе `hello` ушёл в stdout РОДИТЕЛЯ, а не в псевдоконсоль (родитель без консоли) — выяснить до реализации |
-| `Proc` как отдельный эффект | компилируется, `#default_handler`, дескрипторы `*()` и кортежи в операциях допустимы | п. 1 подтверждён |
+| `Proc` как отдельный эффект | компилируется, `#default_handler` | п. 1 подтверждён; форма операций — по D456 (амендмент п. 1) |
 | macOS | **не проверялся** (нет машины) | не заявляется поддержанным |
 
 ### 5. Различия Windows / POSIX (нормативная таблица плана, п. 3.4, действует без изменений)

@@ -100,11 +100,9 @@ fn both_writers_alive(mut rx ChildStdout) -> bool {
     while !(seen_c && seen_g) && total < MARK_READ_LIMIT {
         ro n = ctl_io(rx.read(buf), "read marks")
         if n == 0 { return false }
-        mut i = 0
-        while i < n {
+        for i in 0..n {
             if buf[i] == 99 as u8 { seen_c = true }
             if buf[i] == 103 as u8 { seen_g = true }
-            i += 1
         }
         total += n
     }

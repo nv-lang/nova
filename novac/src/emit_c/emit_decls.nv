@@ -146,7 +146,7 @@ fn Emitter mut @emit_sum_decl(sum_id int) -> () {
 /// "everything I did not name is a sum", so a fourth kind would be emitted as
 /// a sum in silence — the #652 class again. With a match, a new variant is a
 /// compile error at exactly this line.
-fn Emitter mut @emit_type_decls() -> () {
+fn Emitter mut @emit_type_decls(insts []Instantiation) -> () {
     // PASS 1 -- every struct NAME before any body. C needs only the name to
     // take a pointer, so this alone makes a heap-record field whose type is
     // declared LOWER in the file legal. The same skip of handed-over types
@@ -172,7 +172,7 @@ fn Emitter mut @emit_type_decls() -> () {
     // compiled it. A POINTER-shaped one needs only its payload's name -- out
     // now, after pass 1; a value-shaped one embeds its payload's body and goes
     // right after it, inside pass 2 (`@dep_done` orders its holders).
-    ro opts = @option_typedef_ids()
+    ro opts = @option_typedef_ids(insts)
     mut opt_fwd = []str.new()
     mut opt_out = []bool.new()
     // A placeholder "nothing of pass 2 is done yet" row, asked of a
@@ -271,7 +271,7 @@ fn Emitter mut @emit_type_decls() -> () {
     // PASS 3 -- the structural terms, which have no declaration of their own.
     // Last, exactly where the retired door used to run: a term embeds only
     // types the passes above have finished.
-    @emit_structural_typedefs()
+    @emit_structural_typedefs(insts)
     // The options no body of pass 2 released (a payload of an instance of a
     // generic the shell lacks), where they all stood before.
     for i in 0..opts.len() {
@@ -283,9 +283,10 @@ fn Emitter mut @emit_type_decls() -> () {
     }
 }
 
-/// The C typedef of every STRUCTURAL term the file interned -- the anonymous
-/// positional shape, which has no declaration to hang its body on and so
-/// cannot ride the two passes above.
+/// The C typedef of every STRUCTURAL term the unit's bodies were typed with
+/// (`@unit_types`: the file's channel AND its instances', registry #1831) --
+/// the anonymous positional shape, which has no declaration to hang its body
+/// on and so cannot ride the two passes above.
 ///
 /// It runs LAST inside the declaration pass, and that placement is the whole
 /// content of wave V3-3: until 2026-09-04 it was a door of its own, called
@@ -304,9 +305,9 @@ fn Emitter mut @emit_type_decls() -> () {
 /// whole declaration pass; and the shape that would break -- a DECLARED type
 /// embedding a structural term by value -- is refused by name, the subset does
 /// not compile a term as a field type. The gain is one door instead of two.
-fn Emitter mut @emit_structural_typedefs() -> () {
+fn Emitter mut @emit_structural_typedefs(insts []Instantiation) -> () {
     mut ids = []int.new()
-    for t in @out.types {
+    for t in @unit_types(insts) {
         if !is_ty(t) { continue }
         ro k = @ctx.tys.kind_of(t)
         if k != TypeKind.TkTuple { continue }
@@ -374,12 +375,13 @@ fn Emitter mut @emit_one_structural_typedef(t TyId, mut fwd []str) -> () {
 /// WHERE each is written is `@emit_type_decls`' business (a pointer-shaped one
 /// after the names, a value-shaped one after its payload's body); this door
 /// only says WHICH, deduplicated, in first-met order. The candidates are the
-/// types the checker recorded and -- because a field type need not be the type
-/// of any expression -- the fields of the file's records and the payloads of
-/// its sums.
-fn Emitter @option_typedef_ids() -> []int {
+/// types the checker recorded -- in the file's channel and in every instance's
+/// (`@unit_types`, registry #1831) -- and, because a field type need not be the
+/// type of any expression, the fields of the file's records and the payloads
+/// of its sums.
+fn Emitter @option_typedef_ids(insts []Instantiation) -> []int {
     mut cands = []TyId.new()
-    cands.append(@out.types)
+    cands.append(@unit_types(insts))
     for d in @ctx.foreign_types_cnt..@ctx.types.len() {
         ro td = @ctx.types[d]
         ro frange = field_range_of(td) ?? (no_frow(), 0)
@@ -562,7 +564,7 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
         TkRecord => { if fwd_only { @emit_type_fwd(t) } else { @emit_record_decl(t) } }
         TkSum => { if fwd_only { @emit_type_fwd(t) } else { @emit_sum_decl(t) } }
         TkApp => ice_at(
-            "novac/src/emit_c/emit_decls.nv:564",
+            "novac/src/emit_c/emit_decls.nv:566",
             "emit_c: declaration of an applied type — instances are emitted by mono, E2-b2")
             // A type parameter DECLARES nothing: it has no layout until a
             // substitution names one, and the instance that carries the
@@ -578,21 +580,61 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
             // unreferenced typedef would be text nobody reads.
         TkNewtype => {}
         TkInfer => ice_at(
-            "novac/src/emit_c/emit_decls.nv:580",
+            "novac/src/emit_c/emit_decls.nv:582",
             "emit_c: declaration of an inference variable — a variable escaped its body")
             // TkEffect: unreachable while the with-doors refuse non-handler values;
             // ice, not a fallback (E4 wave). An effect declares OPERATION rows, not
             // a C struct; its emission arrives with the Effect-type stage.
         TkPtr => ice_at(
-            "novac/src/emit_c/emit_decls.nv:586",
+            "novac/src/emit_c/emit_decls.nv:588",
             "emit_c: declaration of a POINTER type — a pointer is a structural term, nothing declares one")
         TkEffect => ice_at(
-            "novac/src/emit_c/emit_decls.nv:589",
+            "novac/src/emit_c/emit_decls.nv:591",
             "emit_c: declaration of an EFFECT type — an effect owns operations, not a C layout; with-doors refuse non-handler values (E4 wave)")
             // A tuple is a structural TERM: nothing ever declares one, so a
             // registry row with this kind is a harvest bug, not a decl to emit.
         TkTuple => ice_at(
-            "novac/src/emit_c/emit_decls.nv:594",
+            "novac/src/emit_c/emit_decls.nv:596",
             "emit_c: a structural term among declarations — a structural term declares nothing")
+    }
+}
+
+/// Every type the bodies THIS UNIT prints were typed with, each once, in
+/// first-met order: the file's own channel first, then each instance's.
+///
+/// THE ONE ANSWER to "which terms does this unit print" (registry #1831). An
+/// instance body is typed into a channel of its own (`Instantiation.chan`,
+/// pipeline `check_instance`), and its `Option[T]` or `(T, T)` at `T = Pt` is
+/// recorded THERE only -- the file's channel saw the body once, under the
+/// abstract `T`. The two doors that print structural typedefs asked `@out`
+/// alone, so a term born in an instance was used five times and declared
+/// nowhere: clang "unknown type name 'NovaOpt_Nova_Pt_p'" (probe p03d) and
+/// "'_NovaTuple_2_9_Nova_Pt_p_9_Nova_Pt_p'" (p10) while the oracle compiled
+/// both. Measured: the instance channel holds the concrete term; nothing in
+/// mono was missing, only the question was asked of one channel out of two.
+///
+/// In a program an instance another unit prints is asked here too: its terms'
+/// typedefs are guarded (`NOVA_TUPLE_TYPEDEF_`, `@open_once`), so a second
+/// copy is a no-op, and asking fewer channels than bodies printed is the bug.
+fn Emitter @unit_types(insts []Instantiation) -> []TyId {
+    mut seen = []bool.new()
+    mut ts = []TyId.new()
+    @collect_types(@out.types, seen, ts)
+    for inst in insts {
+        @collect_types(inst.chan.types, seen, ts)
+    }
+    ts
+}
+
+/// Append to `ts` each recorded type of `from` not `seen` yet (`seen` grows to
+/// the largest id met: a type id is a row index, dense from zero).
+fn Emitter @collect_types(from []TyId, mut seen []bool, mut ts []TyId) -> () {
+    for t in from {
+        if !is_ty(t) { continue }
+        ro rid = raw_ty(t)
+        while seen.len() <= rid { seen.push(false) }
+        if seen[rid] { continue }
+        seen[rid] = true
+        ts.push(t)
     }
 }

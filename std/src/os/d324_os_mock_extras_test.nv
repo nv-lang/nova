@@ -15,8 +15,13 @@ test "mock_os: env_bytes 2-arg set (raw bytes) + vars snapshot + args" {
     with Os = mock_os(os) {
         mut raw []u8 = []u8.new()
         raw.push(0xFF as u8); raw.push(0xFE as u8)
-        ro _ = env_bytes("B".bytes(), raw)
-        match env_bytes("B".bytes()) {
+        // The key is bound before the call ON PURPOSE: a bare literal argument is the canonical
+        // form (D429 `#coerce` str -> []u8, and `nova lint` asks for it), but emit_c passes it
+        // as nova_str and the unit fails to compile (registry #1850, carrier
+        // std/src/os/n1850_probe/). An explicit `.bytes()` AS the argument is flagged by the lint.
+        ro b_key = "B".bytes()
+        ro _ = env_bytes(b_key, raw)
+        match env_bytes(b_key) {
             Some(b) => { assert(b.len() == 2); assert(b[0] == (0xFF as u8)); assert(b[1] == (0xFE as u8)) }
             None    => assert(false)
         }

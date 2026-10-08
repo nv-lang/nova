@@ -182,7 +182,7 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
                           // this very field the day the pool was added.
                           pool: LitPool.new(), blobs: []int.new(), infos: []TyId.new(),
                           tag, program, skip, made: []str.new(), tid_base }
-    e.emit_type_decls()
+    e.emit_type_decls(insts)
     // Module values (274.5 section 6): the cells before any function reads
     // them, the initializers after every function they may call, and the
     // lines that run them before `main` into the shell's INIT slot.
