@@ -272,20 +272,31 @@ export fn Command @output() Proc -> Result[Output, IoError] {
         Some(consume s) => s
         None => return Err(output_missing("output: stderr pipe missing"))
     }
-    ro err_ch = Channel[Result[[]u8, IoError]].new(1)
+    // The stderr fiber reports through two plain channels (bytes, raw OS code): a
+    // `Channel[Result[[]u8, IoError]]` corrupted the received value (registry №TBD).
+    ro err_bytes = Channel[[]u8].new(1)
+    ro err_code = Channel[int].new(1)
     mut out_res Result[[]u8, IoError] = Err(output_missing("output: not read"))
     supervised {
         spawn consume e = se {
-            err_ch.tx.send(read_to_end(e))
+            match read_to_end(e) {
+                Ok(b) => { err_bytes.tx.send(b); err_code.tx.send(0) }
+                Err(x) => { err_bytes.tx.send([]u8.new()); err_code.tx.send(if x.raw_os == 0 { 5 } else { x.raw_os }) }
+            }
         }
         out_res = read_to_end(so)
     }
-    ro err_res = match err_ch.rx.recv() {
-        Some(r) => r
-        None => Err(output_missing("output: stderr reader vanished"))
+    ro stderr_bytes = match err_bytes.rx.recv() {
+        Some(b) => b
+        None => []u8.new()
+    }
+    ro stderr_code = match err_code.rx.recv() {
+        Some(c) => c
+        None => 5
     }
     ro status = child.wait()?
-    Ok(Output { status, stdout: out_res?, stderr: err_res? })
+    if stderr_code != 0 { return Err(IoError.from_os(stderr_code, "read child stderr")) }
+    Ok(Output { status, stdout: out_res?, stderr: stderr_bytes })
 }
 
 // ─── real_proc — the production Proc handler over nova_rt/process.c ──
