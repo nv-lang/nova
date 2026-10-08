@@ -161,6 +161,24 @@
         "family": "kimi",
         "tier": "task"
       }
+    },
+    "kimi": {
+      "develop": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "accept": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "plan": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "plan_accept": {
+        "family": "kimi",
+        "tier": "task"
+      }
     }
   }
 }
