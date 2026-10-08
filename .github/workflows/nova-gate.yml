@@ -164,7 +164,8 @@ jobs:
     # шаг модульных тестов ниже на тихой Linux-машине — 1057с (33 файла), на
     # раннере медленнее. Сумма ~55–60 мин; 75 — с запасом ~25%. Первый ночной
     # прогон после слияния — замер: число правится по нему. Пуш остаётся 45.
-    timeout-minutes: ${{ github.event_name == 'schedule' && 75 || 45 }}
+    # Ручной `tier=full` — тот же ярус, значит и тот же предел (реестр №1828).
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.tier == 'full') && 75 || 45 }}
     steps:
       - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
         uses: actions/checkout@v4
@@ -231,9 +232,13 @@ jobs:
       # ночной прогон, — то есть яруса `full` у неё на CI не существовало, и
       # два стража за ним (мутационная проверка самотестов, цена цикла) не
       # исполнялись ни разу. Ночью время есть: там полная плотность фаззера.
+      # РУЧНОЙ `tier=full` ВКЛЮЧАЕТ И ЭТОТ ЯРУС (правка 2026-10-07, задача #34,
+      # реестр №1828). Вход `tier` (№765) читал только gate.sh: ручной прогон
+      # «full» шёл здесь ярусом push, корпус и самосборка Карины в нём не
+      # судились, и проверить ночной фикс Карины можно было опять раз в сутки.
       - name: novac conventions gate (scripts/gate-novac.sh)
         env:
-          NOVAC_TIER: ${{ github.event_name == 'schedule' && 'full' || 'push' }}
+          NOVAC_TIER: ${{ (github.event_name == 'schedule' || inputs.tier == 'full') && 'full' || 'push' }}
         run: NOVAC_SMOKE_EXE_CACHE="$HOME/.cache/novac-oracle-exe" bash scripts/gate-novac.sh "$(pwd)"
 
       # Saved even when the gate is red: the binaries are the oracle's, not a

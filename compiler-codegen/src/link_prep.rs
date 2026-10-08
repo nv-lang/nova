@@ -187,17 +187,28 @@ pub fn build_missing_vendor_ffi_libs(ffi: &ResolvedFfiConfig, vcvars: Option<&Pa
         let candidates = ffi_lib_candidate_names(lib);
         candidates.iter().any(|name| target_dir.join(name).is_file())
     });
-    if is_built() {
-        return;
-    }
     // Hold the lock across the WHOLE re-check+build sequence below — see
     // VENDOR_FFI_BUILD_LOCK doc above.
     let _guard = match VENDOR_FFI_BUILD_LOCK.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };
+    // Registry 221.1 #1824: the mutex above sees THREADS only. Another `nova`
+    // PROCESS on the same git-dep checkout (the gate's examples guard builds
+    // four at once on a fresh runner) rebuilt `.vendor-obj/` under this one's
+    // feet and left the archive half-written: "[ffi] lib `mbedtls` not
+    // found". The OS lock is taken BEFORE the first look at the archive —
+    // a file that exists may still be mid-write by the holder.
+    let lock_path = target_dir.join(".nova-vendor-build.lock");
+    let _xproc = match crate::fs_lock::lock_exclusive(&lock_path) {
+        Ok(l) => Some(l),
+        Err(e) => {
+            eprintln!("nova: warning: vendor FFI build: lock {}: {:#}", lock_path.display(), e);
+            None
+        }
+    };
     if is_built() {
-        return; // another thread finished the build while we waited.
+        return; // built earlier, or by the holder we just waited for.
     }
     // Group `.c` sources by their ORIGINATING `vendor_src_dirs` entry
     // (rather than one flat Vec) — see `build_vendor_ffi_lib` doc for why:

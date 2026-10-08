@@ -18,6 +18,7 @@ module novac.emit_c
 
 import ../sem.{decl_of_ty, field_range_of, no_frow, raw_frow, c_type, subst_type, instance_struct_c}
 import ../sem.{variant_range_of, raw_vrow, no_vrow}
+import ../sem.{c_ident}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind}
 
@@ -57,7 +58,7 @@ fn Emitter mut @emit_instance_struct_of(t TyId, mut done []TyId) -> () {
     ro frange = field_range_of(td) ?? (no_frow(), 0)
     for j in raw_frow(frange.0)..raw_frow(frange.0) + frange.1 {
         ro fd = @ctx.fields.rows[j]
-        @body.append("    ${c_type(@ctx, subst_type(@ctx, fd.type_id, args))} ${fd.name};\n")
+        @body.append("    ${c_type(@ctx, subst_type(@ctx, fd.type_id, args))} ${c_ident(fd.name)};\n")
     }
     @body.append("};\n\n")
     @close_once()

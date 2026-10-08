@@ -21,6 +21,7 @@ pub mod doc;
 pub mod effect_surface;
 pub mod field_cache;
 pub mod free_idents;
+pub mod fs_lock;
 pub mod git_cache;
 pub mod import_alias;
 pub mod imports;
