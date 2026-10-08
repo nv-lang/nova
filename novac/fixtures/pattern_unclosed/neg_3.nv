@@ -1,0 +1,9 @@
+module pattern_unclosed.neg_3
+
+// The same for an array pattern (registry 1856).
+
+// NOVAC_EXPECT expected `]`
+
+fn f(s int) -> int => match s {
+    [a,
+}
