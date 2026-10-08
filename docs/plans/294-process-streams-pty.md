@@ -318,7 +318,7 @@ D-блок потребует). Каждая фикстура утверждае
 **Ф.1.** `compiler-codegen/nova_rt/process.{h,c}` (`proc_spawn`, `proc_child_*`, `proc_pipe_*`; тот же TU, что
 `os_process_run`, сборочные списки не менялись), `std/src/os/{proc.nv, proc_ffi.nv}`, `os.nv` (поля `Command`).
 Фикстуры `std/src/os/proc_streams_test.nv` — 22 теста: S1 (+b, +c), S2, S4a/S4b, S5, S6 (+b), отказы F1–F4, отмена
-C1, уборка C2. Прогон на Windows — в отчёте задачи; Linux — CI. Документация — `docs/guide/process-streams.md`,
+C1, уборка C2. **Прогоны:** Windows — 22/22 зелёные (+ 12/12 и 40/40 повторов с `NOVA_MAXPROCS=1`); Linux (WSL2 Ubuntu, rustc 1.85) — все 15 фикстур p294 зелёные в 20 повторах из 20 (красный там только старый `d453: supervised(timeout:) reaps…`, реестр №591). Сабот: без `uv_read_stop` краснеют S1, S1c, S2, S4a, S5, S6 (16/22); без убийства в `release` — ровно C2. **Редкий сбой под M:N на Windows** (1 зависание S6 на 40 прогонов, 1 аварийный выход на ~20; с `MAXPROCS=1` 0/40) — заведён в реестр 221.1 (№TBD), причина не установлена. Документация — `docs/guide/process-streams.md`,
 пример — `examples/os/agent_runner.nv`.
 
 **Известные ограничения проверки.** (1) На Windows помощник-потомок — `powershell`, у которого нельзя закрыть
