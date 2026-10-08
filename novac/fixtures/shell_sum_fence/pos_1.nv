@@ -1,0 +1,33 @@
+module shell_sum_fence.pos_1
+
+// NOVAC_PROGRAM
+// A PAYLOAD-FREE SUM OF THE SHELL IS LAID OUT BY THE SHELL (registry 221.1
+// #1830): std's `PathStyle` is declared by value in the shell
+// (`NovaValue_PathStyle`), and a unit that fences it -- a `[]PathStyle` here and
+// in `styles/` -- must still read it by value, while the program's own `Lane`
+// (`lane/`, fenced there) follows the program's fence. Judged by the unit's
+// fence, every `[]PathStyle` printed `Nova_PathStyle*` -- clang "unknown type
+// name 'Nova_PathStyle'". Each line prints a value that depends on the variant.
+
+import std.fs.{PathStyle}
+import ./lane.{Lane, all_lanes, lane_name}
+import ./styles.{both_styles, style_name}
+
+fn main() {
+    mut xs = []PathStyle.new()
+    xs.push(PathStyle.Posix)
+    xs.push(PathStyle.Windows)
+    xs.push(PathStyle.Posix)
+    for s in xs {
+        println(style_name(s))
+    }
+    for s in both_styles() {
+        println("other ${style_name(s)}")
+    }
+    mut n = 0
+    for l in all_lanes() {
+        if l == Lane.Middle { n += 10 }
+        println("${lane_name(l)} ${n}")
+    }
+    println(xs.len() + both_styles().len())
+}

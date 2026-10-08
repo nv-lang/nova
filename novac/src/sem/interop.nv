@@ -164,15 +164,42 @@ export fn Ctx @in_program(row FnRow) -> bool {
 /// ~950 clang errors on novac itself. `fences` is empty in a single unit, where
 /// the answer is the pool's alone. Asked only by `is_value_sum`, after
 /// `is_payload_free_sum` -- so `t` is a sum with a declaration.
+///
+/// A SUM OF THE SHELL is not judged here at all (registry 221.1 #1830): its
+/// layout was decided ONCE, when the oracle emitted the probe, and the shell
+/// glued into every unit already carries the answer (`shell_fence`). Judged by
+/// the unit's pool, `[]PathStyle` in a program printed `Nova_PathStyle*` for a
+/// sum the shell declares only as `NovaValue_PathStyle` -- clang "unknown type
+/// name 'Nova_PathStyle'".
 fn is_fenced(ctx Ctx, t TyId) -> bool {
+    match shell_fence(ctx, t) {
+        Some(fenced) => { return fenced }
+        None => {}
+    }
     if ctx.tys.is_arg_anywhere(t) { return true }
     ctx.fences.name_cnt > 0 && ctx.fences.has(fence_key(ctx, t))
 }
 
+/// The SHELL's A4 answer for payload-free sum `t` (registry 221.1 #1830):
+/// `Some(false)` when the shell defines `struct NovaValue_<name>` (laid out by
+/// value), `Some(true)` when it defines `struct Nova_<name>` (on the heap), and
+/// `None` when `t` is the program's (`fence_key` names it) or the shell defines
+/// neither body -- a unit built with no shell, whose pool is then the only
+/// judge. The shell spells std's types bare (`decl_base` keeps the name of a
+/// type that is not the program's), so the declared name is the C base.
+fn shell_fence(ctx Ctx, t TyId) -> Option[bool] {
+    if fence_key(ctx, t) != "" { return None }
+    ro nm = decl_of_ty(ctx, t).name
+    if ctx.interop.has_body("NovaValue_${nm}") { return Some(false) }
+    if ctx.interop.has_body("Nova_${nm}") { return Some(true) }
+    None
+}
+
 /// Add THIS unit's fence to the program's: every payload-free sum of the
 /// PROGRAM standing in the unit's argument pool, by `fence_key`. A sum of the
-/// shell keeps its unit's answer -- the shell's layout is the oracle's emission
-/// of the probe, not this program's to decide.
+/// shell is not added: its layout is the oracle's emission of the probe, not
+/// this program's to decide, and every unit reads it from the shell
+/// (`shell_fence`, #1830).
 export fn note_fences(ctx Ctx, mut into CNames) -> () {
     for i in 0..ctx.tys.arg_pool_len() {
         ro t = ctx.tys.arg_pool_at(i)

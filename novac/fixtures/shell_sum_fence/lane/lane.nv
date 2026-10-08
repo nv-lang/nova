@@ -1,0 +1,23 @@
+module shell_sum_fence.lane
+
+// A MODULE OF THE PROGRAM that owns a payload-free sum of its own, `Lane`, and
+// fences it here (`all_lanes`, a `[]Lane`): the program's sum is laid out by
+// the program's fence, beside std's `PathStyle`, whose layout the shell already
+// decided (registry 221.1 #1830).
+
+/// A lane: no variant carries a payload.
+#impl(Equal)
+export type Lane enum
+    | Left
+    | Middle
+    | Right
+
+/// Every lane, in order: the vector that fences `Lane` for the program.
+export fn all_lanes() -> []Lane => []Lane.of(Lane.Left, Lane.Middle, Lane.Right)
+
+/// The lane's word -- a match over the sum in its own module.
+export fn lane_name(l Lane) -> str => match l {
+    Left => "left"
+    Middle => "middle"
+    Right => "right"
+}
