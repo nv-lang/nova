@@ -1,8 +1,8 @@
-module variant_scope_program.pos_2
+module imported.pos_2
 
 // NOVAC_PROGRAM
 // IMPORTED MODULE SUM vs STD'S PRELUDE SUM (registry 221.1 #1814, замер (2)):
-// `Empty` here is a variant of `variant_scope_program.shape`'s `Shape`, a
+// `Empty` here is a variant of `imported.shape`'s `Shape`, a
 // module of THIS program, named after an explicit import, with NO type
 // annotation anywhere near the bare use -- `variant_named_in` (D478) never
 // enters the picture, so the ambiguity-count door (`variants_named`) is the

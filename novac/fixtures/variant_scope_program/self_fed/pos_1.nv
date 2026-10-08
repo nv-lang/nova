@@ -1,4 +1,4 @@
-module variant_scope_program.pos_1
+module self_fed.pos_1
 
 // NOVAC_PROGRAM
 // SELF-FED ENTRY (registry 221.1 #1814, замер (1)): a program root fed to

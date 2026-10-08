@@ -600,6 +600,10 @@ export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
         }
         n_all += 1
         ro sname = decl_of_ty(ctx, v.sum_id).name
+        ro is_program_home = match handed_type_home(ctx, ctx.tys.decl_head_of(v.sum_id), sname) {
+            Some(home) => ctx.interop.has_module(home)
+            None => false
+        }
         if raw_decl(ctx.tys.decl_head_of(v.sum_id)) >= ctx.foreign_types_cnt {
             if !is_vrow(first_file) {
                 first_file = VariantRow(r)
@@ -607,10 +611,7 @@ export fn variants_named(ctx Ctx, name str) -> (VariantRow, int) {
                 // A later file-declared row only counts.
             }
             n_file += 1
-        } else if match handed_type_home(ctx, ctx.tys.decl_head_of(v.sum_id), sname) {
-            Some(home) => ctx.interop.has_module(home)
-            None => false
-        } {
+        } else if is_program_home {
             if !is_vrow(first_program) {
                 first_program = VariantRow(r)
             } else {

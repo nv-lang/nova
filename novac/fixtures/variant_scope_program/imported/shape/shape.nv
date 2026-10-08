@@ -1,4 +1,4 @@
-module variant_scope_program.shape
+module imported.shape
 
 export type Shape enum
     | Circle(int)
