@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # scripts/tools/land-task.sh — механика вливания принятой задачи в main ОДНИМ
-# скриптом: кандидат -> integrate/t<N> -> CI -> перемотка main -> три зеркала ->
-# уборка integrate/t<N>.
+# скриптом: кандидат -> integrate/t<N> -> CI -> перемотка origin/main -> уборка
+# integrate/t<N>. Зеркала gitverse и sourcecraft — НЕ здесь, а в
+# `scripts/tools/sync-mirrors.sh`, после отдачи замка (задача #51, 2026-10-08): пуш
+# зеркала сразу после пуша main ждал CI на новом main ~15–20 мин (#40, #45, #47, #48),
+# и весь этот срок замок вливания держался зря — следующему вливанию нужен только
+# сдвинутый origin/main.
 #
 # ЗАЧЕМ (слово владельца 2026-10-06): «механику вливания вернуть приёмщикам
 # законным путём». До этого шаги 3–6 пути приёмщика (`/integrator`, «Путь
@@ -29,12 +33,13 @@
 #   bash scripts/tools/land-task.sh --dry-run <N> <хеш>   # только проверки, без пушей
 #
 # КОДЫ ВОЗВРАТА (последняя строка вывода — LANDED / LAND-FAIL с шагом):
-#   0 — влито: origin/main == хеш, зеркала догнаны, integrate/t<N> снята;
+#   0 — влито: origin/main == хеш, integrate/t<N> снята; замок можно отдавать,
+#       зеркала догоняет `bash scripts/tools/sync-mirrors.sh` уже без замка;
 #   2 — неверные аргументы; 3 — хеш не содержит свежий origin/main (влей main в
 #   ветку задачи и запусти снова); 4 — CI красный или не дождались; 5 — main
 #   сдвинулся, пока шёл CI (влей свежий main, запусти снова); 6 — пуш origin
-#   отказан; 7 — зеркало не догнано (origin уже влит — догонит интегратор);
-#   8 — вливает не приёмщик этой задачи и не интегратор (шаг 0).
+#   отказан; 8 — вливает не приёмщик этой задачи и не интегратор (шаг 0).
+#   7 больше не выдаётся: «зеркало не догнано» — теперь rc=7 `sync-mirrors.sh`.
 #
 # Ожидания печатают строку раз в минуту: сторож снимает окно за 10 минут тишины.
 
@@ -103,7 +108,7 @@ fi
 say "шаг 1 ok: $SHA9 содержит origin/main ${MAIN_NOW:0:9}"
 
 if [ $DRY = 1 ]; then
-    say "пробный прогон: дальше были бы пуш $CAND, ожидание CI, перемотка main, три зеркала, снятие $CAND"
+    say "пробный прогон: дальше были бы пуш $CAND, ожидание CI, перемотка origin/main, снятие $CAND (зеркала — sync-mirrors.sh)"
     echo "LAND-DRY-OK task=#$N sha=$SHA9"
     exit 0
 fi
@@ -169,28 +174,10 @@ else
     say "главная копия не на main или грязная — не трогаю, догонит интегратор"
 fi
 
-# Шаг 6. Зеркала. pre-push судит и их; пока на main стоят свежие прогоны того же
-# хеша, он может отказать «run still queued» — тогда дождаться их и повторить.
-mirror_fail=0
-for r in gitverse sourcecraft; do
-    if git -C "$ROOT" push -q "$r" "$SHA:refs/heads/main" 2>/dev/null; then
-        say "зеркало $r ok"
-        continue
-    fi
-    say "зеркало $r отказало — жду CI на main для $SHA9 и повторяю"
-    if wait_ci main && git -C "$ROOT" push -q "$r" "$SHA:refs/heads/main"; then
-        say "зеркало $r ok (после CI на main)"
-    else
-        echo "land-task: зеркало $r НЕ догнано" >&2
-        mirror_fail=1
-    fi
-done
+# Шаг 6. Уборка кандидата. Зеркал здесь нет (задача #51): pre-push пустит их только
+# после CI на НОВОМ main, а ждать его под замком незачем — это работа
+# sync-mirrors.sh после отдачи замка.
+git -C "$ROOT" push -q origin --delete "$CAND" 2>/dev/null && say "шаг 6 ok: $CAND снята"
 
-# Шаг 7. Уборка кандидата.
-git -C "$ROOT" push -q origin --delete "$CAND" 2>/dev/null && say "шаг 7 ok: $CAND снята"
-
-for r in origin gitverse sourcecraft; do
-    printf 'land-task:   %-12s %s\n' "$r" "$(git -C "$ROOT" ls-remote "$r" refs/heads/main | cut -c1-9)"
-done
-[ $mirror_fail = 0 ] || die 7 "origin влит, но зеркало не догнано — сообщи интегратору"
+say "зеркала не трогаю: отдай замок, затем crew_watch {command: \"cd $ROOT && bash scripts/tools/sync-mirrors.sh\", minutes: 120}"
 echo "LANDED task=#$N main=$SHA9"
