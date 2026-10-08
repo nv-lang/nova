@@ -109,16 +109,20 @@ export type Proc effect {
     fn pipe_read(pipe *(), mut buf []u8) -> int
     fn pipe_write(pipe *(), data []u8) -> int
     fn pipe_close(pipe *()) -> ()
-    // Plan 294 F.4 — pseudo terminal (pty.nv). Same conventions as the child operations above.
-    fn pty_launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, rows int, cols int) -> (int, *())
-    fn pty_read(pty *(), mut buf []u8) -> int
-    fn pty_write(pty *(), data []u8) -> int
-    fn pty_resize(pty *(), rows int, cols int) -> int
-    fn pty_pid(pty *()) -> int
-    fn pty_wait(pty *()) -> (int, int, int)
-    fn pty_try_wait(pty *()) -> (int, int, int)
-    fn pty_kill(pty *(), sig int) -> int
-    fn pty_close(pty *()) -> ()
+    // Plan 294 F.4 — pseudo terminal (pty.nv). The boundary speaks Nova (D456): the launch is
+    // the `Command` plus a `PtySize`, the handle is `PtyChild`, failures are `IoError`; the C
+    // forms live in proc_ffi.nv and in pty.nv's `real_pty_*` translators only.
+    // `Err(Unsupported)`: no pseudo terminal on this system (Windows before 10 1809, POSIX until F.3).
+    fn pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError]
+    fn pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError]
+    fn pty_write(pty PtyChild, data []u8) -> Result[int, IoError]
+    fn pty_resize(pty PtyChild, size PtySize) -> Result[(), IoError]
+    fn pty_pid(pty PtyChild) -> int
+    // Cancelled by the enclosing scope: the tree is killed, `Err(Interrupted)`.
+    fn pty_wait(pty PtyChild) -> Result[ExitStatus, IoError]
+    fn pty_try_wait(pty PtyChild) -> Result[Option[ExitStatus], IoError]
+    fn pty_kill(pty PtyChild, sig Signal) -> Result[(), IoError]
+    fn pty_close(pty PtyChild) -> ()
 }
 
 // ─── Types ──
@@ -463,28 +467,16 @@ export fn real_proc() -> Effect[Proc] {
         pipe_read(pipe *(), mut buf []u8) -> int => unsafe { proc_pipe_read(pipe, buf.ptr(), buf.len()) }
         pipe_write(pipe *(), data []u8) -> int => unsafe { proc_pipe_write(pipe, data.ptr(), data.len()) }
         pipe_close(pipe *()) -> () { unsafe { proc_pipe_close(pipe) } }
-        pty_launch(program []u8, argv []u8, argc int, env []u8, envc int, use_env bool, cwd []u8, rows int, cols int) -> (int, *()) {
-            mut err = 0
-            ro h = unsafe { proc_pty_spawn(program.ptr(), program.len(), argv.ptr(), argv.len(), argc, env.ptr(), env.len(), envc, use_env, cwd.ptr(), cwd.len(), rows, cols, &err) }
-            (err, h)
-        }
-        pty_read(pty *(), mut buf []u8) -> int => unsafe { proc_pty_read(pty, buf.ptr(), buf.len()) }
-        pty_write(pty *(), data []u8) -> int => unsafe { proc_pty_write(pty, data.ptr(), data.len()) }
-        pty_resize(pty *(), rows int, cols int) -> int => unsafe { proc_pty_resize(pty, rows, cols) }
-        pty_pid(pty *()) -> int => unsafe { proc_pty_pid(pty) }
-        pty_wait(pty *()) -> (int, int, int) {
-            mut code = 0
-            mut sig = 0
-            ro rc = unsafe { proc_pty_wait(pty, &code, &sig) }
-            (rc, code, sig)
-        }
-        pty_try_wait(pty *()) -> (int, int, int) {
-            mut code = 0
-            mut sig = 0
-            ro rc = unsafe { proc_pty_try_wait(pty, &code, &sig) }
-            (rc, code, sig)
-        }
-        pty_kill(pty *(), sig int) -> int => unsafe { proc_pty_kill(pty, sig) }
-        pty_close(pty *()) -> () { unsafe { proc_pty_close(pty) } }
+        pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError] => real_pty_launch(cmd, size)
+        pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError] => real_pty_read(pty, buf)
+        pty_write(pty PtyChild, data []u8) -> Result[int, IoError] => real_pty_write(pty, data)
+        pty_resize(pty PtyChild, size PtySize) -> Result[(), IoError] => real_pty_resize(pty, size)
+        pty_pid(pty PtyChild) -> int => unsafe { proc_pty_pid(pty.handle) }
+        pty_wait(pty PtyChild) -> Result[ExitStatus, IoError] => real_pty_wait(pty)
+        pty_try_wait(pty PtyChild) -> Result[Option[ExitStatus], IoError] => real_pty_try_wait(pty)
+        // Not `sig`: a local of an earlier operation body (`mut sig = 0` above) retypes a later
+        // parameter of the same name in the checker - Signal.Kill arrived as Other(2) (registry #1870).
+        pty_kill(pty PtyChild, signal Signal) -> Result[(), IoError] => real_pty_kill(pty, signal)
+        pty_close(pty PtyChild) -> () { unsafe { proc_pty_close(pty.handle) } }
     }
 }

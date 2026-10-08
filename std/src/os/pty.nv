@@ -14,6 +14,11 @@
 // parked operations as the `Child` pipes (proc.nv), with independent slots: a reader fiber and a
 // writer fiber need no `select`.
 //
+// **Boundary (D456).** The `Proc` operations for the terminal speak Nova: `Command` + `PtySize`
+// in, `PtyChild` / `IoError` / `ExitStatus` out. The C forms (NUL-joined argv, counts, negative
+// errno, the raw handle) stay in proc_ffi.nv and in the `real_pty_*` translators at the end of
+// this file, which `real_proc` calls.
+//
 // **Systems.** Windows: ConPTY, Windows 10 1809 or newer (older: `Err(Unsupported)`). POSIX
 // (`forkpty`) is the next phase of plan 294; until then `start_pty` is `Err(Unsupported)` there.
 //
@@ -45,34 +50,17 @@ export type PtyChild consume value priv { handle *() }
 /// `Command.start` takes them; the `stdin` / `stdout` / `stderr` / `tree` settings do not apply
 /// (the terminal is all three streams, and the tree is always the child's).
 #stable(since = "0.1")
-export fn Command @start_pty(size PtySize) Proc -> Result[PtyChild, IoError] {
-    ro argv = join_nul(@args)?
-    ro use_env = @clear_env || !@envs.is_empty()
-    ro deduped = dedupe_envs(@envs)
-    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
-    ro cwd_bytes = match @dir {
-        Some(p) => p.os_bytes()
-        None => []u8.new()
-    }
-    ro (err, h) = Proc.pty_launch(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes, size.rows, size.cols)
-    if err == PROC_UNSUPPORTED { Err(IoError.new(ErrorKind.Unsupported, "start_pty: no pseudo terminal on this system")) }
-    else if err < 0 { Err(proc_io_err(err, "start_pty")) }
-    else { Ok(PtyChild { handle: h }) }
-}
+export fn Command @start_pty(size PtySize) Proc -> Result[PtyChild, IoError] => Proc.pty_launch(@, size)
 
 /// Read what the terminal shows, up to `buf.len()` bytes. Parks the fiber until bytes arrive.
 /// `Ok(0)` = the terminal is gone (the child exited and everything it printed was read).
 #stable(since = "0.1")
-export fn PtyChild mut @read(mut buf []u8) Proc -> Result[int, IoError] {
-    stream_result(Proc.pty_read(@handle, buf), "read pty")
-}
+export fn PtyChild mut @read(mut buf []u8) Proc -> Result[int, IoError] => Proc.pty_read(@, buf)
 
 /// Type `data` on the terminal's keyboard: the whole buffer, or an error. Enter is "\r";
 /// the byte 3 is Ctrl-C (the child gets SIGINT / CTRL_C_EVENT).
 #stable(since = "0.1")
-export fn PtyChild mut @write(data []u8) Proc -> Result[int, IoError] {
-    stream_result(Proc.pty_write(@handle, data), "write pty")
-}
+export fn PtyChild mut @write(data []u8) Proc -> Result[int, IoError] => Proc.pty_write(@, data)
 
 /// `io.Write` conformance: writes reach the terminal directly — `flush` is a no-op.
 #stable(since = "0.1")
@@ -81,51 +69,97 @@ export fn PtyChild mut @flush() -> Result[(), IoError] => Ok(())
 /// Change the window size; the child sees the new size (SIGWINCH / a console resize event).
 /// `Err(InvalidInput)` for a size outside 1..32767, `Err(NotConnected)` once the terminal is gone.
 #stable(since = "0.1")
-export fn PtyChild mut @resize(size PtySize) Proc -> Result[(), IoError] {
-    ro rc = Proc.pty_resize(@handle, size.rows, size.cols)
-    if rc == 0 { Ok(()) }
-    else if rc == PROC_CLOSED { Err(IoError.new(ErrorKind.NotConnected, "resize pty")) }
-    else { Err(proc_io_err(rc, "resize pty")) }
-}
+export fn PtyChild mut @resize(size PtySize) Proc -> Result[(), IoError] => Proc.pty_resize(@, size)
 
 /// The OS process id of the child.
 #stable(since = "0.1")
-export fn PtyChild @pid() Proc -> int { Proc.pty_pid(@handle) }
+export fn PtyChild @pid() Proc -> int => Proc.pty_pid(@)
 
 /// Wait for the child to exit; parks the fiber. A cancelled scope kills the tree and gives
 /// `Err(Interrupted)`, as `Child.wait`. Windows: `signal()` is always `None`; a child ended by
 /// Ctrl-C reports its code (usually 0xC000013A).
 #stable(since = "0.1")
-export fn PtyChild mut @wait() Proc -> Result[ExitStatus, IoError] {
-    ro (rc, code, sig) = Proc.pty_wait(@handle)
-    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "pty wait")) }
-    else if rc < 0 { Err(proc_io_err(rc, "pty wait")) }
-    else { Ok(exit_status_of(code, sig)) }
-}
+export fn PtyChild mut @wait() Proc -> Result[ExitStatus, IoError] => Proc.pty_wait(@)
 
 /// Non-blocking: `Ok(Some(status))` once the child has exited, `Ok(None)` while it runs.
 #stable(since = "0.1")
-export fn PtyChild mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] {
-    ro (rc, code, sig) = Proc.pty_try_wait(@handle)
-    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
-    else if rc == 1 { Ok(None) }
-    else { Err(proc_io_err(rc, "pty try_wait")) }
-}
+export fn PtyChild mut @try_wait() Proc -> Result[Option[ExitStatus], IoError] => Proc.pty_try_wait(@)
 
 /// Send `sig` to the child's whole tree, as `Child.kill` with `Tree.Group`: `Ok` and nothing sent
 /// once the child has exited; Windows knows only `Kill` / `Terminate` (`Err(Unsupported)` for the
 /// rest — Ctrl-C goes through the keyboard, `write([3])`).
 #stable(since = "0.1")
-export fn PtyChild mut @kill(sig Signal) Proc -> Result[(), IoError] {
-    signal_result(Proc.pty_kill(@handle, signal_number(sig)), "pty kill")
-}
+export fn PtyChild mut @kill(sig Signal) Proc -> Result[(), IoError] => Proc.pty_kill(@, sig)
 
 /// Close the terminal. A child still running is hung up (POSIX: SIGHUP; Windows: the console is
 /// closed under it), gets 500 ms to leave, then its tree is killed; the call returns once it is
 /// gone. Unread output is dropped.
 #stable(since = "0.1")
-export fn PtyChild consume @close() Proc { Proc.pty_close(@handle) }
+export fn PtyChild consume @close() Proc { Proc.pty_close(@) }
 
 /// `Cleanup[never]` (D188): leaving the scope closes the terminal, see `close`.
 #stable(since = "0.1")
 export fn PtyChild consume @cleanup(_outcome ScopeOutcome) -> () { @close() }
+
+// ─── real_proc's translators for the terminal operations (nova_rt/process.c) ──
+//
+// Regular private functions, not handler bodies: `Result` / `Option` variants are built here
+// (the `real_net` precedent), and the handler in proc.nv only forwards to them.
+
+fn real_pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError] {
+    ro argv = join_nul(cmd.args)?
+    ro use_env = cmd.clear_env || !cmd.envs.is_empty()
+    ro deduped = dedupe_envs(cmd.envs)
+    ro env_blob = if use_env { env_blob_of(deduped)? } else { []u8.new() }
+    ro cwd_bytes = match cmd.dir {
+        Some(p) => p.os_bytes()
+        None => []u8.new()
+    }
+    ro program = cmd.program.bytes()
+    mut err = 0
+    ro h = unsafe {
+        proc_pty_spawn(program.ptr(), program.len(), argv.ptr(), argv.len(), cmd.args.len(),
+                       env_blob.ptr(), env_blob.len(), deduped.len(), use_env,
+                       cwd_bytes.ptr(), cwd_bytes.len(), size.rows, size.cols, &err)
+    }
+    if err == PROC_UNSUPPORTED { Err(IoError.new(ErrorKind.Unsupported, "start_pty: no pseudo terminal on this system")) }
+    else if err < 0 { Err(proc_io_err(err, "start_pty")) }
+    else { Ok(PtyChild { handle: h }) }
+}
+
+fn real_pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError] {
+    stream_result(unsafe { proc_pty_read(pty.handle, buf.ptr(), buf.len()) }, "read pty")
+}
+
+fn real_pty_write(pty PtyChild, data []u8) -> Result[int, IoError] {
+    stream_result(unsafe { proc_pty_write(pty.handle, data.ptr(), data.len()) }, "write pty")
+}
+
+fn real_pty_resize(pty PtyChild, size PtySize) -> Result[(), IoError] {
+    ro rc = unsafe { proc_pty_resize(pty.handle, size.rows, size.cols) }
+    if rc == 0 { Ok(()) }
+    else if rc == PROC_CLOSED { Err(IoError.new(ErrorKind.NotConnected, "resize pty")) }
+    else { Err(proc_io_err(rc, "resize pty")) }
+}
+
+fn real_pty_wait(pty PtyChild) -> Result[ExitStatus, IoError] {
+    mut code = 0
+    mut sig = 0
+    ro rc = unsafe { proc_pty_wait(pty.handle, &code, &sig) }
+    if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "pty wait")) }
+    else if rc < 0 { Err(proc_io_err(rc, "pty wait")) }
+    else { Ok(exit_status_of(code, sig)) }
+}
+
+fn real_pty_try_wait(pty PtyChild) -> Result[Option[ExitStatus], IoError] {
+    mut code = 0
+    mut sig = 0
+    ro rc = unsafe { proc_pty_try_wait(pty.handle, &code, &sig) }
+    if rc == 0 { Ok(Some(exit_status_of(code, sig))) }
+    else if rc == 1 { Ok(None) }
+    else { Err(proc_io_err(rc, "pty try_wait")) }
+}
+
+fn real_pty_kill(pty PtyChild, sig Signal) -> Result[(), IoError] {
+    signal_result(unsafe { proc_pty_kill(pty.handle, signal_number(sig)) }, "pty kill")
+}

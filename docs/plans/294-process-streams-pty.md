@@ -216,7 +216,9 @@ async-signal-safe вызовы, всё подготовлено заранее (
 
 *Сделано (задача #50, 2026-10-08) — первой, до Ф.3:* слово владельца «Windows в приоритете» переставило фазы,
 поэтому форму API задала ConPTY-половина, с оглядкой на POSIX (ни одного решения, невозможного на `forkpty`).
-`std/src/os/pty.nv` (`PtySize`, `PtyChild`, `Command.start_pty`), операции `pty_*` эффекта `Proc`,
+`std/src/os/pty.nv` (`PtySize`, `PtyChild`, `Command.start_pty`), операции `pty_*` эффекта `Proc` — в форме D456,
+как у #43 после третьего круга приёмки (`pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError]` и т. д.;
+C-формы — в `proc_ffi.nv` и переводчиках `real_pty_*` в `pty.nv`; страж `check-effect-boundary-shape` по `pty_*` чист),
 `nova_rt/process.{h,c}` (`proc_pty_*`; в том же TU, что Ф.1/Ф.2, а не в `proc_conpty.c`: новый файл требовал бы
 правки сборочных списков `test_runner.rs`, Rust в задачу не входил). На POSIX `proc_pty_*` — заглушки:
 `start_pty` → `Err(Unsupported)`. Фикстуры — `std/src/os/pty/pty_test.nv` (PTY-1…PTY-5, PTY-4a/4b, отказы PTY-F);
