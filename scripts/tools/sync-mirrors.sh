@@ -32,12 +32,15 @@
 #
 # ИСПОЛЬЗОВАНИЕ — из ЧИСТОГО дерева этой репы (pre-push check-tree-matches-push
 # откажет, если отслеживаемые файлы изменены; скрипт проверяет это сам ДО пуша и
-# выходит с rc=2, а не ложным rc=6). Чистое дерево — дерево задачи до `cleaned`, а у
-# интегратора — временное дерево от origin/main (`/save`):
+# выходит с rc=2, а не ложным rc=6). Чистое дерево — временное от origin/main, и у
+# приёмщика, и у интегратора (`/save`): дерево задачи живёт до `cleaned`, а плагин держит
+# замок вливания до `cleaned`, так что догон оттуда снова держал бы замок всё ожидание:
 #   bash scripts/tools/sync-mirrors.sh             # ждать до зелёного main и пушить
 #   bash scripts/tools/sync-mirrors.sh --dry-run   # только сказать; можно и из грязного
-# Приёмщик — через crew_watch сразу после LANDED и отдачи замка:
-#   crew_watch {command: "cd <дерево задачи> && bash scripts/tools/sync-mirrors.sh", minutes: 120}
+# Приёмщик — после accept и cleaned (/integrator, «Путь приёмщика», шаг 3):
+#   git -C <главная копия> worktree add --detach <worktrees>/nova-mirrors-t<N> origin/main
+#   crew_watch {command: "cd <то дерево> && bash scripts/tools/sync-mirrors.sh", minutes: 120}
+#   git -C <главная копия> worktree remove --force <то дерево>   # после последней строки
 # Ожидание: SYNC_MIRRORS_TIMEOUT (секунды, 5400), опрос — SYNC_MIRRORS_POLL (60).
 #
 # КОДЫ ВОЗВРАТА (последняя строка — MIRRORS-SYNCED / MIRRORS-DRY / MIRRORS-FAIL):

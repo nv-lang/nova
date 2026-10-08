@@ -277,9 +277,15 @@ id сессии, если держателей роли больше одног�
    До неё скрипт пушил gitverse и sourcecraft сам и под замком ждал CI на новом `main`
    ~15–20 мин (pre-push зеркала судит `check-push-proven-by-ci`, а пуш `main` ставит на
    хеш свежие прогоны); следующему вливанию зеркала не нужны — ему нужен только
-   сдвинутый `origin/main`. После `LANDED` и `accept` приёмщик ставит догон
-   `crew_watch {command: "cd <дерево задачи> && bash scripts/tools/sync-mirrors.sh",
-   minutes: 120}` и делает `cleaned` после его последней строки. Скрипт ждёт зелёный CI
+   сдвинутый `origin/main`. Плагин держит замок вливания до `cleaned`, поэтому порядок
+   такой: `LANDED` -> `accept` -> уборка дерева и ветки задачи -> `cleaned` (замок
+   свободен) -> догон из ВРЕМЕННОГО дерева от `origin/main`:
+   `git -C <главная копия> worktree add --detach <родитель главной копии>/worktrees/nova-mirrors-t<N> origin/main`,
+   `crew_watch {command: "cd <то дерево> && bash scripts/tools/sync-mirrors.sh",
+   minutes: 120}`, после его последней строки
+   `git -C <главная копия> worktree remove --force <то дерево>`. Догон из дерева задачи
+   до `cleaned` держал бы замок всё ожидание CI на `main` — ровно то, что #51 убрала.
+   Скрипт ждёт зелёный CI
    на `main` и пушит в зеркала ПОСЛЕДНИЙ зелёный `main` (ушёл дальше — новый, не хеш
    задачи); красная вершина — не пушит, код 4; не дождался — код 7 (прежний смысл rc=7
    `land-task`); отказ зеркала при завершённом CI — код 6 (отказ, пока CI цели ещё идёт,
@@ -331,12 +337,13 @@ id сессии, если держателей роли больше одног�
    предел позволяет: `check-merge-discipline` принимает вердикт на кандидате, если тот
    содержит HEAD `main`.
 6. Выкладка: `git -C <главная копия> push` `main` на origin; pre-push сам сверит
-   доказательство CI. Замок отдаётся здесь; зеркала gitverse и sourcecraft —
-   `scripts/tools/sync-mirrors.sh` без замка (шаг 3).
-7. `crew_task accept {n, checks}` — отчёт по каждому шагу приёмки; затем догон зеркал
-   из дерева задачи (шаг 3, `sync-mirrors.sh` через `crew_watch`, уже без замка), после
-   его последней строки снять дерево и ветку задачи, ветку кандидата и `integrate/t<N>` на origin
-   (`git -C <дерево> push origin --delete integrate/t<N>`) и `crew_task cleaned {n}`.
+   доказательство CI. Зеркала gitverse и sourcecraft здесь НЕ пушатся: их догоняет
+   `scripts/tools/sync-mirrors.sh` после `cleaned`, без замка (шаг 7).
+7. `crew_task accept {n, checks}` — отчёт по каждому шагу приёмки; затем снять дерево
+   и ветку задачи, ветку кандидата и `integrate/t<N>` на origin
+   (`git -C <дерево> push origin --delete integrate/t<N>`) и `crew_task cleaned {n}` —
+   замок свободен; затем догон зеркал из временного дерева от `origin/main` (шаг 3,
+   `sync-mirrors.sh` через `crew_watch`) и снятие этого дерева.
    Пока задача «принята», но не `cleaned`, она занимает место в `inflight_limit`: отказ
    `cleaned` — не «больше ничего не нужно» (так #9 провисела 11,5 часа, 2026-10-06), а хвост,
    который надо снять. Чужие ветки и деревья плагин хвостом больше не считает (crew-harness

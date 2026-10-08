@@ -179,5 +179,5 @@ fi
 # sync-mirrors.sh после отдачи замка.
 git -C "$ROOT" push -q origin --delete "$CAND" 2>/dev/null && say "шаг 6 ok: $CAND снята"
 
-say "зеркала не трогаю: отдай замок, затем crew_watch {command: \"cd $ROOT && bash scripts/tools/sync-mirrors.sh\", minutes: 120}"
+say "зеркала не трогаю: после accept и cleaned (замок свободен) — bash scripts/tools/sync-mirrors.sh из временного дерева от origin/main через crew_watch (/integrator, путь приёмщика, шаг 3)"
 echo "LANDED task=#$N main=$SHA9"
