@@ -82,12 +82,12 @@ jobs:
           cargo build --release --manifest-path nova-cli/Cargo.toml
 
       # Дымовая проверка Windows-половины: одиночная фикстура, выходящая через
-      # `std.os.exit_process` (EXPECT_EXIT_CODE 7). Шаг ОБЯЗАН быть зелёным.
+      # `std.os.exit_process` (EXPECT_EXIT_CODE 7, lane --exit). Шаг ОБЯЗАН быть зелёным.
       - name: nova test spec_tests process smoke (${{ matrix.toolchain }})
         shell: bash
         run: |
-          echo "running: nova test spec_tests --filter p1418_exit_process --toolchain ${{ matrix.toolchain }}"
-          ./nova-cli/target/release/nova test spec_tests --filter p1418_exit_process --toolchain ${{ matrix.toolchain }} --timeout 120 2>&1 | tee smoke.out
+          echo "running: nova test spec_tests --exit --filter p1418_exit_process --toolchain ${{ matrix.toolchain }}"
+          ./nova-cli/target/release/nova test spec_tests --exit --filter p1418_exit_process --toolchain ${{ matrix.toolchain }} --timeout 120 2>&1 | tee smoke.out
           rc=${PIPESTATUS[0]}
           if ! grep -Eq '^PASS: [1-9]' smoke.out; then echo "FAIL: no test passed - filter matched nothing"; exit 1; fi
           exit $rc
