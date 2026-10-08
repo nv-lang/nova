@@ -273,7 +273,7 @@ export fn Command @output() Proc -> Result[Output, IoError] {
         None => return Err(output_missing("output: stderr pipe missing"))
     }
     // The stderr fiber reports through two plain channels (bytes, raw OS code): a
-    // `Channel[Result[[]u8, IoError]]` corrupted the received value (registry №TBD).
+    // `Channel[Result[[]u8, IoError]]` corrupted the received value (registry #1858).
     ro err_bytes = Channel[[]u8].new(1)
     ro err_code = Channel[int].new(1)
     mut out_res Result[[]u8, IoError] = Err(output_missing("output: not read"))
