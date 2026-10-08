@@ -42,11 +42,15 @@ concurrency:
 
 jobs:
   windows-process:
-    name: nova test std/os on windows-latest (non-required)
+    name: nova test std/os on windows-latest, ${{ matrix.toolchain }} (non-required)
     runs-on: windows-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [clang, msvc]
     env:
-      FILTER: os/d453
+      FILTER: std/src/os
     steps:
       - name: Checkout nova (submodules recursive — nova_rt/libuv, gc, libatomic_ops)
         uses: actions/checkout@v4
@@ -76,8 +80,15 @@ jobs:
           echo "building nova-cli on $RUNNER_OS"
           cargo build --release --manifest-path nova-cli/Cargo.toml
 
-      - name: nova test std (process fixtures, MSVC)
+      # `std/src/os` собирается КАК ОДИН модуль (папка-модуль: все `*_test.nv` — пиры),
+      # поэтому фильтр по имени одного файла (`os/d453`) не находит ничего: первый
+      # прогон дал `PASS: 0 FAIL: 0` и зелёный. Пустой зелёный — не вердикт, шаг
+      # ниже краснеет, если не прошёл ни один тест.
+      - name: nova test std/src/os (${{ matrix.toolchain }})
         shell: bash
         run: |
-          echo "running: nova test std --filter $FILTER"
-          ./nova-cli/target/release/nova test std --filter "$FILTER" --toolchain msvc --timeout 120
+          echo "running: nova test std --filter $FILTER --toolchain ${{ matrix.toolchain }}"
+          ./nova-cli/target/release/nova test std --filter "$FILTER" --toolchain ${{ matrix.toolchain }} --timeout 120 2>&1 | tee test.out
+          rc=${PIPESTATUS[0]}
+          if grep -Eq '^PASS: 0 ' test.out; then echo "FAIL: zero tests ran - filter matched nothing"; exit 1; fi
+          exit $rc
