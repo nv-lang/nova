@@ -16,8 +16,8 @@ mkdir -p "$TMP/scripts/guards" "$TMP/compiler-codegen/src"
 cp "$HERE/../generic-static-scan.py" "$TMP/scripts/guards/"
 SRC="$TMP/compiler-codegen/src/probe.rs"
 
-run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
-say() { sh "$G" "$TMP" 2>&1; }
+run() { bash "$G" "$TMP" >/dev/null 2>&1; echo $?; }
+say() { bash "$G" "$TMP" 2>&1; }
 
 echo "== check-generic-static selftest =="
 

@@ -54,7 +54,7 @@ static inline nova_str nova_str_of(const void* p, int64_t n) {
     nova_str s; s.ptr = (const uint8_t*)p; s.len = n; return s;
 }
 EOF
-sh "$G" "$D" > "$T/out1" 2> "$T/err1"; rc1=$?
+bash "$G" "$D" > "$T/out1" 2> "$T/err1"; rc1=$?
 if grep -q "НЕ СУДИЛ" "$T/out1"; then
     skip "случай 1: C++-драйвера на машине нет — судить нечем (это проверяет случай 3)"
 elif [ "$rc1" -eq 0 ]; then
@@ -72,7 +72,7 @@ cat > "$D/compiler-codegen/nova_rt/nova_rt.h" <<'EOF'
 typedef struct { const uint8_t* ptr; int64_t len; } nova_str;
 static nova_str nova_bad(const char* p) { return (nova_str){ p, 3 }; }
 EOF
-sh "$G" "$D" > "$T/out2" 2> "$T/err2"; rc2=$?
+bash "$G" "$D" > "$T/out2" 2> "$T/err2"; rc2=$?
 if grep -q "НЕ СУДИЛ" "$T/out2"; then
     skip "случай 2: C++-драйвера на машине нет"
 elif [ "$rc2" -eq 0 ]; then
@@ -91,7 +91,7 @@ cat > "$D/compiler-codegen/nova_rt/nova_rt.h" <<'EOF'
 #include <stdint.h>
 typedef struct { const uint8_t* ptr; int64_t len; } nova_str;
 EOF
-if NOVA_CXX="no-such-cxx-driver-4f2a" sh "$G" "$D" > "$T/out3" 2> "$T/err3"; then
+if NOVA_CXX="no-such-cxx-driver-4f2a" bash "$G" "$D" > "$T/out3" 2> "$T/err3"; then
     # ДВА требования разом: `ok:` — чтобы обёртка гейта сочла шаг доказанным
     # (без неё авторитетный CI краснеет, замер 2026-09-09), и слова «НЕ СУДИЛ» —
     # чтобы человек не прочёл зелёную строку как «проверено».
@@ -113,7 +113,7 @@ cat > "$D/compiler-codegen/nova_rt/nova_rt.h" <<'EOF'
 #include <stdint.h>
 typedef struct { const uint8_t* ptr; int64_t len; } nova_str;
 EOF
-sh "$G" "$D" > "$T/out4" 2> "$T/err4"; rc4=$?
+bash "$G" "$D" > "$T/out4" 2> "$T/err4"; rc4=$?
 if grep -q "НЕ СУДИЛ" "$T/out4"; then
     skip "случай 4: C++-драйвера на машине нет"
 elif [ "$rc4" -eq 0 ]; then

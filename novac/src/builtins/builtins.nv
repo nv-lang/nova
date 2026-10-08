@@ -221,6 +221,14 @@ export const EMBED_FN = "embed"
 /// The element type of the `[]u8` an `embed` call is (D412).
 export const BYTE_TYPE = "u8"
 
+/// Nova's own primitive spellings that happen to collide with a C keyword
+/// (221.1 #1787, plan 274.5 section 74): the C-name escape door's keyword
+/// table needs these three words too, but they are Nova/std names first, and
+/// P5 forbids spelling them a second time anywhere outside this file.
+export const INT_TYPE_NAME = "int"
+export const BOOL_TYPE_NAME = "bool"
+export const CHAR_TYPE_NAME = "char"
+
 /// `assert(cond)` / `assert(cond, msg)`: the prelude's runtime check (D81),
 /// declared `extern "nova"` -- no body, so the call is the language's intrinsic.
 export const ASSERT_FN = "assert"

@@ -23,64 +23,64 @@ clean() { : > "$FIX/docs/guide/g.md"; : > "$FIX/docs/plans/p.md"; : > "$FIX/docs
 
 echo "== проходит =="
 clean; mk_base 0 0 0
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "чистое дерево — зелёный" "$?" "0"
 
 clean
 { echo '```nova'; echo 'fn read(p str) -> Result[str, IoError] {'; echo '    ro raw = open(p)?'; echo '    Ok(raw)'; echo '}'; echo '```'; } > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "канон D85 (\`?\` в fn, возвращающей Result) — зелёный" "$?" "0"
 
 clean
 { echo '```nova'; echo 'fn read(p str) Fail[IoError] -> str {'; echo '    consume f = File.open(p)? {'; echo '        f.read_all()!!'; echo '    }'; echo '}'; echo '```'; } > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "законная форма D196 'consume X = expr? { }' — НЕ ловится" "$?" "0"
 
 clean
 printf 'Оператор `expr ?? fb` подставляет запасное значение.\n' > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "живой оператор \`??\` — не ловится" "$?" "0"
 
 clean
 printf 'Здесь `?` desugar'"'"'ится в `match` + ранний `return None`.\n' > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "слово 'desugar' — не считается словом 'sugar'" "$?" "0"
 
 clean
 printf 'Раньше `?` был сахаром над `throw` — СНЯТО амендментом D85.\n' > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "строка, которая САМА помечает форму снятой — не ловится" "$?" "0"
 
 echo "== ловит =="
 clean
 printf 'Оператор `?` — это сахар над `throw`.\n' > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "лексическое: снятая трактовка в ПУБЛИКУЕМОМ руководстве — красный" "$?" "1"
 
 clean
 { echo '```nova'; echo 'fn read(p str) Fail[IoError] -> str {'; echo '    ro raw = f.read_all()?'; echo '    raw'; echo '}'; echo '```'; } > "$FIX/docs/guide/g.md"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "структурное: \`?\` внутри Fail-функции в руководстве — красный" "$?" "1"
 
 clean
 printf 'Оператор `?` — это сахар над `throw`.\n' > "$FIX/spec/s.md"
 mk_base 0 0 0
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "рост осадка в spec выше базы — красный" "$?" "1"
 
 mk_base 1 0 0
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "тот же осадок в пределах базы — зелёный" "$?" "0"
 
 clean
 mk_base 0 0 0
 rm -f "$FIX/scripts/guards/retracted-try.baseline"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "нет файла базы — красный (а не 'считаем ноль')" "$?" "1"
 
 mk_base 0 0 0
 mv "$FIX/scripts/guards/retracted-try-scan.py" "$FIX/scripts/guards/retracted-try-scan.py.off"
-sh "$G" "$FIX" >/dev/null 2>&1
+bash "$G" "$FIX" >/dev/null 2>&1
 check "нет ядра — красный (а не тихое 'ноль нарушений')" "$?" "1"
 mv "$FIX/scripts/guards/retracted-try-scan.py.off" "$FIX/scripts/guards/retracted-try-scan.py"
 

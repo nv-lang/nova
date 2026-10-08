@@ -26,7 +26,7 @@ printf 'rows=0
 scanned_rows=0
 ' > "$NSB"
 mk() { printf '%s\n' "$@" > "$REG"; }
-run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
+run() { bash "$G" "$TMP" >/dev/null 2>&1; echo $?; }
 
 # Реестр пишется ПИТОНОМ, а не оболочкой: маркеры кириллические, и через
 # оболочку они уже уезжали перекодированными (реестр №590).
@@ -147,7 +147,7 @@ check "zamena nomera pri tom zhe schete -- krasneet" "$(run)" "1"
 # ПОГАШЕНИЕ: номер в базе есть, нарушения уже нет — зелёный С СОВЕТОМ.
 printf 'rows=2\nscanned_rows=0\nno_status_row=1\nno_status_row=777\n' > "$NSB"
 check "pogashennyy nomer -- zelyonyy" "$(run)" "0"
-sh "$G" "$TMP" 2>&1 | grep -q "POGASHENY\|ПОГАШЕНЫ" \
+bash "$G" "$TMP" 2>&1 | grep -q "POGASHENY\|ПОГАШЕНЫ" \
     && ok "pogashenie nazvano vsluh" \
     || bad "pogashenie proshlo molcha"
 
@@ -168,7 +168,7 @@ MUT="$TMP/mut"; mkdir -p "$MUT"
 cp "$G" "$MUT/check-registry-single-verdict.sh"
 sed 's/^ROW = re\.compile(.*/ROW = re.compile(r"^NIKOGDA-NE-SOVPADET")/' \
     "$HERE/../registry-verdict-scan.py" > "$MUT/registry-verdict-scan.py"
-if sh "$MUT/check-registry-single-verdict.sh" "$TMP" > "$TMP/mutout" 2>&1; then
+if bash "$MUT/check-registry-single-verdict.sh" "$TMP" > "$TMP/mutout" 2>&1; then
     bad "suzhennyy razbor proshel kak zelyonyy"
 else
     grep -q "razbor suzilsya\|разбор сузился" "$TMP/mutout" \
@@ -184,7 +184,7 @@ rm -f "$REG"
 check "propavshiy reestr -- FAIL, a ne 'ok'" "$(run)" "1"
 
 echo "== realnost =="
-check "nastoyashchiy reestr prohodit" "$(sh "$G" "$HERE/../../.." >/dev/null 2>&1; echo $?)" "0"
+check "nastoyashchiy reestr prohodit" "$(bash "$G" "$HERE/../../.." >/dev/null 2>&1; echo $?)" "0"
 
 echo
 echo "selftest check-registry-single-verdict: PASS=$PASS FAIL=$FAIL"

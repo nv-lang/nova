@@ -23,7 +23,7 @@ cp "$HERE/../bare-type-lookup-scan.py" "$TMP/scripts/guards/"
 
 mk_src() { printf '%s\n' "$@" > "$TMP/compiler-codegen/src/types/mod.rs"; }
 mk_base() { printf 'bare=%s\n' "$1" > "$TMP/scripts/guards/bare-type-lookups.baseline"; }
-run() { sh "$G" "$TMP" >/dev/null 2>&1; echo $?; }
+run() { bash "$G" "$TMP" >/dev/null 2>&1; echo $?; }
 
 echo "== propuskaet =="
 mk_src 'let a = self.types.get("X");' 'let b = self.types.get("Y");'
@@ -72,7 +72,7 @@ check "propavshaya baza -- FAIL" "$(run)" "1"
 
 echo "== realnost =="
 # Настоящее дерево обязано проходить: база ставится по факту.
-check "nastoyashchee derevo prohodit" "$(sh "$G" "$HERE/../../.." >/dev/null 2>&1; echo $?)" "0"
+check "nastoyashchee derevo prohodit" "$(bash "$G" "$HERE/../../.." >/dev/null 2>&1; echo $?)" "0"
 
 echo
 echo "selftest check-bare-type-lookups: PASS=$PASS FAIL=$FAIL"
