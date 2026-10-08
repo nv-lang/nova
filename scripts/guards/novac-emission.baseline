@@ -22,6 +22,16 @@
 # typedef/объявления +317, прочие инстанциации +30. Дифф шаблона +10591/-8026 —
 # перенумерация временных (после нормализации чисел +2566/-1). Эмиссия novac не
 # менялась ни на строку. Ленивое подключение `#default_handler` — реестр №1871.
+# 2026-10-09 (задача #44, план 294 Ф.2, слияние main 95d083bad): +275 строк на
+# КАЖДОЙ фикстуре, рост целиком оболочечный — шаблон 25672 -> 25947, тот же путь,
+# что запись выше: `real_proc` (№1871) тянет в каждую программу поверхность Ф.2.
+# Дифф шаблона после нормализации чисел +295/-20; раскладка по ближайшему
+# определению: `Signal` (тип, конструкторы, `signal_number`) ~118, `Tree` и
+# `Command.tree_mode` ~48, `wait_timeout` (операция, переводчик, метод) ~45,
+# `signal_result` ~29, `stream_result` (закрытый поток -> `NotConnected`) ~21,
+# `kill_pid` ~15, `Duration` ~10, `kill`/`stop` ~9; минус 20 — прежние ветки
+# `n < 0` в чтении/записи пайпа, ушедшие в `stream_result`. Эмиссия novac не
+# менялась: novac пересобран под шаблоном и замерен, рост равен приросту шаблона.
 #
 # ЛОВУШКА, названная чтобы её не переучивать: этот страж остаётся ЗЕЛЁНЫМ,
 # пока novac не пересобран под новым шаблоном, — старый бинарь несёт старую
@@ -145,9 +155,9 @@
 # print/println). База в main не поднята: двоичный novac самого main (`dc2617993`) даёт те же
 # 15386/15316/15309/15277. Эмиссия novac не менялась -- рост целиком оболочечный.
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-match_demo 25796
+match_demo 26071
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-records 25719
+records 25994
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
 # Девять строк -- это ровно те функции фикстуры, до которых из `main` нет
 # пути. Храповик двусторонний, и опускать базу СНИЖЕНИЕМ обязательно: иначе
@@ -176,7 +186,7 @@ records 25719
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-arithmetic 25716
+arithmetic 25991
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
 #   the shell, novac's own emission unchanged. +5446 came with E.9 step 1
 #   (75b205fe0): the shell probe imports std.fs/std.os and exercises args, an
@@ -196,7 +206,7 @@ arithmetic 25716
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-hello 25678
+hello 25953
 # match_demo 6197 -> 6373, records 6127 -> 6303, arithmetic 6117 -> 6293, hello 6088 -> 6264 (2026-09-05, волна 274.7 В7): реген shell.tpl.c — проба оболочки получила
 # `Vec[f64]` (`reals = [1.5, 2.5]`, ради `Vec[Meters]` -> `Nova_Vec____nova_f64`, №940), и в
 # шаблон въехали инстанс Vec[f64] с его методами плюс всё, что оракул сам добавил в прелюдию с
