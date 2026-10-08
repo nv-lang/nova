@@ -1,0 +1,53 @@
+// EXPECT_STDOUT per-E rounds ok 20
+//
+// Registry 221.1 #1857, the per-E half. `with Fail[E] = h { .. }` for a user
+// type E installs, besides the erased `_nova_handler_Fail`, a per-E vtable
+// (heap object) into the thread-local slot `_nova_handler_Fail_<E>`. That slot
+// is not effect storage (not in the fiber snapshot), so the runtime fix that
+// made the registered handler slots GC roots did not see it; the codegen's
+// local copy of the vtable is dead after the TLS store under -O2/-O3. A
+// collection between the install and the throw freed the vtable, and the
+// throw's per-E fast path called through it. Fixed by recording the slot as a
+// GC-only root of the installing thread (nova_effect_register_root).
+//
+// Each round: a fresh `with Fail[P1857Err]` whose arm captures a local, heap
+// churn and an explicit collection inside the body, then a typed throw; the
+// arm's answer must come back intact.
+//
+// THE RED SIDE NEEDS AN OPTIMIZED BUILD (nova test builds -O0, where the
+// local survives): CI runs `nova test spec_tests --filter p1857_ --mode
+// release` for that (nova-gate.yml, windows-process-acceptance.yml).
+module standalone.p1857_per_e_fail_root
+
+import std.runtime.gc
+
+type P1857Err { code int }
+
+fn churn(round int) -> int {
+    mut xs = []str.new()
+    for i in 0..2000 { xs.push("churn-${round}-${i}") }
+    xs.len()
+}
+
+fn risky(round int) Fail[P1857Err] -> int {
+    ro n = churn(round)
+    gc.collect()
+    throw P1857Err { code: round + n - 2000 }
+}
+
+fn once(round int) -> int {
+    ro bias = round * 100
+    with Fail[P1857Err] = effect Fail[P1857Err] {
+        fail(e P1857Err) -> never { interrupt e.code + bias }
+    } {
+        risky(round)
+    }
+}
+
+fn main() Io -> () {
+    mut ok = 0
+    for r in 0..20 {
+        if once(r) == r * 101 { ok += 1 }
+    }
+    println("per-E rounds ok ${ok}")
+}

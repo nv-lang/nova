@@ -2097,10 +2097,20 @@ extern __thread NovaEffectRegistry _nova_effect_registry;
  * nova_effect_roots_retract -- a thread that published, before it exits (its TLS
  *                              block dies with it; the callback must not read it).
  * nova_effect_roots_push    -- mark phase, world stopped: `push(lo, hi)` for each
- *                              registered slot of each live thread. */
+ *                              registered slot of each live thread.
+ * nova_effect_register_root -- a TLS handler slot that is a GC root but NOT part of
+ *                              the per-fiber snapshot: the per-E `_nova_handler_Fail_<E>`
+ *                              slots of `with Fail[E]` (emit_c.rs, emit_with). They never
+ *                              were in the snapshot (registry entries are positional
+ *                              and the per-E set is per program), so registering them
+ *                              as effect storage would change what a fiber inherits;
+ *                              this records them for the GC only. Called by the
+ *                              installer right after its TLS store, on the thread
+ *                              whose slot it wrote; idempotent per (thread, slot). */
 void nova_effect_roots_publish(void);
 void nova_effect_roots_retract(void);
 void nova_effect_roots_push(void (*push)(void* lo, void* hi));
+void nova_effect_register_root(void** slot_addr);
 
 /* Plan 83.10.4 Ф.3: function pointer set by generated nova_fn_main to
  * register all effects for any thread. Null until nova_fn_main runs.

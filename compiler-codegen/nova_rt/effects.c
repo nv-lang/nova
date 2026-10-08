@@ -506,6 +506,12 @@ __thread NovaEffectRegistry _nova_effect_registry;
 typedef struct NovaEffectRootNode {
     NovaEffectRegistry* volatile reg;
     struct NovaEffectRootNode* next;
+    /* nova_effect_register_root: GC-only slots of this thread (per-E Fail). The
+     * array grows by publishing a fresh copy; the old one is never freed, so a
+     * collection that stopped this thread mid-growth still reads valid memory. */
+    void** volatile* volatile extra;
+    volatile int extra_n;
+    int extra_cap;
 } NovaEffectRootNode;
 
 static NovaEffectRootNode* volatile _nova_effect_roots = NULL;
@@ -523,6 +529,9 @@ void nova_effect_roots_publish(void) {
         abort();
     }
     nd->reg = &_nova_effect_registry;
+    nd->extra = NULL;
+    nd->extra_n = 0;
+    nd->extra_cap = 0;
     NovaEffectRootNode* h;
     do {
         h = (NovaEffectRootNode*)__atomic_load_n(&_nova_effect_roots, __ATOMIC_ACQUIRE);
@@ -551,7 +560,35 @@ void nova_effect_roots_push(void (*push)(void* lo, void* hi)) {
             void** slot = reg->slots[i];
             if (slot) push((void*)slot, (void*)(slot + 1));
         }
+        void** volatile* extra = (void** volatile*)__atomic_load_n(&nd->extra, __ATOMIC_ACQUIRE);
+        int m = (int)__atomic_load_n(&nd->extra_n, __ATOMIC_ACQUIRE);
+        for (int i = 0; extra && i < m; i++) {
+            void** slot = extra[i];
+            if (slot) push((void*)slot, (void*)(slot + 1));
+        }
     }
+}
+
+void nova_effect_register_root(void** slot_addr) {
+    if (!_nova_effect_root_self) nova_effect_roots_publish();
+    NovaEffectRootNode* nd = _nova_effect_root_self;
+    int n = nd->extra_n;
+    for (int i = 0; i < n; i++) {
+        if (nd->extra[i] == slot_addr) return;
+    }
+    if (n == nd->extra_cap) {
+        int cap = nd->extra_cap ? nd->extra_cap * 2 : 8;
+        void** volatile* grown = (void** volatile*)malloc(sizeof(void**) * (size_t)cap);
+        if (!grown) {
+            fprintf(stderr, "nova: out of memory (effect roots)\n");
+            abort();
+        }
+        for (int i = 0; i < n; i++) grown[i] = nd->extra[i];
+        __atomic_store_n(&nd->extra, grown, __ATOMIC_RELEASE);   /* old copy: kept */
+        nd->extra_cap = cap;
+    }
+    nd->extra[n] = slot_addr;
+    __atomic_store_n(&nd->extra_n, n + 1, __ATOMIC_RELEASE);
 }
 
 /* Plan 83.10.4 Ф.3: function pointer set by generated code (nova_fn_main)
