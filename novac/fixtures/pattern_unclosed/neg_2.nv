@@ -1,0 +1,9 @@
+module pattern_unclosed.neg_2
+
+// The same for a tuple pattern: the closer in view is the match's `}` (registry 1856).
+
+// NOVAC_EXPECT expected `)`
+
+fn f(s int) -> int => match s {
+    (a,
+}
