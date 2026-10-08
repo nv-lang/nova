@@ -1,0 +1,9 @@
+module pattern_unclosed.neg_1
+
+// A variant pattern left open at the match's own `}`: the arm loop must stop at a foreign closer, not spin on a zero-width marker (registry 1856).
+
+// NOVAC_EXPECT expected `)`
+
+fn f(s int) -> int => match s {
+    R(w,
+}
