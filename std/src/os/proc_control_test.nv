@@ -181,8 +181,14 @@ test "p294 R1: read_to_end cut by supervised(timeout:) returns NotConnected - no
     }
     ro elapsed = Timestamp.now().unix_millis() - t0
     assert(kind == ErrorKind.NotConnected)           // the read was cut, not retried for ever
-    assert(elapsed >= 400)                           // ... by the timeout, not by an early failure
     assert(elapsed < 5000)
+    // ... and cut by the timeout, not by the child: it is still alive and never closed its stdout.
+    // (Not a lower bound on `elapsed`: the scope timer runs on the loop clock, which may lag the
+    // wall clock after an idle stretch - measured: one run in three cut at < 400 ms of wall time.)
+    match ctl_io(child.try_wait(), "try_wait") {
+        Some(_) => panic("the child ended: the stream was not cut by the timeout")
+        None => ()
+    }
     // The stream stays dead: one more read is the same error at once, not a hang.
     mut buf []u8 = []u8.new()
     buf.resize(16, 0 as u8)
