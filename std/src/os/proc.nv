@@ -13,7 +13,8 @@
 //
 // `Proc` is a plumbing effect (the `Net` / `Os` precedent): user code calls the methods
 // below, never the effect operations; production uses `real_proc()` (auto-installed,
-// `#default_handler`), tests install `mock_proc(state)`. It is a NEW effect next to `Os`
+// `#default_handler`); a test handler (`mock_proc`) is deferred, plan 294 marker
+// `[M-294-mock-proc]`, so tests run real processes. It is a NEW effect next to `Os`
 // because D453 forbids widening `process_run` after the fact and `Os` carries no
 // handles.
 //

@@ -73,5 +73,5 @@ Process-tree kill, signals, `stop(grace)`, `wait_timeout` (plan 294 phase 2), PT
 ## Testing code that spawns
 
 `Proc` is a plumbing effect like `Os` and `Net`: production code gets `real_proc()` automatically
-(`#default_handler`). The fixtures in `std/src/os/proc_streams_test.nv` show portable helper
+(`#default_handler`). The fixtures in `std/src/os/proc_streams/proc_streams_test.nv` show portable helper
 children (`sh`/`cat` on POSIX, `powershell` on Windows).

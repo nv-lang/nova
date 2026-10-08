@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/os/proc_streams_test.nv — Plan 294 F.1 (D492): child-process streams.
+// std/os/proc_streams/proc_streams_test.nv — Plan 294 F.1 (D492): child-process streams.
 //
 // Scenarios S1, S2, S4, S5, S6 and the failure table of docs/plans/294-process-streams-pty.md §5.
 // The child is always a PLATFORM tool present on every CI image (`sh` + coreutils on POSIX,
@@ -8,10 +8,16 @@
 // that is byte-exact on both OSes (raw stdin/stdout streams, no text translation).
 //
 // Every assertion states an OBSERVABLE: bytes, a counter, an exit code, an error kind.
+//
+// Its own directory and module ON PURPOSE: `nova test` folds every `module std.os` file of
+// std/src/os into ONE unit, so any red peer (registry #591: d453 `supervised(timeout:) reaps`
+// on Linux CI) would hide these fixtures under its name. Here they are a separate unit with
+// their own PASS/FAIL line, and they use only the public `std.os` surface, as a user would.
 
-module std.os
+module proc_streams.proc_streams_test
 
-import std.io.{read_to_end, write_all}
+import std.os.{Command, Child, ChildStdin, ChildStdout, ChildStderr, Stdio, Os, real_os, temp_dir}
+import std.io.{IoError, ErrorKind, read_to_end, write_all}
 import std.fs.{Path}
 import std.time.duration
 
@@ -186,7 +192,7 @@ test "p294 S1b: streams not asked for are absent; a Null stdin reaches the child
 }
 
 test "p294 S1c: args, env and dir reach the child; a non-zero code is Ok(status), not Err" {
-    ro tmp = Path.from_bytes(os_temp_dir_for_test().bytes())
+    ro tmp = os_temp_dir_for_test()
     ro cmd = env_cwd_cmd().env("P294_VAR", "value-1").dir(tmp).stdout(Stdio.Piped)
     consume child = must_child(cmd.start(), "start")
     consume rx = must_stdout(child.take_stdout())
@@ -197,11 +203,9 @@ test "p294 S1c: args, env and dir reach the child; a non-zero code is Ok(status)
     assert(text.starts_with("value-1|"))
 }
 
-fn os_temp_dir_for_test() -> str {
-    with Os = real_os() { temp_dir_str() }
+fn os_temp_dir_for_test() -> Path {
+    with Os = real_os() { temp_dir() }
 }
-
-fn temp_dir_str() Os -> str { Os.temp_dir() }
 
 // ─── S2: reading in pieces does not block other fibers ──
 
@@ -346,7 +350,7 @@ test "p294 F1: no such program -> Err(NotFound) with a raw OS code" {
 }
 
 test "p294 F2: a directory is not runnable -> Err (PermissionDenied or the platform's equivalent)" {
-    match Command.new(os_temp_dir_for_test()).start() {
+    match Command.new(os_temp_dir_for_test().display()).start() {
         Ok(consume c) => { c.release(); panic("expected Err: a directory ran") }
         Err(e) => assert(e.raw_os != 0)
     }

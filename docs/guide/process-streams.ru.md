@@ -72,5 +72,5 @@ assert(status.success())
 ## Как тестировать код, который запускает процессы
 
 `Proc` — plumbing-эффект, как `Os` и `Net`: рабочий код получает `real_proc()` сам
-(`#default_handler`). Фикстуры `std/src/os/proc_streams_test.nv` показывают переносимых
+(`#default_handler`). Фикстуры `std/src/os/proc_streams/proc_streams_test.nv` показывают переносимых
 потомков-помощников (`sh`/`cat` на POSIX, `powershell` на Windows).
