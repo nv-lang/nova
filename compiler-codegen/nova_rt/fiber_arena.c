@@ -555,9 +555,19 @@ static void _nova_push_main_stack_vma(void) {
     close(fd);
 }
 
+/* 221.1 №1857: effects.c -- the handler TLS slots of every thread (effects.h,
+ * "THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS"). Declared here, not by
+ * including effects.h: this TU stays off nova_rt.h. */
+void nova_effect_roots_push(void (*push)(void* lo, void* hi));
+static void _nova_gc_push_eager(void* lo, void* hi) {
+    GC_push_all_eager((char*)lo, (char*)hi);
+}
+
 /* Mark-фаза, мир остановлен → arena-list append-only + bitmap/high_water
  * стабильны; обход без лока безопасен (симметрия с Windows). */
 static void _nova_gc_push_other_roots(void) {
+    /* №1857: the installed effect handlers -- TLS is not scanned by Boehm. */
+    nova_effect_roots_push(_nova_gc_push_eager);
     /* (а) main-стек (текущая VMA). */
     _nova_push_main_stack_vma();
     /* (б) native-стеки потоков рантайма. */

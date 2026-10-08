@@ -2078,6 +2078,30 @@ extern __declspec(thread) NovaEffectRegistry _nova_effect_registry;
 extern __thread NovaEffectRegistry _nova_effect_registry;
 #endif
 
+/* 221.1 №1857: THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS. A `_nova_handler_X`
+ * slot is thread-local, and Boehm does not scan TLS (GC_set_no_dls(1); Windows
+ * TLS blocks for every thread, Linux the main thread's -- see №1420 in
+ * alloc_boehm.c). A handler installed by `with X = h { .. }` used to be kept alive
+ * only by a "GC root pin" local the codegen emits next to the TLS store; that local
+ * is never read again, so an optimizing build (-O2/-O3) drops it, and a collection
+ * inside the block freed the live handler: the next `X.op()` dispatch jumped
+ * through a reused vtable -- "fiber stack overflow in slot 0 (access violation in
+ * fiber arena)" on the first file call of a release binary, at a path length that
+ * only moved WHEN the collection came. The class fix is here, not in the pin: each
+ * thread publishes its registry on its first registration, and the GC
+ * push_other_roots callbacks (fiber_arena.c, fiber_arena_win.c) push every
+ * registered slot's current value -- whichever path stored it (`with`, snapshot
+ * restore, a default handler, a per-E adapter vtable).
+ *
+ * nova_effect_roots_publish -- once per thread, from nova_register_effect_storage.
+ * nova_effect_roots_retract -- a thread that published, before it exits (its TLS
+ *                              block dies with it; the callback must not read it).
+ * nova_effect_roots_push    -- mark phase, world stopped: `push(lo, hi)` for each
+ *                              registered slot of each live thread. */
+void nova_effect_roots_publish(void);
+void nova_effect_roots_retract(void);
+void nova_effect_roots_push(void (*push)(void* lo, void* hi));
+
 /* Plan 83.10.4 Ф.3: function pointer set by generated nova_fn_main to
  * register all effects for any thread. Null until nova_fn_main runs.
  * Worker threads call this at startup to populate their TLS registry. */
@@ -2124,7 +2148,12 @@ static inline void nova_register_effect_storage(void** slot_addr) {
             _nova_effect_registry.count, NOVA_MAX_EFFECT_STORAGES);
         abort();
     }
-    _nova_effect_registry.slots[_nova_effect_registry.count++] = slot_addr;
+    if (_nova_effect_registry.count == 0) nova_effect_roots_publish();   /* №1857 */
+    /* №1857: the slot before the count -- a collection that stops this thread
+     * between the two reads only slots that are already written. */
+    _nova_effect_registry.slots[_nova_effect_registry.count] = slot_addr;
+    __atomic_store_n(&_nova_effect_registry.count, _nova_effect_registry.count + 1,
+                     __ATOMIC_RELEASE);
 }
 
 /* Snapshot — массив значений pointer-ов. Размер фиксированный, индексы
