@@ -1,0 +1,26 @@
+module instance_terms_program.pos_1
+
+// NOVAC_PROGRAM
+// The program half of registry 221.1 #1831 (`instance_terms/pos_1` is the
+// unit half): the generic bodies live in the module `gen/` beside this file,
+// and their `Option[T]`, `(T, T)`
+// and `Option[(T, T)]` are born only when THIS module instantiates them at its
+// own `Pt` -- a term of an instance whose body is another module's, over a
+// type no other module knows.
+
+import ./gen.{pick, second, pair_pick}
+
+/// A point, known only to this module.
+type Pt {
+    x int
+}
+
+fn main() {
+    ro p = Pt { x: 5 }
+    ro q = Pt { x: 6 }
+    println(pick[Pt](p, q, true).x)
+    println(pick[Pt](p, q, false).x)
+    println(second[Pt](p, q).x)
+    println(pair_pick[Pt](p, q, true).x)
+    println(pair_pick[Pt](p, q, false).x)
+}

@@ -103,7 +103,7 @@
 #   comments, blank lines, docstring). Measured before the change: 14 guards
 #   carry an address only in the body; 13 of them were not in this base
 #   (row-fields already was). Their names are added, none is new work.
-no_plan_ref=59
+no_plan_ref=58
 no_plan_ref_name=check-bug-number-sync
 no_plan_ref_name=check-dblock-numbers
 no_plan_ref_name=check-merge-message-hashes
@@ -122,7 +122,6 @@ no_plan_ref_name=check-novac-doc-language
 no_plan_ref_name=check-novac-edge-payload
 no_plan_ref_name=check-novac-emitted-names
 no_plan_ref_name=check-novac-export-has-caller
-no_plan_ref_name=check-novac-file-decls-door
 no_plan_ref_name=check-novac-file-size
 no_plan_ref_name=check-novac-grammar-kinds
 no_plan_ref_name=check-novac-guard-registry

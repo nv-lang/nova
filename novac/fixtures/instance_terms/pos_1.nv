@@ -1,0 +1,69 @@
+module instance_terms.pos_1
+
+// A STRUCTURAL TERM BORN ONLY IN AN INSTANCE BODY (registry 221.1 #1831):
+// `Option[T]`, `(T, T)` and `Option[(T, T)]` inside generic bodies, called at
+// `T = Pt` (a heap record) and `T = Color` (a value sum). The file's own
+// channel sees each body once, under the abstract `T`; the concrete terms are
+// recorded only in the instances' channels. The typedef doors
+// (`emit_decls.nv` `@option_typedef_ids`, `@emit_structural_typedefs`) asked
+// the file's channel alone, and clang said "unknown type name
+// 'NovaOpt_Nova_Pt_p'" / "'_NovaTuple_2_9_Nova_Pt_p_9_Nova_Pt_p'" while the
+// oracle compiled the file. Unit mode; `instance_terms_program` is the same
+// in a program.
+
+/// A point.
+type Pt {
+    x int
+}
+
+/// Three colours, no payload: a value sum.
+type Color enum
+    | Red
+    | Green
+    | Blue
+
+/// The colour's position, so the output names which one came back.
+fn color_no(c Color) -> int => match c {
+    Red => 1
+    Green => 2
+    Blue => 3
+}
+
+/// `a` when `first`, else `b` -- through an option only the instance holds.
+fn pick[T](a T, b T, first bool) -> T {
+    ro o = if first { Some(a) } else { None }
+    match o {
+        Some(x) => x
+        None => b
+    }
+}
+
+/// `b` -- through a pair only the instance holds.
+fn second[T](a T, b T) -> T {
+    ro p = (a, b)
+    p.1
+}
+
+/// The pair's second when `some`, else `a` -- through an option over a pair.
+fn pair_pick[T](a T, b T, some bool) -> T {
+    ro o = if some { Some((a, b)) } else { None }
+    match o {
+        Some(p) => p.1
+        None => a
+    }
+}
+
+fn main() {
+    ro p = Pt { x: 1 }
+    ro q = Pt { x: 2 }
+    println(pick[Pt](p, q, true).x)
+    println(pick[Pt](p, q, false).x)
+    println(second[Pt](p, q).x)
+    println(pair_pick[Pt](p, q, true).x)
+    println(pair_pick[Pt](p, q, false).x)
+    println(color_no(pick[Color](Color.Green, Color.Blue, true)))
+    println(color_no(pick[Color](Color.Green, Color.Blue, false)))
+    println(color_no(second[Color](Color.Red, Color.Blue)))
+    println(color_no(pair_pick[Color](Color.Red, Color.Green, true)))
+    println(second[int](3, 4))
+}
