@@ -43,7 +43,7 @@ CI), #45 (CI в плане 294), #47 (№1831), #48 (№1830).
 №1817/№1818 (чекер Карины), №1819 (оракул). Заводить в свободные слоты (≤ 5 в работе) сразу после вливаний.
 
 **Залипший цикл плагина** (2026-10-07 21:08–23:xx): письма не доставлялись 2 ч, `crew_doctor` молчал. Лечится
-`touch D:/Sources/crew-harness/opencode-plugin/index.ts`; диагностика — `/tmp/opencode-plugins.log`. Предложение
+`touch` файла `opencode-plugin/index.ts` в рабочей копии репозитория crew-harness; диагностика — `/tmp/opencode-plugins.log`. Предложение
 владельцу: сторож цикла и проверка времени последнего прохода в `crew_doctor`.
 
 **/check-release 2026-10-08:** subset-debt 136/136, legacy-workarounds 4, plans-tag-bound 44/41 (база 41),
