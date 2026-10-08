@@ -242,7 +242,22 @@ fn Emitter mut @emit_type_decls() -> () {
             // The value-shaped options over THIS type, right after its body.
             for i in 0..opts.len() {
                 if opt_out[i] { continue }
-                if decl_index_of_ty(@ctx, @ctx.tys.arg(TyId(opts[i]), 0)) != t { continue }
+                ro payload = @ctx.tys.arg(TyId(opts[i]), 0)
+                if decl_index_of_ty(@ctx, payload) != t { continue }
+                @emit_option_typedef(TyId(opts[i]), opt_fwd)
+                opt_out[i] = true
+            }
+            // The options over a STRUCTURAL payload whose VALUE components this
+            // body just completed (registry #1840): a holder embeds the option
+            // by value and may be printed in this very pass, so the release
+            // cannot wait for the tail after pass 3. The tuple's own typedef
+            // goes first; the pass-3 repeat is a no-op under its guard.
+            for i in 0..opts.len() {
+                if opt_out[i] { continue }
+                ro payload = @ctx.tys.arg(TyId(opts[i]), 0)
+                if decl_index_of_ty(@ctx, payload) >= 0 { continue }
+                if !@dep_done(payload, done) { continue }
+                @emit_one_structural_typedef(payload, opt_fwd)
                 @emit_option_typedef(TyId(opts[i]), opt_fwd)
                 opt_out[i] = true
             }
