@@ -1,0 +1,18 @@
+module shell_sum_fence.styles
+
+// A MODULE OF THE PROGRAM that fences std's payload-free `PathStyle` in a
+// `[]PathStyle`, while the entry also reads it by value. The shell declares
+// that sum as `NovaValue_PathStyle` once, for every unit; judged by this unit's
+// own fence, it printed `Nova_PathStyle*`, a type nobody declares (registry
+// 221.1 #1830).
+
+import std.fs.{PathStyle}
+
+/// Both styles, in a vector -- the fence of a shell sum in another module.
+export fn both_styles() -> []PathStyle => []PathStyle.of(PathStyle.Windows, PathStyle.Posix)
+
+/// The style's word -- a match over std's sum.
+export fn style_name(s PathStyle) -> str => match s {
+    Posix => "posix"
+    Windows => "windows"
+}
