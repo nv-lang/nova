@@ -167,10 +167,10 @@ export fn Ctx @in_program(row FnRow) -> bool {
 ///
 /// A SUM OF THE SHELL is not judged here at all (registry 221.1 #1830): its
 /// layout was decided ONCE, when the oracle emitted the probe, and the shell
-/// glued into every unit already carries the answer (`shell_fence`). Judged by
-/// the unit's pool, `[]PathStyle` in a program printed `Nova_PathStyle*` for a
-/// sum the shell declares only as `NovaValue_PathStyle` -- clang "unknown type
-/// name 'Nova_PathStyle'".
+/// glued into every unit already carries the answer (`shell_fence(ctx, t)`).
+/// When the unit's pool decided, `[]PathStyle` in a program printed
+/// `Nova_PathStyle*` for a sum the shell declares only as `NovaValue_PathStyle`
+/// -- clang "unknown type name 'Nova_PathStyle'".
 fn is_fenced(ctx Ctx, t TyId) -> bool {
     match shell_fence(ctx, t) {
         Some(fenced) => { return fenced }
