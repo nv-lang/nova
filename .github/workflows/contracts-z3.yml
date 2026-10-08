@@ -26,7 +26,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release, no z3)
         run: cargo build --release --manifest-path nova-cli/Cargo.toml
       # ВСЕ #verify-контракты живут в nova_tests (0 в std/spec_tests) — т.е. это
@@ -47,7 +48,8 @@ jobs:
         with:
           submodules: true
       - name: Install system deps
-        run: sudo apt-get install -y libgc-dev libz3-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev libz3-dev
+        timeout-minutes: 15
       - name: Build nova-cli (release, z3-backend feature)
         run: cargo build --release --features z3-backend --manifest-path nova-cli/Cargo.toml
       - name: Run contracts tests with Z3 (non-blocking — см. TrivialBackend)

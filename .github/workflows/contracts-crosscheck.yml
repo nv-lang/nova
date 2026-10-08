@@ -38,7 +38,8 @@ jobs:
           submodules: true
 
       - name: Install system deps (Boehm GC + Z3)
-        run: sudo apt-get update && sudo apt-get install -y libgc-dev libz3-dev
+        run: bash scripts/tools/ci-apt-install.sh libgc-dev libz3-dev
+        timeout-minutes: 15
 
       - name: Install cvc5
         run: |
@@ -102,7 +103,8 @@ jobs:
           submodules: true
 
       - name: Install system deps (Z3)
-        run: sudo apt-get update && sudo apt-get install -y libz3-dev
+        run: bash scripts/tools/ci-apt-install.sh libz3-dev
+        timeout-minutes: 15
 
       - name: Install cvc5
         run: |

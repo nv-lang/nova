@@ -402,3 +402,13 @@ Nova-workspace `nova.toml` (members: `std`, `examples`, `nova_tests`). Подр�
 Прецедент: [D449](../../spec/decisions/06-concurrency.md) (`supervised(on_timeout:)`)
 записан до кода; интегратор сперва заявил обратное («станет D-блоком вместе с
 кодом») и был поправлен.
+
+## CI: шаг apt с пределом и повтором (задача #37)
+
+2026-10-07 шаг «Install system deps» в `nova-gate.yml` зависал на apt дважды (run 37686972126: 84+ минуты без
+движения; ручной full по #34 снят пределом 120 минут), хотя нормально идёт 1-2 минуты. Теперь все шаги apt во всех
+workflow идут через `scripts/tools/ci-apt-install.sh`: до 3 попыток по 270 с (`timeout`), apt с
+`Acquire::Retries=3`, сетевыми таймаутами 30 с и `DPkg::Lock::Timeout=120`, между попытками `dpkg --configure -a`;
+на самом шаге `timeout-minutes: 15`. Предел попытки 270, а не 600 с: три попытки по 600 с в предел шага не входят.
+Повтор — shell-цикл, а не стороннее retry-действие (его пришлось бы пинить по SHA и проверять). Правило держит страж
+`check-workflow-apt-step` (самотест `scripts/guards/selftest/test-check-workflow-apt-step.sh`).
