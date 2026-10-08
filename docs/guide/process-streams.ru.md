@@ -21,9 +21,9 @@ consume child = Command.new("sort").stdin(Stdio.Piped).stdout(Stdio.Piped).start
 consume tx = child.take_stdin().unwrap()      // ChildStdin  - io.Write
 consume rx = child.take_stdout().unwrap()     // ChildStdout - io.Read
 write_all(tx, "b\na\n".bytes())?
-tx.close()                                    // конец ввода
+tx.close()                                    // end of input
 ro out = read_to_end(rx)?                     // "a\nb\n"
-ro status = child.wait()?                     // паркует волокно
+ro status = child.wait()?                     // parks the fiber
 assert(status.success())
 ```
 
