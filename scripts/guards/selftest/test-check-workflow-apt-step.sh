@@ -54,6 +54,8 @@ echo x >> "$CI_APT_COUNT"
 sleep 30
 EOF
 : > "$T/count"
+# +x обязателен: на Linux `cat >` его не даёт, и apt-подмена падала rc=126 (CI 37755615116), а на Windows не видно.
+chmod +x "$T/hang.sh"
 out=$(CI_APT_SUDO="" CI_APT_GET="$T/hang.sh" CI_APT_DPKG=true CI_APT_ATTEMPT_TIMEOUT=1 CI_APT_PAUSE=0 CI_APT_COUNT="$T/count" bash "$TOOL" pkg 2>&1); rc=$?
 n=$(grep -c . "$T/count")
 # update стоит первым в && : зависший update считается попыткой -> по одному запуску на попытку
@@ -66,6 +68,7 @@ case " $* " in *" update "*) echo u >> "$CI_APT_COUNT"; [ "$(grep -c . "$CI_APT_
 exit 0
 EOF
 : > "$T/count"
+chmod +x "$T/flaky.sh"
 out=$(CI_APT_SUDO="" CI_APT_GET="$T/flaky.sh" CI_APT_DPKG=true CI_APT_ATTEMPT_TIMEOUT=5 CI_APT_PAUSE=0 CI_APT_COUNT="$T/count" bash "$TOOL" pkg 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'попытка 2'; then ok "8: сбой, затем успех на 2-й попытке"; else bad "8: rc=$rc: $out"; fi
 
