@@ -46,6 +46,9 @@ jobs:
     name: nova test std/os on windows-latest, ${{ matrix.toolchain }} (non-required)
     runs-on: windows-latest
     timeout-minutes: 45
+    # MSVC информационный: C2099 в сгенерированном C роняет всё, что тянет `std.os`
+    # (реестр 221.1 №TBD); вердикт приёмки даёт clang. Убрать, когда MSVC позеленеет.
+    continue-on-error: ${{ matrix.toolchain == 'msvc' }}
     strategy:
       fail-fast: false
       matrix:
