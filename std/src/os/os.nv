@@ -241,7 +241,7 @@ fn env_blob_of(envs []EnvVar) -> Result[[]u8, IoError] {
 /// NOT receive via `supervised(timeout:)`/`(cancel:)` reports `128 + signal`
 /// (shell convention).
 #stable(since = "0.1")
-export type ExitStatus value { ro code int }
+export type ExitStatus value { ro code int, ro sig int }
 
 /// The raw exit code the child returned.
 #stable(since = "0.1")
@@ -250,6 +250,12 @@ export fn ExitStatus @code() -> int => @code
 /// Whether the child exited with code `0`.
 #stable(since = "0.1")
 export fn ExitStatus @success() -> bool => @code == 0
+
+/// The POSIX signal number that terminated the child (Plan 294, D492), or `None`
+/// when it exited by itself. Always `None` on Windows (no signals there; the
+/// terminating code is in `code()`).
+#stable(since = "0.1")
+export fn ExitStatus @signal() -> Option[int] => if @sig == 0 { None } else { Some(@sig) }
 
 /// A subprocess to launch (Rust `Command` / Go `exec.Cmd` precedent). Build
 /// with `Command.new(program)`, then `.arg`/`.env`/`.dir` (each returns a
@@ -267,13 +273,17 @@ export type Command value priv {
     envs []EnvVar
     clear_env bool
     dir Option[Path]
+    stdin_mode Stdio
+    stdout_mode Stdio
+    stderr_mode Stdio
 }
 
 /// A fresh command running `program` with no arguments, inheriting the
 /// parent's environment and current working directory.
 #stable(since = "0.1")
 export fn Command.new(program str) -> Command =>
-    { program, args: [], envs: [], clear_env: false, dir: None }
+    { program, args: [], envs: [], clear_env: false, dir: None,
+      stdin_mode: Stdio.Null, stdout_mode: Stdio.Null, stderr_mode: Stdio.Null }
 
 /// Append one argument.
 #stable(since = "0.1")
@@ -319,7 +329,7 @@ export fn Command @run() Os -> Result[ExitStatus, IoError] {
     ro (rc, code) = Os.process_run(@program.bytes(), argv, @args.len(), env_blob, deduped.len(), use_env, cwd_bytes)
     if rc == PROCESS_CANCELLED { Err(IoError.new(ErrorKind.Interrupted, "process run")) }
     else if rc < 0 { Err(IoError.from_os(0 - rc, "process run")) }
-    else { Ok(ExitStatus { code }) }
+    else { Ok(ExitStatus { code, sig: 0 }) }
 }
 
 // ─── real_os — the production Os handler over the native hooks (os_env.h) ──

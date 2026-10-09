@@ -1,0 +1,98 @@
+// agent_runner.nv - run an external "agent" program the way a launcher service does (Plan 294, D492).
+//
+//     agent_runner <program> [args...]
+//
+// What it shows, all in fiber-friendly calls (nothing blocks an OS thread):
+//   * start the agent with stdin / stdout piped, stderr discarded;
+//   * hand it a prompt on stdin, then close stdin (end of input);
+//   * stream its stdout back in pieces, as they arrive (pull-style: a slow consumer slows the agent);
+//   * give the whole run a budget: `supervised(timeout:)` kills the agent when it overruns;
+//   * report its exit status, or why it never ran.
+//
+// Try it:  agent_runner cat          (POSIX; echoes the prompt back)
+//          agent_runner sort         (also works on Windows)
+
+module os.agent_runner
+
+import std.io.{IoError, write_all}
+import std.os.{args, Command, Child, ChildStdin, ChildStdout, Stdio}
+import std.time.duration
+
+const BUDGET_SECONDS = 30
+
+fn pipe_in(o Option[ChildStdin]) -> ChildStdin {
+    match o {
+        Some(consume s) => s
+        None => panic("stdin was asked to be piped")
+    }
+}
+
+fn pipe_out(o Option[ChildStdout]) -> ChildStdout {
+    match o {
+        Some(consume s) => s
+        None => panic("stdout was asked to be piped")
+    }
+}
+
+// Talk to a started agent: prompt in, answer out, then its exit code.
+fn converse(mut child Child, prompt str) Proc Io -> Result[int, IoError] {
+    consume tx = pipe_in(child.take_stdin())
+    consume rx = pipe_out(child.take_stdout())
+    match write_all(tx, prompt.bytes()) {
+        Ok(_) => ()
+        Err(e) => return Err(e)
+    }
+    tx.close()                               // the agent now sees end of input
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    loop {
+        match rx.read(buf) {
+            Ok(0) => break                   // the agent closed stdout
+            Ok(n) => print(unsafe { buf[..n].to_str_unchecked() })
+            Err(e) => return Err(e)
+        }
+    }
+    match child.wait() {
+        Ok(st) => Ok(st.code())
+        Err(e) => Err(e)
+    }
+}
+
+// Run `program` once. `Ok(code)` is the agent's own exit code; `Err` means it never ran,
+// or the budget ran out before it finished (ErrorKind.Interrupted).
+fn run_agent(program str, extra []str, prompt str) Proc Io -> Result[int, IoError] {
+    ro cmd = Command.new(program).args(extra).stdin(Stdio.Piped).stdout(Stdio.Piped)
+    match cmd.start() {
+        Ok(consume started) => {
+            consume child = started          // owns the handle: leaving this scope kills a still-running agent
+            converse(child, prompt)
+        }
+        Err(e) => Err(e)
+    }
+}
+
+fn main() {
+    ro argv = args()
+    if argv.len() < 2 {
+        println("usage: agent_runner <program> [args...]")
+        return
+    }
+    mut extra []str = []
+    mut i = 2
+    while i < argv.len() {
+        extra.push(argv[i])
+        i += 1
+    }
+    mut outcome = "not run"
+    ro timed_out = with Fail[TimeoutError] = |_e| { true } {
+        supervised(timeout: BUDGET_SECONDS.to_seconds()) {
+            match run_agent(argv[1], extra, "task: demo\n") {
+                Ok(code) => { outcome = "agent exited with code ${code}" }
+                Err(e) => { outcome = "agent did not finish: ${e}" }
+            }
+        }
+        false
+    }
+    if timed_out { outcome = "budget of ${BUDGET_SECONDS}s exceeded; the agent was killed" }
+    println(outcome)
+}

@@ -56,7 +56,23 @@ echo "std test :: ${SUMMARY:-<нет строки итога>}"
     exit 1
 }
 
-strip "$TMP/run.log" | grep -aE "^(RUN-FAIL|CC-FAIL)" | awk '{print $2}' | sort -u > "$TMP/now.txt"
+# ОТКАЗ — ЛЮБАЯ метка, кроме PASS и SKIP (№1865). Прежде здесь стояли только
+# RUN-FAIL|CC-FAIL, и TIMEOUT / CODEGEN-FAIL проходили МОЛЧА: зависшая или не
+# собравшаяся единица не попадала в `now.txt` и считалась зелёной. Перечень меток —
+# `Outcome::label()` в compiler-codegen/src/test_runner.rs; итоговый `FAIL:` там
+# считает всё, что не PASS и не SKIP, — с ним и сверяемся ниже.
+FAIL_LABELS='RUN-FAIL|CC-FAIL|CODEGEN-FAIL|NO-C-FILE|TIMEOUT|NEG-[A-Z-]+'
+strip "$TMP/run.log" | grep -aE "^($FAIL_LABELS)[[:space:]]" | awk '{print $2}' | sort -u > "$TMP/now.txt"
+
+# Сверка с итогом: меток могут добавить, и новая снова прошла бы молча. Число
+# разобранных отказов обязано совпасть с `FAIL:` строки итога.
+FAIL_N=$(echo "$SUMMARY" | sed -n 's/.*FAIL: \([0-9][0-9]*\).*/\1/p')
+NOW_N=$(grep -c . "$TMP/now.txt")
+if [ "${FAIL_N:-x}" != "$NOW_N" ]; then
+    echo "check-std-test-baseline: в итоге FAIL: ${FAIL_N:-?}, а разобрано отказов $NOW_N —" >&2
+    echo "    метка исхода, которой страж не знает (№1865): допиши её в FAIL_LABELS" >&2
+    exit 1
+fi
 
 UNLINKED=$(grep -vE '^[[:space:]]*#' "$BASE_FILE" | grep -vE '^[[:space:]]*$' | grep -v '№' || true)
 if [ -n "$UNLINKED" ]; then

@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/n1850_probe/env_bytes_str_literal_test.nv — carrier of registry
+// #1850 / #1594 (class: a `str` literal passed for a `[]u8` parameter passes
+// the type checker, but emit_c hands the C callee a `nova_str`, and the C
+// compiler rejects the unit).
+//
+// The two d324 tests that used to carry this case now pass `.bytes()`
+// explicitly, so the `std/src/os` folder-module unit compiles and runs.
+// This file keeps the defect visible on its own: it lives in a separate
+// directory with its own module, so walk_nv makes it a standalone unit and its
+// CC-FAIL cannot take the `std.os` unit down. It is listed in
+// scripts/guards/std-test-fail.baseline under this name. When #1850 is fixed
+// (either the checker rejects the literal or emit_c converts it), this unit
+// compiles and the baseline entry goes.
+
+module n1850_probe.env_bytes_str_literal_test
+
+import std.os.{env, env_bytes, mock_os, MockOs, Os}
+
+test "n1850: str literal as the []u8 key of env_bytes (get)" {
+    mut st = MockOs.new()
+    with Os = mock_os(st) {
+        match env("RAW", "seed") { Ok(()) => assert(true), Err(_) => assert(false) }
+        match env_bytes("RAW") {
+            Some(b) => { assert(b.len() == 4); assert(b[0] == (115 as u8)) }   // 's'
+            None    => assert(false)
+        }
+    }
+}
+
+test "n1850: str literal as the []u8 key of env_bytes (set)" {
+    mut st = MockOs.new()
+    with Os = mock_os(st) {
+        mut raw []u8 = []u8.new()
+        raw.push(0xFF as u8); raw.push(0xFE as u8)
+        ro _ = env_bytes("B", raw)
+        match env_bytes("B") {
+            Some(b) => { assert(b.len() == 2); assert(b[0] == (0xFF as u8)) }
+            None    => assert(false)
+        }
+    }
+}
