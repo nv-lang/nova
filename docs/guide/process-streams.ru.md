@@ -75,11 +75,11 @@ import std.os.{Command, PtySize}
 import std.io.{write_all}
 
 consume pty = Command.new("cmd").start_pty(PtySize { rows: 24, cols: 80 })?
-write_all(pty, "echo hello\r".bytes())?    // набор с клавиатуры; Enter — "\r"
+write_all(pty, "echo hello\r".bytes())?    // typing; Enter is "\r"
 pty.resize(PtySize { rows: 40, cols: 120 })?
 mut buf []u8 = []u8.new()
 buf.resize(4096, 0 as u8)
-ro n = pty.read(buf)?                      // экран; Ok(0) — терминала больше нет
+ro n = pty.read(buf)?                      // the screen; Ok(0) = the terminal is gone
 ro status = pty.wait()?
 ```
 
