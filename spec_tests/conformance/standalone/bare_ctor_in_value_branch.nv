@@ -1,0 +1,53 @@
+// EXPECT_STDOUT get other:BREW other:WHEN code 7
+//
+// Registry 221.1 #1874. A bare variant constructor in a branch of a `match` / `if`
+// that is itself the payload of `Ok(...)` was not given the expected sum: the
+// checker's №658 channel descended through `Ok(inner)` but stopped at a compound
+// `inner`, and codegen fell back to the first-wins lookup by name. With two sums
+// sharing a same-arity variant (`Other(int)` declared first, `Other(str)` second)
+// the branch was emitted as the FIRST sum's constructor - a C compile error
+// ("passing 'nova_str' to parameter of incompatible type 'nova_int'"). Carrier:
+// nova-http's `Method.parse` (`Ok(match s { ... _ => Other(s) })`) once std.os
+// gained `Signal.Other(int)` (plan 294 F.2).
+//
+// Fixed by descending into match arms, if/else branches and block tails in
+// value position (types/mod.rs, record_bare_variant_ctor).
+
+module standalone.bare_ctor_in_value_branch
+
+type BcSignal enum
+    | Kill | Other(int)
+
+type BcMethod enum
+    | Get | Other(str)
+
+fn parse_match(s str) -> Result[BcMethod, str] {
+    Ok(match s {
+        "GET" => Get
+        _ => Other(s)
+    })
+}
+
+fn parse_if(s str) -> Result[BcMethod, str] {
+    Ok(if s == "GET" { Get } else { Other(s) })
+}
+
+fn sig_of(n int) -> BcSignal {
+    if n == 9 { Kill } else { Other(n) }
+}
+
+fn show(m Result[BcMethod, str]) -> str {
+    match m {
+        Ok(Get) => "get"
+        Ok(Other(t)) => "other:${t}"
+        Err(e) => e
+    }
+}
+
+fn main() Io -> () {
+    ro code = match sig_of(7) {
+        Kill => 9
+        Other(n) => n
+    }
+    println("${show(parse_match("GET"))} ${show(parse_match("BREW"))} ${show(parse_if("WHEN"))} code ${code}")
+}
