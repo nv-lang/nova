@@ -117,7 +117,9 @@ fn Emitter @op_signature(n int, op Node, sig_at int) -> str {
     s.append("static ${c_type(@ctx, sig.ret_id)} novac_hop_${@tag}${n}_${sig.name}(void* _novac_ctx")
     mut j = 0
     for pname in pnames {
-        s.append(", ${c_type(@ctx, @ctx.effects.op_params[sig.param_off + j])} ${pname}")
+        // The body reads the parameter through the door (registry #1872);
+        // the signature declares it under the same spelling.
+        s.append(", ${c_type(@ctx, @ctx.effects.op_params[sig.param_off + j])} ${c_ident(pname)}")
         j += 1
     }
     s.append(")")

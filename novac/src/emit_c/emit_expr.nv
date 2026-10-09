@@ -459,7 +459,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro kids = branch_children(e)
         // A `value` record that arrived BY COPY (D488 R5) is reached with `.`.
         @body.append(if @recv_copy { "(${RECV_C_NAME}." } else { "(${RECV_C_NAME}->" })
-        @body.append(leaf_text(kids[1]))
+        // Through the same door as the field's declaration (registry #1872):
+        // `ctx`/`schedlink` spell `nv_*` on the member side too.
+        @body.append(c_ident(leaf_text(kids[1])))
         @body.append(")")
     } else if k == NodeKind.FieldAccess {
         // A QUALIFIED constant or module value (`Type.NAME`, D200 amend #66):
