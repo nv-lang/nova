@@ -1,0 +1,43 @@
+// EXPECT_STDOUT other 5 other 6 kb
+//
+// Registry 221.1 #1874, the silent half. Same class as
+// bare_ctor_in_value_branch.nv, but the two sums carry the SAME payload type, so
+// the C compiler has nothing to object to: a bare `Other(n)` in a branch of a
+// `match` / `if` in value position, resolved by name to the first-declared sum,
+// builds `SpA.Other` (tag 0 there) where `SpB.Other` (tag 1) was meant, and the
+// match on the result silently takes the `Kb` arm (tag 0 of SpB). Expected
+// output with the fix: "other 5 other 6 kb"; without it the first two read "kb".
+
+module standalone.bare_ctor_in_value_branch_same_payload
+
+type SpA enum
+    | Other(int) | Ka
+
+type SpB enum
+    | Kb | Other(int)
+
+fn pick_match(n int) -> Result[SpB, str] {
+    Ok(match n {
+        0 => Kb
+        _ => Other(n)
+    })
+}
+
+fn pick_if(n int) -> Result[SpB, str] {
+    Ok(if n == 0 { Kb } else { Other(n) })
+}
+
+fn show(r Result[SpB, str]) -> str {
+    match r {
+        Ok(Kb) => "kb"
+        Ok(Other(v)) => "other ${v}"
+        Err(e) => e
+    }
+}
+
+fn first_a() -> SpA => Ka
+
+fn main() Io -> () {
+    ro _a = first_a()
+    println("${show(pick_match(5))} ${show(pick_if(6))} ${show(pick_match(0))}")
+}
