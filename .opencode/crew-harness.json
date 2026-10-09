@@ -244,5 +244,6 @@
     }
   },
   "profile_set": "codex",
-  "accepted_slot": "free"
+  "accepted_slot": "free",
+  "merge_precheck": "required"
 }
