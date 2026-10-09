@@ -1,0 +1,41 @@
+// EXPECT_STDOUT run=42018 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №1870, ВТОРАЯ ФИКСТУРА КЛАССА: локал тела одной операции и
+// параметр соседней — ОДНОГО типа (int), но с РАЗНЫМИ значениями. Здесь
+// перетипизировать нечего — типы совпадают, — и фикстура сторожит ровно
+// границу класса: (а) значение, доходящее до тела `use`, — это значение
+// ПАРАМЕТРА из вызова (9*2=18), а не что-либо из тела `seed`; (б) фикс
+// области видимости операций не отнял у параметра его законный тип и не
+// сломал обычную арифметику в теле операции. 42*1000+18=42018.
+//
+// Порядок тот же, что в носителе (`p1870_handler_op_local_leak_pos.nv`):
+// операция с локалом первой.
+
+module standalone.p1870_handler_op_same_type_pos
+
+type P1870bEffect effect {
+    fn seed() -> int
+    fn use(q int) -> int
+}
+
+fn p1870b_run() -> int {
+    with P1870bEffect = effect P1870bEffect {
+        seed() -> int {
+            mut q = 41
+            q = q + 1
+            return q
+        }
+        use(q int) -> int {
+            return q * 2
+        }
+    } {
+        ro a = P1870bEffect.seed()
+        ro b = P1870bEffect.use(9)
+        return a * 1000 + b
+    }
+}
+
+fn main() Io -> () {
+    println("run=${p1870b_run()} ok")
+}

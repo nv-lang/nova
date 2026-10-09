@@ -1,0 +1,38 @@
+// EXPECT_STDOUT 4207
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Probe C for #1870: the leak shape inside a `#default_handler` factory.
+module standalone.p1870_handler_default_pos
+
+type P1870fSignal enum P1870fKill | P1870fOther(int)
+
+fn p1870f_tag(s P1870fSignal) -> int {
+    match s {
+        P1870fKill => 1
+        P1870fOther(v) => v
+    }
+}
+
+type P1870fEffect effect {
+    fn seed() -> int
+    fn pass(s P1870fSignal) -> int
+}
+
+#default_handler
+fn real_p1870f() -> Effect[P1870fEffect] {
+    return effect P1870fEffect {
+        seed() -> int {
+            mut s = 0
+            s = 41
+            return s + 1
+        }
+        pass(s P1870fSignal) -> int {
+            return p1870f_tag(s)
+        }
+    }
+}
+
+fn main() Io -> () {
+    ro a = P1870fEffect.seed()
+    ro b = P1870fEffect.pass(P1870fSignal.P1870fOther(7))
+    println("${a * 100 + b}")
+}

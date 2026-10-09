@@ -1,0 +1,74 @@
+// EXPECT_STDOUT run=4207 kill=1 ok
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Реестр 221.1 №1870, К1 (тихая порча кода), НОСИТЕЛЬ КЛАССА. Локал,
+// объявленный в теле одной операции обработчика-литерала, не должен быть
+// виден в телах СОСЕДНИХ операций того же литерала и не должен
+// перетипизировать одноимённый параметр.
+//
+// ЧТО ЗДЕСЬ ПИНЯЕТСЯ. Операция `seed` объявляет `mut s = 0` (int). Операция
+// `pass` принимает параметр `s P1870Signal`. До фикса пост-чек проход,
+// материализующий single-wrapper sum-lift (`MapLitAnnotator` в
+// compiler-codegen/src/types/mod.rs), вёл ПЛОСКУЮ таблицу типов имён через
+// все операции литерала: после тела `seed` в ней оставалось `s:int`, и в
+// теле `pass` параметр `s` судился как int. На вызове `p1870_tag(s)` чекер
+// вставлял лишний sum-lift, и в C получалось
+//   `p1870_tag(nova_make_P1870Signal_P1870Other((nova_int)((Nova_P1870Signal*)s)->tag))`
+// — до функции доходил тег вместо payload: замер до фикса печатал
+// `run=4201` вместо `run=4207` (тег 1 читался как payload).
+// Область видимости каждой операции — её параметры плюс ВНЕШНЯЯ область
+// литерала; локалы тела умирают вместе с операцией.
+//
+// ОБА ЧИСЛА — НАБЛЮДАЕМОЕ ПОВЕДЕНИЕ: 42*100+7=4207 верно, 4201 — порча.
+// Порядок операций существенен: носитель ловится, когда операция с локалом
+// идёт ПЕРВОЙ (проход идёт по операциям подряд).
+
+module standalone.p1870_handler_op_local_leak_pos
+
+type P1870Signal enum P1870Kill | P1870Other(int)
+
+fn p1870_tag(s P1870Signal) -> int {
+    match s {
+        P1870Kill => 1
+        P1870Other(v) => v
+    }
+}
+
+type P1870Effect effect {
+    fn seed() -> int
+    fn pass(s P1870Signal) -> int
+}
+
+fn p1870_run() -> int {
+    with P1870Effect = effect P1870Effect {
+        seed() -> int {
+            mut s = 0
+            s = 41
+            return s + 1
+        }
+        pass(s P1870Signal) -> int {
+            return p1870_tag(s)
+        }
+    } {
+        ro a = P1870Effect.seed()
+        ro b = P1870Effect.pass(P1870Signal.P1870Other(7))
+        return a * 100 + b
+    }
+}
+
+fn p1870_kill() -> int {
+    with P1870Effect = effect P1870Effect {
+        seed() -> int {
+            mut s = 0
+            s = s + 1
+            return s
+        }
+        pass(s P1870Signal) -> int => p1870_tag(s)
+    } {
+        return P1870Effect.pass(P1870Signal.P1870Kill)
+    }
+}
+
+fn main() Io -> () {
+    println("run=${p1870_run()} kill=${p1870_kill()} ok")
+}

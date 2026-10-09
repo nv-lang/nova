@@ -1,0 +1,47 @@
+// EXPECT_STDOUT 4107 state=42
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Probe A for #1870: handler WITH STATE (ops share an outer capture,
+// D474 one-ctx norm) + op-body locals + the leak shape. The outer capture
+// must stay shared; op locals must not cross ops.
+module standalone.p1870_handler_state_pos
+
+type P1870dSignal enum P1870dKill | P1870dOther(int)
+
+fn p1870d_tag(s P1870dSignal) -> int {
+    match s {
+        P1870dKill => 1
+        P1870dOther(v) => v
+    }
+}
+
+type P1870dEffect effect {
+    fn bump() -> int
+    fn pass(s P1870dSignal) -> int
+}
+
+fn p1870d_run() -> int {
+    mut current = 0
+    mut r = 0
+    with P1870dEffect = effect P1870dEffect {
+        bump() -> int {
+            mut s = 0
+            s = 41
+            current = current + s
+            return current
+        }
+        pass(s P1870dSignal) -> int {
+            current = current + 1
+            return p1870d_tag(s)
+        }
+    } {
+        ro a = P1870dEffect.bump()
+        ro b = P1870dEffect.pass(P1870dSignal.P1870dOther(7))
+        r = a * 100 + b
+    }
+    return r * 100 + current
+}
+
+fn main() Io -> () {
+    ro result = p1870d_run()
+    println("${result / 100} state=${result % 100}")
+}

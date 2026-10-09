@@ -1,0 +1,42 @@
+// EXPECT_STDOUT 4207
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Probe B for #1870: precomputed handler `ro h = effect X {...}; with X = h`.
+module standalone.p1870_handler_precomputed_pos
+
+type P1870eSignal enum P1870eKill | P1870eOther(int)
+
+fn p1870e_tag(s P1870eSignal) -> int {
+    match s {
+        P1870eKill => 1
+        P1870eOther(v) => v
+    }
+}
+
+type P1870eEffect effect {
+    fn seed() -> int
+    fn pass(s P1870eSignal) -> int
+}
+
+fn p1870e_run() -> int {
+    // The typed op parameter also shadows an OUTER int namesake (F1/BoundCtx).
+    ro s = 123
+    ro h = effect P1870eEffect {
+        seed() -> int {
+            mut s = 0
+            s = 41
+            return s + 1
+        }
+        pass(s P1870eSignal) -> int {
+            return p1870e_tag(s)
+        }
+    }
+    with P1870eEffect = h {
+        ro a = P1870eEffect.seed()
+        ro b = P1870eEffect.pass(P1870eSignal.P1870eOther(7))
+        return a * 100 + b + s - 123
+    }
+}
+
+fn main() Io -> () {
+    println("${p1870e_run()}")
+}

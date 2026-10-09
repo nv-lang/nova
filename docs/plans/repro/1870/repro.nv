@@ -1,0 +1,40 @@
+// EXPECT_STDOUT 4207
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Probe for registry #1870: a local declared in one handler op body must not
+// be visible in a sibling op of the same handler literal.
+module repro1870
+
+type T1870Signal enum T1870Kill | T1870Other(int)
+
+fn t1870_tag(s T1870Signal) -> int {
+    match s {
+        T1870Kill => 1
+        T1870Other(v) => v
+    }
+}
+
+type T1870Effect effect {
+    fn seed() -> int
+    fn pass(s T1870Signal) -> int
+}
+
+fn t1870_run() -> int {
+    with T1870Effect = effect T1870Effect {
+        seed() -> int {
+            mut s = 0
+            s = 41
+            return s + 1
+        }
+        pass(s T1870Signal) -> int {
+            return t1870_tag(s)
+        }
+    } {
+        ro a = T1870Effect.seed()
+        ro b = T1870Effect.pass(T1870Signal.T1870Other(7))
+        return a * 100 + b
+    }
+}
+
+fn main() Io -> () {
+    println("${t1870_run()}")
+}

@@ -43,6 +43,8 @@ mod const_names; // #1488: the type of a module-level `const`/`ro` read by its b
 mod variant_ctor; // #1517: a variant constructor against the sum instance it builds
 mod numeric_change; // #1611: a value does not change numeric kind implicitly (D491)
 mod assign_value; // #1611: `target = value` judged by `assignable`, as a declaration
+#[cfg(test)]
+mod handler_scope_tests;
 
 /// Plan 196 (gs-bounds migration, spike `docs/plans/wip/196-gs-spike.md`):
 /// `gs` ("generics in scope") used to be `HashSet<String>` — ONLY the names of the
@@ -14173,12 +14175,13 @@ impl<'a> TypeCheckCtx<'a> {
             // идентичен.
             ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods {
+                    let mut op_scope = handler_method_scope(scope, m);
                     match &m.body {
                         HandlerMethodBody::Expr(e) => {
-                            self.f1_expr(e, gs, scope, errors)
+                            self.f1_expr(e, gs, &mut op_scope, errors)
                         }
                         HandlerMethodBody::Block(b) => {
-                            self.f1_block(b, gs, scope, errors)
+                            self.f1_block(b, gs, &mut op_scope, errors)
                         }
                     }
                 }
@@ -32580,12 +32583,13 @@ impl<'a> BoundCtx<'a> {
             // же вызов внутри тела обработчика проходил молча.
             ExprKind::HandlerLit { methods, .. } => {
                 for m in methods {
+                    let mut op_scope = handler_method_scope(scope, m);
                     match &m.body {
                         HandlerMethodBody::Expr(e) => {
-                            self.walk_expr(e, scope, errors)
+                            self.walk_expr(e, &mut op_scope, errors)
                         }
                         HandlerMethodBody::Block(b) => {
-                            self.walk_block(b, scope, errors)
+                            self.walk_block(b, &mut op_scope, errors)
                         }
                     }
                 }
@@ -44725,6 +44729,20 @@ fn hide_bound_names(names: &[String], scope: &mut HashMap<String, TypeRef>) -> V
     names.iter().filter(|n| n.as_str() != "_").map(|n| (n.clone(), scope.remove(n))).collect()
 }
 
+/// #1870: sibling operations inherit only the literal's outer environment.
+/// Parameters shadow outer names even when their type is unknown to this pass.
+fn handler_method_scope(scope: &HashMap<String, TypeRef>, method: &HandlerMethod) -> HashMap<String, TypeRef> {
+    let mut local = scope.clone();
+    let names: Vec<String> = method.params.iter().map(|p| p.name.clone()).collect();
+    let _ = shadow_bound_names(&names, &mut local, method.span);
+    for p in &method.params {
+        if let Some(ty) = &p.ty {
+            local.insert(p.name.clone(), ty.clone());
+        }
+    }
+    local
+}
+
 /// Restore entries saved by `shadow_bound_names` (and by binding inserts made
 /// after it) -- in REVERSE order, so an entry saved twice gets its oldest value.
 fn restore_scope_entries(scope: &mut HashMap<String, TypeRef>, saved: Vec<(String, Option<TypeRef>)>) {
@@ -56281,10 +56299,15 @@ impl MapLitAnnotator<'_> {
                     // method-impl has no `ret_ty` and keeps `None`, as before.
                     let op_ret = m.ret_ty.clone();
                     let saved = std::mem::replace(&mut self.current_fn_return_ty, op_ret.clone());
+                    // #1870: an op-local `s int` must never retype a sibling's
+                    // `s Signal` and cause try_wrap_leaf to insert Signal.Other(s).
+                    let op_scope = handler_method_scope(&self.var_types, m);
+                    let saved_var_types = std::mem::replace(&mut self.var_types, op_scope);
                     match &mut m.body {
                         HandlerMethodBody::Expr(x) => self.walk_expr(x, op_ret.as_ref()),
                         HandlerMethodBody::Block(b) => self.walk_block_to(b, op_ret.as_ref()),
                     }
+                    self.var_types = saved_var_types;
                     self.current_fn_return_ty = saved;
                 }
             }

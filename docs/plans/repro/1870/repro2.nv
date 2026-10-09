@@ -1,0 +1,30 @@
+// EXPECT_COMPILE_ERROR undefined identifier `leaked`
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Probe 2 for #1870: does op2 see op1's local by name (no param shadow)?
+module repro1870b
+
+type T1870bEffect effect {
+    fn seed() -> int
+    fn ask() -> int
+}
+
+fn t1870b_run() -> int {
+    with T1870bEffect = effect T1870bEffect {
+        seed() -> int {
+            mut leaked = 7
+            leaked = 41
+            return leaked + 1
+        }
+        ask() -> int {
+            return leaked
+        }
+    } {
+        ro a = T1870bEffect.seed()
+        ro b = T1870bEffect.ask()
+        return a * 100 + b
+    }
+}
+
+fn main() Io -> () {
+    println("${t1870b_run()}")
+}
