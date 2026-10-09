@@ -3,16 +3,22 @@
 
 ## РЕПРО
 
-`repro.nv`: ожидается `4207`, исходный компилятор печатает `4201`.
-`repro3.nv`: те же операции переставлены — исходный компилятор печатает `4207`.
-`repro2.nv`: соседняя операция читает локал без одноимённого параметра —
+`repro.nv.txt`: ожидается `4207`, исходный компилятор печатает `4201`.
+`repro3.nv.txt`: те же операции переставлены — исходный компилятор печатает `4207`.
+`repro2.nv.txt`: соседняя операция читает локал без одноимённого параметра —
 name-resolution правильно отказывает `undefined identifier \`leaked\``.
 То есть утечка — в суждении о типе и материализации, не в разрешении имени.
 
 ```sh
-nova-cli/target/release/nova build docs/plans/repro/1870/repro.nv -o <session-scratch>/repro1870.exe
+cp docs/plans/repro/1870/repro.nv.txt <session-scratch>/repro1870.nv
+nova-cli/target/release/nova build <session-scratch>/repro1870.nv -o <session-scratch>/repro1870.exe
 <session-scratch>/repro1870.exe
 ```
+
+`<session-scratch>` — scratchpad текущей сессии, не каталог исходников.
+Для контрольных улик `repro2.nv.txt`/`repro3.nv.txt` применяется тот же шаг
+копирования в scratchpad под суффиксом `.nv`. Постоянные исполняемые
+фикстуры остаются в spec_tests, улики не подхватываются раннером.
 
 До фикса C: `tag(nova_make_Signal_Other((nova_int)((Nova_Signal*)s)->tag))`.
 После фикса: значение передаётся напрямую, без лишнего конструктора и as-cast.
@@ -35,7 +41,7 @@ nova-cli/target/release/nova build docs/plans/repro/1870/repro.nv -o <session-sc
 | `BoundCtx::walk_expr` | Общий scope, параметры отсутствовали. `walk_block` восстанавливал локалы, но параметры не затеняли внешние; теперь та же дверь scope. ProtocolLit здесь проверяет структурное соответствие без обхода тел. |
 | `MapLitAnnotator::walk_expr_shape` | Прямая утечка локалов предыдущей операции. Обмен карты на op-scope и восстановление после тела, обе формы тела (Expr/Block). |
 | `TypeCheckCtx::walk_expr` (arity/type-reference walk) | Не ведёт изменяемого окружения локальных типов; синтаксический обход, нечему протекать. |
-| `NameResCtx::walk_expr` | Уже отдельный frame параметров push/pop на каждую операцию; probe `repro2.nv` подтверждает отказ соседнему локалу. |
+| `NameResCtx::walk_expr` | Уже отдельный frame параметров push/pop на каждую операцию; probe `repro2.nv.txt` подтверждает отказ соседнему локалу. |
 | `consume_walk_expr` | Уже `consume_walk_isolated_expr/block` на каждую операцию; тип/consume-параметры передаются отдельно. |
 | `MapLitCtx::walk_expr` | Не ведёт карту типов локалов: ожидаемые типы и синтаксические формы, нет наследования локала операции. |
 | Проверки деклараций, never, effects/fail, capture, default-handler | Нет последовательного изменяемого scope локальных типов; capture-скан начинает каждую операцию со своих параметров, а проверки деклараций используют schema/ret_ty. |
@@ -199,3 +205,29 @@ PASS: 158  FAIL: 26  WARN: 67
 - CI/land-task и итоговый LANDED выполняет приёмщик на кандидате integrate/t53.
 - Хеш единственного коммита передаётся интегратору вместе с отчётом; реестр
   ссылается на эту задачу и функцию фикса, чтобы не вписывать хеш в себя.
+
+## Доработка после CI (круг 1)
+
+CI кандидата `nova-gate` run 37872268078 остановился на двух текстовых
+требованиях, не на поведении фикса:
+
+1. Комментарий `must never retype` теперь помечен `[INV-PROPERTY]`:
+   новая карта области операции не может содержать локалы соседней операции.
+   Рядом названы существующий тест
+   `handler_scope_tests::annotator_does_not_sum_lift_sibling_parameter_or_outer_capture`
+   и `standalone/p1870_handler_op_local_leak_pos.nv`; их краснота при снятии
+   механизма и зелёный повтор приведены выше. Формулировка инварианта сохранена.
+2. Три архивные улики переименованы в `.nv.txt`, ссылки и команда
+   воспроизведения обновлены (копирование в scratchpad). Пять живых фикстур
+   в spec_tests не менялись. База `repro-evidence-suffix` не ослаблялась.
+
+Проверки отдельно, без запуска локальных гейтов:
+
+```sh
+bash scripts/guards/check-invariant-discipline.sh . origin/main
+bash scripts/guards/check-repro-evidence-suffix.sh .
+```
+
+Страж инвариантов проверяет также уже закоммиченные добавления относительно
+базы; поэтому исправление его вывода подтверждается после коммита, не только
+по незакоммиченному diff. CI/land-task после синхронизации — за приёмщиком.

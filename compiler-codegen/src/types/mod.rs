@@ -56299,8 +56299,11 @@ impl MapLitAnnotator<'_> {
                     // method-impl has no `ret_ty` and keeps `None`, as before.
                     let op_ret = m.ret_ty.clone();
                     let saved = std::mem::replace(&mut self.current_fn_return_ty, op_ret.clone());
-                    // #1870: an op-local `s int` must never retype a sibling's
+                    // #1870 [INV-PROPERTY]: an op-local `s int` must never retype a sibling's
                     // `s Signal` and cause try_wrap_leaf to insert Signal.Other(s).
+                    // A fresh outer+params map makes sibling locals inaccessible; restored below.
+                    // Witness: handler_scope_tests::annotator_does_not_sum_lift_sibling_parameter_or_outer_capture
+                    // and standalone/p1870_handler_op_local_leak_pos.nv (rollback proof in repro/1870).
                     let op_scope = handler_method_scope(&self.var_types, m);
                     let saved_var_types = std::mem::replace(&mut self.var_types, op_scope);
                     match &mut m.body {
