@@ -57,7 +57,8 @@ struct Nova_Box {
    фикс в том же коммите, проба — фикстура `carina_c_names/pos_3.nv`.
 
 Не входят в класс (сырые с ОБЕИХ сторон, консистентно): vtable-члены
-(`emit_handler.nv:242`, `emit_decls.nv:106/129`, `emit_place.nv:292`).
+(`emit_handler.nv:242`) и variant payload
+(`emit_decls.nv:106/129`, `emit_place.nv:292`).
 
 ## Замер самосборки (весь класс)
 
@@ -66,4 +67,6 @@ struct Nova_Box {
 6 «use of undeclared identifier 'ctx'». ПОСЛЕ (ветка задачи #52):
 `CLANG_ERRORS_TOTAL=0` — эмиссия самосборки (165169 строк C) компилируется
 clang чисто (rc=0). Дословно оба замера — в строке №1872 реестра
-`docs/plans/221.1-bug-sweep.md`.
+`docs/plans/221.1-bug-sweep.md`. Полные команды, повторный замер и доказательства
+приёмки: [REPORT.md](REPORT.md). Повторяемая дверь замера: `measure.sh` рядом;
+ей передаются бинарь novac, кэш `novac-e1-smoke.sh --prepare` и scratchpad.
