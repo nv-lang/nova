@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/proc_ffi.nv — private C FFI layer for the child-process streams (Plan 294 F.1, D492).
+//
+// C side: nova_rt/process.{h,c} (`proc_*`). Same layering as std/net/ffi.nv: plain
+// C-ABI functions, a persistent handle crossing as an opaque `*()`; the rich
+// types and every Result are built in proc.nv.
+//
+// Contract in one place (details: process.h):
+//   * errors are NEGATIVE errno numbers (-2 = ENOENT, -32 = EPIPE, -4 = interrupted);
+//   * `proc_pipe_read` / `proc_pipe_write` / `proc_child_wait` PARK the calling
+//     fiber, never the OS thread;
+//   * `proc_pipe_read` is pull-style: one chunk straight into the caller's buffer,
+//     then reading stops, so a fast child is blocked by the pipe (back pressure).
+
+module std.os
+
+// proc_spawn: start `program`; `modes` packs stdin | stdout << 2 | stderr << 4 with
+// 0 = null device, 1 = inherit, 2 = piped. Returns the child handle, or null with
+// `*out_err` = -errno.
+extern "C" fn proc_spawn(program *u8, program_len int, argv *u8, argv_len int, argc int, env *u8, env_len int, envc int, use_env bool, cwd *u8, cwd_len int, modes int, out_err *mut int) -> *()
+// proc_child_pipe: the parent end of the child's stdin(0) / stdout(1) / stderr(2) pipe,
+// handed out ONCE (null afterwards or when the stream was not piped).
+extern "C" fn proc_child_pipe(child *(), which int) -> *()
+extern "C" fn proc_child_pid(child *()) -> int
+// proc_child_wait: parks until exit. 0 = exited; -100000 = cancelled by the enclosing scope.
+extern "C" fn proc_child_wait(child *(), out_code *mut int, out_signal *mut int) -> int
+// proc_child_try_wait: 0 = exited (outs valid), 1 = running. Never parks.
+extern "C" fn proc_child_try_wait(child *(), out_code *mut int, out_signal *mut int) -> int
+// proc_child_release: kill a still-running child, close pipes never taken, drop ownership.
+extern "C" fn proc_child_release(child *()) -> ()
+extern "C" fn proc_pipe_read(pipe *(), buf *mut u8, cap int) -> int
+extern "C" fn proc_pipe_write(pipe *(), buf *u8, len int) -> int
+extern "C" fn proc_pipe_close(pipe *()) -> ()

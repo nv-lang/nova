@@ -17,7 +17,9 @@ erasure — in [D12](decisions/04-effects.md#d12), [D13](decisions/08-runtime.md
 ## Central principle
 
 Network, disk, time, randomness, logging, errors, mutation, launching a process
-(`std.os`, `Command.new(...).run()` — Plan 265 Ф.1, [D453](decisions/04-effects.md#d453)) — in Nova these
+(`std.os`, `Command.new(...).run()` — Plan 265 Ф.1, [D453](decisions/04-effects.md#d453); a live child with
+byte streams over its stdin/stdout/stderr, `Command.new(...).start()` — the separate `Proc` effect,
+Plan 294, [D492](decisions/04-effects.md#d492)) — in Nova these
 are all **effects**. A function declares in its signature the effects it
 uses itself; calls to other functions do not pull those functions' effects
 up into the caller's signature (the exception is `Fail` — errors are visible
