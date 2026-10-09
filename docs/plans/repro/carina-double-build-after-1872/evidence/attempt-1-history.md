@@ -60,7 +60,8 @@ Scratchpad (далее S):
   `83cf50e498034ac041ec7e63618d3521bd3c92eff1f677d5147db8655f78f1a8`.
 - rustc `1.95.0 (59807616e 2026-04-14)`, host `x86_64-pc-windows-msvc`;
   cargo `1.95.0 (f2d3ce0bd 2026-03-21)`.
-- clang `22.1.5`, LLVM commit `5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c`,
+- clang `22.1.5`, LLVM commit `llvm/llvm-project@5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c`
+  ([upstream](https://github.com/llvm/llvm-project/commit/5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c)),
   `C:/Program Files/LLVM/bin/clang.exe`, target `x86_64-pc-windows-msvc`.
 - GC через штатную `novac_borrow_main_gc`:
   `D:/Sources/nv-lang/nova-opencode/target/gc-cache/gc.lib`, SHA256
@@ -79,7 +80,8 @@ Scratchpad (далее S):
 Дополнительные факты первого прогона:
 
 - Оракул штатно материализовал libuv submodule на
-  `1cfa32ff59c076ffb6ed735bbc8c18361558661f` и собрал libuv.lib (37 файлов).
+  `libuv/libuv@1cfa32ff59c076ffb6ed735bbc8c18361558661f`
+  ([upstream](https://github.com/libuv/libuv/commit/1cfa32ff59c076ffb6ed735bbc8c18361558661f)) и собрал libuv.lib (37 файлов).
 - Собрал runtime archive (14 файлов) в
   `source/target/rt-archive-cache/b9ddddff1d491c9c/libnova_rt.lib`.
   Это побочный выход в detached-дереве вне scratchpad: про необходимость
@@ -92,7 +94,7 @@ Scratchpad (далее S):
 ## ВЕТКА/КОММИТ и подготовительный блокер
 
 Основная ветка задачи `t54-karina-0-2-svezhaya-polnaya-samosborka-a`:
-HEAD `a8cebecd1dd526818f6724c6acd7eda2922a66c8`,
+HEAD записан в [локальном снимке происхождения](local-task-base.txt),
 MERGE_HEAD `02908e5ad35007d82a3b23eb27c319451563807d`, конфликтов нет.
 Попытка ff-only отвергнута из-за расхождения истории. Обычный merge остановлен
 `check-merge-discipline`: сохранённый verdict называл
@@ -155,7 +157,8 @@ Short-path того же каталога: `C:\Users\B7E3~1\AppData\Local\Temp\o
 Инвентарь сохранён в `S/source-target-inventory.json`; содержимое перенесено в
 `S/source-target`, source/target теперь junction туда. Ничего не удалялось.
 После переноса git status source пуст; libuv SHA
-`1cfa32ff59c076ffb6ed735bbc8c18361558661f`, GC/libatomic_ops не инициализированы.
+`libuv/libuv@1cfa32ff59c076ffb6ed735bbc8c18361558661f`
+([upstream](https://github.com/libuv/libuv/commit/1cfa32ff59c076ffb6ed735bbc8c18361558661f)), GC/libatomic_ops не инициализированы.
 
 Первый W перемещён в `S/attempt-1/double-build`; его verdict, stdout, trace,
 environment, result и исходная обёртка скопированы в `S/attempt-1/`.

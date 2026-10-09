@@ -20,7 +20,8 @@ W = `S/target/double-build`. Cargo target = `S/cargo-target`;
 `TREE/nova-cli/target` — junction туда. `TREE/target` после первого прогона
 перенесён в `S/source-target` с сохранением содержимого и заменён junction.
 Исходники detached-дерева не правились. Штатная сборка инициализировала libuv
-на `1cfa32ff59c076ffb6ed735bbc8c18361558661f`; источники подмодуля не менялись.
+на `libuv/libuv@1cfa32ff59c076ffb6ed735bbc8c18361558661f`
+([upstream commit](https://github.com/libuv/libuv/commit/1cfa32ff59c076ffb6ed735bbc8c18361558661f)); источники подмодуля не менялись.
 
 `scripts/` точно скопирован в S, идентичность всего каталога проверена `diff -qr`
 перед обоими прогонами. SHA256 исходного и скопированного `double-build.sh`:
@@ -58,7 +59,8 @@ bash "$(cygpath -u "$LOCALAPPDATA")/Temp/opencode/ses_mv0lbkydosyhrllojp/run-dou
   host `x86_64-pc-windows-msvc`; [environment.txt](evidence/environment.txt).
 - Свежий оракул `TREE/nova-cli/target/release/nova.exe`, SHA256
   `83cf50e498034ac041ec7e63618d3521bd3c92eff1f677d5147db8655f78f1a8`.
-- Clang `22.1.5`, LLVM `5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c`,
+- Clang `22.1.5`, LLVM `llvm/llvm-project@5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c`
+  ([upstream commit](https://github.com/llvm/llvm-project/commit/5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c)),
   `C:/Program Files/LLVM/bin/clang.exe`, target `x86_64-pc-windows-msvc`.
 - GC — штатная `novac_borrow_main_gc`: library
   `D:/Sources/nv-lang/nova-opencode/target/gc-cache/gc.lib`, SHA256
@@ -214,7 +216,7 @@ check-registry-routes ok: открытых блокеров тега 108 (баз
 ## ВЕТКА/КОММИТ и доставка
 
 Ветка `t54-karina-0-2-svezhaya-polnaya-samosborka-a` первоначально имела HEAD
-`a8cebecd1dd526818f6724c6acd7eda2922a66c8` (унаследованный chore).
+из [локального снимка происхождения](evidence/local-task-base.txt) (унаследованный chore).
 Подготовительный merge принятой базы остановил `check-merge-discipline`:
 старый verdict был на `20be1409d490bb092d99658a1626cd0dd0c4a9ec`.
 Hook не обходился, локальный gate и подделка verdict не применялись.
@@ -248,3 +250,49 @@ code delta. Унаследованные chore/handoff изменения не �
 саботаж сравнения, CI кандидата и остальные условия ступени 0.2.
 Не исправлялись №1875 и неизвестная причина первого env-отказа.
 Не выпускались tag/bootstrap-бинарь; локальные gate/mega-CU/full nova test не запускались.
+
+## Документальная доработка CI (круг 2)
+
+Содержательная часть измерения принята приёмщиком. Кандидат
+`fee24b282e194b704e67a42092ec0612057ac43d` от актуального main получил два
+документальных отказа в [CI run 37898115921](https://github.com/nv-lang/nova/actions/runs/37898115921):
+счётчик реестра отстал на новую №1875; внешние SHA и локальный исходный chore
+были ошибочно оформлены как голые ссылки на коммиты истории Nova.
+
+По разрешению интегратора создана собственная ветка `t54-docs-ci-fix` от этого
+кандидата, дерево `worktrees/nova-opencode-54-docs-ci-fix`; дерево приёмщика не
+менялось, исходная task-ветка, chore, detached source и scratchpad сохранены.
+
+Изменения доставки:
+
+- Внешние ревизии записаны по `doc-conventions.md` §«Ссылки наружу» как
+  `репозиторий@хеш`, с настоящими upstream URL.
+- Локальное происхождение исходного HEAD, точные SHA, subject и date сохранены
+  в [local-task-base.txt](evidence/local-task-base.txt); отчёт ссылается на этот
+  именованный артефакт. История chore не удалялась, публичная commit-ссылка на
+  локальный объект не заявляется. Сырые логи, argv и хеши измерения не менялись.
+- Только с явного разрешения интегратора `registry-rows.baseline` поднята по
+  прямому счёту с rows=1785/max=1874 до rows=1786/max=1875, с летописью №1875.
+  Список gaps и остальные базы сохранены. Это уточнение исходного запрета на
+  базы для документальной доработки; код стражей не менялся.
+
+Точечная проверка до изменения счётчика, rc=1:
+
+```text
+check-registry-rows-intact: FAIL — реестр 221.1 потерял строки либо задвоил номера:
+    реестр вырос: записей 1786 (база 1785), наибольший номер 1875 (база 1874). Рост законен, но базу поднимает ТА ЖЕ правка — иначе храповик отстаёт и молча разрешает потерять столько же строк.
+```
+
+После изменения, обе команды rc=0:
+
+```text
+check-registry-rows-intact ok: записей 1786 (база 1786), наибольший номер 1875 (база 1875), дублей 0, законных дыр 89, из них протухших (номер и в `gaps=`, и со строкой) 0 (база 0) — ни одна строка не потеряна
+check-commit-refs: ссылок на коммит без темы/даты 0 (база 0), мёртвых хешей 888 (база 888), ссылок через зеркало 0 (база 0)
+check-commit-refs ok: новых мёртвых ссылок на коммиты нет
+```
+
+Команды: `python scripts/guards/check-registry-rows-intact.py`,
+`bash scripts/guards/check-commit-refs.sh`; `git diff --check` — rc=0.
+Повтор bootstrap и локальные гейты не запускались. Доказательство остаётся
+на exact `02908e5ad35007d82a3b23eb27c319451563807d`, с остановкой на C compile;
+доработка не переносит его на main после #53. Новый CI и LANDED — приёмщику.

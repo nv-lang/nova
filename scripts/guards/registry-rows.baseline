@@ -1,3 +1,8 @@
+# 2026-10-09 (задача #54, документальная доработка кандидата fee24b282):
+#   Прямой счёт check-registry-rows-intact.py: rows 1785 -> 1786,
+#   max 1874 -> 1875. Добавлена №1875 — остановка полной самосборки на C compile.
+#   Разрешение интегратора: обновить только эти два числа и летопись;
+#   gaps и остальные базы не меняются, исходники/результат замера сохранены.
 # 2026-10-09 (задача #53, финальный sync origin/main 02908e5ad после #50/#52):
 #   итог rows 1785, max 1874, дублей 0. Две записи №1870 сведены в одну:
 #   история и носитель #50 сохранены, статус закрыт фиксом класса #53.
@@ -1717,8 +1722,8 @@
 #   1784 main rows + task #52 row 1872 = 1785, max 1874 unchanged.
 #   Rows 1868 and 1870 came from main; row 1872 came from task #52.
 #   All three are present and must not be gaps; reserved row 1873 stays.
-rows=1785
-max=1874
+rows=1786
+max=1875
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

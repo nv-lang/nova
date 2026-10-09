@@ -1,0 +1,22 @@
+Task #54 initial local branch provenance (not the measured source revision).
+Repository: nova-opencode; local task worktree branch:
+t54-karina-0-2-svezhaya-polnaya-samosborka-a
+Initial HEAD: a8cebecd1dd526818f6724c6acd7eda2922a66c8
+Subject: chore(crew): take crew-harness's current model profiles and sets
+AuthorDate: Fri Oct 9 03:50:30 2026 +0300
+CommitDate: Fri Oct 9 03:50:30 2026 +0300
+Origin: inherited local main commit when crew created the task worktree.
+This commit is preserved in the executor branch; it is not claimed to be
+published or reachable from the clean acceptance candidate's main history.
+
+The measurement used a separate, clean detached source at:
+02908e5ad35007d82a3b23eb27c319451563807d
+
+The aborted preparation merge snapshot (saved before merge --abort) is at:
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/merge-snapshot/
+Files: merge-heads.txt, status.txt, staged.patch, worktree.patch, index.txt.
+merge-heads.txt raw lines:
+a8cebecd1dd526818f6724c6acd7eda2922a66c8
+02908e5ad35007d82a3b23eb27c319451563807d
+
+No commit, tree, or history was rewritten to make the acceptance candidate.
