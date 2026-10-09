@@ -26,12 +26,18 @@ test "d324: mock_os env value byte-correctness via env_bytes" {
     mut d324_os = MockOs.new()
     with Os = mock_os(d324_os) {
         match env("RAW", "seed") { Ok(()) => assert(true), Err(_) => assert(false) }
-        match env_bytes("RAW") {
+        // The key is bound before the call ON PURPOSE: a bare literal argument is the canonical
+        // form (D429 `#coerce` str -> []u8, and `nova lint` asks for it), but emit_c passes it
+        // as nova_str and the unit fails to compile (registry #1850, carrier
+        // std/src/os/n1850_probe/). An explicit `.bytes()` AS the argument is flagged by the lint.
+        ro raw_key = "RAW".bytes()
+        match env_bytes(raw_key) {
             Some(b) => { assert(b.len() == 4); assert(b[0] == (115 as u8)) }   // 's'
             None    => assert(false)
         }
         // absent key → None (distinct from present-empty)
-        match env_bytes("MISSING") { Some(_) => assert(false), None => assert(true) }
+        ro missing_key = "MISSING".bytes()
+        match env_bytes(missing_key) { Some(_) => assert(false), None => assert(true) }
     }
 }
 

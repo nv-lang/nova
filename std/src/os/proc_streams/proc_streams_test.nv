@@ -1,0 +1,415 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/proc_streams/proc_streams_test.nv — Plan 294 F.1 (D492): child-process streams.
+//
+// Scenarios S1, S2, S4, S5, S6 and the failure table of docs/plans/294-process-streams-pty.md §5.
+// The child is always a PLATFORM tool present on every CI image (`sh` + coreutils on POSIX,
+// `powershell` on Windows) — the plan's own helper binary is not usable from a `nova test`
+// (the test binary cannot build a second program); every helper below is a one-line script
+// that is byte-exact on both OSes (raw stdin/stdout streams, no text translation).
+//
+// Every assertion states an OBSERVABLE: bytes, a counter, an exit code, an error kind.
+//
+// Its own directory and module ON PURPOSE: `nova test` folds every `module std.os` file of
+// std/src/os into ONE unit, so any red peer (registry #591: d453 `supervised(timeout:) reaps`
+// on Linux CI) would hide these fixtures under its name. Here they are a separate unit with
+// their own PASS/FAIL line, and they use only the public `std.os` surface, as a user would.
+
+module proc_streams.proc_streams_test
+
+import std.os.{Command, Child, ChildStdin, ChildStdout, ChildStderr, Stdio, Os, real_os, temp_dir}
+import std.io.{IoError, ErrorKind, read_to_end, write_all}
+import std.fs.{Path}
+import std.time.duration
+
+// A 64-byte block: 63 visible characters + '\n'. `emit_cmd(n)` prints n of them.
+const BLOCK63 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_"
+
+fn blocks_ok(data []u8, n int) -> bool {
+    if data.len() != n * 64 { return false }
+    ro want = "${BLOCK63}\n".bytes()
+    for b in 0..n {
+        for j in 0..64 {
+            if data[b * 64 + j] != want[j] { return false }
+        }
+    }
+    true
+}
+
+fn must_child(r Result[Child, IoError], what str) -> Child {
+    match r {
+        Ok(consume c) => c
+        Err(e) => panic("proc: ${what}: ${e}")
+    }
+}
+
+fn must_io[T](r Result[T, IoError], what str) -> T {
+    match r {
+        Ok(v) => v
+        Err(e) => panic("proc: ${what}: ${e}")
+    }
+}
+
+fn must_stdout(o Option[ChildStdout]) -> ChildStdout {
+    match o {
+        Some(consume s) => s
+        None => panic("proc: stdout was not piped")
+    }
+}
+
+fn must_stderr(o Option[ChildStderr]) -> ChildStderr {
+    match o {
+        Some(consume s) => s
+        None => panic("proc: stderr was not piped")
+    }
+}
+
+fn must_stdin(o Option[ChildStdin]) -> ChildStdin {
+    match o {
+        Some(consume s) => s
+        None => panic("proc: stdin was not piped")
+    }
+}
+
+// ─── Platform helpers ──
+
+#cfg(target_os = "windows")
+fn ps(script str) -> Command =>
+    Command.new("powershell").arg("-NoProfile").arg("-NonInteractive").arg("-Command").arg(script)
+
+#cfg(!target_os = "windows")
+fn sh(script str) -> Command => Command.new("sh").arg("-c").arg(script)
+
+// stdin -> stdout, byte for byte.
+#cfg(target_os = "windows")
+fn echo_cmd() -> Command =>
+    ps("$i=[Console]::OpenStandardInput();$o=[Console]::OpenStandardOutput();$i.CopyTo($o);$o.Flush()")
+
+#cfg(!target_os = "windows")
+fn echo_cmd() -> Command => Command.new("cat")
+
+// n blocks of BLOCK63 + "\n" on stdout, as fast as the reader lets it.
+#cfg(target_os = "windows")
+fn emit_cmd(n int) -> Command =>
+    ps("$b=[Text.Encoding]::ASCII.GetBytes('${BLOCK63}'+[char]10);$o=[Console]::OpenStandardOutput();for($i=0;$i -lt ${n};$i++){$o.Write($b,0,64)}")
+
+#cfg(!target_os = "windows")
+fn emit_cmd(n int) -> Command => sh("yes ${BLOCK63} | head -c ${n * 64}")
+
+// "chunk0\n" .. "chunk4\n", 100 ms apart.
+#cfg(target_os = "windows")
+fn chunks_cmd() -> Command =>
+    ps("$o=[Console]::OpenStandardOutput();for($i=0;$i -lt 5;$i++){$b=[Text.Encoding]::ASCII.GetBytes('chunk'+$i+[char]10);$o.Write($b,0,$b.Length);$o.Flush();Start-Sleep -Milliseconds 100}")
+
+#cfg(!target_os = "windows")
+fn chunks_cmd() -> Command =>
+    sh("i=0; while [ $i -lt 5 ]; do echo chunk$i; sleep 0.1; i=$((i+1)); done")
+
+// Writes "hi\n", CLOSES its stdout, stays alive ~1.5 s, exits with 7.
+#cfg(target_os = "windows")
+fn close_stdout_cmd() -> Command =>
+    ps("Add-Type -MemberDefinition '[DllImport(\"kernel32.dll\")] public static extern bool CloseHandle(IntPtr h); [DllImport(\"kernel32.dll\")] public static extern IntPtr GetStdHandle(int n);' -Name K -Namespace W;$o=[Console]::OpenStandardOutput();$b=[Text.Encoding]::ASCII.GetBytes('hi'+[char]10);$o.Write($b,0,3);$o.Flush();[void][W.K]::CloseHandle([W.K]::GetStdHandle(-11));Start-Sleep -Milliseconds 1500;exit 7")
+
+#cfg(!target_os = "windows")
+fn close_stdout_cmd() -> Command => sh("echo hi; exec 1>&-; sleep 1.5; exit 7")
+
+// Can this OS fixture make the child close stdout while it stays alive? POSIX: `exec 1>&-`. Windows: the
+// PowerShell host keeps another copy of the pipe handle (Stream.Close and CloseHandle(GetStdHandle) both
+// leave the reader without EOF until the process ends - measured), so there S4a checks only the part that
+// holds regardless: the bytes arrive, wait() reports the code.
+#cfg(target_os = "windows")
+fn eof_precedes_exit() -> bool => false
+
+#cfg(!target_os = "windows")
+fn eof_precedes_exit() -> bool => true
+
+// 512 KiB on stderr, then 512 KiB on stdout (a serial reader deadlocks on this).
+#cfg(target_os = "windows")
+fn both_streams_cmd() -> Command =>
+    ps("$b=New-Object byte[] 64;$e=[Console]::OpenStandardError();$o=[Console]::OpenStandardOutput();for($i=0;$i -lt 8192;$i++){$e.Write($b,0,64)};for($i=0;$i -lt 8192;$i++){$o.Write($b,0,64)}")
+
+#cfg(!target_os = "windows")
+fn both_streams_cmd() -> Command => sh("head -c 524288 /dev/zero >&2; head -c 524288 /dev/zero")
+
+// Never reads stdin and exits at once.
+#cfg(target_os = "windows")
+fn quick_exit_cmd() -> Command => Command.new("cmd").arg("/c").arg("exit").arg("0")
+
+#cfg(!target_os = "windows")
+fn quick_exit_cmd() -> Command => Command.new("sh").arg("-c").arg("exit 0")
+
+// Sleeps `seconds`, writes nothing.
+#cfg(target_os = "windows")
+fn sleep_cmd(seconds int) -> Command => Command.new("ping").arg("-n").arg("${seconds + 1}").arg("127.0.0.1")
+
+#cfg(!target_os = "windows")
+fn sleep_cmd(seconds int) -> Command => Command.new("sleep").arg("${seconds}")
+
+// Prints the variable P294_VAR, then the current directory, then exits 5.
+#cfg(target_os = "windows")
+fn env_cwd_cmd() -> Command =>
+    ps("[Console]::Out.Write($env:P294_VAR+'|'+(Get-Location).Path);exit 5")
+
+#cfg(!target_os = "windows")
+fn env_cwd_cmd() -> Command => sh("printf '%s|%s' \"$P294_VAR\" \"$(pwd)\"; exit 5")
+
+// ─── S1: stdin -> stdout -> exit code 0 ──
+
+test "p294 S1: stdin -> stdout is byte-exact (UTF-8 survives) and the child exits 0" {
+    ro payload = "привет, мир\nвторая строка\n".bytes()
+    ro cmd = echo_cmd().stdin(Stdio.Piped).stdout(Stdio.Piped)
+    consume child = must_child(cmd.start(), "start echo")
+    consume tx = must_stdin(child.take_stdin())
+    consume rx = must_stdout(child.take_stdout())
+    must_io(write_all(tx, payload), "write stdin")
+    tx.close()                                      // end of input -> the child finishes
+    ro got = must_io(read_to_end(rx), "read stdout")
+    ro st = must_io(child.wait(), "wait")
+    assert(got.len() == payload.len())
+    assert(got == payload)
+    assert(st.code() == 0)
+    assert(st.success())
+    assert(st.signal() == None)
+}
+
+test "p294 S1b: streams not asked for are absent; a Null stdin reaches the child as end-of-input" {
+    consume child = must_child(echo_cmd().stdout(Stdio.Piped).start(), "start")
+    match child.take_stdin() {
+        Some(consume s) => { s.close(); panic("stdin must be absent when not piped") }
+        None => ()
+    }
+    consume rx = must_stdout(child.take_stdout())
+    match child.take_stdout() {
+        Some(consume s) => { s.close(); panic("take_stdout must hand the stream out once") }
+        None => ()
+    }
+    ro got = must_io(read_to_end(rx), "read")
+    assert(got.len() == 0)                          // Null stdin == immediate EOF: nothing to echo
+    assert(must_io(child.wait(), "wait").code() == 0)
+}
+
+test "p294 S1c: args, env and dir reach the child; a non-zero code is Ok(status), not Err" {
+    ro tmp = os_temp_dir_for_test()
+    ro cmd = env_cwd_cmd().env("P294_VAR", "value-1").dir(tmp).stdout(Stdio.Piped)
+    consume child = must_child(cmd.start(), "start")
+    consume rx = must_stdout(child.take_stdout())
+    ro got = must_io(read_to_end(rx), "read")
+    ro st = must_io(child.wait(), "wait")
+    assert(st.code() == 5)
+    ro text = unsafe { got.to_str_unchecked() }
+    assert(text.starts_with("value-1|"))
+}
+
+fn os_temp_dir_for_test() -> Path {
+    with Os = real_os() { temp_dir() }
+}
+
+// ─── S2: reading in pieces does not block other fibers ──
+
+test "p294 S2: a slow producer is read in pieces while another fiber keeps running" {
+    consume child = must_child(chunks_cmd().stdout(Stdio.Piped).start(), "start")
+    consume rx = must_stdout(child.take_stdout())
+    mut ticks = AtomicInt.new(0)
+    mut stop = AtomicInt.new(0)
+    mut ticks_at_first = -1
+    mut got []u8 = []u8.new()
+    mut pieces = 0
+    supervised {
+        spawn {
+            while stop.load() == 0 {
+                5.to_millis().sleep()
+                ticks.fetch_add(1)
+            }
+        }
+        mut buf []u8 = []u8.new()
+        buf.resize(64, 0 as u8)
+        loop {
+            ro n = must_io(rx.read(buf), "read")
+            if n == 0 { break }
+            if ticks_at_first < 0 { ticks_at_first = ticks.load() }
+            got.append(buf[..n])
+            pieces += 1
+        }
+        stop.store(1)
+    }
+    ro st = must_io(child.wait(), "wait")
+    assert(st.code() == 0)
+    ro text = unsafe { got.to_str_unchecked() }
+    assert(text.replace("\r", "") == "chunk0\nchunk1\nchunk2\nchunk3\nchunk4\n")
+    assert(pieces >= 2)                              // not one lump: the reads were spread over time
+    // The child needs ~400 ms for the 5 chunks; a ticking fiber at 5 ms per tick must have got
+    // dozens of turns BETWEEN the first piece and the end. A read that blocked the OS thread
+    // (or the scheduler) would leave this near zero.
+    ro between = ticks.load() - ticks_at_first
+    assert(between >= 15)
+}
+
+// ─── S4: a closed stdout with a live process ──
+
+test "p294 S4a: the child closes stdout while alive -> end of stream, then wait() still waits and reports its code" {
+    consume child = must_child(close_stdout_cmd().stdout(Stdio.Piped).start(), "start")
+    consume rx = must_stdout(child.take_stdout())
+    ro t0 = Timestamp.now().unix_millis()
+    ro got = must_io(read_to_end(rx), "read")        // returns at EOF, i.e. when stdout closes
+    ro t_eof = Timestamp.now().unix_millis() - t0
+    assert(unsafe { got.to_str_unchecked() }.replace("\r", "") == "hi\n")
+    if eof_precedes_exit() {
+        match must_io(child.try_wait(), "try_wait") {
+            Some(_) => panic("the child must still be running after its stdout closed")
+            None => ()
+        }
+    }
+    ro st = must_io(child.wait(), "wait")
+    assert(st.code() == 7)
+    ro t_total = Timestamp.now().unix_millis() - t0
+    // POSIX: EOF came BEFORE the process ended - the child sleeps 1.5 s after closing stdout, so the gap
+    // between EOF and the end of wait() is about that long. A runtime that only saw EOF at process exit
+    // gives ~0. Windows: see eof_precedes_exit().
+    if eof_precedes_exit() && t_total - t_eof < 1000 {
+        panic("S4a timing: eof at ${t_eof} ms, wait() done at ${t_total} ms")
+    }
+}
+
+test "p294 S4b: WE close stdout while the child still writes -> no hang, no leak; wait() returns" {
+    ro r = with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(timeout: 30.to_seconds()) {
+            consume child = must_child(emit_cmd(1048576).stdout(Stdio.Piped).start(), "start")
+            consume rx = must_stdout(child.take_stdout())
+            mut buf []u8 = []u8.new()
+            buf.resize(4096, 0 as u8)
+            assert(must_io(rx.read(buf), "first read") > 0)
+            rx.close()                               // the child has ~64 MiB left to write
+            match child.wait() {
+                Ok(_) => ()                          // the exit code is the child's business (.NET swallows EPIPE)
+                Err(e) => panic("wait after close: ${e}")
+            }
+        }
+        1
+    }
+    assert(r == 1)
+}
+
+// ─── S5: back pressure, no loss ──
+
+test "p294 S5: a slow reader stalls the child (no unbounded buffering) and still gets every byte" {
+    // 16 MiB. The pipe holds 64 KiB (Linux) / a few KiB (Windows), so a child that can finish while
+    // we are not reading would prove the runtime queued the data itself.
+    ro n_blocks = 262144
+    consume child = must_child(emit_cmd(n_blocks).stdout(Stdio.Piped).start(), "start")
+    consume rx = must_stdout(child.take_stdout())
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    mut got []u8 = []u8.new()
+    ro n0 = must_io(rx.read(buf), "first read")
+    got.append(buf[..n0])
+    800.to_millis().sleep()                          // we stop reading; a PULLING runtime stops the child too
+    match must_io(child.try_wait(), "try_wait") {
+        Some(_) => panic("back pressure missing: the child finished while nobody was reading")
+        None => ()
+    }
+    loop {
+        ro n = must_io(rx.read(buf), "read")
+        if n == 0 { break }
+        got.append(buf[..n])
+    }
+    ro st = must_io(child.wait(), "wait")
+    assert(st.code() == 0)
+    assert(blocks_ok(got, n_blocks))
+}
+
+// ─── S6: output() without a deadlock ──
+
+test "p294 S6: output() drains stderr and stdout in parallel (512 KiB each) and reports the status" {
+    ro out = must_io(both_streams_cmd().output(), "output")
+    if out.stdout.len() != 524288 || out.stderr.len() != 524288 {
+        panic("S6 sizes: stdout=${out.stdout.len()} stderr=${out.stderr.len()}")
+    }
+    assert(out.status.code() == 0)
+}
+
+test "p294 S6b: output() of a failing program is Err, of a non-zero exit is Ok" {
+    match Command.new("nova-p294-no-such-program-xyz").output() {
+        Ok(_) => panic("expected a start failure")
+        Err(e) => assert(e.raw_os != 0)
+    }
+}
+
+// ─── Failures (one fixture per branch of the plan's table) ──
+
+test "p294 F1: no such program -> Err(NotFound) with a raw OS code" {
+    match Command.new("nova-p294-no-such-program-xyz").start() {
+        Ok(consume c) => { c.release(); panic("expected Err") }
+        Err(e) => {
+            assert(e.kind == ErrorKind.NotFound)
+            assert(e.raw_os == 2)
+        }
+    }
+}
+
+test "p294 F2: a directory is not runnable -> Err (PermissionDenied or the platform's equivalent)" {
+    match Command.new(os_temp_dir_for_test().display()).start() {
+        Ok(consume c) => { c.release(); panic("expected Err: a directory ran") }
+        Err(e) => assert(e.raw_os != 0)
+    }
+}
+
+test "p294 F3: a directory that does not exist -> Err(NotFound) or Err(NotADirectory)" {
+    ro bad_bytes = "nova-p294-no-such-dir-xyz/inner".bytes()   // see #1850: no literal argument
+    ro bad = Path.from_bytes(bad_bytes)
+    match echo_cmd().dir(bad).start() {
+        Ok(consume c) => { c.release(); panic("expected Err") }
+        Err(e) => {
+            assert(e.kind == ErrorKind.NotFound || e.kind == ErrorKind.NotADirectory)
+        }
+    }
+}
+
+test "p294 F4: write to a child that already exited -> Err(BrokenPipe), no panic" {
+    consume child = must_child(quick_exit_cmd().stdin(Stdio.Piped).start(), "start")
+    consume tx = must_stdin(child.take_stdin())
+    ro st = must_io(child.wait(), "wait")            // the child is gone: its end of the pipe is closed
+    assert(st.code() == 0)
+    mut data []u8 = []u8.new()
+    data.resize(65536, 65 as u8)
+    mut kind = ErrorKind.Other(0)
+    mut tries = 0
+    // The first writes may still fit into the pipe's buffer; a dead reader must surface by then.
+    while tries < 64 {
+        match tx.write(data) {
+            Ok(_) => { tries += 1 }
+            Err(e) => { kind = e.kind; break }
+        }
+    }
+    assert(kind == ErrorKind.BrokenPipe)
+}
+
+// ─── Cancellation ──
+
+test "p294 C1: supervised(timeout:) around wait() kills the child and reports Interrupted" {
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(timeout: 200.to_millis()) {
+            consume child = must_child(sleep_cmd(10).start(), "start")
+            match child.wait() {
+                Ok(st) => panic("expected the wait to be interrupted, got exit ${st.code()}")
+                Err(e) => assert(e.kind == ErrorKind.Interrupted)
+            }
+        }
+        1
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 3000)                           // killed, not outlasted (the child sleeps 10 s)
+}
+
+test "p294 C2: releasing the handle without wait() kills the child (no orphan outlives its owner)" {
+    // The child sleeps 20 s and holds the write end of the stdout pipe, so `read_to_end` can only
+    // return before ~20 s if the process is really dead. `release` is what `Child.cleanup` runs.
+    ro t0 = Timestamp.now().unix_millis()
+    consume child = must_child(sleep_cmd(20).stdout(Stdio.Piped).start(), "start")
+    consume rx = must_stdout(child.take_stdout())
+    assert(child.pid() > 0)
+    child.release()
+    ro got = must_io(read_to_end(rx), "read")
+    assert(got.len() == 0)
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 8000)
+}

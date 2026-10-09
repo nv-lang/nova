@@ -497,6 +497,100 @@ __declspec(thread) NovaEffectRegistry _nova_effect_registry;
 __thread NovaEffectRegistry _nova_effect_registry;
 #endif
 
+/* 221.1 №1857: the published registries (effects.h, "THE HANDLER SLOTS OF EVERY
+ * THREAD ARE GC ROOTS"). Append-only list of malloc'd nodes, never freed (one per
+ * thread that ever registered an effect -- main and the workers); a thread that
+ * exits clears its node's `reg` instead of unlinking it, so the callback never
+ * races a removal. The list lives in malloc memory, not in a GC object: it is
+ * walked by the callback itself, it is not a root it relies on. */
+typedef struct NovaEffectRootNode {
+    NovaEffectRegistry* volatile reg;
+    struct NovaEffectRootNode* next;
+    /* nova_effect_register_root: GC-only slots of this thread (per-E Fail). The
+     * array grows by publishing a fresh copy; the old one is never freed, so a
+     * collection that stopped this thread mid-growth still reads valid memory. */
+    void** volatile* volatile extra;
+    volatile int extra_n;
+    int extra_cap;
+} NovaEffectRootNode;
+
+static NovaEffectRootNode* volatile _nova_effect_roots = NULL;
+#ifdef _MSC_VER
+static __declspec(thread) NovaEffectRootNode* _nova_effect_root_self = NULL;
+#else
+static __thread NovaEffectRootNode* _nova_effect_root_self = NULL;
+#endif
+
+void nova_effect_roots_publish(void) {
+    if (_nova_effect_root_self) return;
+    NovaEffectRootNode* nd = (NovaEffectRootNode*)malloc(sizeof *nd);
+    if (!nd) {
+        fprintf(stderr, "nova: out of memory (effect roots)\n");
+        abort();
+    }
+    nd->reg = &_nova_effect_registry;
+    nd->extra = NULL;
+    nd->extra_n = 0;
+    nd->extra_cap = 0;
+    NovaEffectRootNode* h;
+    do {
+        h = (NovaEffectRootNode*)__atomic_load_n(&_nova_effect_roots, __ATOMIC_ACQUIRE);
+        nd->next = h;
+    } while (!__atomic_compare_exchange_n(&_nova_effect_roots, &h, nd,
+                                          false, __ATOMIC_RELEASE, __ATOMIC_ACQUIRE));
+    _nova_effect_root_self = nd;
+}
+
+void nova_effect_roots_retract(void) {
+    NovaEffectRootNode* nd = _nova_effect_root_self;
+    if (!nd) return;
+    __atomic_store_n(&nd->reg, (NovaEffectRegistry*)NULL, __ATOMIC_RELEASE);
+    _nova_effect_root_self = NULL;
+}
+
+void nova_effect_roots_push(void (*push)(void* lo, void* hi)) {
+    /* The casts: under MSVC (nova_msvc_compat.h) the loads return an integer. */
+    for (NovaEffectRootNode* nd = (NovaEffectRootNode*)__atomic_load_n(&_nova_effect_roots, __ATOMIC_ACQUIRE);
+         nd; nd = nd->next) {
+        NovaEffectRegistry* reg = (NovaEffectRegistry*)__atomic_load_n(&nd->reg, __ATOMIC_ACQUIRE);
+        if (!reg) continue;
+        int n = (int)__atomic_load_n(&reg->count, __ATOMIC_ACQUIRE);
+        if (n > NOVA_MAX_EFFECT_STORAGES) n = NOVA_MAX_EFFECT_STORAGES;
+        for (int i = 0; i < n; i++) {
+            void** slot = reg->slots[i];
+            if (slot) push((void*)slot, (void*)(slot + 1));
+        }
+        void** volatile* extra = (void** volatile*)__atomic_load_n(&nd->extra, __ATOMIC_ACQUIRE);
+        int m = (int)__atomic_load_n(&nd->extra_n, __ATOMIC_ACQUIRE);
+        for (int i = 0; extra && i < m; i++) {
+            void** slot = extra[i];
+            if (slot) push((void*)slot, (void*)(slot + 1));
+        }
+    }
+}
+
+void nova_effect_register_root(void** slot_addr) {
+    if (!_nova_effect_root_self) nova_effect_roots_publish();
+    NovaEffectRootNode* nd = _nova_effect_root_self;
+    int n = nd->extra_n;
+    for (int i = 0; i < n; i++) {
+        if (nd->extra[i] == slot_addr) return;
+    }
+    if (n == nd->extra_cap) {
+        int cap = nd->extra_cap ? nd->extra_cap * 2 : 8;
+        void** volatile* grown = (void** volatile*)malloc(sizeof(void**) * (size_t)cap);
+        if (!grown) {
+            fprintf(stderr, "nova: out of memory (effect roots)\n");
+            abort();
+        }
+        for (int i = 0; i < n; i++) grown[i] = nd->extra[i];
+        __atomic_store_n(&nd->extra, grown, __ATOMIC_RELEASE);   /* old copy: kept */
+        nd->extra_cap = cap;
+    }
+    nd->extra[n] = slot_addr;
+    __atomic_store_n(&nd->extra_n, n + 1, __ATOMIC_RELEASE);
+}
+
 /* Plan 83.10.4 Ф.3: function pointer set by generated code (nova_fn_main)
  * to register all program effects (built-ins + user-defined). Called by
  * each worker thread at startup so it has its own TLS-address registry. */
