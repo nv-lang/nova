@@ -20,6 +20,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <errno.h>
+#ifdef _WIN32
+#  include <windows.h>
+#  include <tlhelp32.h>
+#else
+#  include <unistd.h>
+#endif
 
 /* ─── Cancel-scope helper (same pattern as net.c's _nn2_cancel_scope) ───── */
 
@@ -251,7 +258,7 @@ static nova_int _proc_neg_errno(int uv) {
         case UV_EPERM:     return -1;
         case UV_ENOENT:    return -2;
         case UV_EINTR:     return -4;
-        case UV_ECANCELED: return -4;   /* surfaces as Interrupted, like D453 */
+        case UV_ECANCELED: return NOVA_PROC_CLOSED;   /* a stream op cut short by close / cancel */
         case UV_EIO:       return -5;
         case UV_EAGAIN:    return -11;
         case UV_ENOMEM:    return -12;
@@ -396,14 +403,14 @@ nova_int proc_pipe_read(void* pv, uint8_t* buf, nova_int cap) {
     nova_int result;
     _pp_acquire(p);
 
-    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = -4; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = NOVA_PROC_CLOSED; goto out; }
     if (cap <= 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/os: pipe read outside scope\n"); abort(); }
     NovaFiberQueue* cancel_sc = _proc_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
 
     p->read_ptr = buf; p->read_cap = cap; p->read_n = 0; p->read_eof = 0; p->read_err = 0;
     nova_aint_store(&p->read_done, 0);
@@ -425,8 +432,8 @@ nova_int proc_pipe_read(void* pv, uint8_t* buf, nova_int cap) {
     nova_sched_unregister_pending(scope, slot);
     p->read_ptr = NULL;   /* do not root the caller's buffer through an uncollectable struct */
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
-    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = NOVA_PROC_CLOSED; goto out; }
     if (p->read_err != 0) { result = _proc_neg_errno(p->read_err); goto out; }
     if (p->read_eof)      { result = 0; goto out; }
     result = p->read_n;
@@ -468,14 +475,14 @@ nova_int proc_pipe_write(void* pv, const uint8_t* buf, nova_int len) {
     nova_int result;
     _pp_acquire(p);
 
-    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = -4; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING) { result = NOVA_PROC_CLOSED; goto out; }
     if (len <= 0) { result = 0; goto out; }
 
     NovaFiberQueue* scope = _nova_active_scope;
     int slot = _nova_active_slot;
     if (!scope) { fprintf(stderr, "nova/os: pipe write outside scope\n"); abort(); }
     NovaFiberQueue* cancel_sc = _proc_cancel_scope(scope);
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
 
     uv_buf_t ubuf = uv_buf_init((char*)(uintptr_t)buf, (unsigned int)len);
     ProcWriteIssueCtx wctx = { p, ubuf };
@@ -502,8 +509,8 @@ nova_int proc_pipe_write(void* pv, const uint8_t* buf, nova_int len) {
     nova_sched_unregister_pending(scope, slot);
     memset(&p->write_req, 0, sizeof(p->write_req));   /* drop the pointer to the caller's buffer */
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = -4; goto out; }
-    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = -4; goto out; }
+    if (nova_abool_load(&cancel_sc->cancel_requested)) { result = NOVA_PROC_CLOSED; goto out; }
+    if (nova_aint_load(&p->stage) >= PP_CLOSING)       { result = NOVA_PROC_CLOSED; goto out; }
     if (p->write_err != 0) { result = _proc_neg_errno(p->write_err); goto out; }
     result = p->write_n;
 out:
@@ -527,6 +534,10 @@ typedef struct NovaProcChild {
     int             wait_slot;
     NovaProcPipe*   pipes[3];
     nova_atomic_int taken[3];
+    int             group;         /* Tree.Group: every kill hits the whole tree */
+#ifdef _WIN32
+    HANDLE          job;           /* Job Object holding the tree (group only; may be NULL) */
+#endif
 } NovaProcChild;
 
 static inline void _pc_acquire(NovaProcChild* c) { (void)nova_aint_inc(&c->refcount); }
@@ -549,7 +560,31 @@ static void _pc_close_cb(uv_handle_t* h) {
 static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal) {
     NovaProcChild* c = (NovaProcChild*)proc->data;
     c->exit_status = exit_status;
+#ifdef _WIN32
+    /* Windows has no signals: libuv reports its own uv_process_kill as "signal 9", while a
+     * TerminateProcess from anywhere else is a plain exit code. Report both the same way —
+     * the code TerminateProcess left (1), signal() == None (D492 table 3.4). */
+    (void)term_signal;
+    c->term_signal = 0;
+#else
     c->term_signal = term_signal;
+#endif
+    /* Tree.Group: the tree does not outlive its leader — stragglers die HERE, the moment
+     * the leader's exit is known, and never later. On POSIX this is the only safe moment:
+     * the group id stays reserved only while some member lives, so once the group is empty
+     * the number is free and the OS may hand it to an unrelated process that leads its own
+     * group; a later kill(-pgid) — from Child.kill or cleanup, maybe hours afterwards —
+     * would SIGKILL that stranger (registry 1866). Here the leader has just been reaped:
+     * a non-empty group still holds the id, an empty one leaves at most the microseconds
+     * since waitpid. Windows: the Job Object handle cannot be reused; same rule for the
+     * same behaviour on both systems. After this point nothing is ever signalled. */
+    if (c->group) {
+#ifdef _WIN32
+        if (c->job) TerminateJobObject(c->job, 1);
+#else
+        (void)kill(-(pid_t)c->pid, SIGKILL);
+#endif
+    }
     nova_aint_store(&c->exited, 1);
     NovaFiberQueue* sc = c->wait_scope; int sl = c->wait_slot;
     c->wait_scope = NULL;
@@ -557,10 +592,64 @@ static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal
     uv_close((uv_handle_t*)proc, _pc_close_cb);
 }
 
+/* Deliver `sig` to the child, or to its whole tree with Tree.Group. 0 also when
+ * there is nothing left to signal; < 0 = -errno or NOVA_PROC_UNSUPPORTED.
+ * Once the child has exited NOTHING is sent, single or group: its pid / pgid may
+ * already belong to another process (registry 1866; a group's stragglers were
+ * swept by _pc_exit_cb). The remaining window — libuv's waitpid has reaped the
+ * child but its exit_cb has not stored `exited` yet — is the same one libuv's
+ * own uv_process_kill has. */
+static nova_int _pc_send(NovaProcChild* c, int sig) {
+#ifdef _WIN32
+    if (sig != 9 && sig != 15) return NOVA_PROC_UNSUPPORTED;   /* no signals on Windows */
+    if (nova_aint_load(&c->exited) != 0) return 0;
+    if (c->job) { TerminateJobObject(c->job, 1); return 0; }
+    int rc = uv_process_kill(&c->proc, SIGKILL);
+    return (rc == 0 || rc == UV_ESRCH) ? 0 : _proc_neg_errno(rc);
+#else
+    if (nova_aint_load(&c->exited) != 0) return 0;
+    int r;
+    if (c->group) {
+        r = kill(-(pid_t)c->pid, sig);     /* the child is its group's leader (setsid) */
+    } else {
+        r = kill((pid_t)c->pid, sig);
+    }
+    if (r == 0 || errno == ESRCH) return 0;
+    return -(nova_int)errno;
+#endif
+}
+
+/* Scope cancellation / release path: SIGKILL, at most once; the `killing` marker is
+ * what lets wait() tell "cancelled" from "died by itself". */
 static void _pc_kill(NovaProcChild* c) {
     int32_t was = __atomic_exchange_n((volatile int32_t*)&c->killing, 1, __ATOMIC_ACQ_REL);
-    if (!was && nova_aint_load(&c->exited) == 0) uv_process_kill(&c->proc, SIGKILL);
+    if (!was && nova_aint_load(&c->exited) == 0) (void)_pc_send(c, 9);
 }
+
+static int64_t _proc_now_ms(void) { return (int64_t)(uv_hrtime() / 1000000ULL); }
+
+#ifdef _WIN32
+/* Tree.Group on Windows: put the just-spawned child into its own Job Object.
+ * Assigned right after uv_spawn, so there IS a race window: a grandchild started
+ * before the Assign stays outside the job (probe (b) of plan 294: 0/30 escapes for an
+ * immediate assignment, 30/30 with a 100 ms delay). D492 wants CreateProcess
+ * (CREATE_SUSPENDED) + Assign + ResumeThread, which libuv cannot do — deliberate
+ * simplification [M-294-win-job-suspended], docs/dev/simplifications.md.
+ * KILL_ON_JOB_CLOSE: the tree dies with our handle even if the parent crashes. */
+static void _pc_assign_job(NovaProcChild* c) {
+    HANDLE j = CreateJobObjectW(NULL, NULL);
+    if (!j) return;
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION li;
+    memset(&li, 0, sizeof li);
+    li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(j, JobObjectExtendedLimitInformation, &li, sizeof li) ||
+        !AssignProcessToJobObject(j, c->proc.process_handle)) {
+        CloseHandle(j);
+        return;     /* degrades to a single-process kill (pre-Windows-8 nested-job refusal) */
+    }
+    c->job = j;
+}
+#endif
 
 static NovaStopMode _pc_stop_cb(void* handle) {
     _pc_kill((NovaProcChild*)handle);
@@ -598,6 +687,7 @@ void* proc_spawn(const uint8_t* program, nova_int program_len,
     for (int i = 0; i < 3; i++) nova_aint_init(&c->taken[i], 0);
     c->loop = loop;
     c->proc.data = c;
+    c->group = (stdio_modes & NOVA_STDIO_TREE_GROUP) != 0;
 
     uv_stdio_container_t io[3];
     for (int i = 0; i < 3; i++) {
@@ -625,6 +715,12 @@ void* proc_spawn(const uint8_t* program, nova_int program_len,
     opts.cwd = cwdz;
     opts.stdio_count = 3;
     opts.stdio = io;
+#ifndef _WIN32
+    /* Tree.Group (POSIX): UV_PROCESS_DETACHED = setsid() in the child, so its pid is
+     * also its process group id and kill(-pid) reaches every descendant. The child
+     * loses the parent's controlling terminal (plan 294, risk R4). */
+    if (c->group) opts.flags |= UV_PROCESS_DETACHED;
+#endif
 
     int rc = uv_spawn(loop, &c->proc, &opts);
 
@@ -652,6 +748,9 @@ void* proc_spawn(const uint8_t* program, nova_int program_len,
         return NULL;
     }
     c->pid = c->proc.pid;
+#ifdef _WIN32
+    if (c->group) _pc_assign_job(c);
+#endif
     return c;
 }
 
@@ -703,15 +802,168 @@ out:
     return result;
 }
 
+nova_int proc_child_kill(void* cv, nova_int sig) {
+    return _pc_send((NovaProcChild*)cv, (int)sig);
+}
+
+nova_int proc_child_wait_ms(void* cv, nova_int ms, nova_int* out_code, nova_int* out_signal) {
+    NovaProcChild* c = (NovaProcChild*)cv;
+    int64_t deadline = _proc_now_ms() + (ms > 0 ? (int64_t)ms : 0);
+    for (;;) {
+        if (nova_aint_load(&c->exited) != 0) {
+            if (out_code) *out_code = (nova_int)c->exit_status;
+            if (out_signal) *out_signal = (nova_int)c->term_signal;
+            return 0;
+        }
+        int64_t left = deadline - _proc_now_ms();
+        if (left <= 0) return 1;
+        /* A fiber sleep: parks (never blocks the OS thread) and unwinds on scope cancellation. */
+        (void)time_sleep_ms((nova_int)(left < 5 ? left : 5));
+    }
+}
+
+/* Child.cleanup: Terminate, a short grace, Kill (the tree with Tree.Group), then wait
+ * until the OS has really reaped the process — callers (and kill_pid) must find it gone. */
+static void _pc_reap(NovaProcChild* c) {
+    int alive = nova_aint_load(&c->exited) == 0;
+    if (!alive) return;            /* gone: its stragglers were swept at exit (_pc_exit_cb) */
+    {
+        (void)_pc_send(c, 15);
+        NovaFiberQueue* scope = _nova_active_scope;
+        int64_t deadline = _proc_now_ms() + NOVA_PROC_RELEASE_GRACE_MS;
+        while (nova_aint_load(&c->exited) == 0 && _proc_now_ms() < deadline) {
+            /* An unshielded, already cancelled scope cannot sleep (the sleep would throw
+             * in the middle of a cleanup): skip the grace and go straight to Kill. */
+            if (!scope || !mco_running()) break;
+            if (nova_cancel_mask_active() == 0 &&
+                nova_abool_load(&_proc_cancel_scope(scope)->cancel_requested)) break;
+            (void)time_sleep_ms(2);
+        }
+    }
+    (void)_pc_send(c, 9);          /* still alive after the grace (a no-op once it exited) */
+    if (nova_aint_load(&c->exited) == 0) {
+        NovaFiberQueue* scope = _nova_active_scope;
+        int slot = _nova_active_slot;
+        if (scope) {
+            c->wait_scope = scope; c->wait_slot = slot;
+            nova_sched_park_until(scope, slot, _pc_exited, c);   /* no stop_cb: not cancellable */
+            c->wait_scope = NULL;
+        }
+    }
+}
+
 void proc_child_release(void* cv) {
     NovaProcChild* c = (NovaProcChild*)cv;
     if (!c) return;
     int32_t zero = 0;
     if (!nova_aint_cas(&c->release_done, &zero, 1)) return;
-    _pc_kill(c);                         /* F.1: no orphan survives its owner; F.2 adds grace + tree */
+    _pc_reap(c);                         /* no orphan survives its owner (D492 rule 6) */
     for (int i = 0; i < 3; i++) {
         int32_t z = 0;
         if (c->pipes[i] && nova_aint_cas(&c->taken[i], &z, 1)) _pp_user_close(c->pipes[i]);
     }
+#ifdef _WIN32
+    if (c->job) { CloseHandle(c->job); c->job = NULL; }
+#endif
     _pc_release(c);                      /* Nova unit */
+}
+
+/* ─── kill_pid: a process this program holds no Child for ─────────────────── */
+
+#ifdef _WIN32
+static nova_int _win_terminate_pid(DWORD pid) {
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) {
+        DWORD e = GetLastError();
+        if (e == ERROR_INVALID_PARAMETER) return NOVA_PROC_NO_SUCH;
+        return e == ERROR_ACCESS_DENIED ? -1 : -5;
+    }
+    nova_int r = 0;
+    if (!TerminateProcess(h, 1)) {
+        DWORD code = 0;
+        if (GetExitCodeProcess(h, &code) && code != STILL_ACTIVE) r = NOVA_PROC_NO_SUCH;
+        else r = -1;
+    }
+    CloseHandle(h);
+    return r;
+}
+#endif
+
+nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree) {
+    if (pid <= 0) return -22;     /* never "my own group" / "every process" */
+#ifdef _WIN32
+    if (sig != 9 && sig != 15) return NOVA_PROC_UNSUPPORTED;
+    if (!tree) return _win_terminate_pid((DWORD)pid);
+    /* One snapshot of the process table, then every descendant of `pid` (parent-id links) and
+     * `pid` itself. Between the snapshot and the kill a listed process may die and its number go to
+     * a stranger, and a parent id in the snapshot may itself be stale (registry 1866, plan 294 R6).
+     * So every kill goes through a HANDLE (a number cannot be reused while a handle is open) and is
+     * checked by creation time first: everything must predate the snapshot, and a descendant must be
+     * younger than the parent it was listed under. What stays best effort: when `pid` itself is
+     * already gone, its listed children cannot be told from children of an earlier holder of the
+     * same number — they are taken if they predate the snapshot (documented in D492). */
+    FILETIME t0_ft; GetSystemTimeAsFileTime(&t0_ft);
+    ULONGLONG t0 = ((ULONGLONG)t0_ft.dwHighDateTime << 32) | t0_ft.dwLowDateTime;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return _win_terminate_pid((DWORD)pid);
+    size_t cap = 256, n = 0;
+    DWORD* pids = (DWORD*)malloc(cap * sizeof(DWORD));
+    DWORD* ppids = (DWORD*)malloc(cap * sizeof(DWORD));
+    PROCESSENTRY32W e; e.dwSize = sizeof e;
+    for (BOOL ok = Process32FirstW(snap, &e); ok; ok = Process32NextW(snap, &e)) {
+        if (n == cap) {
+            cap *= 2;
+            pids = (DWORD*)realloc(pids, cap * sizeof(DWORD));
+            ppids = (DWORD*)realloc(ppids, cap * sizeof(DWORD));
+        }
+        pids[n] = e.th32ProcessID; ppids[n] = e.th32ParentProcessID; n++;
+    }
+    CloseHandle(snap);
+    DWORD* set = (DWORD*)malloc((n + 1) * sizeof(DWORD));
+    size_t* parent = (size_t*)malloc((n + 1) * sizeof(size_t));
+    size_t m = 0;
+    set[m] = (DWORD)pid; parent[m] = (size_t)-1; m++;
+    for (size_t i = 0; i < m; i++)                 /* breadth first; m grows while we walk */
+        for (size_t j = 0; j < n; j++)
+            if (ppids[j] == set[i] && pids[j] != set[i]) {
+                int seen = 0;
+                for (size_t k = 0; k < m; k++) if (set[k] == pids[j]) { seen = 1; break; }
+                if (!seen && m <= n) { set[m] = pids[j]; parent[m] = i; m++; }
+            }
+    /* Open everything first (handles pin the numbers), then judge by creation time. */
+    HANDLE* hs = (HANDLE*)calloc(m, sizeof(HANDLE));
+    ULONGLONG* ct = (ULONGLONG*)calloc(m, sizeof(ULONGLONG));
+    nova_int root_err = NOVA_PROC_NO_SUCH;
+    for (size_t i = 0; i < m; i++) {
+        hs[i] = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, set[i]);
+        if (!hs[i]) {
+            if (i == 0 && GetLastError() == ERROR_ACCESS_DENIED) root_err = -1;
+            continue;
+        }
+        FILETIME c_ft, x_ft, k_ft, u_ft;
+        if (GetProcessTimes(hs[i], &c_ft, &x_ft, &k_ft, &u_ft))
+            ct[i] = ((ULONGLONG)c_ft.dwHighDateTime << 32) | c_ft.dwLowDateTime;
+    }
+    nova_int result = root_err;
+    for (size_t i = m; i-- > 0;) {                 /* descendants first, the root last */
+        if (!hs[i]) continue;
+        int ours = ct[i] != 0 && ct[i] < t0;       /* not born after the snapshot */
+        if (ours && parent[i] != (size_t)-1 && hs[parent[i]] && ct[parent[i]] != 0)
+            ours = ct[i] >= ct[parent[i]];         /* a child is never older than its parent */
+        if (ours) {
+            if (TerminateProcess(hs[i], 1)) result = 0;
+            else {
+                DWORD code = 0;
+                if (!(GetExitCodeProcess(hs[i], &code) && code != STILL_ACTIVE) && result != 0) result = -1;
+            }
+        }
+        CloseHandle(hs[i]);
+    }
+    free(pids); free(ppids); free(set); free(parent); free(hs); free(ct);
+    return result;
+#else
+    int r = tree ? kill(-(pid_t)pid, (int)sig) : kill((pid_t)pid, (int)sig);
+    if (r == 0) return 0;
+    return errno == ESRCH ? NOVA_PROC_NO_SUCH : -(nova_int)errno;
+#endif
 }

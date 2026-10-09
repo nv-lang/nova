@@ -1,0 +1,501 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// std/os/proc_control/proc_control_test.nv — Plan 294 F.2 (D492): process control.
+//
+// Scenarios S3, S7, S8, S9 of docs/plans/294-process-streams-pty.md §5, plus the pieces they
+// stand on: `Child.kill`, `Child.stop`, `Child.wait_timeout`, `Tree.Group`, `kill_pid`, `cleanup`.
+//
+// How a TREE is observed without files or process listings: the grandchild inherits the child's
+// stdout pipe, so `read_to_end` on that pipe reaches end-of-stream ONLY when every holder of the
+// write end — the child AND the grandchild — is dead. A tree kill that missed the grandchild leaves
+// the read hanging (the fixtures bound it with `supervised(timeout:)` and fail instead of hanging).
+//
+// The children are platform tools present on every CI image (`sh` + coreutils on POSIX,
+// `powershell` on Windows), as in proc_streams_test.nv. Every loop a child runs is BOUNDED
+// (about 10 s), so a fixture that fails cannot leave a process running for ever.
+//
+// Its own directory and module, like proc_streams/: `nova test` folds every `module std.os` file of
+// std/src/os into ONE unit, so a red peer there would hide these fixtures under its name. They use
+// only the public `std.os` surface, as a user would.
+
+module proc_control.proc_control_test
+
+import std.os.{Command, Child, ChildStdout, Stdio, Tree, Signal, ExitStatus, kill_pid}
+import std.io.{IoError, ErrorKind, read_to_end}
+import std.time.duration
+
+fn ctl_child(r Result[Child, IoError], what str) -> Child {
+    match r {
+        Ok(consume c) => c
+        Err(e) => panic("proc: ${what}: ${e}")
+    }
+}
+
+fn ctl_io[T](r Result[T, IoError], what str) -> T {
+    match r {
+        Ok(v) => v
+        Err(e) => panic("proc: ${what}: ${e}")
+    }
+}
+
+fn ctl_stdout(o Option[ChildStdout]) -> ChildStdout {
+    match o {
+        Some(consume s) => s
+        None => panic("proc: stdout was not piped")
+    }
+}
+
+// ─── Platform helpers ──
+
+#cfg(target_os = "windows")
+fn ctl_ps(script str) -> Command =>
+    Command.new("powershell").arg("-NoProfile").arg("-NonInteractive").arg("-Command").arg(script)
+
+#cfg(!target_os = "windows")
+fn ctl_sh(script str) -> Command => Command.new("sh").arg("-c").arg(script)
+
+// A child that starts a GRANDCHILD. The child prints 'c' every 50 ms, the grandchild 'g'; both write
+// to the same (inherited) stdout, both stop on their own after ~10 s.
+#cfg(target_os = "windows")
+fn tree_cmd() -> Command =>
+    ctl_ps("Start-Process -NoNewWindow -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','for($i=0;$i -lt 200;$i++){[Console]::Out.Write(''g'');[Console]::Out.Flush();Start-Sleep -Milliseconds 50}'; for($i=0;$i -lt 200;$i++){[Console]::Out.Write('c');[Console]::Out.Flush();Start-Sleep -Milliseconds 50}")
+
+#cfg(!target_os = "windows")
+fn tree_cmd() -> Command =>
+    ctl_sh("(i=0; while [ $i -lt 200 ]; do printf g; sleep 0.05; i=$((i+1)); done) & i=0; while [ $i -lt 200 ]; do printf c; sleep 0.05; i=$((i+1)); done")
+
+// Sleeps `seconds`, writes nothing.
+#cfg(target_os = "windows")
+fn ctl_sleep(seconds int) -> Command => Command.new("ping").arg("-n").arg("${seconds + 1}").arg("127.0.0.1")
+
+#cfg(!target_os = "windows")
+fn ctl_sleep(seconds int) -> Command => Command.new("sleep").arg("${seconds}")
+
+// Prints "ready", then sleeps 30 s ignoring Terminate (POSIX: SIG_IGN survives exec). Windows has no
+// Terminate to ignore, so there it is a plain sleep: the fixture states the difference.
+#cfg(target_os = "windows")
+fn deaf_cmd() -> Command =>
+    ctl_ps("[Console]::Out.Write('ready');[Console]::Out.Flush();Start-Sleep -Seconds 30")
+
+#cfg(!target_os = "windows")
+fn deaf_cmd() -> Command => ctl_sh("trap '' TERM; printf ready; exec sleep 30")
+
+// Exits at once with code 0.
+#cfg(target_os = "windows")
+fn quick_cmd() -> Command => Command.new("cmd").arg("/c").arg("exit").arg("0")
+
+#cfg(!target_os = "windows")
+fn quick_cmd() -> Command => Command.new("sh").arg("-c").arg("exit 0")
+
+// ─── Observation helpers ──
+
+const MARK_READ_LIMIT = 4096
+
+// True once the stream has carried both a 'c' (the child) and a 'g' (the grandchild).
+fn both_writers_alive(mut rx ChildStdout) -> bool {
+    mut buf []u8 = []u8.new()
+    buf.resize(256, 0 as u8)
+    mut seen_c = false
+    mut seen_g = false
+    mut total = 0
+    while !(seen_c && seen_g) && total < MARK_READ_LIMIT {
+        ro n = ctl_io(rx.read(buf), "read marks")
+        if n == 0 { return false }
+        for i in 0..n {
+            if buf[i] == 99 as u8 { seen_c = true }
+            if buf[i] == 103 as u8 { seen_g = true }
+        }
+        total += n
+    }
+    seen_c && seen_g
+}
+
+// Reads until `want` bytes of the word "ready" arrived.
+fn read_ready(mut rx ChildStdout) -> bool {
+    mut buf []u8 = []u8.new()
+    buf.resize(16, 0 as u8)
+    mut got []u8 = []u8.new()
+    while got.len() < 5 {
+        ro n = ctl_io(rx.read(buf), "read ready")
+        if n == 0 { return false }
+        got.append(buf[..n])
+    }
+    unsafe { got.to_str_unchecked() } == "ready"
+}
+
+// The child died of a kill: POSIX reports the signal, Windows the code TerminateProcess was given.
+#cfg(target_os = "windows")
+fn died_of_kill(st ExitStatus) -> bool => st.code() != 0 && st.signal() == None
+
+#cfg(!target_os = "windows")
+fn died_of_kill(st ExitStatus) -> bool => st.signal() == Some(9) && st.code() == 137
+
+// Windows has no gentler signal than the kill itself, so no grace is ever spent there.
+#cfg(target_os = "windows")
+fn grace_was_spent(_elapsed int, _min int) -> bool => true
+
+#cfg(!target_os = "windows")
+fn grace_was_spent(elapsed int, min int) -> bool => elapsed >= min
+
+#cfg(target_os = "windows")
+fn left_by_terminate(st ExitStatus) -> bool => st.code() != 0
+
+#cfg(!target_os = "windows")
+fn left_by_terminate(st ExitStatus) -> bool => st.signal() == Some(15)
+
+// What a signal number the OS does not have is reported as.
+#cfg(target_os = "windows")
+fn refused_signal_kind() -> ErrorKind => ErrorKind.Unsupported
+
+#cfg(!target_os = "windows")
+fn refused_signal_kind() -> ErrorKind => ErrorKind.InvalidInput
+
+// Drains `rx` to its end inside a time box. The end of the stream means nobody holds the write end any more.
+// True ONLY for a real end of stream: a timeout closes the stream (NotConnected) and is false.
+fn drained_within(mut rx ChildStdout, secs int) -> bool {
+    mut eof = false
+    with Fail[TimeoutError] = |_e| { () } {
+        supervised(timeout: secs.to_seconds()) {
+            match read_to_end(rx) {
+                Ok(_) => { eof = true }
+                Err(e) => if e.kind != ErrorKind.NotConnected { panic("drain: ${e}") }  // the timeout closed the stream
+            }
+        }
+    }
+    eof
+}
+
+// ─── S3: stop by pid, with the tree ──
+
+// Registry 1862 (found here): a pipe read cut by a scope cancellation used to report Interrupted,
+// which read_to_end / read_exact / write_all retry - and the closed stream answered every retry the
+// same way, so the helper spun for ever. Now it is NotConnected and the helper returns.
+test "p294 R1: read_to_end cut by supervised(timeout:) returns NotConnected - no endless retry" {
+    consume child = ctl_child(ctl_sleep(30).stdout(Stdio.Piped).start(), "start")
+    consume rx = ctl_stdout(child.take_stdout())
+    ro t0 = Timestamp.now().unix_millis()
+    mut kind = ErrorKind.Other(0)
+    with Fail[TimeoutError] = |_e| { () } {
+        supervised(timeout: 500.to_millis()) {
+            match read_to_end(rx) {
+                Ok(_) => panic("a sleeping child closed nothing: no end of stream expected")
+                Err(e) => { kind = e.kind }
+            }
+        }
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(kind == ErrorKind.NotConnected)           // the read was cut, not retried for ever
+    assert(elapsed < 5000)
+    // ... and cut by the timeout, not by the child: it is still alive and never closed its stdout.
+    // (Not a lower bound on `elapsed`: the scope timer runs on the loop clock, which may lag the
+    // wall clock after an idle stretch - measured: one run in three cut at < 400 ms of wall time.)
+    match ctl_io(child.try_wait(), "try_wait") {
+        Some(_) => panic("the child ended: the stream was not cut by the timeout")
+        None => ()
+    }
+    // The stream stays dead: one more read is the same error at once, not a hang.
+    mut buf []u8 = []u8.new()
+    buf.resize(16, 0 as u8)
+    match rx.read(buf) {
+        Ok(n) => panic("read on a cancelled stream gave ${n} bytes")
+        Err(e) => assert(e.kind == ErrorKind.NotConnected)
+    }
+}
+
+test "p294 S3: kill_pid(child.pid(), Kill, tree: true) ends the child AND its grandchild" {
+    consume child = ctl_child(tree_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start tree")
+    consume rx = ctl_stdout(child.take_stdout())
+    assert(both_writers_alive(rx))
+    ctl_io(kill_pid(child.pid(), Signal.Kill, true), "kill_pid tree")
+    // End of stream = the grandchild let go of the pipe too, within a second or two - not after its ~10 s loop.
+    ro t0 = Timestamp.now().unix_millis()
+    assert(drained_within(rx, 8))
+    assert(Timestamp.now().unix_millis() - t0 < 5000)
+    ro st = ctl_io(child.wait(), "wait")
+    assert(died_of_kill(st))
+    // The process is gone: signalling it again finds nothing.
+    match kill_pid(child.pid(), Signal.Kill, false) {
+        Ok(_) => panic("kill_pid on a reaped child must not succeed")
+        Err(e) => assert(e.kind == ErrorKind.NotFound)
+    }
+}
+
+test "p294 S3b: without Tree.Group a kill reaches the child only - the grandchild keeps the stream open" {
+    consume child = ctl_child(tree_cmd().stdout(Stdio.Piped).start(), "start tree")
+    consume rx = ctl_stdout(child.take_stdout())
+    assert(both_writers_alive(rx))
+    ctl_io(child.kill(Signal.Kill), "kill single")
+    ro st = ctl_io(child.wait(), "wait")
+    assert(died_of_kill(st))
+    // The grandchild is alive and still writing 'g': a read right after the leader's death gets bytes.
+    mut buf []u8 = []u8.new()
+    buf.resize(64, 0 as u8)
+    mut got_g = false
+    mut reads = 0
+    while !got_g && reads < 40 {
+        ro n = ctl_io(rx.read(buf), "read after leader death")
+        if n == 0 { break }
+        for i in 0..n {
+            if buf[i] == 103 as u8 { got_g = true }
+        }
+        reads += 1
+    }
+    assert(got_g)
+    rx.close()          // the grandchild's next write fails; its bounded loop ends by itself
+}
+
+// ─── S7: a timeout kills the tree ──
+
+test "p294 S7: supervised(timeout:) around wait() of a Tree.Group child kills the whole tree" {
+    consume child = ctl_child(tree_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start tree")
+    consume rx = ctl_stdout(child.take_stdout())
+    assert(both_writers_alive(rx))
+    ro t0 = Timestamp.now().unix_millis()
+    ro r = with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(timeout: 1.to_seconds()) {
+            match child.wait() {
+                Ok(st) => panic("expected the wait to be interrupted, got exit ${st.code()}")
+                Err(e) => assert(e.kind == ErrorKind.Interrupted)
+            }
+        }
+        1
+    }
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed >= 900)                           // the timeout, not an early exit
+    assert(elapsed < 5000)
+    assert(drained_within(rx, 8))                    // the grandchild is dead as well
+    assert(Timestamp.now().unix_millis() - t0 < 9000)
+}
+
+// ─── S8: stop(grace) ──
+
+test "p294 S8: stop(grace) of a child that ignores Terminate: grace is spent, then Kill (signal 9)" {
+    consume child = ctl_child(deaf_cmd().stdout(Stdio.Piped).start(), "start deaf")
+    consume rx = ctl_stdout(child.take_stdout())
+    assert(read_ready(rx))                           // the child is past its trap
+    ro t0 = Timestamp.now().unix_millis()
+    ro st = ctl_io(child.stop(400.to_millis()), "stop")
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(died_of_kill(st))
+    assert(elapsed < 5000)
+    assert(grace_was_spent(elapsed, 350))            // POSIX: the full grace was given before the Kill
+    rx.close()
+}
+
+test "p294 S8b: stop(grace) of a child that obeys Terminate returns at once, long before the grace ends" {
+    consume child = ctl_child(ctl_sleep(30).start(), "start")
+    ro t0 = Timestamp.now().unix_millis()
+    ro st = ctl_io(child.stop(20.to_seconds()), "stop")
+    ro elapsed = Timestamp.now().unix_millis() - t0
+    assert(elapsed < 5000)                           // not the 20 s grace
+    assert(left_by_terminate(st))                    // POSIX: because of Terminate, not Kill
+}
+
+// ─── S9: no leak when the scope ends ──
+
+test "p294 S9a: a scope cancelled while waiting reaps the child - the pid is gone afterwards" {
+    mut pid = 0
+    ro r = with Fail[TimeoutError] = |_e| { 0 } {
+        supervised(timeout: 300.to_millis()) {
+            consume child = ctl_child(ctl_sleep(30).start(), "start")
+            pid = child.pid()
+            match child.wait() {
+                Ok(_) => panic("expected the wait to be interrupted")
+                Err(e) => assert(e.kind == ErrorKind.Interrupted)
+            }
+        }
+        1
+    }
+    assert(pid > 0)
+    match kill_pid(pid, Signal.Kill, false) {
+        Ok(_) => panic("the child is still there after its scope ended")
+        Err(e) => assert(e.kind == ErrorKind.NotFound)
+    }
+}
+
+test "p294 S9b: leaving the scope without wait() reaps the child before the block ends" {
+    mut pid = 0
+    {
+        consume child = ctl_child(ctl_sleep(30).start(), "start")
+        pid = child.pid()
+    }                                                // Child.cleanup runs here
+    assert(pid > 0)
+    match kill_pid(pid, Signal.Kill, false) {
+        Ok(_) => panic("the child outlived its owner")
+        Err(e) => assert(e.kind == ErrorKind.NotFound)
+    }
+}
+
+// The child and the grandchild each write ONE mark and then sleep (they never write again, so
+// closing the pipe at the end of the block cannot kill them by a broken pipe and hide the result).
+#cfg(target_os = "windows")
+fn quiet_tree_cmd() -> Command =>
+    ctl_ps("Start-Process -NoNewWindow -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','[Console]::Out.Write(''g'');[Console]::Out.Flush();Start-Sleep -Seconds 30'; [Console]::Out.Write('c');[Console]::Out.Flush();Start-Sleep -Seconds 30")
+
+#cfg(!target_os = "windows")
+fn quiet_tree_cmd() -> Command => ctl_sh("(printf g; exec sleep 30) & printf c; exec sleep 30")
+
+// True once nothing is left of the group led by `pid`. POSIX: signal 0 only asks whether any
+// member exists (the dead leader may take a moment to be reaped by init). Windows: `pid` plus its
+// descendants from one process snapshot - a live grandchild would be killed AND reported as Ok.
+#cfg(target_os = "windows")
+fn group_gone(pid int) -> bool {
+    match kill_pid(pid, Signal.Kill, true) {
+        Ok(_) => false
+        Err(e) => e.kind == ErrorKind.NotFound
+    }
+}
+
+#cfg(!target_os = "windows")
+fn group_gone(pid int) -> bool {
+    for _ in 0..30 {
+        match kill_pid(pid, Signal.Other(0), true) {
+            Ok(_) => { 100.to_millis().sleep() }
+            Err(e) => return e.kind == ErrorKind.NotFound
+        }
+    }
+    false
+}
+
+test "p294 S9c: cleanup of a Tree.Group child takes the grandchild with it" {
+    mut pid = 0
+    ro t0 = Timestamp.now().unix_millis()
+    {
+        consume child = ctl_child(quiet_tree_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start tree")
+        pid = child.pid()
+        consume rx = ctl_stdout(child.take_stdout())
+        assert(both_writers_alive(rx))               // the grandchild exists before the scope ends
+    }                                                // Child.cleanup runs here
+    assert(pid > 0)
+    assert(group_gone(pid))                          // neither the child nor the grandchild is left
+    assert(Timestamp.now().unix_millis() - t0 < 8000)
+}
+
+// The leader starts a grandchild that writes 'g' and sleeps 30 s, waits a little, writes 'c' and EXITS
+// by itself with code 0 - nobody kills it.
+#cfg(target_os = "windows")
+fn leaving_leader_cmd() -> Command =>
+    ctl_ps("Start-Process -NoNewWindow -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','[Console]::Out.Write(''g'');[Console]::Out.Flush();Start-Sleep -Seconds 30'; Start-Sleep -Milliseconds 1500; [Console]::Out.Write('c');[Console]::Out.Flush()")
+
+#cfg(!target_os = "windows")
+fn leaving_leader_cmd() -> Command => ctl_sh("(printf g; exec sleep 30) & sleep 1; printf c")
+
+// Registry 1866: a Tree.Group does not outlive its leader. The stragglers die the moment the leader's
+// exit is known - not later from kill / cleanup, when the group's number may already belong to a
+// stranger. After the exit nothing is signalled any more, and kill is Ok.
+test "p294 S9e: a Tree.Group leader that exits by itself takes the grandchild with it; kill afterwards is Ok" {
+    consume child = ctl_child(leaving_leader_cmd().tree(Tree.Group).stdout(Stdio.Piped).start(), "start")
+    ro pid = child.pid()
+    consume rx = ctl_stdout(child.take_stdout())
+    assert(both_writers_alive(rx))                   // the grandchild exists before the leader leaves
+    ro st = ctl_io(child.wait(), "wait")
+    assert(st.code() == 0)                           // the leader left by itself
+    assert(group_gone(pid))                          // ... and the grandchild did not stay behind
+    ctl_io(child.kill(Signal.Kill), "kill after exit")
+    ctl_io(child.kill(Signal.Terminate), "terminate after exit")
+}
+
+test "p294 S9d: cleanup after a completed wait() does not touch anything and costs nothing" {
+    ro t0 = Timestamp.now().unix_millis()
+    {
+        consume child = ctl_child(quick_cmd().start(), "start")
+        assert(ctl_io(child.wait(), "wait").code() == 0)
+    }
+    assert(Timestamp.now().unix_millis() - t0 < 3000)
+}
+
+// ─── wait_timeout ──
+
+test "p294 W1: wait_timeout returns None while the child lives (and does NOT kill it), Some at its exit" {
+    consume child = ctl_child(ctl_sleep(30).start(), "start")
+    ro t0 = Timestamp.now().unix_millis()
+    match ctl_io(child.wait_timeout(250.to_millis()), "wait_timeout") {
+        Some(_) => panic("the child must still be running")
+        None => ()
+    }
+    ro waited = Timestamp.now().unix_millis() - t0
+    assert(waited >= 230)
+    assert(waited < 3000)
+    match ctl_io(child.try_wait(), "try_wait") {
+        Some(_) => panic("wait_timeout must not kill the child")
+        None => ()
+    }
+    ctl_io(child.kill(Signal.Kill), "kill")
+    match ctl_io(child.wait_timeout(10.to_seconds()), "wait_timeout after kill") {
+        Some(st) => assert(died_of_kill(st))
+        None => panic("a killed child must be reported within the timeout")
+    }
+}
+
+test "p294 W2: wait_timeout of a child that exits at once returns its status without sleeping the timeout out" {
+    consume child = ctl_child(quick_cmd().start(), "start")
+    ro t0 = Timestamp.now().unix_millis()
+    match ctl_io(child.wait_timeout(20.to_seconds()), "wait_timeout") {
+        Some(st) => assert(st.code() == 0)
+        None => panic("the child exited, the wait must say so")
+    }
+    assert(Timestamp.now().unix_millis() - t0 < 5000)
+}
+
+// ─── kill / kill_pid edges ──
+
+test "p294 K1: kill is idempotent - twice on a live child and once more after it exited, all Ok" {
+    consume child = ctl_child(ctl_sleep(30).start(), "start")
+    ctl_io(child.kill(Signal.Kill), "kill 1")
+    ctl_io(child.kill(Signal.Kill), "kill 2")
+    ro st = ctl_io(child.wait(), "wait")
+    assert(died_of_kill(st))
+    ctl_io(child.kill(Signal.Kill), "kill after exit")
+}
+
+test "p294 K2: a signal the OS cannot deliver is an Err, never a silent kill" {
+    consume child = ctl_child(ctl_sleep(30).start(), "start")
+    match child.kill(Signal.Other(999)) {
+        Ok(_) => panic("signal 999 does not exist")
+        Err(e) => assert(e.kind == refused_signal_kind())
+    }
+    // The child must be untouched by the refused signal.
+    match ctl_io(child.try_wait(), "try_wait") {
+        Some(_) => panic("a refused signal must not end the child")
+        None => ()
+    }
+}
+
+#cfg(target_os = "windows")
+test "p294 K3: Windows has no Interrupt - Err(Unsupported), the child lives" {
+    consume child = ctl_child(ctl_sleep(30).start(), "start")
+    match child.kill(Signal.Interrupt) {
+        Ok(_) => panic("Interrupt cannot be delivered on Windows")
+        Err(e) => assert(e.kind == ErrorKind.Unsupported)
+    }
+    match ctl_io(child.try_wait(), "try_wait") {
+        Some(_) => panic("the child must be alive")
+        None => ()
+    }
+}
+
+test "p294 K4: kill_pid of a pid that does not exist -> NotFound; a non-positive pid -> InvalidInput" {
+    match kill_pid(2147483646, Signal.Kill, false) {
+        Ok(_) => panic("no such process")
+        Err(e) => assert(e.kind == ErrorKind.NotFound)
+    }
+    match kill_pid(2147483646, Signal.Kill, true) {
+        Ok(_) => panic("no such process tree")
+        Err(e) => assert(e.kind == ErrorKind.NotFound)
+    }
+    match kill_pid(0, Signal.Kill, true) {
+        Ok(_) => panic("pid 0 means 'my own group': refused")
+        Err(e) => assert(e.kind == ErrorKind.InvalidInput)
+    }
+    match kill_pid(-1, Signal.Kill, false) {
+        Ok(_) => panic("pid -1 means 'everything': refused")
+        Err(e) => assert(e.kind == ErrorKind.InvalidInput)
+    }
+}
+
+test "p294 K5: a child killed from outside while the parent waits is Ok(status), not Err" {
+    consume child = ctl_child(ctl_sleep(30).start(), "start")
+    ro pid = child.pid()
+    ctl_io(kill_pid(pid, Signal.Kill, false), "kill_pid single")
+    ro st = ctl_io(child.wait(), "wait")
+    assert(died_of_kill(st))
+}

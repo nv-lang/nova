@@ -26,8 +26,18 @@ extern "C" fn proc_child_pid(child *()) -> int
 extern "C" fn proc_child_wait(child *(), out_code *mut int, out_signal *mut int) -> int
 // proc_child_try_wait: 0 = exited (outs valid), 1 = running. Never parks.
 extern "C" fn proc_child_try_wait(child *(), out_code *mut int, out_signal *mut int) -> int
-// proc_child_release: kill a still-running child, close pipes never taken, drop ownership.
+// proc_child_release: Terminate -> short grace -> Kill (the tree with Tree.Group), wait until the
+// process is gone, close pipes never taken, drop ownership.
 extern "C" fn proc_child_release(child *()) -> ()
+// proc_child_kill: send a signal number (2 / 15 / 9 / 1 / n) to the child, its whole tree
+// with Tree.Group. 0 also for a child that is already gone; -100001 = unsupported on this OS
+// (Windows knows only 9 and 15).
+extern "C" fn proc_child_kill(child *(), sig int) -> int
+// proc_child_wait_ms: park up to `ms` WITHOUT killing. 0 = exited (outs valid), 1 = still running.
+extern "C" fn proc_child_wait_ms(child *(), ms int, out_code *mut int, out_signal *mut int) -> int
+// proc_kill_pid: signal a pid this program has no Child for. 0, -3 = no such process, -1 = denied,
+// -22 = bad pid, -100001 = unsupported. `tree`: the process group led by pid / pid + descendants.
+extern "C" fn proc_kill_pid(pid int, sig int, tree bool) -> int
 extern "C" fn proc_pipe_read(pipe *(), buf *mut u8, cap int) -> int
 extern "C" fn proc_pipe_write(pipe *(), buf *u8, len int) -> int
 extern "C" fn proc_pipe_close(pipe *()) -> ()

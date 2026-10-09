@@ -112,11 +112,53 @@ nova_int proc_child_pid(void* child);
 nova_int proc_child_wait(void* child, nova_int* out_code, nova_int* out_signal);
 /* 0 = exited (out valid), 1 = still running. Never parks. */
 nova_int proc_child_try_wait(void* child, nova_int* out_code, nova_int* out_signal);
-/* Drop the Nova-side ownership: kills a still-running child (SIGKILL /
- * TerminateProcess) and closes every pipe the caller never took. Idempotent. */
+/* Drop the Nova-side ownership (Child.cleanup): a still-running child gets
+ * Terminate, NOVA_PROC_RELEASE_GRACE_MS to leave, then Kill (the whole tree
+ * with Tree.Group); returns only after the process is gone, so a following
+ * kill_pid finds nothing. Closes every pipe the caller never took. Idempotent. */
+#define NOVA_PROC_RELEASE_GRACE_MS 500
 void     proc_child_release(void* child);
 
-/* read: n > 0 bytes, 0 = end of stream, < 0 = -errno. */
+/* --- Plan 294 F.2 (D492): process control ---------------------------------
+ *
+ * `stdio_modes` bit 6 (value 64) of proc_spawn selects Tree.Group: the child
+ * leads its own process group (POSIX: setsid via UV_PROCESS_DETACHED) or Job
+ * Object (Windows: assigned right after uv_spawn, KILL_ON_JOB_CLOSE), and every
+ * kill below — explicit, scope cancellation, release — hits the whole tree.
+ *
+ * Signals cross as plain numbers (Interrupt 2, Terminate 15, Kill 9, Hangup 1,
+ * Other(n) = n). Windows has no signals: 9 and 15 terminate (Terminate has no
+ * gentler form there — named in the plan, table 3.4); every other number is
+ * NOVA_PROC_UNSUPPORTED.
+ */
+#define NOVA_STDIO_TREE_GROUP 64
+#define NOVA_PROC_UNSUPPORTED ((nova_int)-100001)
+/* "no such process" for kill_pid: Windows and POSIX agree on this value (ESRCH). */
+#define NOVA_PROC_NO_SUCH ((nova_int)-3)
+
+/* Send `sig` to the child (its whole group with Tree.Group). 0 also when the
+ * child is already gone (idempotent); < 0 = -errno or NOVA_PROC_UNSUPPORTED.
+ * Does NOT mark the child as cancelled: a later proc_child_wait still reports
+ * the real exit status. */
+nova_int proc_child_kill(void* child, nova_int sig);
+/* Wait up to `ms` for the child to exit WITHOUT killing it. 0 = exited (outs
+ * valid), 1 = still running when the time ran out. Parks the fiber in short
+ * steps; a scope cancellation unwinds like any sleep. */
+nova_int proc_child_wait_ms(void* child, nova_int ms, nova_int* out_code, nova_int* out_signal);
+/* Signal a process this program has no Child for. tree: the whole process group
+ * led by `pid` (POSIX) / `pid` and its descendants (Windows, one snapshot).
+ * 0, NOVA_PROC_NO_SUCH, -1 (EPERM), -22, NOVA_PROC_UNSUPPORTED. */
+nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree);
+
+/* A read or write on a stream that is closed — by our own close, or by the scope
+ * cancellation that closed it (D492 rule 3.11) — or issued from an already cancelled
+ * scope. Deliberately NOT -EINTR: std.io's loop helpers (read_to_end, write_all, ...)
+ * retry Interrupted, and a dead stream answers every retry the same way, so -EINTR
+ * here spun those helpers for ever (found by plan 294 F.2, registry entry TBD).
+ * std/os/proc.nv maps it to ErrorKind.NotConnected (std/net's `Closed` precedent). */
+#define NOVA_PROC_CLOSED ((nova_int)-100002)
+
+/* read: n > 0 bytes, 0 = end of stream, < 0 = -errno or NOVA_PROC_CLOSED. */
 nova_int proc_pipe_read(void* pipe, uint8_t* buf, nova_int cap);
 /* write: whole buffer or < 0 = -errno (-32 = EPIPE: the child closed its end). */
 nova_int proc_pipe_write(void* pipe, const uint8_t* buf, nova_int len);

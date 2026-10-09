@@ -54252,7 +54252,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // arm body's `ExprKind::Ident` reads look it up).
                 self.line(&format!("{} {} = {};", ty, Self::mangle_field_name(name), scr));
             }
-            Pattern::Variant { path, kind, .. } => {
+            Pattern::Variant { path, kind, span } => {
                 let variant_name = path.last().cloned().unwrap_or_default();
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 // Detect if scr is already a pointer-cast form (e.g., "((NovaOpt_nova_int*)(outer.value))")
@@ -54281,6 +54281,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             let scr_base = self.debt_strip_nova_trim_start(&scr_ty);
                             if !scr_base.is_empty() && self.sum_schemas.contains_key(&scr_base) {
                                 scr_base
+                            } else if let Some(checker_sum) = self.pattern_variant_types.get(span) {
+                                // Registry 221.1 №1874: the checker's sum (№279 channel), as
+                                // `pattern_cond` already reads it for the TAG. Without it a nested
+                                // bare `Ok(Other(t))` got the right tag but the payload type of
+                                // another sum's same-name variant (first-wins below).
+                                checker_sum.clone()
                             } else {
                                 // Plan 62.A.bis Ф.2.3: registry-driven variant resolution.
                                 self.sum_schema_registry.find_variant_compat(&variant_name)

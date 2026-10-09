@@ -23605,6 +23605,36 @@ impl<'a> TypeCheckCtx<'a> {
         expected: &TypeRef,
         scope: &HashMap<String, TypeRef>,
     ) {
+        // Value-position descent (registry 221.1 №1874): a bare ctor in a branch of a
+        // `match` / `if` / block that is itself the value — `Ok(match s { _ => Other(s) })`
+        // — gets the same expected type as the compound. Without it the branch fell back
+        // to `find_variant_compat` first-wins and named another sum's same-arity variant
+        // (`Method.Other(str)` emitted as `std.os.Signal.Other(int)`).
+        match &expr.kind {
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    match &arm.body {
+                        MatchArmBody::Expr(e) => self.record_bare_variant_ctor(e, expected, scope),
+                        MatchArmBody::Block(b) => self.record_bare_variant_ctor_block(b, expected, scope),
+                    }
+                }
+                return;
+            }
+            ExprKind::If { then, else_, .. } | ExprKind::IfLet { then, else_, .. } => {
+                self.record_bare_variant_ctor_block(then, expected, scope);
+                match else_ {
+                    Some(ElseBranch::Block(b)) => self.record_bare_variant_ctor_block(b, expected, scope),
+                    Some(ElseBranch::If(e)) => self.record_bare_variant_ctor(e, expected, scope),
+                    None => {}
+                }
+                return;
+            }
+            ExprKind::Block(b) => {
+                self.record_bare_variant_ctor_block(b, expected, scope);
+                return;
+            }
+            _ => {}
+        }
         let ExprKind::Call { func, args, .. } = &expr.kind else { return };
         let ExprKind::Ident(name) = &func.kind else { return };
         if scope.contains_key(name) {
@@ -23660,6 +23690,13 @@ impl<'a> TypeCheckCtx<'a> {
             for (a, fty) in args.iter().zip(fields.iter()) {
                 self.materialize_literal_coercion(a.expr(), fty);
             }
+        }
+    }
+
+    /// The trailing value of a block in value position (see `record_bare_variant_ctor`).
+    fn record_bare_variant_ctor_block(&self, b: &Block, expected: &TypeRef, scope: &HashMap<String, TypeRef>) {
+        if let Some(t) = &b.trailing {
+            self.record_bare_variant_ctor(t, expected, scope);
         }
     }
 
