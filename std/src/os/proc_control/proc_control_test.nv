@@ -234,10 +234,8 @@ test "p294 S3b: without Tree.Group a kill reaches the child only - the grandchil
     while !got_g && reads < 40 {
         ro n = ctl_io(rx.read(buf), "read after leader death")
         if n == 0 { break }
-        mut i = 0
-        while i < n {
+        for i in 0..n {
             if buf[i] == 103 as u8 { got_g = true }
-            i += 1
         }
         reads += 1
     }
@@ -349,13 +347,11 @@ fn group_gone(pid int) -> bool {
 
 #cfg(!target_os = "windows")
 fn group_gone(pid int) -> bool {
-    mut tries = 0
-    while tries < 30 {
+    for _ in 0..30 {
         match kill_pid(pid, Signal.Other(0), true) {
             Ok(_) => { 100.to_millis().sleep() }
             Err(e) => return e.kind == ErrorKind.NotFound
         }
-        tries += 1
     }
     false
 }
