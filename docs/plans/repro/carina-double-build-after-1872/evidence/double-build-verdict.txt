@@ -1,0 +1,2 @@
+не собралась C (clang -c failed: 83 errors; /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.cc.log)
+02908e5ad (tree /d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source)

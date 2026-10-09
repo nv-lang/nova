@@ -1,0 +1,4 @@
++ 1791528933.176279 /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/scripts/tools/double-build.sh:147: cd /d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source
++ 1791528933.177069 /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/scripts/tools/double-build.sh:147: bash $'/c/Users/\320\225\320\262\320\263\320\265\320\275\320\270\320\271/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/scripts/tools/with-deadline.sh' 900 /d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/nova-cli/target/release/nova.exe build novac/src/main.nv -o $'/c/Users/\320\225\320\262\320\263\320\265\320\275\320\270\320\271/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/A.exe'
+[32mnote:[0m build cache hit — reusing generated C
+[32mbuilt:[0m C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/A.exe (8.13s)

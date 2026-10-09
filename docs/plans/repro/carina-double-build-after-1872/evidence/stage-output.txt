@@ -1,0 +1,27 @@
+double-build: tree = /d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source
+double-build: oracle = /d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/nova-cli/target/release/nova.exe
+double-build: work dir = /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build (A.exe, B.c, B/novac.exe, C.c, C/novac.exe and every step's log stay there)
+double-build: building A: oracle build novac/src/main.nv (deadline 900s)
+double-build:   built in 8s
+double-build: A = /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/A.exe (4387328 bytes)
+double-build: precondition -- A check on its own source: accepted 214/214
+double-build: capturing clang argv + PCH (novac-e1-smoke.sh --prepare)
+double-build: building B: NOVAC_SELF_PATH=novac/src /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/A.exe emit novac/src/main.nv
+double-build:   emitted /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/B.c (13249423 bytes) in 26s
+double-build:   B = /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/B/novac.exe (3876352 bytes)
+double-build: building C: NOVAC_SELF_PATH=novac/src /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/B/novac.exe emit novac/src/main.nv
+double-build:   emitted /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.c (13210676 bytes) in 15s
+double-build:   clang errors by class (quoted names folded to 'X'):
+double-build:        43 assigning to 'X' (aka 'X') from incompatible type 'X' (aka 'X')
+double-build:        31 initializing 'X' (aka 'X') with an expression of incompatible type 'X' (aka 'X')
+double-build:         9 use of undeclared identifier 'X'
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:130586:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_BuiltinType' (aka 'struct NovaValue_BuiltinType')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:131268:21: error: initializing 'NovaValue_TyRow' (aka 'struct NovaValue_TyRow') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:131276:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_TyRow' (aka 'struct NovaValue_TyRow')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:140941:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_FnDef' (aka 'struct NovaValue_FnDef')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141006:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CleanupRow' (aka 'struct NovaValue_CleanupRow')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141021:28: error: initializing 'NovaValue_ContractNote' (aka 'struct NovaValue_ContractNote') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141039:26: error: initializing 'NovaValue_CoercePair' (aka 'struct NovaValue_CoercePair') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+double-build:   C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141044:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_TypeDef' (aka 'struct NovaValue_TypeDef')
+double-build: VERDICT: не собралась C (clang -c failed: 83 errors; /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.cc.log)
+double-build: verdict recorded in /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build-verdict.txt

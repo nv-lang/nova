@@ -1,0 +1,9 @@
+git ['rev-parse', 'HEAD', 'origin/main']: rc=0
+02908e5ad35007d82a3b23eb27c319451563807d
+02908e5ad35007d82a3b23eb27c319451563807d
+git ['status', '--porcelain']: rc=0
+git ['submodule', 'status']: rc=0
+-ee59af3722e56de8404de6cd0c21c2493cc4d855 compiler-codegen/nova_rt/gc
+-4c00f978cbafe4eb76929dace4ba8f456e800fec compiler-codegen/nova_rt/libatomic_ops
+ 1cfa32ff59c076ffb6ed735bbc8c18361558661f compiler-codegen/nova_rt/libuv (v1.52.1)
+git ['diff', '--stat', '02908e5ad35007d82a3b23eb27c319451563807d']: rc=0

@@ -1,0 +1,5 @@
+{
+  "assigning to 'X' (aka 'X') from incompatible type 'X' (aka 'X')": 43,
+  "initializing 'X' (aka 'X') with an expression of incompatible type 'X' (aka 'X')": 31,
+  "use of undeclared identifier 'X'": 9
+}

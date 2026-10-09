@@ -1,0 +1,609 @@
+## B.body.c:130597
+130597: static Nova_Vec____NovaValue_BuiltinType* novac_fn_collections_vec_push__m_Vec_of_BuiltinType__BuiltinType__to_Vec_of_BuiltinType__BuiltinType(Nova_Vec____NovaValue_BuiltinType* _novac_self, NovaValue_BuiltinType v) {
+130598:     (void)(novac_fn_collections_vec_reserve__m_Vec_of_BuiltinType__nova_int__to_Vec_of_BuiltinType__BuiltinType(_novac_self, ((nova_int)1LL)));
+130599:     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+130600:     (_novac_self->len) = nova_int_checked_add((_novac_self->len), ((nova_int)1LL));
+130601:     return _novac_self;
+130602: }
+## B.body.c:25856
+25856: struct Nova_Vec____NovaValue_BuiltinType {
+25857:     NovaValue_BuiltinType* data;
+25858:     nova_int len;
+25859:     nova_int cap;
+25860: };
+25861:
+## B.body.c:27214
+27214: struct Nova_Vec____NovaValue_BuiltinType {
+27215:     NovaValue_BuiltinType* data;
+27216:     nova_int len;
+27217:     nova_int cap;
+27218: };
+27219:
+## C.body.c:130584
+130584: static Nova_Vec____* novac_fn_collections_vec_push__m_Vec_of_BuiltinType__BuiltinType__to_Vec_of_BuiltinType__BuiltinType(Nova_Vec____* _novac_self, NovaValue_BuiltinType v) {
+130585:     (void)(novac_fn_collections_vec_reserve__m_Vec_of_BuiltinType__nova_int__to_Vec_of_BuiltinType__BuiltinType(_novac_self, ((nova_int)1LL)));
+130586:     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+130587:     (_novac_self->len) = nova_int_checked_add((_novac_self->len), ((nova_int)1LL));
+130588:     return _novac_self;
+130589: }
+## C.body.c:24649
+24649: struct Nova_Vec____ {
+24650:     Nova_novac_lex_Token** data;
+24651:     nova_int len;
+24652:     nova_int cap;
+24653: };
+24654:
+## C.body.c:25856
+25856: struct Nova_Vec____ {
+25857:     NovaValue_BuiltinType* data;
+25858:     nova_int len;
+25859:     nova_int cap;
+25860: };
+25861:
+## C.body.c:25979
+25979: struct Nova_Vec____ {
+25980:     NovaValue_TyRow* data;
+25981:     nova_int len;
+25982:     nova_int cap;
+25983: };
+25984:
+## C.body.c:27078
+27078: struct Nova_Vec____ {
+27079:     NovaValue_ArgSpec* data;
+27080:     nova_int len;
+27081:     nova_int cap;
+27082: };
+27083:
+## C.body.c:27088
+27088: struct Nova_Vec____ {
+27089:     NovaValue_ParamDef* data;
+27090:     nova_int len;
+27091:     nova_int cap;
+27092: };
+27093:
+## C.body.c:27098
+27098: struct Nova_Vec____ {
+27099:     NovaValue_SlotBind* data;
+27100:     nova_int len;
+27101:     nova_int cap;
+27102: };
+27103:
+## C.body.c:27108
+27108: struct Nova_Vec____ {
+27109:     NovaValue_FnDef* data;
+27110:     nova_int len;
+27111:     nova_int cap;
+27112: };
+27113:
+## C.body.c:27118
+27118: struct Nova_Vec____ {
+27119:     NovaValue_VariantDef* data;
+27120:     nova_int len;
+27121:     nova_int cap;
+27122: };
+27123:
+## C.body.c:27128
+27128: struct Nova_Vec____ {
+27129:     NovaValue_TypeDef* data;
+27130:     nova_int len;
+27131:     nova_int cap;
+27132: };
+27133:
+## C.body.c:27148
+27148: struct Nova_Vec____ {
+27149:     NovaValue_ContractNote* data;
+27150:     nova_int len;
+27151:     nova_int cap;
+27152: };
+27153:
+## C.body.c:27158
+27158: struct Nova_Vec____ {
+27159:     NovaValue_CaptureRow* data;
+27160:     nova_int len;
+27161:     nova_int cap;
+27162: };
+27163:
+## C.body.c:27168
+27168: struct Nova_Vec____ {
+27169:     NovaValue_CleanupRow* data;
+27170:     nova_int len;
+27171:     nova_int cap;
+27172: };
+27173:
+## C.body.c:27178
+27178: struct Nova_Vec____ {
+27179:     NovaValue_CalleeRef* data;
+27180:     nova_int len;
+27181:     nova_int cap;
+27182: };
+27183:
+## C.body.c:27188
+27188: struct Nova_Vec____ {
+27189:     NovaValue_CoercePair* data;
+27190:     nova_int len;
+27191:     nova_int cap;
+27192: };
+27193:
+## C.body.c:27198
+27198: struct Nova_Vec____ {
+27199:     NovaValue_BuiltinType* data;
+27200:     nova_int len;
+27201:     nova_int cap;
+27202: };
+27203:
+## C.body.c:27208
+27208: struct Nova_Vec____ {
+27209:     NovaValue_ConstDef* data;
+27210:     nova_int len;
+27211:     nova_int cap;
+27212: };
+27213:
+## C.body.c:27218
+27218: struct Nova_Vec____ {
+27219:     NovaValue_Def* data;
+27220:     nova_int len;
+27221:     nova_int cap;
+27222: };
+27223:
+## C.body.c:27228
+27228: struct Nova_Vec____ {
+27229:     NovaValue_EffectDef* data;
+27230:     nova_int len;
+27231:     nova_int cap;
+27232: };
+27233:
+## C.body.c:27238
+27238: struct Nova_Vec____ {
+27239:     NovaValue_EffectOpSig* data;
+27240:     nova_int len;
+27241:     nova_int cap;
+27242: };
+27243:
+## C.body.c:27248
+27248: struct Nova_Vec____ {
+27249:     Nova_novac_lex_Token** data;
+27250:     nova_int len;
+27251:     nova_int cap;
+27252: };
+27253:
+## C.body.c:27258
+27258: struct Nova_Vec____ {
+27259:     NovaValue_ProtoDef* data;
+27260:     nova_int len;
+27261:     nova_int cap;
+27262: };
+27263:
+## C.body.c:27268
+27268: struct Nova_Vec____ {
+27269:     NovaValue_ProtoSig* data;
+27270:     nova_int len;
+27271:     nova_int cap;
+27272: };
+27273:
+## C.body.c:27278
+27278: struct Nova_Vec____ {
+27279:     NovaValue_FieldDef* data;
+27280:     nova_int len;
+27281:     nova_int cap;
+27282: };
+27283:
+## C.body.c:27337
+27337: struct Nova_Vec____ {
+27338:     Nova_novac_lex_Token** data;
+27339:     nova_int len;
+27340:     nova_int cap;
+27341: };
+27342:
+## C.body.c:27448
+27448: struct Nova_Vec____ {
+27449:     NovaValue_FnDef* data;
+27450:     nova_int len;
+27451:     nova_int cap;
+27452: };
+27453:
+## C.body.c:27458
+27458: struct Nova_Vec____ {
+27459:     NovaValue_FieldDef* data;
+27460:     nova_int len;
+27461:     nova_int cap;
+27462: };
+27463:
+## C.body.c:27468
+27468: struct Nova_Vec____ {
+27469:     NovaValue_ParamDef* data;
+27470:     nova_int len;
+27471:     nova_int cap;
+27472: };
+27473:
+## C.body.c:27478
+27478: struct Nova_Vec____ {
+27479:     NovaValue_ArgSpec* data;
+27480:     nova_int len;
+27481:     nova_int cap;
+27482: };
+27483:
+## C.body.c:27488
+27488: struct Nova_Vec____ {
+27489:     NovaValue_ProtoSig* data;
+27490:     nova_int len;
+27491:     nova_int cap;
+27492: };
+27493:
+## C.body.c:27879
+27879: struct Nova_Vec____ {
+27880:     NovaValue_FnDef* data;
+27881:     nova_int len;
+27882:     nova_int cap;
+27883: };
+27884:
+## C.body.c:27889
+27889: struct Nova_Vec____ {
+27890:     NovaValue_ParamDef* data;
+27891:     nova_int len;
+27892:     nova_int cap;
+27893: };
+27894:
+## C.body.c:27909
+27909: struct Nova_Vec____ {
+27910:     NovaValue_VariantDef* data;
+27911:     nova_int len;
+27912:     nova_int cap;
+27913: };
+27914:
+## C.body.c:27919
+27919: struct Nova_Vec____ {
+27920:     NovaValue_CaptureRow* data;
+27921:     nova_int len;
+27922:     nova_int cap;
+27923: };
+27924:
+## C.body.c:27929
+27929: struct Nova_Vec____ {
+27930:     NovaValue_SlotBind* data;
+27931:     nova_int len;
+27932:     nova_int cap;
+27933: };
+27934:
+## C.body.c:27939
+27939: struct Nova_Vec____ {
+27940:     NovaValue_ArgSpec* data;
+27941:     nova_int len;
+27942:     nova_int cap;
+27943: };
+27944:
+## C.body.c:27949
+27949: struct Nova_Vec____ {
+27950:     NovaValue_ConstDef* data;
+27951:     nova_int len;
+27952:     nova_int cap;
+27953: };
+27954:
+## C.body.c:27959
+27959: struct Nova_Vec____ {
+27960:     NovaValue_TypeDef* data;
+27961:     nova_int len;
+27962:     nova_int cap;
+27963: };
+27964:
+## C.body.c:27979
+27979: struct Nova_Vec____ {
+27980:     NovaValue_CleanupRow* data;
+27981:     nova_int len;
+27982:     nova_int cap;
+27983: };
+27984:
+## C.body.c:27989
+27989: struct Nova_Vec____ {
+27990:     NovaValue_FieldDef* data;
+27991:     nova_int len;
+27992:     nova_int cap;
+27993: };
+27994:
+## C.body.c:27999
+27999: struct Nova_Vec____ {
+28000:     NovaValue_DisjBinder* data;
+28001:     nova_int len;
+28002:     nova_int cap;
+28003: };
+28004:
+## C.body.c:28009
+28009: struct Nova_Vec____ {
+28010:     NovaValue_EffectOpSig* data;
+28011:     nova_int len;
+28012:     nova_int cap;
+28013: };
+28014:
+## C.body.c:28019
+28019: struct Nova_Vec____ {
+28020:     Nova_Diagnostic** data;
+28021:     nova_int len;
+28022:     nova_int cap;
+28023: };
+28024:
+## C.body.c:28029
+28029: struct Nova_Vec____ {
+28030:     NovaValue_Binding* data;
+28031:     nova_int len;
+28032:     nova_int cap;
+28033: };
+28034:
+## C.body.c:29169
+29169: struct Nova_Vec____ {
+29170:     NovaValue_LocalDecl* data;
+29171:     nova_int len;
+29172:     nova_int cap;
+29173: };
+29174:
+## C.body.c:29179
+29179: struct Nova_Vec____ {
+29180:     Nova_Block** data;
+29181:     nova_int len;
+29182:     nova_int cap;
+29183: };
+29184:
+## C.body.c:29199
+29199: struct Nova_Vec____ {
+29200:     NovaValue_SwitchArm* data;
+29201:     nova_int len;
+29202:     nova_int cap;
+29203: };
+29204:
+## C.body.c:29209
+29209: struct Nova_Vec____ {
+29210:     Nova_WithScope** data;
+29211:     nova_int len;
+29212:     nova_int cap;
+29213: };
+29214:
+## C.body.c:29219
+29219: struct Nova_Vec____ {
+29220:     NovaValue_CleanupCall* data;
+29221:     nova_int len;
+29222:     nova_int cap;
+29223: };
+29224:
+## C.body.c:29239
+29239: struct Nova_Vec____ {
+29240:     NovaValue_CleanupRow* data;
+29241:     nova_int len;
+29242:     nova_int cap;
+29243: };
+29244:
+## C.body.c:29249
+29249: struct Nova_Vec____ {
+29250:     NovaValue_HandlerSwap* data;
+29251:     nova_int len;
+29252:     nova_int cap;
+29253: };
+29254:
+## C.body.c:29259
+29259: struct Nova_Vec____ {
+29260:     NovaValue_IfCtx* data;
+29261:     nova_int len;
+29262:     nova_int cap;
+29263: };
+29264:
+## C.body.c:29269
+29269: struct Nova_Vec____ {
+29270:     NovaValue_VariantDef* data;
+29271:     nova_int len;
+29272:     nova_int cap;
+29273: };
+29274:
+## C.body.c:29302
+29302: struct Nova_Vec____ {
+29303:     NovaValue_ParamDef* data;
+29304:     nova_int len;
+29305:     nova_int cap;
+29306: };
+29307:
+## C.body.c:29312
+29312: struct Nova_Vec____ {
+29313:     NovaValue_FnDef* data;
+29314:     nova_int len;
+29315:     nova_int cap;
+29316: };
+29317:
+## C.body.c:29322
+29322: struct Nova_Vec____ {
+29323:     NovaValue_Instance* data;
+29324:     nova_int len;
+29325:     nova_int cap;
+29326: };
+29327:
+## C.body.c:29332
+29332: struct Nova_Vec____ {
+29333:     NovaValue_CleanupRow* data;
+29334:     nova_int len;
+29335:     nova_int cap;
+29336: };
+29337:
+## C.body.c:29352
+29352: struct Nova_Vec____ {
+29353:     NovaValue_CalleeRef* data;
+29354:     nova_int len;
+29355:     nova_int cap;
+29356: };
+29357:
+## C.body.c:29362
+29362: struct Nova_Vec____ {
+29363:     NovaValue_SlotBind* data;
+29364:     nova_int len;
+29365:     nova_int cap;
+29366: };
+29367:
+## C.body.c:126099
+126099: struct Nova_Vec____ {
+126100:     NovaValue_VariantDef* data;
+126101:     nova_int len;
+126102:     nova_int cap;
+126103: };
+126104:
+## C.body.c:126109
+126109: struct Nova_Vec____ {
+126110:     NovaValue_SlotBind* data;
+126111:     nova_int len;
+126112:     nova_int cap;
+126113: };
+126114:
+## C.body.c:126129
+126129: struct Nova_Vec____ {
+126130:     NovaValue_FnDef* data;
+126131:     nova_int len;
+126132:     nova_int cap;
+126133: };
+126134:
+## C.body.c:126139
+126139: struct Nova_Vec____ {
+126140:     Nova_Instantiation** data;
+126141:     nova_int len;
+126142:     nova_int cap;
+126143: };
+126144:
+## C.body.c:126149
+126149: struct Nova_Vec____ {
+126150:     Nova_UnitC** data;
+126151:     nova_int len;
+126152:     nova_int cap;
+126153: };
+126154:
+## C.body.c:126159
+126159: struct Nova_Vec____ {
+126160:     NovaValue_ParamDef* data;
+126161:     nova_int len;
+126162:     nova_int cap;
+126163: };
+126164:
+## C.body.c:126169
+126169: struct Nova_Vec____ {
+126170:     NovaValue_TypeDef* data;
+126171:     nova_int len;
+126172:     nova_int cap;
+126173: };
+126174:
+## C.body.c:126179
+126179: struct Nova_Vec____ {
+126180:     NovaValue_FieldDef* data;
+126181:     nova_int len;
+126182:     nova_int cap;
+126183: };
+126184:
+## C.body.c:126189
+126189: struct Nova_Vec____ {
+126190:     Nova_Block** data;
+126191:     nova_int len;
+126192:     nova_int cap;
+126193: };
+126194:
+## C.body.c:126209
+126209: struct Nova_Vec____ {
+126210:     NovaValue_LocalDecl* data;
+126211:     nova_int len;
+126212:     nova_int cap;
+126213: };
+126214:
+## C.body.c:126219
+126219: struct Nova_Vec____ {
+126220:     NovaValue_SwitchArm* data;
+126221:     nova_int len;
+126222:     nova_int cap;
+126223: };
+126224:
+## C.body.c:126229
+126229: struct Nova_Vec____ {
+126230:     NovaValue_EffectOpSig* data;
+126231:     nova_int len;
+126232:     nova_int cap;
+126233: };
+126234:
+## C.body.c:126239
+126239: struct Nova_Vec____ {
+126240:     NovaValue_CaptureRow* data;
+126241:     nova_int len;
+126242:     nova_int cap;
+126243: };
+126244:
+## C.body.c:126249
+126249: struct Nova_Vec____ {
+126250:     NovaValue_ConstDef* data;
+126251:     nova_int len;
+126252:     nova_int cap;
+126253: };
+126254:
+## C.body.c:126319
+126319: struct Nova_Vec____ {
+126320:     NovaValue_UnitFile* data;
+126321:     nova_int len;
+126322:     nova_int cap;
+126323: };
+126324:
+## C.body.c:126329
+126329: struct Nova_Vec____ {
+126330:     Nova_Diagnostic** data;
+126331:     nova_int len;
+126332:     nova_int cap;
+126333: };
+126334:
+## C.body.c:126339
+126339: struct Nova_Vec____ {
+126340:     Nova_Instantiation** data;
+126341:     nova_int len;
+126342:     nova_int cap;
+126343: };
+126344:
+## C.body.c:126349
+126349: struct Nova_Vec____ {
+126350:     NovaValue_Instance* data;
+126351:     nova_int len;
+126352:     nova_int cap;
+126353: };
+126354:
+## C.body.c:126359
+126359: struct Nova_Vec____ {
+126360:     NovaValue_FnDef* data;
+126361:     nova_int len;
+126362:     nova_int cap;
+126363: };
+126364:
+## C.body.c:126369
+126369: struct Nova_Vec____ {
+126370:     NovaValue_Unit* data;
+126371:     nova_int len;
+126372:     nova_int cap;
+126373: };
+126374:
+## C.body.c:126379
+126379: struct Nova_Vec____ {
+126380:     Nova_Checked** data;
+126381:     nova_int len;
+126382:     nova_int cap;
+126383: };
+126384:
+## C.body.c:126389
+126389: struct Nova_Vec____ {
+126390:     Nova_UnitC** data;
+126391:     nova_int len;
+126392:     nova_int cap;
+126393: };
+126394:
+## C.body.c:126444
+126444: struct Nova_Vec____ {
+126445:     Nova_Diagnostic** data;
+126446:     nova_int len;
+126447:     nova_int cap;
+126448: };
+126449:
+## C.body.c:126454
+126454: struct Nova_Vec____ {
+126455:     NovaValue_Unit* data;
+126456:     nova_int len;
+126457:     nova_int cap;
+126458: };
+126459:
+## C.body.c:126464
+126464: struct Nova_Vec____ {
+126465:     Nova_DirEntry** data;
+126466:     nova_int len;
+126467:     nova_int cap;
+126468: };
+126469:

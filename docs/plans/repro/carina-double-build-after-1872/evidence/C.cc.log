@@ -1,0 +1,251 @@
+++ 1791529012.994180 /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/scripts/tools/double-build.sh:285: 'C:/Program Files/LLVM/bin/clang.exe' --target=x86_64-pc-windows-msvc -O0 -Wno-everything -DNOVA_GC_BOEHM -DGC_THREADS -DNOVA_MAX_EFFECT_STORAGES=11 -I D:/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/compiler-codegen -DNOVA_USE_LIBUV=1 -I D:/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/compiler-codegen/nova_rt/libuv/include -I D:/Sources/nv-lang/nova-opencode/target/gc-cache/include -ferror-limit=0 -include-pch $'/c/Users/\320\225\320\262\320\263\320\265\320\275\320\270\320\271/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/cache/prelude-1791528608-e11.pch' -c $'/c/Users/\320\225\320\262\320\263\320\265\320\275\320\270\320\271/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c' -o $'/c/Users/\320\225\320\262\320\263\320\265\320\275\320\270\320\271/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.o'
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:130586:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_BuiltinType' (aka 'struct NovaValue_BuiltinType')
+ 130586 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:131268:21: error: initializing 'NovaValue_TyRow' (aka 'struct NovaValue_TyRow') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 131268 |     NovaValue_TyRow _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                     ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:131276:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_TyRow' (aka 'struct NovaValue_TyRow')
+ 131276 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:140941:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_FnDef' (aka 'struct NovaValue_FnDef')
+ 140941 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141006:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CleanupRow' (aka 'struct NovaValue_CleanupRow')
+ 141006 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141021:28: error: initializing 'NovaValue_ContractNote' (aka 'struct NovaValue_ContractNote') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 141021 |     NovaValue_ContractNote _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                            ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141039:26: error: initializing 'NovaValue_CoercePair' (aka 'struct NovaValue_CoercePair') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 141039 |     NovaValue_CoercePair _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                          ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141044:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_TypeDef' (aka 'struct NovaValue_TypeDef')
+ 141044 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141067:27: error: initializing 'NovaValue_BuiltinType' (aka 'struct NovaValue_BuiltinType') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 141067 |     NovaValue_BuiltinType _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                           ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141137:19: error: initializing 'NovaValue_Def' (aka 'struct NovaValue_Def') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 141137 |     NovaValue_Def _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                   ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141172:25: error: initializing 'NovaValue_EffectDef' (aka 'struct NovaValue_EffectDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 141172 |     NovaValue_EffectDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                         ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141177:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_EffectOpSig' (aka 'struct NovaValue_EffectOpSig')
+ 141177 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141182:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ParamDef' (aka 'struct NovaValue_ParamDef')
+ 141182 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141217:24: error: initializing 'NovaValue_ProtoDef' (aka 'struct NovaValue_ProtoDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 141217 |     NovaValue_ProtoDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141222:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ProtoSig' (aka 'struct NovaValue_ProtoSig')
+ 141222 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141262:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CalleeRef' (aka 'struct NovaValue_CalleeRef')
+ 141262 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141268:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CleanupRow' (aka 'struct NovaValue_CleanupRow')
+ 141268 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141274:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CaptureRow' (aka 'struct NovaValue_CaptureRow')
+ 141274 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141280:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CaptureRow' (aka 'struct NovaValue_CaptureRow')
+ 141280 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141303:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ContractNote' (aka 'struct NovaValue_ContractNote')
+ 141303 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141345:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_FnDef' (aka 'struct NovaValue_FnDef')
+ 141345 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141351:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_TypeDef' (aka 'struct NovaValue_TypeDef')
+ 141351 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141360:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_EffectOpSig' (aka 'struct NovaValue_EffectOpSig')
+ 141360 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141366:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ConstDef' (aka 'struct NovaValue_ConstDef')
+ 141366 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141375:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_Def' (aka 'struct NovaValue_Def')
+ 141375 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141390:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_EffectDef' (aka 'struct NovaValue_EffectDef')
+ 141390 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141410:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ProtoSig' (aka 'struct NovaValue_ProtoSig')
+ 141410 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141416:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_FieldDef' (aka 'struct NovaValue_FieldDef')
+ 141416 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141422:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CoercePair' (aka 'struct NovaValue_CoercePair')
+ 141422 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141431:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_VariantDef' (aka 'struct NovaValue_VariantDef')
+ 141431 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:141440:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ProtoDef' (aka 'struct NovaValue_ProtoDef')
+ 141440 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:144932:24: error: initializing 'NovaValue_ProtoSig' (aka 'struct NovaValue_ProtoSig') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 144932 |     NovaValue_ProtoSig _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161325:23: error: initializing 'NovaValue_ArgSpec' (aka 'struct NovaValue_ArgSpec') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 161325 |     NovaValue_ArgSpec _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                       ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161393:26: error: initializing 'NovaValue_DisjBinder' (aka 'struct NovaValue_DisjBinder') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 161393 |     NovaValue_DisjBinder _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                          ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161413:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ArgSpec' (aka 'struct NovaValue_ArgSpec')
+ 161413 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161419:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ArgSpec' (aka 'struct NovaValue_ArgSpec')
+ 161419 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161432:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_SlotBind' (aka 'struct NovaValue_SlotBind')
+ 161432 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161452:23: error: initializing 'NovaValue_Binding' (aka 'struct NovaValue_Binding') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 161452 |     NovaValue_Binding _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                       ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161630:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_SlotBind' (aka 'struct NovaValue_SlotBind')
+ 161630 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161653:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_Binding' (aka 'struct NovaValue_Binding')
+ 161653 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161715:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ArgSpec' (aka 'struct NovaValue_ArgSpec')
+ 161715 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161763:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_DisjBinder' (aka 'struct NovaValue_DisjBinder')
+ 161763 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:161794:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_SlotBind' (aka 'struct NovaValue_SlotBind')
+ 161794 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165005:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_LocalDecl' (aka 'struct NovaValue_LocalDecl')
+ 165005 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165030:27: error: initializing 'NovaValue_CleanupCall' (aka 'struct NovaValue_CleanupCall') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 165030 |     NovaValue_CleanupCall _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                           ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165035:46: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_SwitchArm' (aka 'struct NovaValue_SwitchArm')
+ 165035 |     (void)(((*(((_novac_self->data)) + (i))) = (val), NOVA_UNIT));
+        |                                              ^ ~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165043:27: error: initializing 'NovaValue_HandlerSwap' (aka 'struct NovaValue_HandlerSwap') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 165043 |     NovaValue_HandlerSwap _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                           ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165086:21: error: initializing 'NovaValue_IfCtx' (aka 'struct NovaValue_IfCtx') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 165086 |     NovaValue_IfCtx _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                     ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165091:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_LocalDecl' (aka 'struct NovaValue_LocalDecl')
+ 165091 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165112:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_IfCtx' (aka 'struct NovaValue_IfCtx')
+ 165112 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165118:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_HandlerSwap' (aka 'struct NovaValue_HandlerSwap')
+ 165118 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165130:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_SwitchArm' (aka 'struct NovaValue_SwitchArm')
+ 165130 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165147:25: error: initializing 'NovaValue_SwitchArm' (aka 'struct NovaValue_SwitchArm') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 165147 |     NovaValue_SwitchArm _novac_l1 = (*(((_novac_self->data)) + ((_novac_self->len))));
+        |                         ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165152:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_CleanupCall' (aka 'struct NovaValue_CleanupCall')
+ 165152 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165806:26: error: initializing 'NovaValue_CleanupRow' (aka 'struct NovaValue_CleanupRow') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 165806 |     NovaValue_CleanupRow _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                          ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165814:25: error: initializing 'NovaValue_CalleeRef' (aka 'struct NovaValue_CalleeRef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 165814 |     NovaValue_CalleeRef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                         ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165830:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_ParamDef' (aka 'struct NovaValue_ParamDef')
+ 165830 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:165836:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_Instance' (aka 'struct NovaValue_Instance')
+ 165836 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172386:26: error: initializing 'NovaValue_VariantDef' (aka 'struct NovaValue_VariantDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172386 |     NovaValue_VariantDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                          ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172391:24: error: initializing 'NovaValue_SlotBind' (aka 'struct NovaValue_SlotBind') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172391 |     NovaValue_SlotBind _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172419:24: error: initializing 'NovaValue_ParamDef' (aka 'struct NovaValue_ParamDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172419 |     NovaValue_ParamDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172424:23: error: initializing 'NovaValue_TypeDef' (aka 'struct NovaValue_TypeDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172424 |     NovaValue_TypeDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                       ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172429:24: error: initializing 'NovaValue_FieldDef' (aka 'struct NovaValue_FieldDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172429 |     NovaValue_FieldDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172447:25: error: initializing 'NovaValue_LocalDecl' (aka 'struct NovaValue_LocalDecl') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172447 |     NovaValue_LocalDecl _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                         ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172455:25: error: initializing 'NovaValue_SwitchArm' (aka 'struct NovaValue_SwitchArm') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172455 |     NovaValue_SwitchArm _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                         ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172460:27: error: initializing 'NovaValue_EffectOpSig' (aka 'struct NovaValue_EffectOpSig') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172460 |     NovaValue_EffectOpSig _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                           ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172468:26: error: initializing 'NovaValue_CaptureRow' (aka 'struct NovaValue_CaptureRow') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172468 |     NovaValue_CaptureRow _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                          ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:172494:24: error: initializing 'NovaValue_ConstDef' (aka 'struct NovaValue_ConstDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 172494 |     NovaValue_ConstDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:173521:24: error: initializing 'NovaValue_UnitFile' (aka 'struct NovaValue_UnitFile') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 173521 |     NovaValue_UnitFile _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:173571:24: error: initializing 'NovaValue_Instance' (aka 'struct NovaValue_Instance') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 173571 |     NovaValue_Instance _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                        ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:173576:21: error: initializing 'NovaValue_FnDef' (aka 'struct NovaValue_FnDef') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 173576 |     NovaValue_FnDef _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                     ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:173581:20: error: initializing 'NovaValue_Unit' (aka 'struct NovaValue_Unit') with an expression of incompatible type 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *')
+ 173581 |     NovaValue_Unit _novac_l1 = (*(((_novac_self->data)) + (i)));
+        |                    ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:173640:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_UnitFile' (aka 'struct NovaValue_UnitFile')
+ 173640 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174184:5: error: use of undeclared identifier 'NovaRes_Nova_Vec_____p_NovaValue_IoError'
+ 174184 |     NovaRes_Nova_Vec_____p_NovaValue_IoError* _novac_l1 = nova_fn_3std2fs8read_dir(Nova_str_method_to_path(full));
+        |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174184:47: error: use of undeclared identifier '_novac_l1'
+ 174184 |     NovaRes_Nova_Vec_____p_NovaValue_IoError* _novac_l1 = nova_fn_3std2fs8read_dir(Nova_str_method_to_path(full));
+        |                                               ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174186:33: error: use of undeclared identifier '_novac_l1'
+ 174186 |     if (!_novac_matched_t0 && ((_novac_l1->tag == NOVA_TAG_Result_Ok))) {
+        |                                 ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174192:33: error: use of undeclared identifier '_novac_l1'
+ 174192 |     if (!_novac_matched_t0 && ((_novac_l1->tag == NOVA_TAG_Result_Err))) {
+        |                                 ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174296:5: error: use of undeclared identifier 'NovaRes_Nova_Vec_____p_NovaValue_IoError'
+ 174296 |     NovaRes_Nova_Vec_____p_NovaValue_IoError* _novac_l2 = nova_fn_3std2fs8read_dir(Nova_str_method_to_path(dir));
+        |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174296:47: error: use of undeclared identifier '_novac_l2'
+ 174296 |     NovaRes_Nova_Vec_____p_NovaValue_IoError* _novac_l2 = nova_fn_3std2fs8read_dir(Nova_str_method_to_path(dir));
+        |                                               ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174298:33: error: use of undeclared identifier '_novac_l2'
+ 174298 |     if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_Result_Ok))) {
+        |                                 ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174299:29: error: use of undeclared identifier '_novac_l2'
+ 174299 |     Nova_Vec____* entries = _novac_l2->payload.Ok._0;
+        |                             ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174359:33: error: use of undeclared identifier '_novac_l2'
+ 174359 |     if (!_novac_matched_t0 && ((_novac_l2->tag == NOVA_TAG_Result_Err))) {
+        |                                 ^~~~~~~~~
+C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/C.body.c:174752:63: error: assigning to 'Nova_novac_lex_Token *' (aka 'struct Nova_novac_lex_Token *') from incompatible type 'NovaValue_Unit' (aka 'struct NovaValue_Unit')
+ 174752 |     (void)(((*(((_novac_self->data)) + ((_novac_self->len)))) = (v), NOVA_UNIT));
+        |                                                               ^ ~~~
+83 errors generated.

@@ -1,0 +1,15 @@
+02908e5ad35007d82a3b23eb27c319451563807d
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-pc-windows-msvc
+release: 1.95.0
+LLVM version: 22.1.2
+cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+TMPDIR=/c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp
+TEMP=C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mv0lbkydosyhrllojp
+TMP=C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mv0lbkydosyhrllojp
+CARGO_TARGET_DIR=C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mv0lbkydosyhrllojp\cargo-target
+15c20ace42515a7619d1449fe8b3086cc2af0021b21967042c1578990dfee102 *scripts/tools/double-build.sh
+15c20ace42515a7619d1449fe8b3086cc2af0021b21967042c1578990dfee102 */c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/scripts/tools/double-build.sh

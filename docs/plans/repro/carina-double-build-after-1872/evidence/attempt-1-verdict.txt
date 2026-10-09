@@ -1,0 +1,2 @@
+не собралась A: the oracle did not build novac/src/main.nv (log /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mv0lbkydosyhrllojp/target/double-build/A.build.log)
+02908e5ad (tree /d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source)

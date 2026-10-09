@@ -1,0 +1,13 @@
+"--target=x86_64-pc-windows-msvc"
+-O0
+-Wno-everything
+-DNOVA_GC_BOEHM
+-DGC_THREADS
+"-DNOVA_MAX_EFFECT_STORAGES=11"
+-I
+D:/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/compiler-codegen
+"-DNOVA_USE_LIBUV=1"
+-I
+D:/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/compiler-codegen/nova_rt/libuv/include
+-I
+D:/Sources/nv-lang/nova-opencode/target/gc-cache/include

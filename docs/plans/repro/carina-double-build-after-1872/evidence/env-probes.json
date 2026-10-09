@@ -1,0 +1,230 @@
+[
+  {
+    "case": "inherited",
+    "repeat": 0,
+    "variables": {
+      "TMPDIR": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TEMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp"
+    },
+    "cwd": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+    "directory_checks": [
+      {
+        "variable": "TMPDIR",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TEMP",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TMP",
+        "exists": true,
+        "write": "ok"
+      }
+    ],
+    "argv": [
+      "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\minimal.c",
+      "-o",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\inherited-0.exe"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": "",
+    "exe_sha256": "8dfcc8519d58a318bb287571763439fffaab26a430a1512e5cf35b57ab5e424d",
+    "exe_rc": 0
+  },
+  {
+    "case": "inherited",
+    "repeat": 1,
+    "variables": {
+      "TMPDIR": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TEMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp"
+    },
+    "cwd": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+    "directory_checks": [
+      {
+        "variable": "TMPDIR",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TEMP",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TMP",
+        "exists": true,
+        "write": "ok"
+      }
+    ],
+    "argv": [
+      "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\minimal.c",
+      "-o",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\inherited-1.exe"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": "",
+    "exe_sha256": "8dfcc8519d58a318bb287571763439fffaab26a430a1512e5cf35b57ab5e424d",
+    "exe_rc": 0
+  },
+  {
+    "case": "windows",
+    "repeat": 0,
+    "variables": {
+      "TMPDIR": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TEMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp"
+    },
+    "cwd": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+    "directory_checks": [
+      {
+        "variable": "TMPDIR",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TEMP",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TMP",
+        "exists": true,
+        "write": "ok"
+      }
+    ],
+    "argv": [
+      "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\minimal.c",
+      "-o",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\windows-0.exe"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": "",
+    "exe_sha256": "8dfcc8519d58a318bb287571763439fffaab26a430a1512e5cf35b57ab5e424d",
+    "exe_rc": 0
+  },
+  {
+    "case": "windows",
+    "repeat": 1,
+    "variables": {
+      "TMPDIR": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TEMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+      "TMP": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp"
+    },
+    "cwd": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+    "directory_checks": [
+      {
+        "variable": "TMPDIR",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TEMP",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TMP",
+        "exists": true,
+        "write": "ok"
+      }
+    ],
+    "argv": [
+      "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\minimal.c",
+      "-o",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\windows-1.exe"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": "",
+    "exe_sha256": "8dfcc8519d58a318bb287571763439fffaab26a430a1512e5cf35b57ab5e424d",
+    "exe_rc": 0
+  },
+  {
+    "case": "short",
+    "repeat": 0,
+    "variables": {
+      "TMPDIR": "C:\\Users\\B7E3~1\\AppData\\Local\\Temp\\opencode\\SES_MV~4",
+      "TEMP": "C:\\Users\\B7E3~1\\AppData\\Local\\Temp\\opencode\\SES_MV~4",
+      "TMP": "C:\\Users\\B7E3~1\\AppData\\Local\\Temp\\opencode\\SES_MV~4"
+    },
+    "cwd": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+    "directory_checks": [
+      {
+        "variable": "TMPDIR",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TEMP",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TMP",
+        "exists": true,
+        "write": "ok"
+      }
+    ],
+    "argv": [
+      "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\minimal.c",
+      "-o",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\short-0.exe"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": "",
+    "exe_sha256": "604f16df6eed88709c223ccd7feb1ef27943b2bbb803f17d0dcfdd36a71eced1",
+    "exe_rc": 0
+  },
+  {
+    "case": "short",
+    "repeat": 1,
+    "variables": {
+      "TMPDIR": "C:\\Users\\B7E3~1\\AppData\\Local\\Temp\\opencode\\SES_MV~4",
+      "TEMP": "C:\\Users\\B7E3~1\\AppData\\Local\\Temp\\opencode\\SES_MV~4",
+      "TMP": "C:\\Users\\B7E3~1\\AppData\\Local\\Temp\\opencode\\SES_MV~4"
+    },
+    "cwd": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp",
+    "directory_checks": [
+      {
+        "variable": "TMPDIR",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TEMP",
+        "exists": true,
+        "write": "ok"
+      },
+      {
+        "variable": "TMP",
+        "exists": true,
+        "write": "ok"
+      }
+    ],
+    "argv": [
+      "C:\\Program Files\\LLVM\\bin\\clang.exe",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\minimal.c",
+      "-o",
+      "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mv0lbkydosyhrllojp\\env-probe-deadline\\short-1.exe"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": "",
+    "exe_sha256": "604f16df6eed88709c223ccd7feb1ef27943b2bbb803f17d0dcfdd36a71eced1",
+    "exe_rc": 0
+  }
+]

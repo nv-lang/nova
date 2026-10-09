@@ -1,0 +1,11 @@
+nova: libuv submodule empty at D:\Sources\nv-lang\worktrees\nova-opencode-54-bootstrap-source\compiler-codegen\nova_rt\libuv — running `git submodule update --init compiler-codegen/nova_rt/libuv` (offline, shared .git)
+sh: BASH_XTRACEFD: 9: invalid value for trace file descriptor
+Cloning into 'D:/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source/compiler-codegen/nova_rt/libuv'...
+Submodule path 'compiler-codegen/nova_rt/libuv': checked out '1cfa32ff59c076ffb6ed735bbc8c18361558661f'
+nova: libuv not built, building (one-time, ~30 sec)...
+nova: libuv.lib built (37 files)
+nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...
+nova: libnova_rt.lib built (14 files)
+nova: libnova_rt archive built (D:\Sources\nv-lang\worktrees\nova-opencode-54-bootstrap-source\target\rt-archive-cache\b9ddddff1d491c9c\libnova_rt.lib)
+[1m[31merror:[0m[0m compiler error:
+clang: error: unable to make temporary file: no such file or directory

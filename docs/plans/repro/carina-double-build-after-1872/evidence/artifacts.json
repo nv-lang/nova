@@ -1,0 +1,40 @@
+{
+  "A.exe": {
+    "bytes": 4387328,
+    "sha256": "37ce91ee0e2aa856f59d808c4c5a7b5175647904653bbe4d044e6192993a0127"
+  },
+  "B.c": {
+    "bytes": 13249423,
+    "sha256": "3572c5cae852ea0c68d819ad2d129e0fdb1da61ac4ee572bb52ff391d0e5650f"
+  },
+  "B.body.c": {
+    "bytes": 13068747,
+    "sha256": "c976c77b5c64ded2ed6b4e54d81b556cf858f7371e9a1c237d950b593419d129"
+  },
+  "B.o": {
+    "bytes": 4272320,
+    "sha256": "573647626d4ca95a7141151998c35f6d670d2c4cf15210ced60b755a774cd551"
+  },
+  "B\\novac.exe": {
+    "bytes": 3876352,
+    "sha256": "7f7135389bd8eb3acf6b45edeb0643c7c55542356dc6cacfd417d5e9ececd067"
+  },
+  "C.c": {
+    "bytes": 13210676,
+    "sha256": "5f93fe12da68c50a1877e2cecdffd73ad99fd0ec6d35bfa2cbed5fd57260dbcb"
+  },
+  "C.body.c": {
+    "bytes": 13030013,
+    "sha256": "5f97cff6ff73fad13e761ddb9802d1103244330db00b07c54ca8ec5b0d196090"
+  },
+  "C.o": {
+    "exists": false
+  },
+  "C\\novac.exe": {
+    "exists": false
+  },
+  "cache\\prelude-1791528608-e11.pch": {
+    "bytes": 18074724,
+    "sha256": "37bd1905928bd456c1b743514d1ca8f934586d4a3a5c37ead469e4cb1e806425"
+  }
+}

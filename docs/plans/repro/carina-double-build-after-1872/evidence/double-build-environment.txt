@@ -1,0 +1,19 @@
+02908e5ad35007d82a3b23eb27c319451563807d
+83cf50e498034ac041ec7e63618d3521bd3c92eff1f677d5147db8655f78f1a8 *nova-cli/target/release/nova.exe
+DOUBLE_BUILD_TREE=/d/Sources/nv-lang/worktrees/nova-opencode-54-bootstrap-source
+TMPDIR=C:/Users/B7E3~1/AppData/Local/Temp/opencode/SES_MV~4
+TEMP=C:\Users\B7E3~1\AppData\Local\Temp\opencode\SES_MV~4
+TMP=C:\Users\B7E3~1\AppData\Local\Temp\opencode\SES_MV~4
+DOUBLE_BUILD_A=unset
+GC_DONT_GC=unset
+DOUBLE_BUILD_SABOTAGE=unset
+environment: GC из главной копии (D:/Sources/nv-lang/nova-opencode/target/gc-cache) — в дереве своего нет (№1750)
+NOVA_GC_LIB_DIR=D:/Sources/nv-lang/nova-opencode/target/gc-cache
+NOVA_GC_INCLUDE_DIR=D:/Sources/nv-lang/nova-opencode/target/gc-cache/include
+NOVA_CLANG=
+ae979102310ecd9ee03f5c99a75b30681a784e9c49b0abeadae6360bdbfa7915 *D:/Sources/nv-lang/nova-opencode/target/gc-cache/gc.lib
+b010f80e6770b063e087d5b105a35ee180e08aeadcc7b4d150d24f950a9a82b2 *D:/Sources/nv-lang/nova-opencode/target/gc-cache/include/gc.h
+clang version 22.1.5 (https://github.com/llvm/llvm-project 5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c)
+Target: x86_64-pc-windows-msvc
+Thread model: posix
+InstalledDir: C:\Program Files\LLVM\bin
