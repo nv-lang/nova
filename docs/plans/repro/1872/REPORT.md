@@ -116,6 +116,18 @@ RAW_SORT_UNIQ_END
 novac-e1-smoke ok: /d/Sources/nv-lang/worktrees/nova-opencode-52-karina-samosborka-klass-no-member-named/docs/plans/repro/1872/self_field_ctx.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
 ```
 
+Дополнительно сам `cmd.sh` запущен из корня дерева:
+
+```sh
+sh docs/plans/repro/1872/cmd.sh
+echo CMD_ROOT_RC=$?
+```
+
+```text
+novac-e1-smoke ok: /d/Sources/nv-lang/worktrees/nova-opencode-52-karina-samosborka-klass-no-member-named/docs/plans/repro/1872/self_field_ctx.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул из кэша)
+CMD_ROOT_RC=0
+```
+
 ## ТОЧКА, ФИКС и поиск класса
 
 Три пути одной асимметрии объявление/использование проведены через существующий
@@ -192,7 +204,13 @@ GREEN_RC=0
 два запуска `nova-cli/target/release/nova.exe check std/src`.
 Это **не исторические логи** до внесения фикса. Для ДО использованы тождественные
 входы проверки: `git diff 3f4b68a8b HEAD -- compiler-codegen nova-cli std`
-пуст; Rust-оракул не читает исправленные `.nv` исходники эмиттера novac.
+пуст; дополнительная проверка включает конфиг команды:
+`git diff 3f4b68a8b HEAD -- compiler-codegen nova-cli std nova.toml nova.lock.toml`
+также пуста. Rust-оракул не читает исправленные `.nv` исходники эмиттера novac.
+Оба запуска выполнены подряд в одной оболочке, из одного cwd и с тем же
+окружением, без пересборки или замены Rust-бинаря между ними. SHA-256
+`nova-cli/target/release/nova.exe`:
+`ecd7fbff4caa6b1ae3b0acb76d7496eb17c416a1ff4759eab992434141d0fe39`.
 Физический откат этих трёх файлов для `nova check std/src` не требуется.
 Обе итоговые строки (сняты только управляющие ANSI-коды цвета):
 
