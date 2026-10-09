@@ -95,6 +95,21 @@ jobs:
           if ! grep -Eq '^PASS: [1-9]' smoke.out; then echo "FAIL: no test passed - filter matched nothing"; exit 1; fi
           exit $rc
 
+      # План 294 Ф.4 (задача #50): PTY на ConPTY — своя единица `std/src/os/pty`
+      # (pty_test.nv, сценарии PTY-1..PTY-5 и отказы). Отдельным шагом и БЕЗ
+      # `continue-on-error`: единица не зависит от №1850 (свой модуль, только
+      # публичная поверхность `std.os`), и красный PTY должен краснить задание
+      # (под MSVC задание и так информационное, см. `continue-on-error` выше).
+      # Пустой зелёный — не вердикт: шаг краснеет, если не прошёл ни один тест.
+      - name: nova test std/src/os/pty (${{ matrix.toolchain }})
+        shell: bash
+        run: |
+          echo "running: nova test std --filter std/src/os/pty --toolchain ${{ matrix.toolchain }}"
+          ./nova-cli/target/release/nova test std --filter std/src/os/pty --toolchain ${{ matrix.toolchain }} --timeout 120 2>&1 | tee pty.out
+          rc=${PIPESTATUS[0]}
+          if ! grep -Eq '^PASS: [1-9]' pty.out; then echo "FAIL: no test passed - filter matched nothing"; exit 1; fi
+          exit $rc
+
       # Реестр 221.1 №1857: Windows-половина release-яруса (Linux — nova-gate.yml,
       # шаг «Release-mode guard»). Обработчик `with` в TLS-слоте, которого Boehm
       # на Windows не сканирует ни у одного потока; красная сторона p1857_*-фикстур

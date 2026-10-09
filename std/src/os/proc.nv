@@ -95,6 +95,19 @@ export type Proc effect {
     fn pipe_read(pipe ChildPipe, mut buf []u8) -> Result[int, IoError]
     fn pipe_write(pipe ChildPipe, data []u8) -> Result[int, IoError]
     fn pipe_close(pipe ChildPipe) -> ()
+    // Plan 294 F.4 — pseudo terminal (pty.nv). Same form: the launch is the `Command` plus a
+    // `PtySize`, the handle is `PtyChild`; the C forms live in pty.nv's `real_pty_*` translators.
+    // `Err(Unsupported)`: no pseudo terminal on this system (Windows before 10 1809, POSIX until F.3).
+    fn pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError]
+    fn pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError]
+    fn pty_write(pty PtyChild, data []u8) -> Result[int, IoError]
+    fn pty_resize(pty PtyChild, size PtySize) -> Result[(), IoError]
+    fn pty_pid(pty PtyChild) -> int
+    // Cancelled by the enclosing scope: the tree is killed, `Err(Interrupted)`.
+    fn pty_wait(pty PtyChild) -> Result[ExitStatus, IoError]
+    fn pty_try_wait(pty PtyChild) -> Result[Option[ExitStatus], IoError]
+    fn pty_kill(pty PtyChild, sig Signal) -> Result[(), IoError]
+    fn pty_close(pty PtyChild) -> ()
 }
 
 // ─── Types ──
@@ -484,5 +497,16 @@ export fn real_proc() -> Effect[Proc] {
         pipe_read(pipe ChildPipe, mut buf []u8) -> Result[int, IoError] => real_pipe_read(pipe, buf)
         pipe_write(pipe ChildPipe, data []u8) -> Result[int, IoError] => real_pipe_write(pipe, data)
         pipe_close(pipe ChildPipe) -> () { unsafe { proc_pipe_close(pipe.handle) } }
+        pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError] => real_pty_launch(cmd, size)
+        pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError] => real_pty_read(pty, buf)
+        pty_write(pty PtyChild, data []u8) -> Result[int, IoError] => real_pty_write(pty, data)
+        pty_resize(pty PtyChild, size PtySize) -> Result[(), IoError] => real_pty_resize(pty, size)
+        pty_pid(pty PtyChild) -> int => unsafe { proc_pty_pid(pty.handle) }
+        pty_wait(pty PtyChild) -> Result[ExitStatus, IoError] => real_pty_wait(pty)
+        pty_try_wait(pty PtyChild) -> Result[Option[ExitStatus], IoError] => real_pty_try_wait(pty)
+        // The handler bodies above declare no locals: a local named like a later parameter would
+        // retype it in the checker (registry #1870 - `mut sig = 0` here once made Kill arrive as Other(2)).
+        pty_kill(pty PtyChild, sig Signal) -> Result[(), IoError] => real_pty_kill(pty, sig)
+        pty_close(pty PtyChild) -> () { unsafe { proc_pty_close(pty.handle) } }
     }
 }

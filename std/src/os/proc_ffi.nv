@@ -41,3 +41,19 @@ extern "C" fn proc_kill_pid(pid int, sig int, tree bool) -> int
 extern "C" fn proc_pipe_read(pipe *(), buf *mut u8, cap int) -> int
 extern "C" fn proc_pipe_write(pipe *(), buf *u8, len int) -> int
 extern "C" fn proc_pipe_close(pipe *()) -> ()
+
+// Plan 294 F.4 — pseudo terminal (Windows ConPTY; POSIX answers -100001 until F.3).
+// proc_pty_spawn: like proc_spawn, with the window size instead of stdio modes. -22 = a size
+// outside 1..32767, -100001 = no pseudo terminal on this OS (Windows before 10 1809, POSIX for now).
+extern "C" fn proc_pty_spawn(program *u8, program_len int, argv *u8, argv_len int, argc int, env *u8, env_len int, envc int, use_env bool, cwd *u8, cwd_len int, rows int, cols int, out_err *mut int) -> *()
+// proc_pty_read / proc_pty_write: the terminal's screen / keyboard; the proc_pipe_* contract.
+extern "C" fn proc_pty_read(pty *(), buf *mut u8, cap int) -> int
+extern "C" fn proc_pty_write(pty *(), buf *u8, len int) -> int
+// proc_pty_resize: 0; -22 bad size; -100002 the terminal is already gone.
+extern "C" fn proc_pty_resize(pty *(), rows int, cols int) -> int
+extern "C" fn proc_pty_pid(pty *()) -> int
+extern "C" fn proc_pty_wait(pty *(), out_code *mut int, out_signal *mut int) -> int
+extern "C" fn proc_pty_try_wait(pty *(), out_code *mut int, out_signal *mut int) -> int
+extern "C" fn proc_pty_kill(pty *(), sig int) -> int
+// proc_pty_close: hang up, grace, kill the tree, return once it is gone; drop ownership.
+extern "C" fn proc_pty_close(pty *()) -> ()
