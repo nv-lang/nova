@@ -1,0 +1,23 @@
+module carina_c_names.pos_3
+
+// THE SAME DOOR, THE HANDLER-OP AXIS (221.1 #1872, path 3): an operation
+// parameter of a HANDLER LITERAL is named by the author, and `ctx` is a fixed
+// member of the generator (`C_NAME_MEMBERS`, sem/mangle_spelling.nv). The op's
+// C signature printed the parameter name RAW while its body read the local
+// through the door (`nv_ctx`), so the emitted C did not compile. No carrier in
+// the self-build (std shell effects name their ops' parameters differently);
+// this probe names one `ctx` on purpose. Behaviour byte-for-byte with the
+// oracle (novac-e1-smoke).
+
+fn main() {
+    with ResourceTrace = effect ResourceTrace {
+        on_resource_enter(ctx str) -> () {
+            println(ctx)
+        }
+        on_resource_exit(label str, outcome ScopeOutcome, duration_ms int, overrun bool) -> () {
+            println(label)
+        }
+    } {
+        ResourceTrace.on_resource_enter("hi")
+    }
+}

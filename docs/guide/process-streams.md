@@ -65,10 +65,54 @@ The streams are `io.Read` / `io.Write`, so `read_to_end`, `write_all` and `copy`
 * **Exit status.** A non-zero exit is `Ok(status)`, not `Err`. A POSIX signal death reports
   `128 + signal` in `code()` and the number in `signal()` (always `None` on Windows).
 
+## Pseudo terminal (PTY)
+
+Some programs behave differently when nobody is "at the keyboard" (no colours, no prompts, block
+buffering). `Command.start_pty(size)` runs the child on a pseudo terminal instead of pipes: one
+duplex byte channel that is its keyboard and its screen, plus a window size.
+
+```nova
+import std.os.{Command, PtySize}
+import std.io.{write_all}
+
+consume pty = Command.new("cmd").start_pty(PtySize { rows: 24, cols: 80 })?
+write_all(pty, "echo hello\r".bytes())?    // typing; Enter is "\r"
+pty.resize(PtySize { rows: 40, cols: 120 })?
+mut buf []u8 = []u8.new()
+buf.resize(4096, 0 as u8)
+ro n = pty.read(buf)?                      // the screen; Ok(0) = the terminal is gone
+ro status = pty.wait()?
+```
+
+| `PtyChild` | does |
+|---|---|
+| `read(buf)` / `write(data)` / `flush()` | screen / keyboard (`io.Read` / `io.Write`) |
+| `resize(size)` | new window size; the child sees it (SIGWINCH / a console resize event) |
+| `pid()`, `wait()`, `try_wait()` | as `Child` |
+| `kill(sig)` | the child's whole tree, as `Child` with `Tree.Group` |
+| `close()` / leaving the scope | hang up, 500 ms, kill the tree, return once it is gone |
+
+* **What you read is the terminal's, not the child's bytes.** Typing is echoed; `\n` becomes
+  `\r\n`. On Windows ConPTY renders the child's output into a screen and sends *that* — the same
+  picture, not the same bytes: `ESC[0m` arrives as `ESC[m`, a clear repaints, a start-up prefix
+  comes first. Match what the program shows (substrings), never exact byte strings.
+* **Enter is `\r`**, as a real keyboard sends (ConPTY does not end a line on `\n`).
+* **Ctrl-C** is the byte 3: `write([3])`. The child gets SIGINT / `CTRL_C_EVENT` (Windows: it
+  usually exits with `0xC000013A`). A PTY child starts with Ctrl-C enabled even if your own process
+  ignores it.
+* **The tree and the terminal do not outlive the child.** When it exits, whatever it started is
+  killed and `read` returns `Ok(0)` after the last byte.
+* **Systems.** Windows 10 1809+ (ConPTY); older Windows: `Err(Unsupported)`. POSIX (`forkpty`) is
+  the next phase of plan 294: until then `start_pty` returns `Err(Unsupported)` there.
+* **One fiber.** `PtyChild` is one `consume` value: read and write from the same fiber (type, then
+  read). Splitting it into a reader and a writer for two fibers is not there yet.
+
+Full example: `examples/os/pty_session.nv`.
+
 ## Not in this wave
 
-Process-tree kill, signals, `stop(grace)`, `wait_timeout` (plan 294 phase 2), PTY (phases 3–4),
-`stderr_to_stdout`. macOS is not verified. Today `Child` cleanup kills only the child itself.
+`stderr_to_stdout`; PTY on POSIX (plan 294 phase 3); a reader/writer split of `PtyChild`. macOS is
+not verified.
 
 ## Testing code that spawns
 

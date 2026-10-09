@@ -1,0 +1,30 @@
+module carina_c_names.pos_2
+
+// THE SAME DOOR, THE MEMBER AXIS (221.1 #1872): `ctx` is a fixed member of the
+// generator (`C_NAME_MEMBERS`, sem/mangle_spelling.nv), so its C spelling is
+// `nv_ctx` exactly like a C keyword's. pos_1 covered the keyword axis through
+// ORDINARY field access (`f.signed`); here are the two print paths that went
+// PAST the door: `@ctx` of a method body (the SelfField arm of emit_expr.nv
+// printed the raw leaf) and the `{ ctx }` punning of a constructor (its value
+// side printed the field's source name, not the local's escaped C name).
+// The control inside the same program: `b.ctx.n` (an ordinary FieldAccess)
+// took the door even before the fix. Behaviour byte-for-byte with the oracle
+// (novac-e1-smoke).
+
+type Ctx { n int }
+
+type Box {
+    ctx Ctx
+}
+
+fn Box mut @bump() -> int {
+    @ctx.n = @ctx.n + 1
+    @ctx.n
+}
+
+fn main() {
+    mut ctx = Ctx { n: 41 }
+    mut b = Box { ctx }
+    println(b.bump())
+    println(b.ctx.n)
+}

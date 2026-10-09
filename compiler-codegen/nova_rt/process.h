@@ -165,6 +165,43 @@ nova_int proc_pipe_write(void* pipe, const uint8_t* buf, nova_int len);
 /* Close our end (idempotent). Closing stdin delivers EOF to the child. */
 void     proc_pipe_close(void* pipe);
 
+/* --- Plan 294 F.4 (D492): pseudo terminal ---------------------------------
+ *
+ * One duplex byte channel (the terminal), its window size and the life of the
+ * child attached to it. Windows: ConPTY (CreatePseudoConsole, Windows 10 1809+,
+ * looked up at run time — older systems get NOVA_PROC_UNSUPPORTED); our two pipe
+ * ends are opened with uv_pipe_open and read / written by the same pull-style
+ * code as the F.1 pipes (proc_pipe_read / _write), so back pressure and the
+ * independent read / write slots are the same. POSIX (forkpty) is the next task:
+ * until then proc_pty_spawn answers NOVA_PROC_UNSUPPORTED there.
+ *
+ * The child is always the leader of its tree (Windows: a Job Object assigned
+ * while the child is still suspended, so no grandchild can escape it); the tree
+ * and the terminal do not outlive it: when the child exits, its stragglers are
+ * killed and the terminal is closed, so the reader sees end of stream after the
+ * last byte.
+ *
+ * `proc_pty_close` hangs the terminal up (ClosePseudoConsole: the attached
+ * processes are told the console is gone), gives the child
+ * NOVA_PROC_RELEASE_GRACE_MS to leave, kills the tree, and returns once it is
+ * gone; idempotent. Returns / outs follow the Child functions above.
+ */
+void*    proc_pty_spawn(const uint8_t* program, nova_int program_len,
+                        const uint8_t* argv, nova_int argv_len, nova_int argc,
+                        const uint8_t* env, nova_int env_len, nova_int envc,
+                        nova_bool use_env,
+                        const uint8_t* cwd, nova_int cwd_len,
+                        nova_int rows, nova_int cols, nova_int* out_err);
+nova_int proc_pty_read(void* pty, uint8_t* buf, nova_int cap);
+nova_int proc_pty_write(void* pty, const uint8_t* buf, nova_int len);
+/* 0, -22 for a size outside 1..32767, NOVA_PROC_CLOSED once the terminal is gone. */
+nova_int proc_pty_resize(void* pty, nova_int rows, nova_int cols);
+nova_int proc_pty_pid(void* pty);
+nova_int proc_pty_wait(void* pty, nova_int* out_code, nova_int* out_signal);
+nova_int proc_pty_try_wait(void* pty, nova_int* out_code, nova_int* out_signal);
+nova_int proc_pty_kill(void* pty, nova_int sig);
+void     proc_pty_close(void* pty);
+
 #ifdef __cplusplus
 }
 #endif

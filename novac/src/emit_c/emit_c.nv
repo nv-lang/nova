@@ -835,7 +835,9 @@ fn Emitter mut @emit_record_ctor(init Node, vtype TyId, positional bool) -> str 
             } else {
                 match fk[0] {
                     // Punning: `Point { x }` stores the local of that name.
-                    Leaf(_) => @body.append(fname)
+                    // The local was declared through the door (registry #1872),
+                    // so its read goes through the same door.
+                    Leaf(_) => @body.append(c_ident(fname))
                     // Receiver punning `{ @x }` (D52 rule 1, #1459): the one
                     // child is the SelfField itself, printed as any `@x` is.
                     Branch { .. } => @emit_expr(fk[0])

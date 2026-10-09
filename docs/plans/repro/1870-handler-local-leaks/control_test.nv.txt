@@ -1,0 +1,41 @@
+// Registry 1870, control (green): the same two operations and the same parameter name,
+// but the earlier body has no local named `s`.
+module repro1870.control_test
+
+import std.os.{Signal}
+
+type SigFx effect {
+    fn waitish(c int) -> (int, int)
+    fn num(s Signal) -> int
+}
+
+fn n_of(s Signal) -> int {
+    match s {
+        Interrupt => 2
+        Terminate => 15
+        Kill => 9
+        Hangup => 1
+        Other(n) => 1000 + n
+    }
+}
+
+fn h() -> Effect[SigFx] {
+    effect SigFx {
+        waitish(c int) -> (int, int) {
+            mut t = 0
+            t = c + 1
+            (c, t)
+        }
+        num(s Signal) -> int => n_of(s)
+    }
+}
+
+fn via(s Signal) SigFx -> int => SigFx.num(s)
+
+test "a local of an earlier operation body does not retype a later parameter" {
+    with SigFx = h() {
+        println("kill=${via(Signal.Kill)} other=${via(Signal.Other(42))}")
+        assert(via(Signal.Kill) == 9)
+        assert(via(Signal.Other(42)) == 1042)
+    }
+}

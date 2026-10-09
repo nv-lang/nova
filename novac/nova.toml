@@ -573,7 +573,9 @@
 # 2026-10-08 (task #44 round 2, registry 1866): 182 -- D492: a Tree.Group does not outlive its leader, nothing
 # is signalled after the exit, Windows kill_pid(tree) goes through handles. Library semantics, no language rule.
 # Merged with t43 854c41ca2 (D492 section 1 amended there, the Proc boundary speaks Nova): 183 in the union.
-#   spec-queue: 183
+# 2026-10-08/09 (task #50, plan 294 F.4): 183, 184 -- D492's pseudo terminal surface and the ConsoleFlags
+# self-check. Merged with t44 9ab2d58cd: 185 commits touch spec/decisions in the union. Library only.
+#   spec-queue: 185
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

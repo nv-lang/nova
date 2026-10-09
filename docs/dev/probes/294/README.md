@@ -82,6 +82,22 @@ raw output (86 bytes): <1b>[?9001h<1b>[?1004h<1b>[?25l<1b>[?9001l<1b>[?1004l<1b>
 агента) — выяснить в Ф.4 до реализации (вероятно, нужен явный `STARTF_USESTDHANDLES` с `INVALID_HANDLE_VALUE`
 или консоль у родителя).
 
+**Ответ Ф.4 (задача #50, 2026-10-08).** Причина — наследование: без `STARTF_USESTDHANDLES` `CreateProcess` отдаёт
+потомку std-дескрипторы родителя, а у родителя, запущенного с перенаправленным выводом, это пайпы, а не консоль.
+Та же проба (`cmd /c echo hello& exit 3`), stdout родителя перенаправлен в пайп (`| cat`), три режима
+`STARTUPINFO`:
+
+```
+без STARTF_USESTDHANDLES:            hello            <- в stdout родителя
+                                     raw (86): ...ESC[2J ESC[m ESC[H ESC]0;C:\WINDOWS\SYSTEM32\cmd.exe BEL ESC[?25h
+STARTF_USESTDHANDLES, NULL:          raw (93): ...ESC[2J ESC[m ESC[H hello<0d><0a> ESC]0;...cmd.exe BEL ...
+STARTF_USESTDHANDLES, INVALID_HANDLE_VALUE:  raw (93): то же, hello в псевдоконсоли
+```
+
+Рантайм (`proc_pty_spawn` в `nova_rt/process.c`) ставит `STARTF_USESTDHANDLES` с пустыми дескрипторами. Прочие
+замеры Ф.4 (перерисовка вывода ConPTY, Enter = `\r`, наследуемый флаг «игнорировать Ctrl-C») — в плане 294,
+раздел Ф.4, и в D492.
+
 ## Не проверялось
 
 macOS (нет машины) — не заявляется поддержанным. R5 (async-signal-safe между `fork` и `exec` в процессе с
