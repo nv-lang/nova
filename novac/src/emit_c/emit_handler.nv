@@ -135,7 +135,7 @@ fn op_param_names(op Node) -> []str {
         if p.kind_of() != NodeKind.Param { continue }
         ro pk = branch_children(p)
         out.push(leaf_text(pk[param_name_at(pk) ?? ice_at(
-            "novac/src/emit_c/emit_handler.nv:135",
+            "novac/src/emit_c/emit_handler.nv:137",
             "emit: a handler op parameter without a name")]))
     }
     out
