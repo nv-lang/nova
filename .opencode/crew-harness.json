@@ -243,5 +243,6 @@
       }
     }
   },
-  "profile_set": "codex"
+  "profile_set": "codex",
+  "accepted_slot": "free"
 }
