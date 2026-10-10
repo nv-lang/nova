@@ -30,6 +30,6 @@ fn Lowerer mut @lower_else_value(b Node, t Local) -> () {
     }
     // Check refuses every other else by name (check/tail_rules.nv).
     ice_at(
-        "novac/src/lower/lower_branch.nv:30",
+        "novac/src/lower/lower_branch.nv:32",
         "lower: the else of a value `if` is neither a block nor an `else if` -- check refuses that")
 }
