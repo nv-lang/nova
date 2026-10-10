@@ -1,0 +1,15 @@
+REVIEW2 targeted guards: live plan, time ledger, ICE labels, delegated channel return
+check-novac-plan-liveline ok: живая строка плана свежа (самый отставший маркер 2026-10-09, код 2026-10-10, отставание 1 дн. при пределе 2)
+check-novac-time-ledger ok: даты коммитов novac покрыты; строк 229, дат 56, максимум суммы долей за дату 1.00 (потолок 1.00)
+check-novac-ice-messages ok: вызовов ice(): 255, все тексты уникальны и с префиксом модуля
+check-novac-no-silent-skip ok: функций прохода канала 60, выходов 299 — у каждого решение (запись, отказ, ice или названная причина)
+check-novac-file-size ok: файлов 214, все не длиннее 1000 строк
+check-novac-line-length ok: строк .nv: 64286, длиннее 120 символов вне трёх исключений: 0
+[32mok:[0m novac/src/main.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+warning: in the working copy of 'novac/src/check/match_arms.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'novac/src/check/tail_rules.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'novac/src/lower/lower_branch.nv', LF will be replaced by CRLF the next time Git touches it
+REVIEW2 PASS

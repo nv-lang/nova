@@ -293,6 +293,9 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
         // `IfExpr` where the `if` is an expression, an `IfStmt` in a body):
         // the same door judges it, and its agreed type is this branch's. The
         // lowering places it into the same temporary (lower_branch.nv).
+        // SILENT-OK: type_block_value_tail delegates to type_if_value/type_if_let;
+        // they record the falling-through value or report its refusal. Both
+        // paths terminating need no value; parser recovery was already reported.
         return @type_block_value_tail(b)
     } else if b.kind_of() != NodeKind.Block {
         // A gap the parser planted: named, not silent.

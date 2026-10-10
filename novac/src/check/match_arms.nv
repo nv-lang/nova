@@ -777,7 +777,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     }
     @value_expect = body_expect
     ro body = ak[arm_body_at(ak) ?? ice_at(
-        "novac/src/check/match_arms.nv:820",
+        "novac/src/check/match_arms.nv:779",
         "check: a match arm with no body reached the checker")]
     // A BLOCK BODY IN VALUE POSITION (274.5 wave B9): `0 => { return 1 }` is
     // statements that leave through `return`, so the arm yields NO value to
