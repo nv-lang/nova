@@ -22,7 +22,9 @@ fn Lowerer mut @lower_else_value(b Node, t Local) -> () {
         @lower_block_value(b, t)
         return
     }
-    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr {
+    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr || b.kind_of() == NodeKind.IfLet {
+        // A pattern-condition chain is the same value position (#1875).
+        // The checker recorded its result; lower_place owns both forms.
         @lower_place(b, t)
         return
     }

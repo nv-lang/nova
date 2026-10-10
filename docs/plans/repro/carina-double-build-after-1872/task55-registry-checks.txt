@@ -1,0 +1,7 @@
+check-registry-entry-shape: записей без полного оформления 343 (база 343)
+check-registry-entry-shape ok: роста неоформленных записей нет (343 <= 343, номера сверены поимённо), разобрано строк 1787 >= 1142
+check-registry-status-field ok: строк без поля 659 (база 659), новых нет
+check-registry-routes ok: открытых блокеров тега 109 (база 109), K1 без маршрута 0 (база 0), без оговорки 0 (база 0)
+warning: in the working copy of 'novac/src/check/match_arms.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'novac/src/check/tail_rules.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'novac/src/lower/lower_branch.nv', LF will be replaced by CRLF the next time Git touches it

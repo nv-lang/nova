@@ -1,0 +1,41 @@
+// EXPECT_STDOUT p1875 chains 51 52 53
+// EXPECT_STDOUT p1875 nested exits 61 62 63
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module standalone.p1875_match_block_branch_exits
+
+fn chained_tail(flag bool, o Option[int]) -> int {
+    match 0 {
+        0 => {
+            if flag { 51 } else if Some(v) = o { v } else { 53 }
+        }
+        _ => 99
+    }
+}
+
+fn nested_exits(flag bool, inner bool) -> int {
+    match 0 {
+        0 => {
+            if flag {
+                if inner { return 61 } else { return 62 }
+            } else { 63 }
+        }
+        _ => 99
+    }
+}
+
+fn main() Io -> () {
+    check_conditional_chains()
+    println("p1875 chains ${chained_tail(true, None)} ${chained_tail(false, Some(52))} ${chained_tail(false, None)}")
+    println("p1875 nested exits ${nested_exits(true, true)} ${nested_exits(true, false)} ${nested_exits(false, true)}")
+}
+
+fn check_conditional_chains() -> () {
+    assert(chained_tail(true, None) == 51)
+    assert(chained_tail(false, Some(52)) == 52)
+    assert(chained_tail(false, None) == 53)
+    assert(nested_exits(true, true) == 61)
+    assert(nested_exits(true, false) == 62)
+    assert(nested_exits(false, true) == 63)
+}
+
+test "conditional chains and nested terminating branches" { check_conditional_chains() }

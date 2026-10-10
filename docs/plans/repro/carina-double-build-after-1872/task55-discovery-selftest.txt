@@ -1,0 +1,60 @@
+== честные «судить нечего» ==
+  ok   без novac — зелёный
+  ok   без оракула — зелёный
+== исходы совпали — проходит ==
+  ok   оба приняли
+  ok   оба отвергли
+== расхождение — ловит ==
+  ok   novac отверг, оракул принял, allow пуст — красный
+== расхождение в allow — законно ==
+  ok   то же расхождение из allow — зелёный
+== ОТВЕТ, а не только вердикт (274.3/F18) ==
+  ok   оба приняли и ответ совпал — зелёный
+  ok   оба приняли, но ОТВЕТ разный — красный
+  ok   красный назван правильно (про ответ, а не про вердикт)
+  ok   оба отвергли — смоук не запускается, зелёный
+  ok   NOVAC_SMOKE=0 — шаг поведения пропущен осознанно (красный смоук не виден)
+  ok   NOVAC_SMOKE=0 — пропуск НАЗВАН в выводе стадией, а не молчит (№992)
+  ok   NOVAC_CORPUS=0 один — смоук ВКЛЮЧЁН, красный смоук красит (швы разделены, №992)
+== близнец NOVAC_TWIN (2026-10-03): оракул собирает близнеца, novac — фикстуру ==
+  ok   близнец есть — смоук получает (близнец, фикстура), зелёный
+  ok   оракул отверг фикстуру (allow), близнеца принял — сверка идёт, зелёный
+  ok   то же, а ответ разошёлся с близнецом — красный
+  ok   близнеца нет — красный
+== пул (№1717): фикстуры делятся между потоками, итог у КАЖДОЙ ==
+  ok   семь старых фикстур и registered negative на три потока — зелёный
+  ok   сводка считает все восемь: 6 совпали, 2 не судились, потоков 3
+  ok   несудимая фикстура названа поимённо с причиной
+  ok   одна фикстура пула разошлась — красный
+  ok   красный называет ИМЕННО её
+  ok   поток этапа 1 умер — красный
+  ok   этап 1: красный назван «пул потерял», с адресом строки
+  ok   поток этапа 2 умер — красный
+  ok   этап 2: красный назван «пул потерял», а не «ОТВЕТ разный»
+== registered conformance discovery: one guard, changed inputs ==
+  ok   registered positive and negative — green
+  ok   targeted result names its two-file scope, never the full gate
+  ok   only the registered positive runs
+  ok   runtime dispatch reaches the registered canonical file
+  ok   both accepted a negative — it still never runs
+  ok   outcome-only negative does not promise runtime
+  ok   novac accepted, oracle rejected registered negative — red
+  ok   registered positive wrong answer — red
+  ok   restored registered outcome and behavior — green
+  ok   duplicate registration — red
+  ok   missing registered file — red
+  ok   missing entry is named, not silently skipped
+  ok   non-canonical parent traversal — red
+  ok   non-canonical backslashes — red
+  ok   non-Nova registered path — red
+  ok   empty registration — red, not a green zero
+  ok   missing manifest — red
+  ok   restored manifest — green
+  ok   default discovery retains legacy plus registered fixtures
+  ok   default counts the union without duplicates
+  ok   default actually runs both legacy and registered positives
+  ok   unknown scope argument — red
+  ok   extra arguments cannot silently select another scope
+  ok   empty extra manifest preserves a nonempty legacy selection
+  ok   empty registration adds no phantom fixture to legacy
+итог: 51 ok, 0 FAIL

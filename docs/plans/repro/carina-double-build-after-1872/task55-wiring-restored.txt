@@ -1,0 +1,15 @@
+check-novac-differential: registered conformance spec_tests/conformance/standalone/p1875_match_block_if.nv
+check-novac-differential: registered conformance spec_tests/conformance/standalone/p1875_match_block_tails.nv
+check-novac-differential: registered conformance spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+check-novac-differential: registered conformance spec_tests/conformance/standalone/p1875_match_block_expected.nv
+check-novac-differential: registered conformance spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv
+check-novac-differential: registered conformance spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv
+check-novac-differential: registered conformance spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv
+check-novac-differential: scope=registered-conformance; registered conformance=7
+check-novac-differential: SAMPLE — legacy novac/fixtures and corpus are NOT checked (--conformance-only)
+check-novac-differential этап 1/3 ИСХОДЫ: фикстур 7, совпали с оракулом (в allow: 0); стена 10с, потоков 1 — НЕ ВЕРДИКТ, поведение и храповик ниже
+check-novac-differential этап 2/3 ПОВЕДЕНИЕ: 4 из 7 байт-в-байт (из них против близнеца NOVAC_TWIN: 0), не судились 3 — каждая названа ниже; стена 15с, потоков 1, бинарь оракула из кэша 4 из 4 — НЕ ВЕРДИКТ, храповик ниже
+  spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv: не судилась — EXPECT_COMPILE_ERROR: check outcomes only
+  spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv: не судилась — EXPECT_COMPILE_ERROR: check outcomes only
+  spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv: не судилась — EXPECT_COMPILE_ERROR: check outcomes only
+check-novac-differential: SAMPLE PASS scope=registered-conformance: 7 fixtures; smoke=1; legacy fixtures and corpus NOT checked

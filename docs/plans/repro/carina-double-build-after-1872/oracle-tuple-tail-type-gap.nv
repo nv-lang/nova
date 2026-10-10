@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Diagnostic probe: the oracle currently accepts incompatible tuple components.
+// This is not a passing conformance fixture; see the task #55 report.
+module neg.p1875_match_block_tuple_type_neg
+
+fn incompatible_tail(k int) -> (int, str) {
+    match k {
+        0 => {
+            // nova:expect E7301 -- this tuple has int in its second slot
+            (1, 2)
+        }
+        _ => (3, "other")
+    }
+}
+
+fn main() Io -> () {
+    ro (a, b) = incompatible_tail(0)
+    println("${a} ${b}")
+}

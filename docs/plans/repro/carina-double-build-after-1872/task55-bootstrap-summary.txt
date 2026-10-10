@@ -1,0 +1,21 @@
+double-build: GC из главной копии (D:/Sources/nv-lang/nova-opencode/target/gc-cache) — в дереве своего нет (№1750)
+double-build: tree = /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov
+double-build: oracle = /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/nova-cli/target/release/nova.exe
+double-build: work dir = /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build (A.exe, B.c, B/novac.exe, C.c, C/novac.exe and every step's log stay there)
+double-build: building A: oracle build novac/src/main.nv (deadline 900s)
+double-build:   built in 26s
+double-build: A = /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/A.exe (4387840 bytes)
+double-build: precondition -- A check on its own source: accepted 214/214
+double-build: capturing clang argv + PCH (novac-e1-smoke.sh --prepare)
+double-build: building B: NOVAC_SELF_PATH=novac/src /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/A.exe emit novac/src/main.nv
+double-build:   emitted /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B.c (13250302 bytes) in 25s
+double-build:   B = /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B/novac.exe (3877888 bytes)
+double-build: building C: NOVAC_SELF_PATH=novac/src /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B/novac.exe emit novac/src/main.nv
+double-build:   emitted /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/C.c (13250302 bytes) in 12s
+double-build:   C = /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/C/novac.exe (3877888 bytes)
+double-build: IDENTICAL /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B/novac.exe (3877888 bytes) == /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B.relink/novac.exe (3877888 bytes)
+double-build: IDENTICAL /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B.c (13250302 bytes) == /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/C.c (13250302 bytes)
+double-build: IDENTICAL /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/B/novac.exe (3877888 bytes) == /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build/C/novac.exe (3877888 bytes)
+double-build: VERDICT: B ≡ C: B/novac.exe and C/novac.exe byte-identical (3877888 bytes), B.c and C.c byte-identical (13250302 bytes)
+double-build: verdict recorded in /d/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov/target/double-build-verdict.txt
+BOOTSTRAP_RC=0

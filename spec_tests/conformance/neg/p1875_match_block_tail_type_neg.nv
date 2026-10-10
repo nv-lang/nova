@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #1875: the block's tail must participate in arm type agreement.
+module neg.p1875_match_block_tail_type_neg
+
+fn incompatible_tail(k int, flag bool) -> str {
+    match k {
+        0 => {
+            // nova:expect E7301 -- an int branch cannot supply the declared str result
+            if flag { 7 } else { 9 }
+        }
+        _ => "other"
+    }
+}
+
+fn main() Io -> () {
+    println(incompatible_tail(0, true))
+}

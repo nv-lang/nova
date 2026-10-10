@@ -1,0 +1,163 @@
+t55: GC из главной копии (D:/Sources/nv-lang/nova-opencode/target/gc-cache) — в дереве своего нет (№1750)
+28e49f0d39ac813e44813671e9d551ce56235e235885811bb7c903c98e1a9801 *C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/cargo/release/nova.exe
+bda7bee0a96a42362d3582c20df3d323bf514191d6841232aa9de083babb02e0 *C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/cargo/release/nova.exe check spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+[32mok:[0m spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe check spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+novac-e1-smoke ok: spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул из кэша)
+RC=0
+RUN bash C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/direct.sh C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv final-p1875_match_block_branch_exits
+DIRECT final-p1875_match_block_branch_exits: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe emit spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+expected: ['p1875 chains 51 52 53', 'p1875 nested exits 61 62 63']
+actual:   ['p1875 chains 51 52 53', 'p1875 nested exits 61 62 63']
+DIRECT PASS: exact observable output
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/cargo/release/nova.exe check spec_tests/conformance/standalone/p1875_match_block_expected.nv
+[32mok:[0m spec_tests/conformance/standalone/p1875_match_block_expected.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe check spec_tests/conformance/standalone/p1875_match_block_expected.nv
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh spec_tests/conformance/standalone/p1875_match_block_expected.nv
+novac-e1-smoke ok: spec_tests/conformance/standalone/p1875_match_block_expected.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+RC=0
+RUN bash C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/direct.sh C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe spec_tests/conformance/standalone/p1875_match_block_expected.nv final-p1875_match_block_expected
+DIRECT final-p1875_match_block_expected: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe emit spec_tests/conformance/standalone/p1875_match_block_expected.nv
+expected: ['p1875 positions 204 206 208 -1 71']
+actual:   ['p1875 positions 204 206 208 -1 71']
+DIRECT PASS: exact observable output
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/cargo/release/nova.exe check spec_tests/conformance/standalone/p1875_match_block_if.nv
+[32mok:[0m spec_tests/conformance/standalone/p1875_match_block_if.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe check spec_tests/conformance/standalone/p1875_match_block_if.nv
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh spec_tests/conformance/standalone/p1875_match_block_if.nv
+novac-e1-smoke ok: spec_tests/conformance/standalone/p1875_match_block_if.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул из кэша)
+RC=0
+RUN bash C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/direct.sh C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe spec_tests/conformance/standalone/p1875_match_block_if.nv final-p1875_match_block_if
+DIRECT final-p1875_match_block_if: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe emit spec_tests/conformance/standalone/p1875_match_block_if.nv
+expected: ['p1875 if 7 -3 value heap record_value record_heap']
+actual:   ['p1875 if 7 -3 value heap record_value record_heap']
+DIRECT PASS: exact observable output
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/cargo/release/nova.exe check spec_tests/conformance/standalone/p1875_match_block_tails.nv
+[32mok:[0m spec_tests/conformance/standalone/p1875_match_block_tails.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+RC=0
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe check spec_tests/conformance/standalone/p1875_match_block_tails.nv
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh spec_tests/conformance/standalone/p1875_match_block_tails.nv
+novac-e1-smoke ok: spec_tests/conformance/standalone/p1875_match_block_tails.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+RC=0
+RUN bash C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/direct.sh C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe spec_tests/conformance/standalone/p1875_match_block_tails.nv final-p1875_match_block_tails
+DIRECT final-p1875_match_block_tails: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe emit spec_tests/conformance/standalone/p1875_match_block_tails.nv
+expected: ['p1875 values 7 -3 value heap record_value record_heap', 'p1875 controls 7 -3 literal other', 'p1875 nested 11 12 13 14', 'p1875 option 17 -17 18 -18', 'p1875 tuple 21 pair 22 tuple', 'p1875 exits 31 32 33 34 35 36', 'p1875 expected 200 201 202 203', 'p1875 statements 41 0 42 0']
+actual:   ['p1875 values 7 -3 value heap record_value record_heap', 'p1875 controls 7 -3 literal other', 'p1875 nested 11 12 13 14', 'p1875 option 17 -17 18 -18', 'p1875 tuple 21 pair 22 tuple', 'p1875 exits 31 32 33 34 35 36', 'p1875 expected 200 201 202 203', 'p1875 statements 41 0 42 0']
+DIRECT PASS: exact observable output
+RC=0
+NEGATIVE spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv
+[31mFAIL:[0m spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv
+  spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv:10:30: error: [E7301] cannot return value of type `int` from a function declared `-> str`
+  10 |             if Some(v) = o { v } else { "none" }
+    |                              ^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle-negative rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv","start":335,"end":337},"message":"outside the subset: the branches of a value `if let` must agree on a type (E2-b)","poisoned_by":null}
+novac-negative rc=1
+NEGATIVE spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv
+[31mFAIL:[0m spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv
+  spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv:10:23: error: [E_LIT_OUT_OF_RANGE] 256 > u8.MAX (255)
+  10 |             if flag { 256 } else { 0 }
+    |                       ^^^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle-negative rc=1
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv","start":346,"end":349},"message":"this literal does not fit `u8` (D227 rule 3, E_LIT_OUT_OF_RANGE): the type holds at most 255 on this side of zero","poisoned_by":null}
+novac-negative rc=1
+NEGATIVE spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv
+[31mFAIL:[0m spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv
+  spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv:10:23: error: [E7301] cannot return value of type `int` from a function declared `-> str`
+  10 |             if flag { 7 } else { 9 }
+    |                       ^
+  spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv:10:34: error: [E7301] cannot return value of type `int` from a function declared `-> str`
+  10 |             if flag { 7 } else { 9 }
+    |                                  ^
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+oracle-negative rc=1
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv","start":410,"end":411},"message":"outside the subset: match arms produce different types (no arm coercion before E2-b3)","poisoned_by":null}
+novac-negative rc=1
+RUN C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/cargo/release/nova.exe test spec_tests/conformance --filter p1875 --full --keep-artifacts
+Toolchain: clang, mode=Dev, jobs=16, paths=[D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\spec_tests/conformance]
+PASS           spec_tests/conformance/neg/p1875_match_block_tail_range_neg  # (negative)
+PASS           spec_tests/conformance/neg/p1875_match_block_tail_type_neg  # (negative)
+PASS           spec_tests/conformance/neg/p1875_match_block_iflet_type_neg  # (negative)
+PASS           spec_tests/conformance/standalone/p1875_match_block_branch_exits  # (stdout/stderr)
+PASS           spec_tests/conformance/standalone/p1875_match_block_expected  # (stdout/stderr)
+PASS           spec_tests/conformance/standalone/p1875_match_block_if  # (stdout/stderr)
+PASS           spec_tests/conformance/standalone/p1875_match_block_tails  # (stdout/stderr)
+
+===== SUMMARY =====
+PASS: 7  FAIL: 0
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh novac/fixtures/tail_if_terminating/pos_1.nv
+novac-e1-smoke ok: novac/fixtures/tail_if_terminating/pos_1.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh novac/fixtures/tail_if_let_value/pos_1.nv
+novac-e1-smoke ok: novac/fixtures/tail_if_let_value/pos_1.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh novac/fixtures/tail_match_none/pos_1.nv
+novac-e1-smoke ok: novac/fixtures/tail_match_none/pos_1.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+RC=0
+RUN bash scripts/tools/novac-e1-smoke.sh novac/fixtures/ctor_if_tail/pos_1.nv
+novac-e1-smoke ok: novac/fixtures/ctor_if_tail/pos_1.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+RC=0
+RUN bash C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/direct.sh C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/tail-family-original.nv final-original-family
+DIRECT final-original-family: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe emit C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/tail-family-original.nv
+expected: ['p1875 values 7 -3 value heap record_value record_heap', 'p1875 controls 7 -3 literal other', 'p1875 nested 11 12 13 14', 'p1875 option 17 -17 18 -18', 'p1875 tuple 21 pair 22 tuple', 'p1875 exits 31 32 33 34 35 36', 'p1875 expected 200 201 202 203', 'p1875 statements 41 0 42 0 43']
+actual:   ['p1875 values 7 -3 value heap record_value record_heap', 'p1875 controls 7 -3 literal other', 'p1875 nested 11 12 13 14', 'p1875 option 17 -17 18 -18', 'p1875 tuple 21 pair 22 tuple', 'p1875 exits 31 32 33 34 35 36', 'p1875 expected 200 201 202 203', 'p1875 statements 41 0 42 0 43']
+DIRECT PASS: exact observable output
+RC=0
+RUN bash scripts/guards/check-novac-diag-schema.sh . C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe
+check-novac-diag-schema ok: фикстур 269, диагностика валидна (id,code,severity,primary,message)
+RC=0
+RUN bash scripts/guards/check-novac-no-cascade.sh . C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe
+check-novac-no-cascade ok: фикстур 269, на каждой ровно один диагностик severity=error
+RC=0
+RUN python scripts/guards/check-novac-file-size.py .
+check-novac-file-size ok: файлов 214, все не длиннее 1000 строк
+RC=0
+RUN python scripts/guards/check-novac-line-length.py .
+check-novac-line-length ok: строк .nv: 64283, длиннее 120 символов вне трёх исключений: 0
+RC=0
+RUN python scripts/guards/check-registry-rows-intact.py .
+check-registry-rows-intact ok: записей 1787 (база 1787), наибольший номер 1876 (база 1876), дублей 0, законных дыр 89, из них протухших (номер и в `gaps=`, и со строкой) 0 (база 0) — ни одна строка не потеряна
+RC=0
+std-final rc=1
+  [1m[33mwarning:[0m[0m D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\std\src\unicode\words.nv:18:1: unused import `Vec` — imported but never referenced in this file [unused-import]
+
+===== SUMMARY =====
+PASS: 162  [31mFAIL[0m: 26  WARN: 67
+[1m[31merror:[0m[0m 26 file(s) failed type-check
+VALIDATE_FAIL=0

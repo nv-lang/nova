@@ -1,0 +1,11 @@
+SABOTAGE c-text: copy byte 6625152, original sha256=8ea9b067c5ba8ebaa47828652d05d616bfddc8b68c3976b28c4acf670b74e996
+double-build: DIFFER D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\target\double-build\B.c (13250302 bytes) != C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\comparison-sabotage\C.c (13250302 bytes): first difference at byte 6625152 -- cmp: D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\target\double-build\B.c C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\comparison-sabotage\C.c differ: char 6625152, line 94021
+SABOTAGE c-text rc=1
+double-build: IDENTICAL D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\target\double-build\B.c (13250302 bytes) == C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\comparison-sabotage\C.c (13250302 bytes)
+RESTORED c-text rc=0
+SABOTAGE c-exe: copy byte 1938945, original sha256=9e87fdc2af7ff264ad8d67bd8d102f95221fe7bef9896eb1128eadbf478087d9
+double-build: DIFFER D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\target\double-build\B\novac.exe (3877888 bytes) != C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\comparison-sabotage\C.exe (3877888 bytes): first difference at byte 1938945 -- cmp: D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\target\double-build\B\novac.exe C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\comparison-sabotage\C.exe differ: char 1938945, line 3023
+SABOTAGE c-exe rc=1
+double-build: IDENTICAL D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\target\double-build\B\novac.exe (3877888 bytes) == C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\comparison-sabotage\C.exe (3877888 bytes)
+RESTORED c-exe rc=0
+COMPARE SABOTAGE PASS: both red and green; original artifacts unchanged

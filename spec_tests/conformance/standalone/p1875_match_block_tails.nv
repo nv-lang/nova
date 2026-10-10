@@ -1,0 +1,186 @@
+// EXPECT_STDOUT p1875 values 7 -3 value heap record_value record_heap
+// EXPECT_STDOUT p1875 controls 7 -3 literal other
+// EXPECT_STDOUT p1875 nested 11 12 13 14
+// EXPECT_STDOUT p1875 option 17 -17 18 -18
+// EXPECT_STDOUT p1875 tuple 21 pair 22 tuple
+// EXPECT_STDOUT p1875 exits 31 32 33 34 35 36
+// EXPECT_STDOUT p1875 expected 200 201 202 203
+// EXPECT_STDOUT p1875 statements 41 0 42 0
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #1875: a block arm's last statement supplies the match value.
+module standalone.p1875_match_block_tails
+
+fn integer_tail(flag bool) -> int {
+    match 0 {
+        0 => {
+            ro n = 7
+            if flag { n } else { -3 }
+        }
+        _ => 99
+    }
+}
+
+fn string_tail(flag bool) -> str {
+    match 0 {
+        0 => { if flag { "value" } else { "heap" } }
+        _ => "other"
+    }
+}
+
+fn interp_tail(flag bool) -> str {
+    match 0 {
+        0 => {
+            ro nm = "record"
+            if flag { "${nm}_value" } else { "${nm}_heap" }
+        }
+        _ => "other"
+    }
+}
+
+fn expression_arm(flag bool) -> int {
+    match 0 { 0 => if flag { 7 } else { -3 }, _ => 99 }
+}
+
+fn plain_tail(k int) -> str {
+    match k {
+        0 => {
+            ro s = "literal"
+            s
+        }
+        _ => "other"
+    }
+}
+
+fn nested_tail(flag bool) -> int {
+    match 0 {
+        0 => { if flag { if flag { 11 } else { 99 } } else { match 1 { 1 => 12, _ => 99 } } }
+        _ => 99
+    }
+}
+
+fn match_tail(flag bool) -> int {
+    match 0 {
+        0 => { match 1 { 1 => { if flag { 13 } else { 14 } }, _ => 99 } }
+        _ => 99
+    }
+}
+
+fn option_tail(o Option[int]) -> int {
+    match 0 {
+        0 => { if Some(v) = o { v } else { -17 } }
+        _ => 99
+    }
+}
+
+fn nested_option_tail(o Option[int]) -> int {
+    match 0 {
+        0 => { if true { if Some(v) = o { v } else { -18 } } else { 99 } }
+        _ => 99
+    }
+}
+
+fn tuple_tail(flag bool) -> (int, str) {
+    match flag {
+        true => { (21, "pair") }
+        false => { if flag { (99, "wrong") } else { (22, "tuple") } }
+    }
+}
+
+fn one_exit(flag bool) -> int {
+    match 0 {
+        0 => { if flag { return 31 } else { 32 } }
+        _ => 99
+    }
+}
+
+fn both_exit(flag bool) -> int {
+    match 0 {
+        0 => { if flag { return 33 } else { return 34 } }
+        _ => 99
+    }
+}
+
+fn option_exit(o Option[int]) -> int {
+    match 0 {
+        0 => { if Some(v) = o { v } else { return 36 } }
+        _ => 99
+    }
+}
+
+fn expected_tail(flag bool) -> u8 {
+    match 0 {
+        0 => { if flag { 200 } else { 201 } }
+        _ => 0
+    }
+}
+
+fn expected_option_tail(o Option[int]) -> u8 {
+    match 0 {
+        0 => { if Some(v) = o { 202 } else { 203 } }
+        _ => 0
+    }
+}
+
+fn statement_tail(flag bool, o Option[int]) -> int {
+    mut out = 0
+    match 0 { 0 => { if flag { out = 41 } }, _ => {} }
+    match 0 { 0 => { if Some(v) = o { out = v } }, _ => {} }
+    out
+}
+
+fn main() Io -> () {
+    check_block_arm_values()
+    check_nested_tails()
+    println("p1875 values ${integer_tail(true)} ${integer_tail(false)} ${string_tail(true)} ${string_tail(false)} ${interp_tail(true)} ${interp_tail(false)}")
+    println("p1875 controls ${expression_arm(true)} ${expression_arm(false)} ${plain_tail(0)} ${plain_tail(1)}")
+    println("p1875 nested ${nested_tail(true)} ${nested_tail(false)} ${match_tail(true)} ${match_tail(false)}")
+    println("p1875 option ${option_tail(Some(17))} ${option_tail(None)} ${nested_option_tail(Some(18))} ${nested_option_tail(None)}")
+    ro (a, b) = tuple_tail(true)
+    ro (c, d) = tuple_tail(false)
+    println("p1875 tuple ${a} ${b} ${c} ${d}")
+    println("p1875 exits ${one_exit(true)} ${one_exit(false)} ${both_exit(true)} ${both_exit(false)} ${option_exit(Some(35))} ${option_exit(None)}")
+    println("p1875 expected ${expected_tail(true)} ${expected_tail(false)} ${expected_option_tail(Some(1))} ${expected_option_tail(None)}")
+    println("p1875 statements ${statement_tail(true, None)} ${statement_tail(false, None)} ${statement_tail(false, Some(42))} ${statement_tail(false, None)}")
+}
+
+fn check_block_arm_values() -> () {
+    assert(integer_tail(true) == 7)
+    assert(integer_tail(false) == -3)
+    assert(string_tail(true) == "value")
+    assert(string_tail(false) == "heap")
+    assert(interp_tail(true) == "record_value")
+    assert(interp_tail(false) == "record_heap")
+    assert(expression_arm(true) == 7)
+    assert(plain_tail(0) == "literal")
+}
+
+fn check_nested_tails() -> () {
+    assert(nested_tail(true) == 11)
+    assert(nested_tail(false) == 12)
+    assert(match_tail(true) == 13)
+    assert(match_tail(false) == 14)
+    assert(option_tail(Some(17)) == 17)
+    assert(option_tail(None) == -17)
+    assert(nested_option_tail(Some(18)) == 18)
+    assert(nested_option_tail(None) == -18)
+    ro (a, b) = tuple_tail(true)
+    assert(a == 21 && b == "pair")
+    ro (c, d) = tuple_tail(false)
+    assert(c == 22 && d == "tuple")
+    assert(one_exit(true) == 31)
+    assert(one_exit(false) == 32)
+    assert(both_exit(true) == 33)
+    assert(both_exit(false) == 34)
+    assert(option_exit(Some(35)) == 35)
+    assert(option_exit(None) == 36)
+    assert(expected_tail(true) == 200)
+    assert(expected_tail(false) == 201)
+    assert(expected_option_tail(Some(1)) == 202)
+    assert(expected_option_tail(None) == 203)
+    assert(statement_tail(true, None) == 41)
+    assert(statement_tail(false, None) == 0)
+    assert(statement_tail(false, Some(42)) == 42)
+}
+
+test "block arm values and controls" { check_block_arm_values() }
+test "nested tails and diverging branches" { check_nested_tails() }

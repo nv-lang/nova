@@ -1,0 +1,19 @@
+t55: GC из главной копии (D:/Sources/nv-lang/nova-opencode/target/gc-cache) — в дереве своего нет (№1750)
+[32mok:[0m spec_tests/conformance/standalone/p1875_match_block_expected.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+novac-e1-smoke ok: spec_tests/conformance/standalone/p1875_match_block_expected.nv — поведение идентично оракулу (stdout байт-в-байт, exit 0; оракул собран)
+DIRECT final-renamed-expected: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-final.exe emit spec_tests/conformance/standalone/p1875_match_block_expected.nv
+expected: ['p1875 positions 204 206 208 -1 71']
+actual:   ['p1875 positions 204 206 208 -1 71']
+DIRECT PASS: exact observable output
+Toolchain: clang, mode=Dev, jobs=16, paths=[D:\Sources\nv-lang\worktrees\nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov\spec_tests/conformance/standalone/p1875_match_block_expected.nv]
+PASS           spec_tests/conformance/standalone/p1875_match_block_expected  # (stdout/stderr)
+
+===== SUMMARY =====
+PASS: 1  FAIL: 0
+DIRECT sabotage-original-family: C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/novac-sabotage.exe emit C:/Users/B7E3~1/AppData/Local/Temp/opencode/SE78CE~1/tail-family-original.nv
+SABOTAGE_ORIGINAL_FAMILY_RC=2
+ORIGINAL FAMILY SABOTAGE RED; restored counterpart passed in validate.log
+COMPARE SABOTAGE NOT RUN: baseline B/C files are absent or differ

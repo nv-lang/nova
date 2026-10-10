@@ -1,0 +1,4 @@
+t55: GC из главной копии (D:/Sources/nv-lang/nova-opencode/target/gc-cache) — в дереве своего нет (№1750)
+G6 PASS: old/new stdout byte-identical except measured wall; stderr byte-identical
+LIVE DISCOVERY DELTA: legacy 278 unchanged + registered 7 = 285; 3 negative behavior skips
+SCOPE: four live legacy controls executed; whole legacy input list measured, broad corpus not run

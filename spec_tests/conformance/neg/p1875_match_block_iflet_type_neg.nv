@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #1875: a pattern-condition tail is a value too.
+module neg.p1875_match_block_iflet_type_neg
+
+fn incompatible_tail(o Option[int]) -> str {
+    match 0 {
+        0 => {
+            // nova:expect E7301 -- the Some branch supplies int, not str
+            if Some(v) = o { v } else { "none" }
+        }
+        _ => "other"
+    }
+}
+
+fn main() Io -> () {
+    println(incompatible_tail(Some(7)))
+}
