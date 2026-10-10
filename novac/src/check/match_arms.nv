@@ -38,7 +38,7 @@ import ../sem.{shape_of, field_range_of, no_frow}
 import ../builtins.{SLICE_HEAD}
 // The payload of an APPLIED sum, with the application's arguments put in.
 import ../sem.{payload_as_seen, variant_is_record}
-import ../sem.{branch_children, call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
+import ../sem.{branch_children, call_callee_text, leaf_text, leaf_kind, expr_leaf_name, raw_vrow, no_vrow}
 import ../sem.{is_vrow, variant_range_of, variant_in_sum, VariantRow}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -740,52 +740,11 @@ fn Checker mut @bind_array_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode
     ok
 }
 
-/// A match arm's Block body, typed for its VALUE when the tail places one --
-/// unlike `@type_branch_value` (tail_rules.nv, a tail `if`'s branch, where a
-/// value is MANDATORY and a non-expression tail is a named refusal), a value
-/// here is OPTIONAL: `@type_match` folds every arm's type unconditionally,
-/// whether the match itself stands in a statement or a value position, so a
-/// Block arm whose tail is not an expression must NOT be refused here -- it
-/// is typed as an ordinary statement, exactly as `@type_block` already does
-/// for it, and offers `no_ty()` to the fold, precisely what happened before
-/// this door existed (registry #TBD, the block-tail-arm wave).
-fn Checker mut @type_arm_block_value(b Node) -> TyId {
-    ro kids = branch_children(b)
-    ro last = last_branch_of(kids)
-    mut i = 0
-    mut out_t = no_ty()
-    // The arm's expectation belongs to the block's TAIL, which is the arm's
-    // value; the statements before it are not (a `ro x = None` there is not
-    // the arm's `None`).
-    ro tail_expect = @value_expect
-    for c in kids {
-        match c {
-            Leaf(_) => {}
-            Branch { .. } => {
-                @value_expect = if i == last { tail_expect } else { no_ty() }
-                if i == last && is_expr_kind(c.kind_of()) {
-                    ro before = @out.len()
-                    if !is_ty(@branch_literal_tail(c)) {
-                        @type_expr(c)
-                    } else {
-                        // A bare literal took the arm's written type: the `if` branch's door.
-                    }
-                    if @out.len() == before {
-                        out_t = type_of(c, @ctx, @scope, @chan)
-                    } else {
-                        // Refused inside: no type, and the refusal already
-                        // is the diagnostic -- nothing invented here.
-                    }
-                } else {
-                    @type_stmt(c)
-                }
-            }
-        }
-        i += 1
-    }
-    @value_expect = tail_expect
-    out_t
-}
+/// A match arm's optional block value. The shared tail walk also judges if
+/// branches (#1875): statement-shaped conditionals and tuples must not lose
+/// their value here. A non-value tail remains an ordinary statement and
+/// offers no type to the fold; terminating arms are handled by @type_arm.
+fn Checker mut @type_arm_block_value(b Node) -> TyId => @type_block_value(b, false)
 
 /// One arm in VALUE position: bind its pattern, type its guards, type its
 /// body, and answer the body's type -- which the fold compares against the

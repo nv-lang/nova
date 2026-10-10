@@ -20,6 +20,9 @@ run() { sh "$GD/check-novac-$1.sh" "$R" "$2" > "$T/out" 2> "$T/err"; }
 echo 'fn main() {}' > "$R/novac/fixtures/pos_a.nv"
 echo 'fn main() { let x = 1 }' > "$R/novac/fixtures/pos_b.nv"
 echo 'fn main() { broken' > "$R/novac/fixtures/neg_a.nv"
+mkdir -p "$R/spec_tests/conformance" "$R/scripts/guards"
+printf 'fn main() {}\n' > "$R/spec_tests/conformance/registered.nv"
+printf 'spec_tests/conformance/registered.nv\n' > "$R/scripts/guards/novac-conformance.list"
 printf '#!/bin/sh\nexit 0\n' > "$R/nova-cli/target/release/nova.exe"
 chmod +x "$R/nova-cli/target/release/nova.exe"
 

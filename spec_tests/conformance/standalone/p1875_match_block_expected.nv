@@ -1,0 +1,39 @@
+// EXPECT_STDOUT p1875 positions 204 206 208 -1 71
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module standalone.p1875_match_block_expected
+
+type P1875ByteBox value { n u8 }
+
+fn take_byte(n u8) -> int => n as int
+
+fn optional_tail(flag bool) -> Option[int] {
+    match 0 {
+        0 => { if flag { None } else { Some(71) } }
+        _ => Some(0)
+    }
+}
+
+fn option_number(o Option[int]) -> int {
+    o ?? -1
+}
+
+fn main() Io -> () {
+    ro a u8 = match 0 {
+        0 => { if true { 204 } else { 205 } }
+        _ => 0
+    }
+    ro b = take_byte(match 0 {
+        0 => { if true { 206 } else { 207 } }
+        _ => 0
+    })
+    ro c = P1875ByteBox { n: match 0 {
+        0 => { if true { 208 } else { 209 } }
+        _ => 0
+    } }
+    assert(a == 204)
+    assert(b == 206)
+    assert(c.n == 208)
+    assert(option_number(optional_tail(true)) == -1)
+    assert(option_number(optional_tail(false)) == 71)
+    println("p1875 positions ${a} ${b} ${c.n} ${option_number(optional_tail(true))} ${option_number(optional_tail(false))}")
+}

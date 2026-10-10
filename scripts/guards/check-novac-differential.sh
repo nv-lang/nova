@@ -19,7 +19,8 @@
 # ПРАВИЛО (план 274 §10.3, §10.3а: «контракт = оракулу; расхождения только из
 # реестра»): novac обязан принимать/отвергать те же программы, что нынешний
 # компилятор (оракул nova-cli/target/release/nova.exe check). Страж прогоняет
-# оба бинаря по novac/fixtures/**/pos_*.nv и сравнивает ИСХОД (принял/отверг,
+# оба бинаря по novac/fixtures/**/pos_*.nv И явно зарегистрированным путям из
+# scripts/guards/novac-conformance.list и сравнивает ИСХОД (принял/отверг,
 # а с 2026-08-16 у принятых обеими сторонами — ещё и ОТВЕТ: stdout и код
 # возврата через смоук, потому что одинаковый вердикт при разном значении
 # зелёным быть не должен (274.3/F18: `1 + 2 * 3` считалось как 9),
@@ -27,7 +28,7 @@
 # (строка = путь фикстуры от корня, с прямыми слэшами), — красное.
 #
 # НЕ проверяет: совпадение текстов/кодов диагностик (только исход),
-# поведение на neg_* (их судят diag-schema и no-cascade), обоснованность
+# поведение EXPECT_COMPILE_ERROR (это только сравнение исходов), обоснованность
 # записей allow — её судит приёмка и docs/plans/274.12-novac-divergences.md.
 # Контракт вызова: '<bin> check <file>'; если CLI novac окажется иным —
 # страж правится тем же коммитом, что вводит бинарь.
@@ -62,6 +63,9 @@
 #
 # $1 — корень репозитория (default: вычислить от себя);
 # $2 — override бинаря novac (для самотеста).
+# $3 — --conformance-only: только зарегистрированные conformance-файлы,
+#      без старых fixtures и корпуса; итог явно SAMPLE, не полный вердикт.
+#      Это CLI-шов, не переменная окружения: gate его не передаёт.
 #
 # Проверялся: Windows (Git Bash), 2026-08-14.
 export LC_ALL=C
@@ -74,6 +78,16 @@ export LC_ALL=C
 ROOT="${1:-$(dirname "$0")/../..}"
 ROOT="$(cd "$ROOT" 2>/dev/null && pwd || printf '%s' "$ROOT")"
 NAME=check-novac-differential
+if [ "$#" -gt 3 ]; then
+    echo "$NAME: FAIL — expected ROOT BIN [--conformance-only], got extra arguments" >&2
+    exit 1
+fi
+SCOPE=all-fixtures
+case "${3:-}" in
+    "") ;;
+    --conformance-only) SCOPE=registered-conformance ;;
+    *) echo "$NAME: FAIL — unknown scope argument: $3" >&2; exit 1 ;;
+esac
 . "$(dirname "$0")/lib/novac.sh"
 BIN="${2:-$(novac_bin "$ROOT")}"   # #1607: the door, not a file name
 
@@ -97,15 +111,77 @@ ALLOW="$ROOT/novac/divergences.allow"
 T=$(mktemp -d "${TMPDIR:-/tmp}/novac-differential.XXXXXX") || { echo "$NAME: FAIL — mktemp не создал каталог" >&2; exit 1; }
 trap 'rm -rf "$T"' 0
 
-if [ -d "$FIXDIR" ]; then
+if [ "$SCOPE" = all-fixtures ] && [ -d "$FIXDIR" ]; then
     find "$FIXDIR" -type f -name 'pos_*.nv' | sort > "$T/list"
 else
     : > "$T/list"
 fi
+# One manifest pass, not one text process per entry (G2). Explicit registration
+# cannot silently lose a file, escape the tree or count a fixture twice.
+if ! python - "$ROOT" "$T/negative" > "$T/registered" <<'PY'
+import pathlib, sys
+sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+root = pathlib.Path(sys.argv[1]).resolve()
+manifest = root / "scripts/guards/novac-conformance.list"
+def fail(message):
+    sys.exit("check-novac-differential: FAIL — conformance manifest: " + message)
+if not manifest.is_file():
+    fail("missing " + str(manifest))
+seen = set()
+negative = []
+try:
+    lines = manifest.read_text(encoding="utf-8").splitlines()
+except (OSError, UnicodeError) as e:
+    fail(str(e))
+for number, raw in enumerate(lines, 1):
+    rel = raw.strip()
+    if not rel or rel.startswith("#"):
+        continue
+    if (rel != raw or "\\" in rel or any(c.isspace() for c in rel)
+            or not rel.startswith("spec_tests/conformance/")
+            or any(p in ("", ".", "..") for p in rel.split("/"))
+            or not rel.endswith(".nv")):
+        fail("non-canonical path at line %d: %s" % (number, raw))
+    path = (root / rel).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        fail("path escapes root: " + rel)
+    if not path.is_file():
+        fail("missing registered file: " + rel)
+    if path in seen:
+        fail("duplicate registered file: " + rel)
+    seen.add(path)
+    try:
+        if any(b"EXPECT_COMPILE_ERROR" in s for s in path.read_bytes().splitlines()[:30]):
+            negative.append(rel)
+    except OSError as e:
+        fail(str(e))
+    print(rel)
+pathlib.Path(sys.argv[2]).write_text("\n".join(negative) + "\n", encoding="utf-8")
+PY
+then
+    exit 1
+fi
+while IFS= read -r rel; do
+    printf '%s/%s\n' "$ROOT" "$rel" >> "$T/list"
+    printf '%s: registered conformance %s\n' "$NAME" "$rel"
+done < "$T/registered"
+sort "$T/list" -o "$T/list"
+registered=$(wc -l < "$T/registered" | tr -d '[:space:]')
+# Paths contain no whitespace (validated above): whole, space-delimited names
+# allow a shell-only membership test inside the behaviour pool (G2).
+NEGATIVE_FILES=" $(tr '\r\n' '  ' < "$T/negative") "
+if [ "$registered" -gt 0 ] || [ "$SCOPE" = registered-conformance ]; then
+    echo "$NAME: scope=$SCOPE; registered conformance=$registered"
+fi
+if [ "$SCOPE" = registered-conformance ]; then
+    echo "$NAME: SAMPLE — legacy novac/fixtures and corpus are NOT checked (--conformance-only)"
+fi
 N=$(wc -l < "$T/list" | tr -d ' ')
 if [ "$N" -eq 0 ]; then
-    echo "$NAME ok: судить нечего (0 фикстур pos_*.nv в novac/fixtures)"
-    exit 0
+    echo "$NAME: FAIL — empty fixture selection" >&2
+    exit 1
 fi
 
 # ---- ПУЛ: фикстуры судятся параллельно, вердикт остаётся поштучным (№1717) ---
@@ -208,6 +284,13 @@ else
         one_behaviour() {
             _r="$T/r/$1"
             read -r _b _o < "$_r.v"
+            # D89: a negative fixture never builds/runs an executable, even
+            # if both checkers unexpectedly accepted it (oracle CI judges EXPECT).
+            case "$NEGATIVE_FILES" in
+                *" ${2#"$ROOT"/} "*)
+                    echo "не-судилась EXPECT_COMPILE_ERROR: check outcomes only" > "$_r.b"
+                    return 0 ;;
+            esac
             if [ "$_b" != "принял" ]; then echo "не-судилась novac отверг" > "$_r.b"; return 0; fi
             _twin=$(sed -n 's|^// NOVAC_TWIN \([^ ]*\)$|\1|p' "$2" | head -n 1)
             _src="$2"
@@ -279,6 +362,12 @@ else
         echo "$NAME этап 2/3 ПОВЕДЕНИЕ: $beh из $N байт-в-байт (из них против близнеца NOVAC_TWIN: $twins), не судились $skipped — каждая названа ниже; стена $(( $(date +%s) - t_stage ))с, потоков $jb, бинарь оракула из кэша $fromcache из $beh — НЕ ВЕРДИКТ, храповик ниже"
         [ "$skipped" -gt 0 ] && cat "$T/skipped"
     fi
+fi
+
+# The CLI-only selection cannot acquire a full gate verdict or run the corpus.
+if [ "$SCOPE" = registered-conformance ]; then
+    echo "$NAME: SAMPLE PASS scope=$SCOPE: $N fixtures; smoke=${NOVAC_SMOKE:-1}; legacy fixtures and corpus NOT checked"
+    exit 0
 fi
 
 # ---- ЯРУС push СУДИТ ЭТАПЫ 1–2, ЭТАП 3 — ЯРУС full (реестр 221.1 №1442) ----

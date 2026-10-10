@@ -22,7 +22,7 @@ module novac.check
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, NodeId, no_node}
-import ../sem.{branch_children, is_expr_kind, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
+import ../sem.{branch_children, leaf_kind, ret_is_unit, is_value_tail_kind, expr_leaf_name}
 import ../sem.{returns_receiver, is_never_ty}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{iflet_body_at, iflet_else_at, loop_ctl_is_break}
@@ -284,21 +284,16 @@ fn Checker mut @type_if_value(n Node) -> () {
 /// The type a BRANCH of a tail `if` produces: its last statement's, or
 /// `no_ty()` after a named refusal.
 ///
-/// A branch whose tail is not an expression -- a `return`, a binding -- is
-/// refused, and that is the boundary this wave DECLARED rather than discovered:
-/// mixing the two ways out of a function needs a measurement against the
-/// oracle, and that measurement is its own step.
+/// Terminating branches are judged as statements by the caller. A branch
+/// that falls through owes a value, including a conditional or tuple tail.
 fn Checker mut @type_branch_value(b Node) -> TyId {
-    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr {
+    if b.kind_of() == NodeKind.IfStmt || b.kind_of() == NodeKind.IfExpr || b.kind_of() == NodeKind.IfLet {
         // AN `else if` CHAIN is itself a value `if` (part 5 of p274-carina-k1;
         // its carrier: sem/mangle.nv `ro shell = if .. else if .. else ..`; an
         // `IfExpr` where the `if` is an expression, an `IfStmt` in a body):
         // the same door judges it, and its agreed type is this branch's. The
         // lowering places it into the same temporary (lower_branch.nv).
-        ro cmark = @out.len()
-        @type_if_value(b)
-        if @out.len() > cmark { return no_ty() }
-        return @chan.type_if_known(b.id_of())
+        return @type_block_value_tail(b)
     } else if b.kind_of() != NodeKind.Block {
         // A gap the parser planted: named, not silent.
         @report_first_leaf_of([]Node.of(b), "outside the subset: this branch of a value `if` is neither a block nor an `else if` (E2-b)")
@@ -306,57 +301,25 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
     } else {
         // A block: its tail decides.
     }
+    @type_block_value(b, true)
+}
+
+/// The shared block-value walk for an if branch and a match arm (#1875).
+/// Only the tail receives the position's expectation. A match arm may end
+/// in statements; a value-if branch owes a value and reports its absence.
+fn Checker mut @type_block_value(b Node, required bool) -> TyId {
     ro kids = branch_children(b)
     ro last = last_branch_of(kids)
     mut i = 0
     mut out_t = no_ty()
+    ro tail_expect = @value_expect
     for c in kids {
         match c {
             Leaf(_) => {}
             Branch { .. } => {
-                if i == last {
-                    ro lmark = @out.len()
-                    ro lit_t = @branch_literal_tail(c)
-                    if is_ty(lit_t) || @out.len() > lmark {
-                        // A bare numeric literal took the position's type, or
-                        // its fit door refused it: decided either way.
-                        out_t = lit_t
-                    } else if c.kind_of() == NodeKind.IfStmt {
-                        // A NESTED tail `if` is the branch's value (part 5 of
-                        // p274-carina-k1): `if a { if b { 1 } else { 2 } } else
-                        // { 0 }` -- the same door judges it, with the same
-                        // expectation, and its agreed type is this branch's.
-                        ro nmark = @out.len()
-                        @type_if_value(c)
-                        if @out.len() == nmark {
-                            out_t = @chan.type_if_known(c.id_of())
-                        } else {
-                            // Refused inside, by name: no type.
-                        }
-                    } else if is_value_tail_kind(c.kind_of()) {
-                        // A TUPLE tail places a value too (`{ (no_vrow(), 0) }`
-                        // -- the destructure carriers of the if-value wave):
-                        // `is_value_tail_kind` is `is_expr_kind` plus the one
-                        // positional record/tuple the tail chain has returned
-                        // since B15 step 4b, and the emitter builds it through
-                        // the same `build_value` dispatch.
-                        // THE LATTICE IS ASKED ONLY WHEN NOTHING WAS REFUSED
-                        // (#902's rule): a refused tail -- an unknown callee,
-                        // a construction the registry has no row for -- has
-                        // no type, and asking iced ("call target not in the
-                        // registry") instead of letting the refusal stand
-                        // (found by W4's reverse probe, 2026-09-06).
-                        ro before = @out.len()
-                        @type_expr(c)
-                        if @out.len() == before {
-                            out_t = type_of(c, @ctx, @scope, @chan)
-                        } else {
-                            // Refused inside: no type, and the refusal is the
-                            // diagnostic -- `no_ty()` says so to the caller.
-                        }
-                    } else {
-                        @report_first_leaf_of([]Node.of(c), "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
-                    }
+                @value_expect = if i == last { tail_expect } else { no_ty() }
+                if i == last && (required || block_tail_can_place_value(c)) {
+                    out_t = @type_block_value_tail(c)
                 } else {
                     @type_stmt(c)
                 }
@@ -364,7 +327,47 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
         }
         i += 1
     }
+    @value_expect = tail_expect
     out_t
+}
+
+/// Conditional statements with an else can supply a block's value. Without
+/// one they remain statements in an optional-value arm; a required branch
+/// goes to the value judge regardless, so that judge names the missing else.
+fn block_tail_can_place_value(c Node) -> bool {
+    ro k = c.kind_of()
+    if k == NodeKind.IfStmt { return branch_children(c).len() >= 5 }
+    if k == NodeKind.IfLet {
+        ro kids = branch_children(c)
+        return kids.len() > iflet_else_at(kids)
+    }
+    is_value_tail_kind(k)
+}
+
+/// Type one block tail through its value door, not its statement spelling.
+/// The recorded answer is what lower reads; an inner refusal stops the
+/// lattice query, including a literal that did not fit the expected width.
+fn Checker mut @type_block_value_tail(c Node) -> TyId {
+    ro before = @out.len()
+    ro lit_t = @branch_literal_tail(c)
+    if is_ty(lit_t) || @out.len() > before { return lit_t }
+    ro k = c.kind_of()
+    if k == NodeKind.IfStmt || k == NodeKind.IfExpr {
+        @type_if_value(c)
+        if @out.len() > before { return no_ty() }
+        return @chan.type_if_known(c.id_of())
+    } else if k == NodeKind.IfLet {
+        @type_if_let(c, as_value: true)
+        if @out.len() > before { return no_ty() }
+        return @chan.type_if_known(c.id_of())
+    } else if is_value_tail_kind(k) {
+        @type_expr(c)
+        if @out.len() > before { return no_ty() }
+        return type_of(c, @ctx, @scope, @chan)
+    } else {
+        @report_first_leaf_of([]Node.of(c), "outside the subset: a branch of a tail `if` ends without a value (E2-b)")
+    }
+    no_ty()
 }
 
 /// A branch's tail that is a BARE NUMERIC LITERAL takes the position's expected

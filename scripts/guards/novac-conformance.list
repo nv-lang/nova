@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Canonical conformance paths included in the novac differential.
+# Positive files compare behavior; negative files compare check outcomes only.
+spec_tests/conformance/standalone/p1875_match_block_if.nv
+spec_tests/conformance/standalone/p1875_match_block_tails.nv
+spec_tests/conformance/standalone/p1875_match_block_branch_exits.nv
+spec_tests/conformance/standalone/p1875_match_block_expected.nv
+spec_tests/conformance/neg/p1875_match_block_tail_type_neg.nv
+spec_tests/conformance/neg/p1875_match_block_iflet_type_neg.nv
+spec_tests/conformance/neg/p1875_match_block_tail_range_neg.nv

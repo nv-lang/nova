@@ -38,8 +38,11 @@ mkdir -p "$FIX/novac/fixtures" "$FIX/nova-cli/target/release" \
          "$FIX/scripts/tools" "$FIX/scripts/guards/lib"
 cp "$ROOT/scripts/guards/lib/novac.sh" "$FIX/scripts/guards/lib/novac.sh"
 printf 'fn main() {}\n' > "$FIX/novac/fixtures/pos_a.nv"
+mkdir -p "$FIX/spec_tests/conformance"
+printf 'fn main() {}\n' > "$FIX/spec_tests/conformance/registered.nv"
+printf 'spec_tests/conformance/registered.nv\n' > "$FIX/scripts/guards/novac-conformance.list"
 
-# Оракул и novac согласны на единственной фикстуре — фикстурная половина
+# Оракул и novac согласны на legacy и registered фикстурах — фикстурная половина
 # зелёная, значит доходим до корпусной.
 printf '#!/bin/sh\nexit 0\n' > "$FIX/nova-cli/target/release/nova.exe"
 chmod +x "$FIX/nova-cli/target/release/nova.exe"

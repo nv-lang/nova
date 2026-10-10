@@ -1,0 +1,10 @@
+check-novac-seams-listed ok: швов у стражей 5, в SEAMS gate-novac.sh 5, расхождений 0 (NOVAC_CORPUS, NOVAC_COST, NOVAC_EMISSION, NOVAC_PROVE, NOVAC_SMOKE)
+check-novac-guard-registry ok: имён в плане §10.3/§10.3а 104 (ждут этапа под маркером 4), файлов стражей 100, вызовов в gate.sh 100, самотестов 102 (без своего стража 2), расхождений 0
+check-registry-rows-intact ok: записей 1787 (база 1787), наибольший номер 1876 (база 1876), дублей 0, законных дыр 89, из них протухших (номер и в `gaps=`, и со строкой) 0 (база 0) — ни одна строка не потеряна
+check-registry-entry-shape: записей без полного оформления 343 (база 343)
+check-registry-entry-shape ok: роста неоформленных записей нет (343 <= 343, номера сверены поимённо), разобрано строк 1787 >= 1142
+check-registry-status-field ok: строк без поля 659 (база 659), новых нет
+check-registry-routes ok: открытых блокеров тега 109 (база 109), K1 без маршрута 0 (база 0), без оговорки 0 (база 0)
+warning: in the working copy of 'novac/src/check/match_arms.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'novac/src/check/tail_rules.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'novac/src/lower/lower_branch.nv', LF will be replaced by CRLF the next time Git touches it

@@ -1,0 +1,15 @@
+  ok: differential: нет бинаря — зелёный «судить нечего»
+  ok: diag-schema: нет бинаря — зелёный «судить нечего»
+  ok: no-cascade: нет бинаря — зелёный «судить нечего»
+  ok: no-panic: нет бинаря — зелёный «судить нечего»
+  ok: differential: совпадение с оракулом проходит, строка ok: есть
+  ok: differential: расхождение вне allow поймано и названо
+  ok: differential: расхождение из allow не краснит
+  ok: no-cascade: один диагностик проходит, строка ok: есть
+  ok: no-cascade: каскад из двух ошибок пойман
+  ok: diag-schema: валидная диагностика проходит
+  ok: diag-schema: пропавшие поля пойманы
+  ok: no-panic: обычное отвержение проходит
+  ok: no-panic: panic в stderr пойман
+  ok: no-panic: крэш-код возврата пойман
+test-check-novac-binary-guards ok: 14/14

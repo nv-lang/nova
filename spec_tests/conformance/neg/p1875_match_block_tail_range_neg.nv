@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry #1875: the block tail inherits u8 and must reject 256.
+module neg.p1875_match_block_tail_range_neg
+
+fn out_of_range(flag bool) -> u8 {
+    match 0 {
+        0 => {
+            // nova:expect E_LIT_OUT_OF_RANGE -- the expected tail type is u8
+            if flag { 256 } else { 0 }
+        }
+        _ => 0
+    }
+}
+
+fn main() Io -> () {
+    println(out_of_range(true))
+}

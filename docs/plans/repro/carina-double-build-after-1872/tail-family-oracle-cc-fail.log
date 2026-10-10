@@ -1,0 +1,5 @@
+[1m[31merror:[0m[0m compiler error:
+C:\Users\B7E3~1\AppData\Local\Temp\opencode\SE78CE~1\tmp\nova_tests-38116\build-47ce0ace9d8b\p1875_match_block_tails.c:8280:13: error: invalid operands to binary expression ('nova_int' (aka 'long long') and 'nova_unit')
+ 8280 |         out += n;
+      |         ~~~ ^  ~
+1 error generated.

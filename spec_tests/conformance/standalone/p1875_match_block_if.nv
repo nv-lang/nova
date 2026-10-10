@@ -1,0 +1,32 @@
+// EXPECT_STDOUT p1875 if 7 -3 value heap record_value record_heap
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Direct wrong-value carrier, independent of the wider tail-family fixture.
+module standalone.p1875_match_block_if
+
+fn integer_tail(flag bool) -> int {
+    match 0 {
+        0 => { if flag { 7 } else { -3 } }
+        _ => 99
+    }
+}
+
+fn string_tail(flag bool) -> str {
+    match 0 {
+        0 => { if flag { "value" } else { "heap" } }
+        _ => "other"
+    }
+}
+
+fn interp_tail(flag bool) -> str {
+    match 0 {
+        0 => {
+            ro name = "record"
+            if flag { "${name}_value" } else { "${name}_heap" }
+        }
+        _ => "other"
+    }
+}
+
+fn main() Io -> () {
+    println("p1875 if ${integer_tail(true)} ${integer_tail(false)} ${string_tail(true)} ${string_tail(false)} ${interp_tail(true)} ${interp_tail(false)}")
+}
