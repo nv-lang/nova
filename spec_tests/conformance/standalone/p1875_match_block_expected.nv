@@ -14,7 +14,7 @@ fn optional_tail(flag bool) -> Option[int] {
 }
 
 fn option_number(o Option[int]) -> int {
-    match o { Some(n) => n, None => -1 }
+    o ?? -1
 }
 
 fn main() Io -> () {

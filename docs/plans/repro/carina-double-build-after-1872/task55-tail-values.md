@@ -508,4 +508,22 @@ CI кандидата выполняет приёмщик; локальные ga
 Финальные targeted мета-проверки seams/guard-registry/registry rows, формы,
 статуса и маршрутов зелёные: [task55-final-meta.txt](task55-final-meta.txt),
 watch `1791647658567-9sp0rx`. `git diff --cached --check` также чист.
+
+### Доработка приёмки, круг 1: canonical coalesce
+
+Предварительный candidate `d708211ca77f1d4b1e0d93780e3a464ee99ab9dc`
+получил W_MANUAL_COALESCE в CI nova-lint (run `38067267936`): helper
+`option_number` вручную раскрывал Option. Его тело заменено на каноническое
+`o ?? -1`. Носители дефекта в `optional_tail` и expected-position match,
+assertions, EXPECT_STDOUT и семь manifest entries сохранены без изменений.
+
+Watch `1791649629256-erif5r`, rc0: targeted `lint --deny` — 1 файл,
+0 findings/denied; oracle и fixed Carina `check` — PASS; targeted oracle
+runtime — 1/1; e1 — stdout побайтно одинаков, exit0; прямой Carina runtime —
+точно `p1875 positions 204 206 208 -1 71`.
+Лог: [task55-review1.txt](task55-review1.txt).
+
+Предварительный candidate не включал #57 и не является финальной проверкой.
+Свежая штатная A→B→C и полный CI остаются обязательными на одном чистом
+combined SHA после #57. №1875 остаётся OPEN до полной приёмки, 0.2 не объявлена.
 Критерии 0.2 не изменены, 274.11 не закрывается.
