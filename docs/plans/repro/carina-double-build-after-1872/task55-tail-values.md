@@ -511,7 +511,7 @@ watch `1791647658567-9sp0rx`. `git diff --cached --check` также чист.
 
 ### Доработка приёмки, круг 1: canonical coalesce
 
-Предварительный candidate `d708211ca77f1d4b1e0d93780e3a464ee99ab9dc`
+Предварительный candidate d708211ca77f1d4b1e0d93780e3a464ee99ab9dc
 получил W_MANUAL_COALESCE в CI nova-lint (run `38067267936`): helper
 `option_number` вручную раскрывал Option. Его тело заменено на каноническое
 `o ?? -1`. Носители дефекта в `optional_tail` и expected-position match,
@@ -530,7 +530,7 @@ combined SHA после #57. №1875 остаётся OPEN до полной п�
 
 ## Запись приёмки кандидата
 
-Первый опубликованный кандидат `d708211ca77f1d4b1e0d93780e3a464ee99ab9dc`
+Первый опубликованный кандидат d708211ca77f1d4b1e0d93780e3a464ee99ab9dc
 на ветке `integrate/t55` был ошибочно собран от `ec4e6a235` (#56), без #57.
 Он отклонён и не является precheck: `nova-lint` run `38067267936` завершился
 с W_MANUAL_COALESCE в `p1875_match_block_expected.nv:17`; исправление helper
