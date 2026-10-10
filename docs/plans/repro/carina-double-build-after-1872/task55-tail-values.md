@@ -8,10 +8,14 @@
 ## РЕПРО
 
 Исходная task-ветка `t55-karina-1875-hvostovye-znacheniya-blokov` оказалась
-на локальном a92abccba392021d7d4f7943d269a695b17c3833. Она оставлена нетронутой.
-В том же дереве создана `t55-fix-1875` от свежего `origin/main`
-`6a3275d0add28a9fe207fac9464baa3380f97f8d`. Обычный cherry-pick диагностического
-c7b1f911d дал `81ca672d1`; дерево расследования и улики #54 не изменялись.
+на локальной голове владельца; её точный идентификатор и роль сохранены в
+[журнале исторического provenance](task55-historical-provenance.json).
+Она оставлена нетронутой. В том же дереве создана `t55-fix-1875` от свежего
+`origin/main` [`6a3275d0add28a9fe207fac9464baa3380f97f8d`](https://github.com/nv-lang/nova/commit/6a3275d0add28a9fe207fac9464baa3380f97f8d) — «chore(crew): release accepted task slots», 2026-10-09. Обычный cherry-pick
+диагностической улики #54 дал commit
+[`81ca672d17d61ddda08b302561275d1f9079d52c`](https://github.com/nv-lang/nova/commit/81ca672d17d61ddda08b302561275d1f9079d52c) — «docs(novac): localize bootstrap record mangling failure», 2026-10-10;
+исходный private commit расследования указан в provenance-файле. Дерево
+расследования и улики #54 не изменялись.
 
 Дерево задачи:
 `D:/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov`.
@@ -267,12 +271,12 @@ PASS: 162  FAIL: 26  WARN: 67
 
 ```text
 S5 PRECONDITION NOT MET: A (novac by the oracle) check accepts only 212/214 of its own source; emit+build+compare not attempted
-81ca672d1+uncommitted-novac/src
+diagnostic HEAD + uncommitted novac/src
 BOOTSTRAP_RC=1
 ```
 
 Это **не успешная самосборка**: A есть, B/C и сравнения не запускались.
-Полный HEAD `81ca672d17d61ddda08b302561275d1f9079d52c` — только предок
+Полный HEAD [`81ca672d17d61ddda08b302561275d1f9079d52c`](https://github.com/nv-lang/nova/commit/81ca672d17d61ddda08b302561275d1f9079d52c) — «docs(novac): localize bootstrap record mangling failure», 2026-10-10 — только предок
 незакоммиченного фикса. SHA256 измеренного source patch:
 `df6e3e7a849a1605c4a97210a542dea4f783033666e30382fa5d42a2236af069`.
 A.exe SHA256: `76a91b1f8550d832ea5b1b20de7463809f653300361e412f6c1ed4b1125a98f6`.
@@ -326,7 +330,7 @@ BOOTSTRAP_RC=0
 | B.c и C.c | 13250302 | `8ea9b067c5ba8ebaa47828652d05d616bfddc8b68c3976b28c4acf670b74e996` |
 | B/novac.exe, B.relink/novac.exe, C/novac.exe | 3877888 | `9e87fdc2af7ff264ad8d67bd8d102f95221fe7bef9896eb1128eadbf478087d9` |
 
-**Provenance:** HEAD `81ca672d17d61ddda08b302561275d1f9079d52c` **плюс dirty source**,
+**Provenance:** HEAD [`81ca672d17d61ddda08b302561275d1f9079d52c`](https://github.com/nv-lang/nova/commit/81ca672d17d61ddda08b302561275d1f9079d52c) — «docs(novac): localize bootstrap record mangling failure», 2026-10-10 — **плюс dirty source**,
 не SHA готового фикса. Полный измеренный patch —
 `task55-measured-source.patch` в [lossless bundle](task55-lossless-evidence.json), SHA256
 `afcbc3bde1882f97dfbd8828482d680080a4409453be7585d19c7e28bcbc5f61`.
@@ -499,7 +503,7 @@ Allow/baselines ради зелени не расширялись.
 
 ## ВЕТКА/КОММИТ И ЧТО НЕ СДЕЛАНО
 
-Ветка `t55-fix-1875`; диагностический предок `81ca672d1`. Финальный SHA будет
+Ветка `t55-fix-1875`; диагностический предок [`81ca672d17d61ddda08b302561275d1f9079d52c`](https://github.com/nv-lang/nova/commit/81ca672d17d61ddda08b302561275d1f9079d52c) — «docs(novac): localize bootstrap record mangling failure», 2026-10-10. Финальный SHA будет
 передан приёмщику с точным списком проверок. Для уборки нужны обе task-ветки.
 CI кандидата выполняет приёмщик; локальные gate/mega-CU/full nova test не запускались.
 `accept` должен указывать полный SHA кандидата, исходная plugin-ветка не его предок.
@@ -511,8 +515,9 @@ watch `1791647658567-9sp0rx`. `git diff --cached --check` также чист.
 
 ### Доработка приёмки, круг 1: canonical coalesce
 
-Предварительный candidate d708211ca77f1d4b1e0d93780e3a464ee99ab9dc
-получил W_MANUAL_COALESCE в CI nova-lint (run `38067267936`): helper
+Предварительный candidate, его точный SHA и причина отклонения сохранены как
+исторические данные в [журнале provenance](task55-historical-provenance.json).
+Он получил W_MANUAL_COALESCE в CI nova-lint (run `38067267936`): helper
 `option_number` вручную раскрывал Option. Его тело заменено на каноническое
 `o ?? -1`. Носители дефекта в `optional_tail` и expected-position match,
 assertions, EXPECT_STDOUT и семь manifest entries сохранены без изменений.
@@ -529,8 +534,9 @@ combined SHA после #57. №1875 остаётся OPEN до полной п�
 
 ### Доработка приёмки, круг 2: четыре блокера novac-gate
 
-Приёмщик сообщил красный `nova-gate` на candidate
-`a8acbc1058fb5bdef8a1244d3fe06504b61e707e`, run `38074299290`:
+Приёмщик сообщил красный `nova-gate` на отклонённом candidate, чей exact SHA и
+роль сохранены в [журнале provenance](task55-historical-provenance.json), run
+`38074299290`:
 устаревшие живые строки плана, отсутствие ledger за 2026-10-10, два адреса
 `ice_at` после сдвига строк и нераспознанный делегирующий выход из типизации.
 Это не успешная финальная приёмка; для manual run `38074337950` приёмщик
@@ -564,11 +570,14 @@ oracle `nova check novac/src/main.nv` — PASS, `git diff --check` чист.
 
 ## Запись приёмки кандидата
 
-Первый опубликованный кандидат d708211ca77f1d4b1e0d93780e3a464ee99ab9dc
-на ветке `integrate/t55` был ошибочно собран от `ec4e6a235` (#56), без #57.
+Первый опубликованный кандидат (exact SHA и причина отклонения сохранены в
+[журнале provenance](task55-historical-provenance.json)) на ветке
+`integrate/t55` был ошибочно собран от #56, а не от #57. База #56 была commit
+[`ec4e6a23531100177f0e2a258ce44478d5595dd9`](https://github.com/nv-lang/nova/commit/ec4e6a23531100177f0e2a258ce44478d5595dd9) — «docs: centralize acceptance and merge-lock rules», 2026-10-10.
 Он отклонён и не является precheck: `nova-lint` run `38067267936` завершился
 с W_MANUAL_COALESCE в `p1875_match_block_expected.nv:17`; исправление helper
-внесено отдельным commit `99b8176f81efbef15b3fd5114fe2bb4eaeac5734`.
+внесено отдельным commit
+[`99b8176f81efbef15b3fd5114fe2bb4eaeac5734`](https://github.com/nv-lang/nova/commit/99b8176f81efbef15b3fd5114fe2bb4eaeac5734) — «test(novac): use canonical coalesce in block-tail fixture», 2026-10-10.
 
 После обнаружения неверной базы остановлены активные workflow: `38067267975`
 (`windows-process-acceptance`), `38067267961` (`crate-tests`), `38067267970`
@@ -586,7 +595,7 @@ process rc=0, stderr пустой. Строка `(--deny, exit 1)` в stdout —
 `38067267986` (`contracts-z3`), `38067267968` (`contracts-crosscheck`) и
 `38067268005` (`nova-test-regression`) завершились success; эти результаты
 также не считаются полным CI кандидата. `#57` достигла `origin/main` на
-`121c39883d7b39f6d1c80e23c2d3a704fa061a37`; свежий `integrate/t55-final`
+[`121c39883d7b39f6d1c80e23c2d3a704fa061a37`](https://github.com/nv-lang/nova/commit/121c39883d7b39f6d1c80e23c2d3a704fa061a37) — «docs(registry): make the example carrier caveat explicit», 2026-10-10; свежий `integrate/t55-final`
 готовится на этой базе. Финальные A→B→C, оба-way сравнения, обязательный CI и
 manual full должны пройти на одном clean SHA; до этого приёмка CI pending,
 №1875 остаётся открытой, 0.2 не объявлена.

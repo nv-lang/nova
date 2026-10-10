@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "purpose": "Lossless audit metadata for private and rejected task-55 commits. These values document local or rejected build provenance; they are not links to accepted code.",
+  "records": [
+    {
+      "key": "original_local_task_head",
+      "sha": "a92abccba392021d7d4f7943d269a695b17c3833",
+      "date": "2026-10-09",
+      "topic": "chore(crew): switch to the codex-light profile set",
+      "role": "HEAD observed on the owner's untouched local original task branch",
+      "disposition": "private local provenance; not the accepted task base",
+      "details": "The original task branch was left untouched. The repair was made separately from fresh origin/main."
+    },
+    {
+      "key": "private_diagnostic_source",
+      "sha": "c7b1f911db22f10734d767fb4f35ffed27cf3fe9",
+      "reported_abbreviation": "c7b1f911d",
+      "date": "2026-10-10",
+      "topic": "docs(novac): localize bootstrap record mangling failure",
+      "role": "private diagnostic investigation commit cherry-picked into the task branch",
+      "disposition": "private source provenance; the cherry-pick result is a separate reachable commit",
+      "details": "The investigation worktree and its #54 evidence were not modified."
+    },
+    {
+      "key": "rejected_candidate_d708",
+      "sha": "d708211ca77f1d4b1e0d93780e3a464ee99ab9dc",
+      "date": "2026-10-10",
+      "topic": "fix(novac): preserve conditional values in match arm blocks",
+      "role": "first published integrate/t55 candidate, mistakenly based on #56 rather than landed #57",
+      "disposition": "rejected after nova-lint run 38067267936 reported W_MANUAL_COALESCE",
+      "details": "The helper was changed to canonical `o ?? -1`; this rejected candidate is retained only as audit provenance."
+    },
+    {
+      "key": "rejected_combined_candidate_b9",
+      "sha": "b9a152f057291e10e6355ea142582715776d7384",
+      "date": "2026-10-10",
+      "topic": "Merge task #55 onto fresh main for final CI",
+      "role": "first combined #55 + #57 acceptance candidate",
+      "disposition": "rejected after nova-gate run 38069905044 found a new dead-commit reference in the report",
+      "details": "Manual full run 38070065480 was cancelled. Stock bootstrap and both sabotage/restore probes were run on this SHA, but are not final proof."
+    },
+    {
+      "key": "rejected_docs_candidate_1ea",
+      "sha": "1ea62be97d3e95f1ecc1c42d4a1277e2fc3e3cc0",
+      "date": "2026-10-10",
+      "topic": "docs(novac): keep rejected candidate SHA as audit metadata",
+      "role": "docs-only revision of combined acceptance candidate b9",
+      "disposition": "rejected after nova-gate run 38072178247 found remaining dead-commit references in the report",
+      "details": "Manual full run 38072212525 was cancelled. Stock bootstrap and both sabotage/restore probes were repeated on this SHA, but are not final proof."
+    },
+    {
+      "key": "rejected_docs_candidate_a8",
+      "sha": "a8acbc1058fb5bdef8a1244d3fe06504b61e707e",
+      "date": "2026-10-10",
+      "topic": "docs(novac): mark historical SHA values as audit metadata",
+      "role": "docs-only revision of combined acceptance candidate 1ea",
+      "disposition": "rejected after nova-gate run 38074299290 failed novac plan-liveline, time-ledger, ICE-label, and no-silent-skip checks",
+      "details": "Manual full run 38074337950 was cancelled. Stock bootstrap and both sabotage/restore probes on 1ea are not proof for this SHA."
+    }
+  ]
+}
