@@ -8,10 +8,10 @@
 ## РЕПРО
 
 Исходная task-ветка `t55-karina-1875-hvostovye-znacheniya-blokov` оказалась
-на локальном `a92abccba392021d7d4f7943d269a695b17c3833`. Она оставлена нетронутой.
+на локальном a92abccba392021d7d4f7943d269a695b17c3833. Она оставлена нетронутой.
 В том же дереве создана `t55-fix-1875` от свежего `origin/main`
 `6a3275d0add28a9fe207fac9464baa3380f97f8d`. Обычный cherry-pick диагностического
-`c7b1f911d` дал `81ca672d1`; дерево расследования и улики #54 не изменялись.
+c7b1f911d дал `81ca672d1`; дерево расследования и улики #54 не изменялись.
 
 Дерево задачи:
 `D:/Sources/nv-lang/worktrees/nova-opencode-55-karina-1875-hvostovye-znacheniya-blokov`.
