@@ -56,7 +56,7 @@ fn run(program str, extra []str) Proc Io -> Result[int, IoError] {
     }
 }
 
-fn main() {
+fn main() Os Proc Io -> () {
     ro argv = args()
     if argv.len() < 2 {
         println("usage: pty_session <program> [args...]")

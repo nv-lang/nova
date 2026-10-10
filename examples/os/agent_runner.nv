@@ -71,7 +71,7 @@ fn run_agent(program str, extra []str, prompt str) Proc Io -> Result[int, IoErro
     }
 }
 
-fn main() {
+fn main() Os Proc Io -> () {
     ro argv = args()
     if argv.len() < 2 {
         println("usage: agent_runner <program> [args...]")
