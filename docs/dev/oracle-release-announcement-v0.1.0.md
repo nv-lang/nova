@@ -24,9 +24,11 @@ What makes it interesting:
   concurrency as language constructs, not a library bolt-on.
 - **One way to format.** String interpolation `"${x}"` is the canonical path
   (there is no string `+`), backed by a single zero-copy formatting engine.
-- **Batteries.** Collections, JSON, time/tz, unicode, net; TLS, HTTP and
-  compression as versioned packages. Plus `nova` CLI (build/check/test/doc),
-  an LSP server, editor support, and a Docker build recipe.
+- **Batteries.** Collections, JSON, time/tz, Unicode and networking in `std`;
+  the examples workspace pins packages named `tls`, `http`, `compress`,
+  `socks`, and `polaris`. Their package boundaries and known limits are in
+  the release notes. Plus the `nova` CLI (build/check/test/doc), an LSP
+  server, editor support, and a Docker build recipe.
 
 This is an early alpha: the language surface and APIs may change, and
 compatibility is not guaranteed. See the release notes for the exact scope,
@@ -61,9 +63,11 @@ C, эффекты — часть сигнатур функций, владени
   конкурентность как конструкции языка.
 - **Один путь форматирования.** Интерполяция `"${x}"` — канон (строкового `+`
   в языке нет), под ней единый zero-copy движок.
-- **Батарейки.** Коллекции, JSON, время/зоны, unicode, сеть; TLS, HTTP и
-  сжатие — версионируемыми пакетами. Плюс CLI (build/check/test/doc),
-  LSP-сервер, поддержку редакторов и рецепт сборки Docker-образа.
+- **Батарейки.** Коллекции, JSON, время/зоны, Unicode и сеть — в `std`;
+  examples workspace закрепляет пакеты `tls`, `http`, `compress`, `socks`
+  и `polaris`. Их границы и ограничения — в release notes. Плюс CLI
+  (build/check/test/doc), LSP-сервер, поддержка редакторов и рецепт сборки
+  Docker-образа.
 
 Это ранняя альфа: поверхность языка и API могут меняться, совместимость не
 гарантируется. Точный scope, известные ограничения и планируемые артефакты — в

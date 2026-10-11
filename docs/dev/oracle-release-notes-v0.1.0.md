@@ -83,9 +83,23 @@ IO, filesystem, path, OS, time, JSON-capable encoding, checksums,
 cryptography primitives, identifiers, Unicode, text utilities, a testing
 framework with deterministic handlers (e.g. a mockable clock and `Random`
 seed), and the concurrency/runtime layer that backs the fiber scheduler.
-Networking, TLS, HTTP, and compression are separately versioned packages.
-Their availability, exact versions, and release readiness are separate from
-this Oracle compiler release and must be checked in their own package sources.
+Networking is `std.net`; there is no `nova-net` dependency in the current
+examples lock. The separately-versioned packages below are pinned by the
+examples workspace and are not bundled Oracle components or proof that each
+package API is release-certified.
+
+| Locked package | Documented scope at the pinned version | Boundary |
+|---|---|---|
+| `http` 0.2.1 ([pin](https://github.com/nv-lang/nova-http/tree/5505f31c4ef814ac9f9fdb111878a67aa170c5df)) | HTTP/1.1 protocol model and client, URL validation, cookies, typed JSON bodies | No server/router in this package; the server framework is `polaris`. |
+| `tls` 0.2.1 ([pin](https://github.com/nv-lang/nova-tls/tree/01d323b6423d69fd5c54216667134313033f8644)) | mbedTLS-backed client/server streams, verification modes, mTLS | OS trust-store behavior has platform limits; consult its release documentation. |
+| `compress` 0.1.3 ([pin](https://github.com/nv-lang/nova-compress/tree/c4c387fdf145280b7253ede7bf992fe6fbb35359)) | deflate/gzip/zlib encode+decode; brotli decode | Brotli encode is not in scope. |
+| `socks` 0.1.3 ([pin](https://github.com/nv-lang/nova-socks/tree/9d44e5d5353e3d4094b17a29eb242f3fea7aef1d)) | SOCKS5 client CONNECT, IPv4/domain targets, username/password | No server, IPv6 target, BIND/UDP ASSOCIATE or GSSAPI; no built-in handshake timeout. |
+| `polaris` 0.2.4 ([pin](https://github.com/nv-lang/nova-polaris/tree/24f9d1757868e0d682217606c7c8fdf0e5037881)) | Separate server framework: Router, middleware, auth, WebSocket, serving | The current 274.11 checklist keeps extractor arities/end-to-end acceptance and other HTTP scope open; not fully validated. |
+
+These package descriptions were checked against the pinned sources' README
+files and the in-tree manifest/lock. They describe documented scope, not an
+independent package test run or proof that the packages ship in this Oracle
+release.
 
 - **`serde`-style field attributes** for the JSON derive: `rename`,
   `rename_all` (container-level, typo-checked at compile time rather
@@ -108,11 +122,12 @@ this Oracle compiler release and must be checked in their own package sources.
   `Permit`. It applies to the supported bare consume binding form, not to
   every pattern or aggregate; types without this protocol keep their prior
   ownership rules.
-- HTTP/router and typed-extractor claims in the earlier shared draft are not
-  treated as Oracle release guarantees. The current Carina release checklist
-  still records extractor arities and end-to-end acceptance as open package
-  work; verify the separately versioned package at its own release before
-  advertising those capabilities.
+- The earlier draft misattributed the server framework to `http` and used
+  the nonexistent locked package name `nova-net`. The examples lock uses
+  `http`, `tls`, `compress`, `socks`, and `polaris`; `std.net` supplies the
+  network effect. Their documented scopes and boundaries are listed above.
+  In particular, Router/extractors belong to `polaris`, and current 274.11
+  evidence does not close all typed-extractor acceptance.
 
 ### Tooling
 
