@@ -17,6 +17,9 @@ jobs:
       - name: Checkout dispatched revision and submodules
         uses: actions/checkout@v4
         with:
+          # The workflow_dispatch branch picker selects the source ref (main by
+          # default); github.sha is its immutable dispatch-time commit, unlike a
+          # later fetch of a moving branch name.
           ref: ${{ github.sha }}
           submodules: recursive
 
@@ -24,7 +27,8 @@ jobs:
         shell: pwsh
         run: |
           $actual = (git rev-parse HEAD).Trim()
-          "Dispatched SHA: ${{ github.sha }}" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY
+          "Selected ref: ${{ github.ref }}" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY
+          "Dispatched source SHA: ${{ github.sha }}" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "Checked out SHA: $actual" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           if ($actual -ne "${{ github.sha }}") {
             throw "Checkout SHA mismatch: expected ${{ github.sha }}, got $actual"
