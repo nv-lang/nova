@@ -12,6 +12,10 @@
 [274.11](274.11-carina-release.md) §7. Это решение не закрывает 274.11, не
 изменяет критерии ступени 0.2 и не меняет scope Polaris.
 
+Релизная линия: Oracle остаётся **0.1.x**; Carina продолжает лестницу
+**0.2 → 0.3 → 1.0**. Решение владельца 2026-10-11 отменяет прежнее
+решение 2026-09-15 «Oracle не выходит».
+
 Оба релиза — **alpha и pre-release**. Заголовок GitHub Release Oracle:
 `Nova Oracle 0.1.0 (alpha)`. Тег — `oracle-v0.1.0`; последующие patch-теги —
 `oracle-v0.1.1` и т. д. Alpha не добавляется в тег или имя файла.
@@ -28,10 +32,21 @@
 Docker recipe/source — [`docker/release/`](../../docker/release/); имя образа
 Oracle: `nova-oracle:0.1.0`.
 
-Заметки основываются на обоих документах:
-[`release-notes-v0.1.0.md`](../dev/release-notes-v0.1.0.md) и
-[`release-announcement-v0.1.0.md`](../dev/release-announcement-v0.1.0.md).
-В заметки включить ясную фразу о не-гарантиях: «This is an early alpha: the
+**Инвентарь CI по текущим workflow (не список готовых артефактов):** Oracle
+`nova-cli` собирается в release на Ubuntu и Windows x86_64, но workflow не
+загружает compiler binaries для выпуска. Carina `novac` собирается только на
+Linux в `nova-gate`, не загружается; сборки `novac` для Windows в текущих
+workflow нет. Текущие uploads — benchmark-results JSON/Markdown и full test
+report, не релизные бинарники. Поэтому все три архива выше — планируемые
+артефакты, а не уже произведённые CI outputs.
+
+Заметки Oracle: [`oracle-release-notes-v0.1.0.md`](../dev/oracle-release-notes-v0.1.0.md)
+и [`oracle-release-announcement-v0.1.0.md`](../dev/oracle-release-announcement-v0.1.0.md).
+Оба черновика сверены с `origin/main` SHA `22367b3e315d9125fabb3b3378cb0971a0009034`
+и D431–D437 с учётом амендмента D462; устаревшие количественные заявления
+о зелёных наборах и флагмане удалены, текущие ограничения и изменения
+зафиксированы в заметках.
+В заметки включена ясная фраза о не-гарантиях: «This is an early alpha: the
 language surface and APIs may change, and compatibility is not guaranteed.»
 
 ## Порядок и критерии приёмки выпуска

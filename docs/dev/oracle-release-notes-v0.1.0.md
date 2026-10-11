@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Nova v0.1.0 — release notes (draft)
+# Nova Oracle 0.1.0 — release notes (alpha draft)
 
-**Nova v0.1.0 is the first public release of the language.** Nova compiles
+**Nova Oracle 0.1.0** is an early alpha release. Oracle compiles
 to C and then to a native binary — there is no interpreter. Every
 function's side effects (`Db`, `Net`, `Io`, `Time`, `Fail`, ...) are part of
 its type signature and checked by the compiler. Memory is managed by a
@@ -10,9 +10,10 @@ Boehm GC by default; for resources that need deterministic cleanup,
 the loop. Concurrency is structured (`spawn`, `parallel for`, `supervised`)
 on an M:N work-stealing fiber scheduler, with no `async`/`await` split.
 
-This is a snapshot of an early, working compiler and standard library —
-not a finished 1.0. See "Known limitations" below before depending on it
-for anything beyond experimentation.
+This is an early alpha snapshot of Oracle, not a finished 1.0. The language
+surface and APIs may change, and compatibility is not guaranteed. See
+"Known limitations" below before depending on it for anything beyond
+experimentation.
 
 ## Highlights
 
@@ -24,14 +25,12 @@ for anything beyond experimentation.
   answer to mocking in tests — swap a handler, no mocking framework.
 - **`consume`/ownership with `defer`**: `defer { ... }` runs at every scope
   exit (including `throw`/`panic`), LIFO across multiple `defer`s in the
-  same scope. A `consume`-typed binding is ownership-tracked; historically
-  it had to be consumed exactly once or the compiler rejected the program
-  (strict-linear). **New in this release (D432):** a `consume` type can
-  opt into an affine discipline instead — if it declares an effect-pure
-  `@cleanup(outcome ScopeOutcome) -> ()`, the compiler auto-inserts a call
-  to it on any exit path where the value is still live, so forgetting to
-  consume it is no longer a compile error. Types without `@cleanup` keep
-  the original strict-linear behavior.
+  same scope. A `consume` type with `@cleanup` is affine for a named bare
+  binding (`consume x = ...`): if still live at scope exit, the compiler
+  inserts cleanup (D432). Cleanup effects propagate to the containing
+  function; a `Fail` effect must be declared where required. Other binding
+  forms and types without `@cleanup` retain explicit-consumption rules;
+  cleanup is not recursively synthesized for arbitrary aggregates.
 - **`protocol`s** — structural interfaces, opted into explicitly via
   `#impl(...)`, distinct from effects (an effect is a swappable
   implementation of "how"; a protocol is a fixed contract of "what a value
@@ -62,23 +61,31 @@ for anything beyond experimentation.
   must appear explicitly in a function's effect row; the previous
   "ambient" carve-out for `Time` is gone (D62 retraction). An effect
   with one obvious default implementation can declare it once with
-  `#default_handler(...)` (D431) instead of every call site wiring a
-  handler by hand.
+  `#default_handler(...)` (D431) for an opted-in effect instead of every
+  call site wiring a handler by hand. Under strict effects, callers still
+  declare the effect explicitly; Fs/Net/Os have not been migrated to this
+  default-handler mechanism.
 - **Better diagnostics for uncaught `throw`/panics (D437)**: the error
-  now reports the throw site plus a propagation trace through the
-  `?`-sites it passed through (a bounded ring, not an unbounded call
-  stack).
+  reports the throw site plus a propagation trace through the `?`-sites it
+  passed through. This is not a full call stack: the trace is bounded to 16
+  entries, and the default human-readable output also has an opt-in JSON
+  form (`NOVA_PANIC_FORMAT=json`, D462).
+- **Consistent numeric `match` arms (D433, as amended by D491)**: without an
+  expected result type, numeric arms must agree; incompatible widths or
+  signedness are rejected instead of silently selecting one arm's type.
+  The earlier safe-widening rule was withdrawn. An in-range unsuffixed
+  integer literal can still adopt its sibling arm's type.
 
 ### Standard library
 
-`std` ships with collections (`Vec`/`[]T` alias, `HashMap`, iterators),
+Oracle's `std` includes collections (`Vec`/`[]T` alias, `HashMap`, iterators),
 IO, filesystem, path, OS, time, JSON-capable encoding, checksums,
 cryptography primitives, identifiers, Unicode, text utilities, a testing
 framework with deterministic handlers (e.g. a mockable clock and `Random`
 seed), and the concurrency/runtime layer that backs the fiber scheduler.
-Networking, TLS, HTTP, and compression are separately versioned packages
-(`nova-net`/`nova-tls`/`nova-http`/`nova-compress`), pulled in via
-`nova.lock` the same way any external Nova package is.
+Networking, TLS, HTTP, and compression are separately versioned packages.
+Their availability, exact versions, and release readiness are separate from
+this Oracle compiler release and must be checked in their own package sources.
 
 - **`serde`-style field attributes** for the JSON derive: `rename`,
   `rename_all` (container-level, typo-checked at compile time rather
@@ -86,7 +93,9 @@ Networking, TLS, HTTP, and compression are separately versioned packages
   `default` (including `default = "fn"`), and `alias` (D435) — plus
   strict-by-default rejection of unknown JSON fields, with an explicit
   opt-out (`#serde(allow_unknown)`, D436). `flatten` is designed but
-  gated behind a clear compile error, not yet implemented.
+  not synthesized yet and is rejected with a diagnostic. These field
+  attributes currently apply to records; rich attributes on sum-variant
+  record payloads remain outside this scope (D435).
 - **Runtime hardening**: an intermittent, load-dependent crash in
   orphaned `detach` fibers (a use-after-return on the parent's stack)
   and a use-after-free in listener refcounting on a cancelled-then-
@@ -94,22 +103,16 @@ Networking, TLS, HTTP, and compression are separately versioned packages
   `try_acquire_permit() -> Option[Permit]` so admission-control code can
   use a `@cleanup`-guarded `Permit` instead of a bare boolean plus a
   manual `release()` in `defer`.
-- **Affine `@cleanup` (D432) rolled out to networking types**:
-  `TcpListener`, `TcpReadHalf`, `TcpWriteHalf`, and `UdpSocket` now
-  auto-release on any exit path if forgotten. `File`, `BufWriter`, and
-  `OnceGuard` are deliberately excluded — a fallible close and a
-  non-interchangeable commit/abort are part of their design, not an
-  oversight.
-- **`nova-http`'s router was rebuilt from scratch**, Axum-class: a
-  segment-trie with static-segment > `{param}` > `{*catch-all}`
-  precedence, a composable `MethodRouter` (automatic `405` with an
-  `Allow` header), `nest()` for sub-routers, and a route conflict
-  reported as a typed registration error instead of a runtime panic;
-  the old linear-scan `ServeMux` is retired. Typed extractors
-  (`Path[T]`, `Query[T]`, `Json[T]`, `Bytes`, `Text`, `Headers`) and an
-  `IntoResponse` protocol (`str`/`StatusCode`/`ServerResponse`/
-  `Json[T]`/a `Result` blanket) build on the same `serde` machinery —
-  early and still hardening, see Known limitations.
+- **Affine `@cleanup` (D432) is used by selected resource types**, including
+  `File`, `BufWriter`, TCP listener/stream/split halves, `UdpSocket`, and
+  `Permit`. It applies to the supported bare consume binding form, not to
+  every pattern or aggregate; types without this protocol keep their prior
+  ownership rules.
+- HTTP/router and typed-extractor claims in the earlier shared draft are not
+  treated as Oracle release guarantees. The current Carina release checklist
+  still records extractor arities and end-to-end acceptance as open package
+  work; verify the separately versioned package at its own release before
+  advertising those capabilities.
 
 ### Tooling
 
@@ -124,11 +127,9 @@ Networking, TLS, HTTP, and compression are separately versioned packages
   lookup) with a **VSCode extension** (TextMate grammar plus LSP wiring;
   Sublime/Vim/Emacs get syntax-highlighting-only grammars under
   `editors/`).
-- **Docker image** (`docker/release/`) — a ~1 GB Linux image with the
-  `nova` compiler, `std/`, and the C runtime (libuv-backed), built from
-  the same recipe as CI; mount a project directory and run
-  `nova build`/`nova test` inside the container with no local Rust
-  toolchain.
+- **Docker recipe** (`docker/release/`) exists. This plan proposes
+  `nova-oracle:0.1.0`; no Docker image has been built or published for this
+  draft.
 - Optional **Z3-backed contract verification** (`--features z3-backend`,
   `NOVA_SMT_BACKEND=z3`); a dependency-free `TrivialBackend` (reflexive
   tautologies, constant folding) is the default and needs no external
@@ -136,35 +137,37 @@ Networking, TLS, HTTP, and compression are separately versioned packages
 
 ## Distribution
 
-- **Windows x64**: a prebuilt zip (`nova-v0.1.0-windows-x64.zip`) with
-  `nova.exe`, `nova-lsp.exe`, the `std/` sources, a trimmed C runtime
-  (headers plus the subset of libuv actually compiled), a trimmed Boehm
-  GC lib/headers subset, a `setup-env.ps1` that points the compiler at
-  this bundle from any working directory, `README-INSTALL.md`, and the
-  license files. A C compiler (MSVC via `vcvars64.bat`, or Clang/GCC)
-  must be installed separately — Nova compiles to C, not directly to
-  machine code. See [docs/guide/quickstart.md](../guide/quickstart.md).
-- **Linux**: built from source; there is no prebuilt Linux archive for
-  v0.1.0 yet. Follow [docs/guide/linux-build.md](../guide/linux-build.md) (Debian/Ubuntu
-  packages, Rust toolchain, `git submodule update` for the libuv
-  submodule, build, smoke test). This is the same recipe the CI gate
-  runs, and it is green.
+- **Planned release assets (not produced by current CI):**
+  `nova-oracle-0.1.0-linux-x86_64.tar.gz`,
+  `nova-oracle-0.1.0-windows-x86_64.zip`,
+  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. Current CI builds
+  `nova-cli` in release mode on Ubuntu and Windows x86_64, but does not
+  upload releasable compiler binaries. Its artifact uploads are benchmark
+  JSON/Markdown results and the full test report; those are not release
+  assets.
+- The intended binary platforms are Linux and Windows x86_64. The archive
+  contents and installation recipe still need release-build verification;
+  a C compiler is required because Nova compiles to C. See
+  [docs/guide/quickstart.md](../guide/quickstart.md).
+- **Linux source build**: follow [docs/guide/linux-build.md](../guide/linux-build.md)
+  (Debian/Ubuntu packages, Rust toolchain, libuv submodule, build, smoke
+  test). A CI release-mode build is not a releasable Linux archive.
 - **Docker**: `docker/release/Dockerfile`, a two-stage build (Ubuntu
   22.04 builder with the Rust toolchain, then a slim runtime image with
   the compiled `nova` binary, `std/`, and the C runtime). Build context
-  must be the repository root. See [docker/release/README.md](../../docker/release/README.md).
+  must be the repository root. The planned Oracle image name is
+  `nova-oracle:0.1.0`; no image has been built or published for this draft.
+  See [docker/release/README.md](../../docker/release/README.md).
 
 ## Known limitations
 
 This is an early release; treat it accordingly.
 
-- **API and syntax are not yet frozen.** The core language surface
-  (effects, handlers, syntax, memory model, concurrency primitives) is
-  stable in practice, but corners of the standard library and CLI can
-  still change before a 1.0.
-- **Windows is the primary, most-tested platform** for this release —
-  the prebuilt zip only targets Windows x64. Linux works and is
-  CI-gated, but only from source; there is no prebuilt Linux binary yet.
+- **API and syntax are not frozen.** The language surface, standard library,
+  and CLI may change; compatibility is not guaranteed before 1.0.
+- **Release assets are not CI outputs.** CI currently builds Oracle on
+  Ubuntu and Windows x86_64, but uploads no releasable binaries. Building on
+  a runner does not by itself prove that a distributable archive is ready.
 - **Contract verification beyond trivial cases needs Z3**, an optional
   external dependency; without it, only reflexive/constant-foldable
   contracts are statically proven, and the rest fall back to runtime
@@ -210,26 +213,19 @@ This is an early release; treat it accordingly.
   (`spec/decisions/`); this release's English-facing documentation
   (README, quickstart, language tour) is a curated subset, not a full
   translation.
-- The VSCode extension (syntax highlighting + LSP client) ships as a
-  packaged `nova-lang-0.1.0.vsix` attached to this release.
+- The VSCode extension is not included in the owner-approved asset list for
+  this draft; packaging and release attachment are not asserted here.
 - Some standard-library corners and example programs carry documented,
   narrow-scope simplifications (see `docs/dev/simplifications.md` in the
   repository) — these are tracked, not silent.
-- **`serde`'s `flatten` attribute isn't implemented yet** — using it is
-  a compile error, not silently-ignored behaviour; every other field
-  attribute (`rename`, `rename_all`, `skip`, `skip_serializing_if`,
-  `default`, `alias`) works.
-- **`nova-http`'s new typed extractors are early.** `Path[T]`, `Query[T]`,
-  and `Json[T]` compile and the server test suite is green, but an open
-  codegen bug (a value/pointer argument mismatch on a generic static
-  method) blocks per-handler arity registration and end-to-end
-  round-trip coverage for them — treat extractors as not yet fully
-  validated.
-- **A handful of `nova-http` server-policy hardening tests are held
-  back**: cancelling a `supervised(timeout:)`-wrapped `accept()` retry
-  loop doesn't reliably stop the loop after the first cancellation (a
-  related use-after-free was already fixed; this is a narrower,
-  residual liveness gap) — 5 tests are pending a fix.
+- **Serde attributes have scope limits.** `flatten` is parsed but not
+  synthesized; record-field attributes do not yet cover rich attributes on
+  sum-variant record payloads (D435). Unknown JSON fields are rejected by
+  default; `#serde(allow_unknown)` is the explicit opt-out (D436).
+- **Separately versioned packages are not covered by Oracle's acceptance.**
+  In particular, current release-plan evidence keeps typed-extractor
+  arities/end-to-end acceptance and some Polaris HTTP work open; do not infer
+  that package APIs are fully validated from an Oracle compiler release.
 
 ## Links
 

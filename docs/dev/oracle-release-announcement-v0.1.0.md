@@ -1,9 +1,11 @@
 <!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
-# Announcement draft — Nova v0.1.0 (A-V6; финал при тегах)
+# Nova Oracle 0.1.0
+
+Release announcement draft (English/Russian; alpha release).
 
 ## EN (GitHub Release / nv-lang.org)
 
-**Nova 0.1.0 — first public release**
+**Nova Oracle 0.1.0**
 
 Today I'm releasing Nova, a systems-flavored language I've been building solo:
 it compiles to C, tracks effects in function signatures, and enforces resource
@@ -14,10 +16,9 @@ What makes it interesting:
 - **Effects in types.** A function that touches time, network, or spawns
   concurrency says so in its signature — and `--strict-effects` makes the
   compiler enforce it. No hidden I/O.
-- **Ownership without a borrow checker tax.** `consume` parameters, `defer`,
-  and automatic `@cleanup` give deterministic resource release (files, sockets,
-  locks) at compile time, while a GC handles plain memory. You get use-after-
-  close and double-close as compile errors, not runtime surprises.
+- **Ownership without a borrow checker tax.** `consume` parameters and
+  `defer` are checked by the compiler; opted-in `@cleanup` resources are
+  cleaned on exit when still live, while a GC handles plain memory.
 - **M:N concurrency built in.** Fibers on a work-stealing scheduler:
   `spawn`, `parallel for`, `supervised(deadline:)`, channels — structured
   concurrency as language constructs, not a library bolt-on.
@@ -25,15 +26,14 @@ What makes it interesting:
   (there is no string `+`), backed by a single zero-copy formatting engine.
 - **Batteries.** Collections, JSON, time/tz, unicode, net; TLS, HTTP and
   compression as versioned packages. Plus `nova` CLI (build/check/test/doc),
-  an LSP server, a VSCode extension, and a Docker image.
+  an LSP server, editor support, and a Docker build recipe.
 
-This is an early release: the language surface is not frozen and APIs will
-move. But the compiler is real — the whole stdlib and every example builds
-under strict effects, the conformance suite (1000+ fixtures in a single
-compilation unit) is green on Windows and Linux, and the flagship demo app
-(concurrent aggregator with HTTP/TLS) builds and survives load testing.
+This is an early alpha: the language surface and APIs may change, and
+compatibility is not guaranteed. See the release notes for the exact scope,
+known limitations, and planned assets. A green compiler build or test suite
+does not by itself certify a releasable binary or package ecosystem.
 
-Get started: download the Windows build, or build from source on Linux —
+Get started: download the Windows archive when it is published, or build from source on Linux —
 the [quickstart](docs/guide/quickstart.md) takes you from install to a running
 concurrent program in a few minutes. The [language tour](docs/guide/language-tour.md)
 covers the surface in 12 short sections, every example verified.
@@ -42,7 +42,7 @@ Feedback, bug reports, and hard questions are welcome — this is day one.
 
 ## RU (nv-lang.ru)
 
-**Nova 0.1.0 — первый публичный релиз**
+**Nova Oracle 0.1.0**
 
 Сегодня я выпускаю Nova — язык, который делаю в одиночку: компилируется через
 C, эффекты — часть сигнатур функций, владение ресурсами проверяется на этапе
@@ -53,10 +53,9 @@ C, эффекты — часть сигнатур функций, владени
 - **Эффекты в типах.** Функция, трогающая время, сеть или конкурентность,
   объявляет это в сигнатуре, а `--strict-effects` заставляет компилятор это
   проверять. Скрытого I/O нет.
-- **Владение без налога borrow checker'а.** `consume`-параметры, `defer` и
-  автоматический `@cleanup` дают детерминированное освобождение ресурсов
-  (файлы, сокеты, локи) на этапе компиляции; обычной памятью занимается GC.
-  Use-after-close и double-close — ошибки компиляции, а не сюрпризы в проде.
+- **Владение без налога borrow checker'а.** `consume`-параметры и `defer`
+  проверяются компилятором; для ресурсов с `@cleanup` очистка запускается
+  при выходе, если значение ещё живо, а обычной памятью занимается GC.
 - **Встроенная M:N-конкурентность.** Файберы на work-stealing планировщике:
   `spawn`, `parallel for`, `supervised(deadline:)`, каналы — структурная
   конкурентность как конструкции языка.
@@ -64,15 +63,14 @@ C, эффекты — часть сигнатур функций, владени
   в языке нет), под ней единый zero-copy движок.
 - **Батарейки.** Коллекции, JSON, время/зоны, unicode, сеть; TLS, HTTP и
   сжатие — версионируемыми пакетами. Плюс CLI (build/check/test/doc),
-  LSP-сервер, расширение VSCode и Docker-образ.
+  LSP-сервер, поддержку редакторов и рецепт сборки Docker-образа.
 
-Релиз ранний: поверхность языка не заморожена, API будут меняться. Но
-компилятор настоящий: вся стандартная библиотека и все примеры собираются под
-строгими эффектами, конформанс-сьют (1000+ фикстур одним компилируемым юнитом)
-зелёный на Windows и Linux, флагманское демо (конкурентный агрегатор с
-HTTP/TLS) собирается и держит нагрузочный тест.
+Это ранняя альфа: поверхность языка и API могут меняться, совместимость не
+гарантируется. Точный scope, известные ограничения и планируемые артефакты — в
+release notes. Зелёная сборка компилятора или тестовый набор сами по себе не
+подтверждают готовность бинарного артефакта или экосистемы пакетов.
 
-Начать: скачайте Windows-сборку или соберите из исходников на Linux —
+Начать: скачайте Windows-архив после его публикации или соберите из исходников на Linux —
 quickstart доводит от установки до работающей конкурентной программы за
 несколько минут. Язык-тур покрывает поверхность в 12 коротких секциях, каждый
 пример проверен.
