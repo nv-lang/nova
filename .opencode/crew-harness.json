@@ -9,7 +9,7 @@
   ],
   "worktrees": "worktrees",
   "worktree_name": "{repo}-{n}-{slug}",
-  "branch_name": "t{n}-{slug}",
+  "branch_name": "task/{n}-{slug}",
   "target_branch": "main",
   "reviewer": "acceptor",
   "cleanup": "local+remote",
@@ -57,12 +57,12 @@
     {
       "id": "gate",
       "required": true,
-      "text": "вердикт гейта — CI на кандидате integrate/t<N> (слово владельца 2026-10-07: гейты отданы GitHub CI; его nova-gate гоняет gate.sh ярусов loop и push и novac-gate): засчитывается строкой `LANDED` land-task вместе с шагом ci. Локально `scripts/gate.sh` и `scripts/gate-novac.sh` НЕ гонять — только точечные проверки своей правки (фикстура, e1-smoke, стражи check-novac-diag-schema / check-novac-no-cascade напрямую, если тронут novac/src/check). Красный CI — доработка, без локального повтора гейта"
+      "text": "вердикт гейта — CI на кандидате integrate/t<N> (nova-gate, слово владельца 2026-10-07: гейты отданы GitHub CI); локально scripts/gate.sh и scripts/gate-novac.sh не гонять; красный CI — доработка"
     },
     {
       "id": "ci",
       "required": true,
-      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в свою ветку integrate/t<N>, `python scripts/guards/check-push-proven-by-ci.py <полный хеш>` — ok; основной путь — под замком `crew_watch` с `bash scripts/tools/land-task.sh <N> <полный хеш вершины>`, в отчёт — его строка `LANDED task=#N main=…` (/integrator, путь приёмщика, шаг 3)"
+      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в integrate/t<N>; python scripts/guards/check-push-proven-by-ci.py <полный хеш> — ok; порядок приёмки (precheck, замок, accept) — crew_help, раздел ПРИЁМКА; в отчёт — строка LANDED task=#N main=…"
     },
     {
       "id": "commits",
@@ -223,26 +223,10 @@
         "family": "kimi",
         "tier": "task"
       }
-    },
-    "codex-light": {
-      "develop": {
-        "family": "codex",
-        "tier": "light"
-      },
-      "accept": {
-        "family": "codex",
-        "tier": "light"
-      },
-      "plan": {
-        "family": "codex",
-        "tier": "light"
-      },
-      "plan_accept": {
-        "family": "codex",
-        "tier": "light"
-      }
     }
   },
   "profile_set": "codex",
-  "accepted_slot": "free"
+  "tier_max": "light",
+  "accepted_slot": "free",
+  "merge_precheck": "required"
 }
