@@ -55,7 +55,10 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 Write-Host "RepoRoot: $RepoRoot"
 
 $ZipName = "$ProductName-$Version-windows-$Architecture"
-$OutDirFull = Join-Path $RepoRoot $OutDir
+$OutDirFull = $OutDir
+if (-not [System.IO.Path]::IsPathRooted($OutDirFull)) {
+    $OutDirFull = Join-Path $RepoRoot $OutDir
+}
 $StageRoot = Join-Path $OutDirFull "stage"
 $StageDir = Join-Path $StageRoot $ZipName
 $ZipPath = Join-Path $OutDirFull "$ZipName.zip"
