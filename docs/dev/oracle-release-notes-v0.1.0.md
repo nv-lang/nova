@@ -5,9 +5,11 @@
 to C and then to a native binary — there is no interpreter. Every
 function's side effects (`Db`, `Net`, `Io`, `Time`, `Fail`, ...) are part of
 its type signature and checked by the compiler. Memory is managed by a
-Boehm GC by default; for resources that need deterministic cleanup,
-`consume`-typed ownership guarantees an exit-time callback with no GC in
-the loop. Concurrency is structured (`spawn`, `parallel for`, `supervised`)
+Boehm GC by default; a type that opts into `@cleanup` gets an automatically
+inserted exit callback only for supported named bare consume-bindings
+(`consume x = ...`) when the value is still live (D432). Other binding forms
+and types without `@cleanup` retain their explicit-consumption rules.
+Concurrency is structured (`spawn`, `parallel for`, `supervised`)
 on an M:N work-stealing fiber scheduler, with no `async`/`await` split.
 
 This is an early alpha snapshot of Oracle, not a finished 1.0. The language
