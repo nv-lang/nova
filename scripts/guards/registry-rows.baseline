@@ -1,3 +1,5 @@
+# Task #62: row 1878 added; direct recount rows=1788 -> 1789,
+#   max=1877 -> 1878. №1878 is filled, not added to gaps=.
 # 2026-10-10 combined candidate #55 + #57 (integrator-approved reconciliation):
 #   #57 contributes row 1877; #55 contributes row 1876.
 #   Combined direct recount: rows=1788, max=1877; remove 1876 from gaps below.
@@ -1725,8 +1727,8 @@
 #   1784 main rows + task #52 row 1872 = 1785, max 1874 unchanged.
 #   Rows 1868 and 1870 came from main; row 1872 came from task #52.
 #   All three are present and must not be gaps; reserved row 1873 stays.
-rows=1788
-max=1877
+rows=1789
+max=1878
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
