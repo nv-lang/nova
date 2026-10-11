@@ -39,8 +39,8 @@ param(
     [string]$Architecture = "x86_64",
     [string]$OutDir = "dist",
     [switch]$SmokeTest,
-    # Где искать vcpkg_installed/x64-windows-static (gc.lib/atomic_ops.lib +
-    # headers). По умолчанию — репо-относительно (compiler-codegen/vcpkg_installed).
+    # Где искать vcpkg_installed/x64-windows-static (gc.lib + headers; для
+    # x86_64 atomic_ops.lib необязательна). По умолчанию — репо-относительно.
     # Нужен override, когда пакуешь из worktree БЕЗ своей копии vcpkg_installed
     # (worktree на exFAT не может junction/symlink на main-репо — см.
     # docs/plans/wip/221-version-notes.md, project-worktree-nova-test-setup):
@@ -73,7 +73,7 @@ if ([string]::IsNullOrWhiteSpace($VcpkgSrcBase)) {
     $VcpkgSrcBase = Join-Path $RepoRoot "compiler-codegen\vcpkg_installed\$VcpkgTriplet"
 }
 $RequiredGcFiles = @(
-    "lib\gc.lib", "lib\atomic_ops.lib",
+    "lib\gc.lib",
     "include\gc.h", "include\gc_cpp.h", "include\atomic_ops.h",
     "include\atomic_ops_malloc.h", "include\atomic_ops_stack.h"
 )
@@ -203,7 +203,8 @@ Write-Host "nova_rt/ staged: $DstNovaRt"
 # ---------- 4. gc/ — Boehm GC (нужен detect_boehm's NOVA_GC_LIB_DIR/INCLUDE_DIR) ----------
 #
 # ПОЛНЫЙ vcpkg_installed/x64-windows-static — ~4.3G (там ещё z3 и debug-либы).
-# Дистрибуции нужны только gc.lib+atomic_ops.lib + их заголовки.
+# Дистрибуции нужны gc.lib и заголовки. x86_64 atomic_ops primitives inline,
+# поэтому atomic_ops.lib из vcpkg может отсутствовать.
 
 Write-Host "=== Копирую gc/ (Boehm GC lib+headers, подмножество vcpkg_installed) ==="
 Write-Host "vcpkg source: $VcpkgSrcBase"
@@ -214,15 +215,11 @@ New-Item -ItemType Directory -Force -Path $DstGcLib | Out-Null
 New-Item -ItemType Directory -Force -Path $DstGcInclude | Out-Null
 
 $GcOk = $true
-$GcLibFiles = @("gc.lib", "atomic_ops.lib")
-foreach ($f in $GcLibFiles) {
-    $srcF = Join-Path $VcpkgSrcBase "lib\$f"
-    if (Test-Path $srcF) {
-        Copy-Item $srcF (Join-Path $DstGcLib $f)
-    } else {
-        Write-Warning "GC lib отсутствует: $srcF"
-        $GcOk = $false
-    }
+$GcLib = Join-Path $VcpkgSrcBase "lib\gc.lib"
+Copy-Item $GcLib (Join-Path $DstGcLib "gc.lib")
+$AtomicOpsLib = Join-Path $VcpkgSrcBase "lib\atomic_ops.lib"
+if (Test-Path $AtomicOpsLib) {
+    Copy-Item $AtomicOpsLib (Join-Path $DstGcLib "atomic_ops.lib")
 }
 
 $GcIncludeTop = @("gc.h", "gc_cpp.h", "atomic_ops.h", "atomic_ops_malloc.h", "atomic_ops_stack.h")
@@ -248,7 +245,7 @@ foreach ($d in $GcIncludeDirs) {
 }
 
 if (-not $GcOk) {
-    throw "Required default Boehm GC bundle is incomplete at '$VcpkgSrcBase'; refusing to create a misleading release archive. Provide a complete vcpkg layout with gc.lib, atomic_ops.lib and all required headers."
+    throw "Required default Boehm GC bundle is incomplete at '$VcpkgSrcBase'; refusing to create a misleading release archive. Provide gc.lib and all required GC headers."
 }
 
 Write-Host "gc/ staged: $DstGc (ok=$GcOk)"

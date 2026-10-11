@@ -1,0 +1,102 @@
+name: windows-oracle-package
+
+# Private, manual-only packaging path for the owner-approved Oracle Windows
+# asset. This creates an Actions artifact only: no release, tag, or publication.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-windows-oracle:
+    name: Build, package, and smoke-test Windows Oracle
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout dispatched revision and submodules
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+
+      - name: Report exact source revision
+        shell: pwsh
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          "Dispatched SHA: ${{ github.sha }}" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY
+          "Checked out SHA: $actual" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          if ($actual -ne "${{ github.sha }}") {
+            throw "Checkout SHA mismatch: expected ${{ github.sha }}, got $actual"
+          }
+          "NOVA_SOURCE_SHA=$actual" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install Boehm GC for x64 static Windows
+        shell: pwsh
+        run: |
+          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
+          if (-not (Test-Path $vcpkg)) {
+            throw "vcpkg.exe not found under VCPKG_INSTALLATION_ROOT=$env:VCPKG_INSTALLATION_ROOT"
+          }
+          & $vcpkg install bdwgc:x64-windows-static "--x-install-root=$PWD\compiler-codegen\vcpkg_installed"
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg bdwgc install failed: exit=$LASTEXITCODE" }
+          $gcRoot = Join-Path $PWD "compiler-codegen\vcpkg_installed\x64-windows-static"
+          foreach ($required in @("lib\gc.lib", "include\gc.h", "include\gc\gc.h", "include\atomic_ops.h", "include\atomic_ops")) {
+            if (-not (Test-Path (Join-Path $gcRoot $required))) { throw "Required Boehm GC payload missing: $required" }
+          }
+          if (Test-Path (Join-Path $gcRoot "lib\atomic_ops.lib")) {
+            Write-Host "vcpkg installed optional atomic_ops.lib"
+          } else {
+            Write-Host "No atomic_ops.lib: x86_64 atomics are inline; GC smoke test validates this layout."
+          }
+
+      - name: Build Nova CLI and LSP from dispatched source
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path nova-cli/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "nova-cli release build failed: exit=$LASTEXITCODE" }
+          cargo build --release --manifest-path nova-lsp/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "nova-lsp release build failed: exit=$LASTEXITCODE" }
+
+      - name: Package and run clean-extraction default-GC smoke test
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD "dist\windows-oracle"
+          ./scripts/package-release.ps1 -SkipBuild -ProductName nova-oracle -Version 0.1.0 -Architecture x86_64 -VcpkgBase (Join-Path $PWD "compiler-codegen\vcpkg_installed\x64-windows-static") -OutDir $out -SmokeTest
+          if ($LASTEXITCODE -ne 0) { throw "Windows Oracle packaging/smoke test failed: exit=$LASTEXITCODE" }
+          $zip = Join-Path $out "nova-oracle-0.1.0-windows-x86_64.zip"
+          $sha = "$zip.sha256"
+          if (-not (Test-Path $zip)) { throw "Expected package not produced: $zip" }
+          if (-not (Test-Path $sha)) { throw "Expected checksum not produced: $sha" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $roots = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/').Split('/')[0] } | Sort-Object -Unique)
+            if ($roots.Count -ne 1 -or $roots[0] -ne "nova-oracle-0.1.0-windows-x86_64") {
+              throw "Unexpected top-level zip entries: $($roots -join ', ')"
+            }
+            if (-not ($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq "nova-oracle-0.1.0-windows-x86_64/nova.exe" })) {
+              throw "Package lacks its top-level nova.exe"
+            }
+          } finally {
+            $archive.Dispose()
+          }
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          "Package: $zip" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "SHA256: $hash" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Top-level folder: nova-oracle-0.1.0-windows-x86_64/" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
+      - name: Upload private Actions artifact (zip + SHA256)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-oracle-0.1.0-windows-x86_64-${{ github.sha }}
+          path: |
+            dist/windows-oracle/nova-oracle-0.1.0-windows-x86_64.zip
+            dist/windows-oracle/nova-oracle-0.1.0-windows-x86_64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
