@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Nova Carina 0.2.0 — release notes (alpha draft)
+# Nova Carina 0.2.0 — release notes (alpha)
 
 **Nova Carina 0.2.0 (alpha)** is the accepted self-hosting milestone for
 Carina, the Nova compiler written in Nova. This is an early alpha: the
@@ -62,5 +62,3 @@ Owner decision dated 2026-10-11: publish Oracle first, then Carina. Carina's
 version line continues **0.2 → 0.3 → 1.0**; Oracle remains **0.1.x**. The
 release procedure and final acceptance checklist remain in
 [274.11 §7](../plans/274.11-carina-release.md#7-процедура-выпуска-бывш-a-v6-и-a-r2--переезжает-как-заготовка).
-These notes remain a draft. Local archives and checksums have been prepared;
-no release has been published or tag created by preparing these notes.

@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Nova Oracle 0.1.0 — release notes (alpha draft)
+# Nova Oracle 0.1.0 — release notes
 
 **Nova Oracle 0.1.0** is an early alpha release. Oracle compiles
 to C and then to a native binary — there is no interpreter. Every
@@ -124,12 +124,11 @@ release.
   `Permit`. It applies to the supported bare consume binding form, not to
   every pattern or aggregate; types without this protocol keep their prior
   ownership rules.
-- The earlier draft misattributed the server framework to `http` and used
-  the nonexistent locked package name `nova-net`. The examples lock uses
-  `http`, `tls`, `compress`, `socks`, and `polaris`; `std.net` supplies the
-  network effect. Their documented scopes and boundaries are listed above.
-  In particular, Router/extractors belong to `polaris`, and current 274.11
-  evidence does not close all typed-extractor acceptance.
+- The examples lock uses `http`, `tls`, `compress`, `socks`, and `polaris`;
+  `std.net` supplies the network effect. Their documented scopes and
+  boundaries are listed above. In particular, Router/extractors belong to
+  `polaris`, and current 274.11 evidence does not close all typed-extractor
+  acceptance.
 
 ### Tooling
 
@@ -141,12 +140,11 @@ release.
   `nova run` (an interpreter entry point) is intentionally unsupported —
   Nova is compile-only.
 - **`nova-lsp`** — a language server (hover, diagnostics, symbol
-  lookup) with a **VSCode extension** (TextMate grammar plus LSP wiring;
+  lookup) with a VSCode extension (TextMate grammar plus LSP wiring;
   Sublime/Vim/Emacs get syntax-highlighting-only grammars under
   `editors/`).
-- **Docker recipe** (`docker/release/`) exists. This plan proposes
-  `nova-oracle:0.1.0`; no Docker image has been built or published for this
-  draft.
+- **Docker recipe** (`docker/release/`) builds `nova-oracle:0.1.0`; no Docker
+  image is published with this release.
 - Optional **Z3-backed contract verification** (`--features z3-backend`,
   `NOVA_SMT_BACKEND=z3`); a dependency-free `TrivialBackend` (reflexive
   tautologies, constant folding) is the default and needs no external
@@ -154,16 +152,16 @@ release.
 
 ## Distribution
 
-- **Planned release assets (not produced by current CI):**
+- **Prepared local release assets (not public uploads):**
   `nova-oracle-0.1.0-linux-x86_64.tar.gz`,
   `nova-oracle-0.1.0-windows-x86_64.zip`,
-  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. Current CI builds
-  `nova-cli` in release mode on Ubuntu and Windows x86_64, but does not
-  upload releasable compiler binaries. Its artifact uploads are benchmark
-  JSON/Markdown results and the full test report; those are not release
-  assets.
+  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual
+  Windows Oracle workflow produced a private, 14-day Actions artifact on
+  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901`, with a
+  clean-extraction default-GC smoke test. Other CI uploads (benchmark
+  results and test reports) are not release binaries.
 - The intended binary platforms are Linux and Windows x86_64. The archive
-  contents and installation recipe still need release-build verification;
+  contents and installation recipe were smoke-tested on their respective platforms;
   a C compiler is required because Nova compiles to C. See
   [docs/guide/quickstart.md](../guide/quickstart.md).
 - **Linux source build**: follow [docs/guide/linux-build.md](../guide/linux-build.md)
@@ -172,8 +170,8 @@ release.
 - **Docker**: `docker/release/Dockerfile`, a two-stage build (Ubuntu
   22.04 builder with the Rust toolchain, then a slim runtime image with
   the compiled `nova` binary, `std/`, and the C runtime). Build context
-  must be the repository root. The planned Oracle image name is
-  `nova-oracle:0.1.0`; no image has been built or published for this draft.
+  must be the repository root. The Oracle image name is
+  `nova-oracle:0.1.0`; the image was built and smoke-tested locally, but not published.
   See [docker/release/README.md](../../docker/release/README.md).
 
 ## Known limitations
@@ -230,8 +228,7 @@ This is an early release; treat it accordingly.
   (`spec/decisions/`); this release's English-facing documentation
   (README, quickstart, language tour) is a curated subset, not a full
   translation.
-- The VSCode extension is not included in the owner-approved asset list for
-  this draft; packaging and release attachment are not asserted here.
+- The VSCode extension is not included in this release.
 - Some standard-library corners and example programs carry documented,
   narrow-scope simplifications (see `docs/dev/simplifications.md` in the
   repository) — these are tracked, not silent.
@@ -255,3 +252,5 @@ This is an early release; treat it accordingly.
 - [Repository](https://github.com/nv-lang/nova)
 - [docs/guide/linux-build.md](../guide/linux-build.md) — building from source on
   Linux/WSL2.
+- [claude-limits](https://github.com/unitcraft/claude-limits) — a program built with the Nova toolchain: a local page that
+  shows the usage limits of Claude, Kimi Code and Codex accounts (alpha).
