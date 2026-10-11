@@ -20,8 +20,8 @@
 # расположения (dot-source после распаковки).
 #
 # Usage:
-#   powershell -File scripts/package-release.ps1 [-SkipBuild] [-Version 0.1.0]
-#     [-OutDir dist] [-SmokeTest]
+#   powershell -File scripts/package-release.ps1 [-SkipBuild] [-ProductName nova-oracle]
+#     [-Version 0.1.0] [-Architecture x86_64] [-OutDir dist] [-SmokeTest]
 #
 #   -SkipBuild   не собирать cargo — взять уже собранные
 #                nova-cli/target/release/nova.exe и
@@ -32,7 +32,11 @@
 
 param(
     [switch]$SkipBuild,
+    [ValidatePattern("^[a-zA-Z0-9][a-zA-Z0-9._-]*$")]
+    [string]$ProductName = "nova",
     [string]$Version = "0.1.0",
+    [ValidateSet("x86_64")]
+    [string]$Architecture = "x86_64",
     [string]$OutDir = "dist",
     [switch]$SmokeTest,
     # Где искать vcpkg_installed/x64-windows-static (gc.lib/atomic_ops.lib +
@@ -50,10 +54,35 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Write-Host "RepoRoot: $RepoRoot"
 
-$ZipName = "nova-v$Version-windows-x64"
+$ZipName = "$ProductName-$Version-windows-$Architecture"
 $OutDirFull = Join-Path $RepoRoot $OutDir
 $StageRoot = Join-Path $OutDirFull "stage"
 $StageDir = Join-Path $StageRoot $ZipName
+$ZipPath = Join-Path $OutDirFull "$ZipName.zip"
+if (Test-Path $ZipPath) {
+    Remove-Item -Force $ZipPath
+}
+
+# Validate the mandatory default-GC payload before building or staging anything.
+$VcpkgTriplet = "x64-windows-static"
+$VcpkgSrcBase = $VcpkgBase
+if ([string]::IsNullOrWhiteSpace($VcpkgSrcBase)) {
+    $VcpkgSrcBase = Join-Path $RepoRoot "compiler-codegen\vcpkg_installed\$VcpkgTriplet"
+}
+$RequiredGcFiles = @(
+    "lib\gc.lib", "lib\atomic_ops.lib",
+    "include\gc.h", "include\gc_cpp.h", "include\atomic_ops.h",
+    "include\atomic_ops_malloc.h", "include\atomic_ops_stack.h"
+)
+$MissingGcFiles = @($RequiredGcFiles | Where-Object { -not (Test-Path (Join-Path $VcpkgSrcBase $_)) })
+foreach ($dir in @("include\gc", "include\atomic_ops")) {
+    if (-not (Test-Path (Join-Path $VcpkgSrcBase $dir) -PathType Container)) {
+        $MissingGcFiles += $dir
+    }
+}
+if ($MissingGcFiles.Count -gt 0) {
+    throw "Required default Boehm GC bundle is incomplete at '$VcpkgSrcBase' (missing: $($MissingGcFiles -join ', ')); refusing to create a release archive. Provide the complete architecture-specific vcpkg layout."
+}
 
 # ---------- 1. Сборка (если не -SkipBuild) ----------
 
@@ -174,10 +203,6 @@ Write-Host "nova_rt/ staged: $DstNovaRt"
 # Дистрибуции нужны только gc.lib+atomic_ops.lib + их заголовки.
 
 Write-Host "=== Копирую gc/ (Boehm GC lib+headers, подмножество vcpkg_installed) ==="
-$VcpkgSrcBase = $VcpkgBase
-if ([string]::IsNullOrWhiteSpace($VcpkgSrcBase)) {
-    $VcpkgSrcBase = Join-Path $RepoRoot "compiler-codegen\vcpkg_installed\x64-windows-static"
-}
 Write-Host "vcpkg source: $VcpkgSrcBase"
 $DstGc = Join-Path $StageDir "gc"
 $DstGcLib = Join-Path $DstGc "lib"
@@ -220,7 +245,7 @@ foreach ($d in $GcIncludeDirs) {
 }
 
 if (-not $GcOk) {
-    Write-Warning "GC-бандл неполный — дистрибутив не будет собирать программы без системного vcpkg/Boehm GC на машине пользователя. См. [M-release-std-discovery] в отчёте."
+    throw "Required default Boehm GC bundle is incomplete at '$VcpkgSrcBase'; refusing to create a misleading release archive. Provide a complete vcpkg layout with gc.lib, atomic_ops.lib and all required headers."
 }
 
 Write-Host "gc/ staged: $DstGc (ok=$GcOk)"
@@ -276,7 +301,7 @@ Set-Content -Path (Join-Path $StageDir "setup-env.ps1") -Value $SetupEnvContent 
 # инлайн-код — просто без выделения. $Version/$ZipName — намеренная
 # интерполяция (двойные кавычки here-string).
 $ReadmeContent = @"
-# Nova v$Version — установка (Windows x64)
+# $ProductName $Version — установка (Windows $Architecture)
 
 ## Установка
 
@@ -354,7 +379,6 @@ if (Test-Path $ThirdPartyDir) {
 # ---------- 8. Zip + sha256 ----------
 
 Write-Host "=== Собираю zip ==="
-$ZipPath = Join-Path $OutDirFull "$ZipName.zip"
 if (Test-Path $ZipPath) {
     Remove-Item -Force $ZipPath
 }
