@@ -31,23 +31,30 @@ the same SHA and receipt again.
   substitute a locally built compiler. See [Oracle plan 295](../plans/295-oracle-release-v0-1.md)
   and [the bootstrap description](novac-bootstrap.md).
 - Passing the exact-SHA bootstrap and CI receipt does not certify package
-  compatibility, release archives, a Windows Carina binary, or a published
-  Docker image.
+  compatibility or a published Docker image. The Windows archive is separately
+  prepared from the saved, byte-identical stock B/C evidence, not from the
+  Linux CI build.
 
-## Planned distribution (not current CI uploads)
+## Prepared distribution (not current CI uploads)
 
-The planned assets are `nova-carina-0.2.0-linux-x86_64.tar.gz`,
+The 0.2.0 assets are **Windows x86_64 only**:
 `nova-carina-0.2.0-windows-x86_64.zip`,
-`nova-carina-0.2.0-src.tar.gz`, and `SHA256SUMS`. The release title is
+`nova-carina-0.2.0-src.tar.gz`, `proof-and-accept-receipt.txt`, and
+`SHA256SUMS`. The Windows ZIP contains the saved stock B `novac.exe` from
+task #55, whose SHA256 is
+`b3df460726e92eca612d7df3497c1a6184c07f415bf58f80001717cb2cf8536f`;
+the saved stock C executable has the same hash. The release title is
 `Nova Carina 0.2.0 (alpha)` and the release is marked pre-release. The tag is
 `carina-v0.2.0`; alpha is not added to tag or filenames.
 
-Current workflow inventory is narrower than the planned assets: `novac` is
+Current workflow inventory is narrower than this distribution: `novac` is
 built on Linux in `.github/workflows/nova-gate.yml`, is not uploaded as a
 releasable artifact, and current workflows do not build `novac` for Windows.
 The current CI artifact uploads are benchmark-results JSON/Markdown and the
 full test report; none is a Carina release binary. The Windows archive above
-is therefore a planned release deliverable, not a CI-proven binary.
+comes from the accepted Windows A → B → C evidence, not from a CI upload.
+There is **no Linux Carina binary in 0.2.0**: Linux CI builds `novac`, but has
+not proven a Linux B ≡ C double build. That belongs to a separate 0.2.1 task.
 
 ## Release order
 
@@ -55,5 +62,5 @@ Owner decision dated 2026-10-11: publish Oracle first, then Carina. Carina's
 version line continues **0.2 → 0.3 → 1.0**; Oracle remains **0.1.x**. The
 release procedure and final acceptance checklist remain in
 [274.11 §7](../plans/274.11-carina-release.md#7-процедура-выпуска-бывш-a-v6-и-a-r2--переезжает-как-заготовка).
-This is a draft only. No tag, archive, checksum file, release, or publication
-has been created by preparing these notes.
+These notes remain a draft. Local archives and checksums have been prepared;
+no release has been published or tag created by preparing these notes.

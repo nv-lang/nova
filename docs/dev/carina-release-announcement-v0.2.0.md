@@ -4,11 +4,10 @@
 Release announcement draft (English/Russian; alpha pre-release).
 
 Metadata for a future release: title `Nova Carina 0.2.0 (alpha)`, tag
-`carina-v0.2.0`, pre-release. Planned asset names only:
-`nova-carina-0.2.0-linux-x86_64.tar.gz`,
+`carina-v0.2.0`, pre-release. Prepared local assets (not current CI uploads):
 `nova-carina-0.2.0-windows-x86_64.zip`,
-`nova-carina-0.2.0-src.tar.gz`, and `SHA256SUMS`.
-These are plans, not existing or current CI artifacts.
+`nova-carina-0.2.0-src.tar.gz`, `proof-and-accept-receipt.txt`, and
+`SHA256SUMS`. No Linux Carina binary is included in 0.2.0.
 
 ## EN (GitHub Release / nv-lang.org)
 
@@ -19,6 +18,8 @@ self-compilation milestone: at source SHA
 `99756a8867f913bd6156ed10accf8a20edea00d1`, the recorded A → B → C bootstrap
 produced byte-identical B and C executables and byte-identical B.c and C.c;
 CI was green on that same SHA. Stage A comes from the Oracle release.
+The Windows x86_64 archive contains the saved stock B executable; the Linux
+CI build is not a Linux double-build receipt and does not ship in 0.2.0.
 
 This demonstrates the accepted 0.2 self-compilation step, not readiness of the
 wider package ecosystem or examples: compiling those is a 0.3 criterion.
@@ -41,6 +42,8 @@ Carina — компилятор Nova, написанный на Nova. Эта а�
 `99756a8867f913bd6156ed10accf8a20edea00d1` зафиксирован bootstrap A → B → C,
 в котором исполняемые файлы B и C побайтно совпали, как и B.c с C.c; CI был
 зелёным на том же SHA. Стадия A берётся из релиза Oracle.
+Windows-архив x86_64 содержит сохранённый исполняемый файл стадии B; сборка
+в Linux CI не доказывает двойную сборку на Linux и в выпуск 0.2.0 не входит.
 
 Это подтверждает принятый этап самокомпиляции 0.2, но не готовность широкой
 экосистемы пакетов и примеров: их компиляция — критерий версии 0.3.
