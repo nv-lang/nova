@@ -251,6 +251,7 @@ Some packages include native C components alongside Nova code.
 | [nova-bignum](https://github.com/nv-lang/nova-bignum) | Arbitrary-precision numbers in pure Nova, without C dependencies | [v0.1.0](https://github.com/nv-lang/nova-bignum/tree/v0.1.0) |
 | [nova-socks](https://github.com/nv-lang/nova-socks) | Pure-Nova SOCKS5 client (CONNECT, username/password authentication) | [v0.1.3](https://github.com/nv-lang/nova-socks/tree/v0.1.3) |
 | [nova-duckdb](https://github.com/nv-lang/nova-duckdb) | DuckDB binding for Nova, with native libraries | [v0.2.2](https://github.com/nv-lang/nova-duckdb/tree/v0.2.2) |
+| [nova-postgres](https://github.com/nv-lang/nova-postgres) | PostgreSQL wire-protocol core and plaintext `std.net` adapter; work in progress, TLS composed by consumers | [v0.1.0](https://github.com/nv-lang/nova-postgres/tree/v0.1.0) |
 | [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Tree-sitter grammar for Nova | [v0.1.0](https://github.com/nv-lang/tree-sitter-nova/tree/v0.1.0) |
 
 ## Status
@@ -262,8 +263,12 @@ a standard library covering collections, IO, time, JSON, and — as
 separate packages — networking, TLS, HTTP, and compression. The
 specification is stable across core features (effects, handlers, syntax,
 memory, concurrency); some corners (SMT-backed contract verification
-beyond trivial cases, a concurrent GC) are still on the roadmap. Single
-compiler:
+beyond trivial cases, a concurrent GC) are still on the roadmap. The
+user-facing CLI currently uses the Rust compiler implementation; the same
+repository also contains **Carina**, Nova's self-hosted compiler, under
+development in [`novac/`](https://github.com/nv-lang/nova/tree/main/novac).
+Carina is not a separately versioned
+package, and this mention does not imply full examples or package support.
 
 - **compiler-codegen** — Rust implementation with parser,
   type-checker, and C-backend codegen.
@@ -280,6 +285,8 @@ compiler:
   lint / regen-runtime`. `nova` has its own `test-build` (single file), so
   there's no need to call `nova-codegen` directly; its `test-build` takes
   exactly ONE file (a directory → "read: os error 5").
+- **Carina (`novac/`)** — the self-hosted compiler implementation in this
+  repository; it is developed against the Rust compiler as oracle.
 
 What works today (bootstrap):
 

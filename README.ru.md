@@ -246,6 +246,7 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 | [nova-bignum](https://github.com/nv-lang/nova-bignum) | Числа произвольной точности на чистом Nova, без C-зависимостей | [v0.1.0](https://github.com/nv-lang/nova-bignum/tree/v0.1.0) |
 | [nova-socks](https://github.com/nv-lang/nova-socks) | Клиент SOCKS5 на чистом Nova (CONNECT, аутентификация по имени и паролю) | [v0.1.3](https://github.com/nv-lang/nova-socks/tree/v0.1.3) |
 | [nova-duckdb](https://github.com/nv-lang/nova-duckdb) | Привязка DuckDB для Nova с нативными библиотеками | [v0.2.2](https://github.com/nv-lang/nova-duckdb/tree/v0.2.2) |
+| [nova-postgres](https://github.com/nv-lang/nova-postgres) | Ядро протокола PostgreSQL и plaintext-адаптер на `std.net`; работа продолжается, TLS подключает потребитель | [v0.1.0](https://github.com/nv-lang/nova-postgres/tree/v0.1.0) |
 | [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Грамматика tree-sitter для Nova | [v0.1.0](https://github.com/nv-lang/tree-sitter-nova/tree/v0.1.0) |
 
 ## Статус
@@ -257,8 +258,13 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 отдельными пакетами — сеть, TLS, HTTP и сжатие. Спецификация стабильна по
 ключевым возможностям (эффекты, handler'ы, синтаксис, память,
 конкурентность); некоторые участки (SMT-верификация контрактов за
-пределами тривиальных случаев, конкурентный GC) всё ещё в roadmap. Один
-компилятор:
+пределами тривиальных случаев, конкурентный GC) всё ещё в roadmap.
+Пользовательский CLI сейчас использует реализацию компилятора на Rust; в
+этом же репозитории также разрабатывается **Carina** — self-hosted
+компилятор Nova в [`novac/`](https://github.com/nv-lang/nova/tree/main/novac).
+Carina не является отдельно
+версионируемым пакетом; это упоминание не обещает поддержку всех примеров
+или пакетов.
 
 - **compiler-codegen** — реализация на Rust с парсером, type-checker'ом и
   C-backend codegen'ом. Компилирует Nova в C через нативный runtime
@@ -276,6 +282,8 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
   test-build <file> / lint / regen-runtime`. У `nova` есть свой
   `test-build` (один файл), так что вызывать `nova-codegen` напрямую не
   нужно; его `test-build` берёт ОДИН файл (директория → «read: os error 5»).
+- **Carina (`novac/`)** — self-hosted реализация компилятора в этом
+  репозитории; её разрабатывают, сверяясь с компилятором на Rust как с oracle.
 
 Что работает сегодня (bootstrap):
 
