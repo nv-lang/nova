@@ -3,7 +3,7 @@
 
 **English** | [Русский](quickstart.ru.md)
 
-This page gets you from a downloaded zip to a running Nova program in a
+This page gets you from a downloaded release archive to a running Nova program in a
 few minutes, then to a slightly bigger example that shows the two things
 that make Nova different: effects in function signatures, and structured
 concurrency without `async`/`await`.
@@ -15,8 +15,8 @@ are the two commands you'll use.
 
 ## Install (Windows x64)
 
-1. Download `nova-v0.1.0-windows-x64.zip` from the
-   [GitHub Releases page](https://github.com/nv-lang/nova/releases) and
+1. Download [`nova-oracle-0.1.0-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-windows-x86_64.zip)
+   from the [Oracle 0.1.0 release](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0) and
    unzip it anywhere, e.g. `C:\nova`.
 2. In a PowerShell session, from the folder you unzipped into, **dot-source**
    the setup script (the leading `. ` matters — without it the environment
@@ -48,10 +48,15 @@ are the two commands you'll use.
 
 ### Install (Linux)
 
-There is no prebuilt Linux archive for v0.1.0 yet — build from source.
-See [docs/guide/linux-build.md](linux-build.md) for the full recipe (Debian/Ubuntu
-packages, Rust toolchain, `git submodule update`, build, smoke test);
-it's a five-minute `TL;DR` at the top of that page.
+Oracle 0.1.0 has a prebuilt Linux x86_64 archive:
+[`nova-oracle-0.1.0-linux-x86_64.tar.gz`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-linux-x86_64.tar.gz).
+See the [Oracle 0.1.0 release](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0)
+for the published assets. To build from source instead, see
+[docs/guide/linux-build.md](linux-build.md).
+
+The separate [Carina 0.2.0 release](https://github.com/nv-lang/nova/releases/tag/carina-v0.2.0)
+provides [`nova-carina-0.2.0-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/carina-v0.2.0/nova-carina-0.2.0-windows-x86_64.zip)
+for Windows x86_64; it does not publish a Linux binary.
 
 ## Hello, Nova
 

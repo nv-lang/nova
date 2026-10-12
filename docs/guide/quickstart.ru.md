@@ -8,7 +8,7 @@ source_date: 2026-08-02
 
 [English](quickstart.md) | **Русский**
 
-Эта страница доведёт вас от скачанного zip-архива до работающей программы на
+Эта страница доведёт вас от скачанного релизного архива до работающей программы на
 Nova за несколько минут, а затем до чуть более крупного примера, показывающего
 две вещи, которые отличают Nova: эффекты в сигнатурах функций и
 структурированную конкурентность без `async`/`await`.
@@ -20,8 +20,8 @@ Nova — компилируемый язык: `nova build` превращает 
 
 ## Установка (Windows x64)
 
-1. Скачайте `nova-v0.1.0-windows-x64.zip` со
-   [страницы GitHub Releases](https://github.com/nv-lang/nova/releases) и
+1. Скачайте [`nova-oracle-0.1.0-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-windows-x86_64.zip)
+   из [релиза Oracle 0.1.0](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0) и
    распакуйте куда угодно, например в `C:\nova`.
 2. В сессии PowerShell, из папки, куда вы распаковали архив, выполните
    **dot-source** скрипта настройки (ведущее `. ` важно — без него переменные
@@ -53,10 +53,14 @@ Nova — компилируемый язык: `nova build` превращает 
 
 ### Установка (Linux)
 
-Готового Linux-архива для v0.1.0 пока нет — собирайте из исходников. Полный
-рецепт (пакеты Debian/Ubuntu, Rust-тулчейн, `git submodule update`, сборка,
-smoke-тест) — в [docs/guide/linux-build.md](linux-build.md); наверху той
-страницы есть пятиминутный `TL;DR`.
+В Oracle 0.1.0 есть готовый архив для Linux x86_64:
+[`nova-oracle-0.1.0-linux-x86_64.tar.gz`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-linux-x86_64.tar.gz).
+Полный список опубликованных файлов — в [релизе Oracle 0.1.0](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0).
+Если вы предпочитаете сборку из исходников, см. [docs/guide/linux-build.md](linux-build.md).
+
+Отдельный [релиз Carina 0.2.0](https://github.com/nv-lang/nova/releases/tag/carina-v0.2.0)
+содержит [`nova-carina-0.2.0-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/carina-v0.2.0/nova-carina-0.2.0-windows-x86_64.zip)
+для Windows x86_64; бинарника для Linux в нём нет.
 
 ## Привет, Nova
 
