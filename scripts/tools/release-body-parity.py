@@ -29,6 +29,8 @@ def normalize(text: str, repo: str, source_file: str, revision: str) -> str:
         path_part, query_marker, query = path.partition("?")
         resolved = posixpath.normpath(posixpath.join(source_dir, path_part))
         kind = "tree" if path_part.endswith("/") or not posixpath.splitext(path_part)[1] else "blob"
+        if kind == "tree" and path_part.endswith("/"):
+            resolved += "/"
         url = f"https://github.com/{repo}/{kind}/{revision}/{resolved}"
         suffix = (query_marker + query if query_marker else "") + (marker + fragment if marker else "")
         return f"[{label}]({url}{suffix})"
@@ -46,9 +48,16 @@ def self_test() -> int:
     checked_in = "See [guide](../guide/tour.md#start).\n"
     release = "See [guide](https://github.com/acme/nova/blob/abc/docs/guide/tour.md#start).\n"
     assert compare(release, checked_in, "acme/nova", "docs/dev/notes.md", "abc")
+    checked_tree = "Browse [decisions](../../spec/decisions/).\n"
+    release_tree = "Browse [decisions](https://github.com/acme/nova/tree/abc/spec/decisions/).\n"
+    assert compare(release_tree, checked_tree, "acme/nova", "docs/dev/notes.md", "abc")
+    print("SELFTEST GREEN: relative blob/tree links at the pinned revision compare equal")
     assert not compare(release + "changed\n", checked_in, "acme/nova", "docs/dev/notes.md", "abc")
+    print("SELFTEST RED (expected): arbitrary non-link text mutation is rejected")
+    assert not compare(release.replace("\n", "\r\n"), checked_in, "acme/nova", "docs/dev/notes.md", "abc")
+    print("SELFTEST RED (expected): line-ending difference is rejected")
     assert not compare(release.replace("guide", "manual"), checked_in, "acme/nova", "docs/dev/notes.md", "abc")
-    print("SELFTEST PASS: relative link normalization; arbitrary text/link mutations rejected")
+    print("SELFTEST RED (expected): altered link target is rejected")
     return 0
 
 
@@ -68,7 +77,8 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
     try:
         source_file = args.file.resolve().relative_to(repo_root).as_posix()
-        source = args.file.read_text(encoding="utf-8")
+        with args.file.open("r", encoding="utf-8", newline="") as source_stream:
+            source = source_stream.read()
     except (OSError, ValueError) as exc:
         print(f"ERROR: source file must exist inside repository: {exc}", file=sys.stderr)
         return 2
@@ -87,14 +97,20 @@ def main() -> int:
     matches = normalized_body == normalized_source
     print(f"URL: {release.get('html_url')}")
     print(f"SOURCE: {source_file} @ {args.source_revision}")
+    print(
+        "LINE ENDINGS: release "
+        f"CRLF={body.count(chr(13) + chr(10))}, LF={body.count(chr(10))}; "
+        f"source CRLF={source.count(chr(13) + chr(10))}, LF={source.count(chr(10))}"
+    )
     print("PARITY: PASS" if matches else "PARITY: FAIL (body differs beyond normalized relative Markdown links)")
     if not matches:
         print("DIFF (normalized release body vs checked-in source):")
-        print("".join(difflib.unified_diff(
-            normalized_body.splitlines(keepends=True),
-            normalized_source.splitlines(keepends=True),
+        print("\n".join(difflib.unified_diff(
+            normalized_body.splitlines(),
+            normalized_source.splitlines(),
             fromfile="published-release-body", tofile=source_file,
-        )), end="")
+            lineterm="",
+        )))
     return 0 if matches else 1
 
 
