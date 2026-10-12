@@ -38,6 +38,10 @@
 # Коды выхода: 0 — записано / совпало; 1 — расхождение либо отказ механики;
 #              2 — неверный вызов; 3 — оракул не собран («судить нечего»).
 # Проверялся: Windows (Git Bash), 2026-08-15; две эмиссии — 2026-10-01.
+# 2026-10-12, №1879: исходник probe в Windows worktree был CRLF. WSL sed с
+# якорем $ не заменял module, и локально-зелёный шаблон расходился с Linux CI.
+# Общий copy-проход нормализует только CR в конце строки и требует ровно одну
+# замену, прежде чем оракул получит временную копию.
 export LC_ALL=C
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROBE="novac/probe/shell_probe.nv"
@@ -82,8 +86,9 @@ grep -qF "\"$PROBE_LIT\"" "$ROOT/$PROBE" \
 # Probe в репо объявляет module probe.shell_probe (читаемый адрес), но
 # внутри пакета novac любой .nv вне src/ нелегален по D78 — оракул собирает
 # ВРЕМЕННУЮ копию вне пакета, где работает root-peer правило (module = имя
-# файла). Подмена module — единственная правка копии.
-sed 's/^module probe\.shell_probe$/module shell_probe/' "$ROOT/$PROBE" > "$T/shell_probe.nv"
+# файла). Подмена module — единственная правка копии. AWK-проход одновременно
+# нормализует CRLF у checkout и отказывает, если модуль не был заменён ровно раз.
+awk -f "$ROOT/scripts/tools/novac-shell-probe-copy.awk" "$ROOT/$PROBE" > "$T/shell_probe.nv" || exit 1
 
 # ОДИН ШАБЛОН НА ВСЕ ПЛАТФОРМЫ (2026-10-01, novac-gate в CI). std несёт
 # `#cfg(target_os)` (сегодня ровно `host_style`, std/src/fs/path.nv), и

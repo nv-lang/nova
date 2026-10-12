@@ -14,6 +14,8 @@
 # сгенерированного артефакта и честная передача кода возврата генератора —
 # через поддельный генератор ($2-шов стража). Красный случай есть и здесь,
 # поэтому самотест не может стать зелёной пустышкой на машине без оракула.
+# Probe-copy, которым пользуется генератор: LF и CRLF дают одни байты;
+# пропавшая или повторная module-строка — красный ДО вызова оракула (№1879).
 export LC_ALL=C
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
@@ -28,6 +30,35 @@ bad() { CASES=$((CASES+1)); echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 run() { sh "$G" "$@" > "$T/out" 2> "$T/err"; }
 
 TPL="$ROOT/novac/src/emit_c/shell.tpl.c"
+COPY="$ROOT/scripts/tools/novac-shell-probe-copy.awk"
+# --- Дешёвые LF/CRLF пробы того же copy-прохода, что зовёт генератор --------
+printf 'module probe.shell_probe\nfn main() -> () {}\n' > "$T/probe-lf.nv"
+printf 'module probe.shell_probe\r\nfn main() -> () {}\r\n' > "$T/probe-crlf.nv"
+if awk -f "$COPY" "$T/probe-lf.nv" > "$T/normalized-lf" \
+    && awk -f "$COPY" "$T/probe-crlf.nv" > "$T/normalized-crlf" \
+    && cmp -s "$T/normalized-lf" "$T/normalized-crlf" \
+    && grep -Fxq 'module shell_probe' "$T/normalized-lf" \
+    && ! grep -q "$(printf '\r')" "$T/normalized-crlf"; then
+    ok "probe LF/CRLF — одинаковая pkgless-копия и один module shell_probe"
+else
+    bad "probe LF/CRLF — копии различаются или module не заменён"
+fi
+printf 'module wrong.shell_probe\n' > "$T/probe-wrong.nv"
+if awk -f "$COPY" "$T/probe-wrong.nv" > "$T/wrong.out" 2> "$T/wrong.err"; then
+    bad "probe без ожидаемого module принят"
+elif grep -q 'expected one module' "$T/wrong.err"; then
+    ok "probe без ожидаемого module — красный"
+else
+    bad "probe без ожидаемого module — неименованный отказ"
+fi
+printf 'module probe.shell_probe\nmodule probe.shell_probe\n' > "$T/probe-twice.nv"
+if awk -f "$COPY" "$T/probe-twice.nv" > "$T/twice.out" 2> "$T/twice.err"; then
+    bad "probe с двумя module принят"
+elif grep -q 'got 2' "$T/twice.err"; then
+    ok "probe с двумя module — красный"
+else
+    bad "probe с двумя module — неименованный отказ"
+fi
 # Оракул ищется ДВЕРЬЮ, а не своим списком имён: свой список знал только
 # `nova.exe`, и на Linux-раннере (бинарь `nova`) живая половина умирала —
 # ночной ярус full красен с 2026-10-01 (реестр 221.1 №1826, класс K-A).
