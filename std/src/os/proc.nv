@@ -97,7 +97,7 @@ export type Proc effect {
     fn pipe_close(pipe ChildPipe) -> ()
     // Plan 294 F.4 — pseudo terminal (pty.nv). Same form: the launch is the `Command` plus a
     // `PtySize`, the handle is `PtyChild`; the C forms live in pty.nv's `real_pty_*` translators.
-    // `Err(Unsupported)`: no pseudo terminal on this system (Windows before 10 1809, POSIX until F.3).
+    // `Err(Unsupported)`: no pseudo terminal on this system (Windows before 10 1809 / without ConPTY).
     fn pty_launch(cmd Command, size PtySize) -> Result[PtyChild, IoError]
     fn pty_read(pty PtyChild, mut buf []u8) -> Result[int, IoError]
     fn pty_write(pty PtyChild, data []u8) -> Result[int, IoError]

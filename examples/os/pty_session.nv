@@ -1,4 +1,4 @@
-// pty_session.nv - drive an interactive program through a pseudo terminal (Plan 294 F.4, D492).
+// pty_session.nv - drive an interactive program through a pseudo terminal (Plan 294 F.3/F.4, D492).
 //
 //     pty_session <program> [args...]
 //
@@ -13,8 +13,8 @@
 // The screen is the TERMINAL's bytes: echo of the typing and terminal sequences, on Windows a screen
 // ConPTY re-renders (the same picture, not the same bytes). Print it to a terminal to see it as meant.
 //
-// Systems: Windows 10 1809+ (ConPTY). POSIX: `start_pty` is `Err(Unsupported)` until plan 294 F.3,
-// and the example says so.
+// Systems: Windows 10 1809+ (ConPTY); POSIX uses a controlling terminal. Older Windows without
+// ConPTY returns `Unsupported`. macOS is not claimed until its libuv PTY path is verified.
 //
 // Try it:  pty_session cmd          (Windows: types `echo hello`, then `exit`)
 

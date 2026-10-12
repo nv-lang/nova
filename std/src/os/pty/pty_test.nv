@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// std/os/pty/pty_test.nv — Plan 294 F.4 (D492): a child on a pseudo terminal.
+// std/os/pty/pty_test.nv — Plan 294 F.3/F.4 (D492): a child on a pseudo terminal.
 //
 // Scenarios PTY-1..PTY-5 of docs/plans/294-process-streams-pty.md §5 plus the refusals:
 //   PTY-1  keyboard: "abc" + Enter in, the child's upper-cased line out;
@@ -9,11 +9,8 @@
 //          close() of a live child - returns, and the process is gone (4b);
 //   PTY-5  Ctrl-C typed on the keyboard ends the child the way Ctrl-C does.
 //
-// Systems. Windows: ConPTY; the children are `powershell` / `ping` (on every Windows image).
-// POSIX: the pseudo terminal is the next task (plan 294 F.3) and `start_pty` answers
-// `Err(Unsupported)` there. The runner has no run-time skip, so on POSIX every fixture checks
-// exactly that refusal and prints `SKIP PTY-n: POSIX PTY - next task (plan 294 F.3)`; when F.3
-// lands, `start_pty` succeeds and the same fixtures run (the `sh` children are written already).
+// Systems. Windows: ConPTY; POSIX: controlling terminal. Platform helpers select `powershell` /
+// `ping` or `sh`; an unavailable terminal is explicitly checked as Unsupported and reported SKIP.
 //
 // What a terminal sends is the TERMINAL's bytes, not the child's: echo, "\r\n", and on Windows a
 // screen ConPTY renders and re-encodes (D492, table 3.4). So the fixtures look for what the child
@@ -29,16 +26,9 @@ import std.os.{Command, PtyChild, PtySize, Signal, ExitStatus, kill_pid}
 import std.io.{IoError, ErrorKind}
 import std.time.duration
 
-const SKIP_REASON = "POSIX PTY - next task (plan 294 F.3)"
+const SKIP_REASON = "pseudo-terminal unavailable on this platform (Windows requires ConPTY / Windows 10 1809+)"
 
 // ─── Platform helpers ──
-
-// Does this system give us a pseudo terminal today?
-#cfg(target_os = "windows")
-fn pty_expected() -> bool => true
-
-#cfg(!target_os = "windows")
-fn pty_expected() -> bool => false
 
 #cfg(target_os = "windows")
 fn ps(script str) -> Command =>
@@ -89,7 +79,7 @@ fn sleeper_cmd() -> Command => sh("sleep 30")
 fn ctrl_c_cmd() -> Command => Command.new("ping").arg("-n").arg("30").arg("127.0.0.1")
 
 #cfg(!target_os = "windows")
-fn ctrl_c_cmd() -> Command => sh("echo 127.0.0.1; sleep 30")
+fn ctrl_c_cmd() -> Command => sh("echo 127.0.0.1; exec sleep 30")
 
 // Ended by Ctrl-C: Windows - STATUS_CONTROL_C_EXIT (0xC000013A) as the exit code, no signal;
 // POSIX - SIGINT.
@@ -111,7 +101,6 @@ fn interrupt_kill_kind() -> Option[ErrorKind] => None
 // True when this system has a terminal for us. Otherwise checks that the refusal is the documented
 // one (Unsupported) and prints the skip line.
 fn on_pty(id str) -> bool {
-    if pty_expected() { return true }
     match bye_cmd().start_pty(size(24, 80)) {
         Ok(consume p) => {
             p.close()
@@ -121,6 +110,16 @@ fn on_pty(id str) -> bool {
             assert(e.kind == ErrorKind.Unsupported)
             print("SKIP ${id}: ${SKIP_REASON}")
             false
+        }
+    }
+}
+
+test "p294 PTY-F0: a platform without a terminal reports Unsupported" {
+    match bye_cmd().start_pty(size(24, 80)) {
+        Ok(consume p) => p.close()
+        Err(e) => {
+            assert(e.kind == ErrorKind.Unsupported)
+            assert("${e}".contains("pseudo-terminal"))
         }
     }
 }

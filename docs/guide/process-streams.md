@@ -93,17 +93,19 @@ ro status = pty.wait()?
 | `close()` / leaving the scope | hang up, 500 ms, kill the tree, return once it is gone |
 
 * **What you read is the terminal's, not the child's bytes.** Typing is echoed; `\n` becomes
-  `\r\n`. On Windows ConPTY renders the child's output into a screen and sends *that* — the same
-  picture, not the same bytes: `ESC[0m` arrives as `ESC[m`, a clear repaints, a start-up prefix
-  comes first. Match what the program shows (substrings), never exact byte strings.
+  `\r\n`. POSIX passes the child's output through the terminal line discipline. Windows ConPTY
+  renders it into a screen and sends *that* — the same picture, not the same bytes: `ESC[0m` arrives
+  as `ESC[m`, a clear repaints, a start-up prefix comes first. Match what the program shows
+  (substrings), never exact byte strings.
 * **Enter is `\r`**, as a real keyboard sends (ConPTY does not end a line on `\n`).
 * **Ctrl-C** is the byte 3: `write([3])`. The child gets SIGINT / `CTRL_C_EVENT` (Windows: it
   usually exits with `0xC000013A`). A PTY child starts with Ctrl-C enabled even if your own process
   ignores it.
 * **The tree and the terminal do not outlive the child.** When it exits, whatever it started is
   killed and `read` returns `Ok(0)` after the last byte.
-* **Systems.** Windows 10 1809+ (ConPTY); older Windows: `Err(Unsupported)`. POSIX (`forkpty`) is
-  the next phase of plan 294: until then `start_pty` returns `Err(Unsupported)` there.
+* **Systems.** Windows 10 1809+ (ConPTY); older Windows or a system without ConPTY:
+  `Err(Unsupported)`. POSIX PTY is implemented and verified on Linux; macOS is not claimed because
+  its libuv PTY-master path has not been verified.
 * **One fiber.** `PtyChild` is one `consume` value: read and write from the same fiber (type, then
   read). Splitting it into a reader and a writer for two fibers is not there yet.
 
@@ -111,8 +113,7 @@ Full example: `examples/os/pty_session.nv`.
 
 ## Not in this wave
 
-`stderr_to_stdout`; PTY on POSIX (plan 294 phase 3); a reader/writer split of `PtyChild`. macOS is
-not verified.
+`stderr_to_stdout`; a reader/writer split of `PtyChild`. macOS is not verified.
 
 ## Testing code that spawns
 

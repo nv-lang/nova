@@ -575,7 +575,9 @@
 # Merged with t43 854c41ca2 (D492 section 1 amended there, the Proc boundary speaks Nova): 183 in the union.
 # 2026-10-08/09 (task #50, plan 294 F.4): 183, 184 -- D492's pseudo terminal surface and the ConsoleFlags
 # self-check. Merged with t44 9ab2d58cd: 185 commits touch spec/decisions in the union. Library only.
-#   spec-queue: 185
+# 2026-10-12 (task #67, plan 294 F.3): 186 -- D492 documents the additive POSIX PTY contract under
+# the existing typed API. No new language surface. Library/runtime behavior, not a novac rule.
+#   spec-queue: 186
 #   oracle-pin: 2803de2d9
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,

@@ -158,33 +158,21 @@ nova_int proc_kill_pid(nova_int pid, nova_int sig, nova_bool tree);
  * std/os/proc.nv maps it to ErrorKind.NotConnected (std/net's `Closed` precedent). */
 #define NOVA_PROC_CLOSED ((nova_int)-100002)
 
-/* read: n > 0 bytes, 0 = end of stream, < 0 = -errno or NOVA_PROC_CLOSED. */
-nova_int proc_pipe_read(void* pipe, uint8_t* buf, nova_int cap);
-/* write: whole buffer or < 0 = -errno (-32 = EPIPE: the child closed its end). */
-nova_int proc_pipe_write(void* pipe, const uint8_t* buf, nova_int len);
-/* Close our end (idempotent). Closing stdin delivers EOF to the child. */
-void     proc_pipe_close(void* pipe);
+/* POSIX F.3 uses a controlling terminal and the same typed C boundary as the Windows F.4
+ * implementation below. The child is reaped by its own SIGCHLD watcher; Linux PTY-master EIO
+ * is projected as end-of-stream. Platform behavior is documented in D492. */
 
-/* --- Plan 294 F.4 (D492): pseudo terminal ---------------------------------
+/* --- Plan 294 F.3/F.4 (D492): pseudo terminal -----------------------------
  *
- * One duplex byte channel (the terminal), its window size and the life of the
- * child attached to it. Windows: ConPTY (CreatePseudoConsole, Windows 10 1809+,
- * looked up at run time — older systems get NOVA_PROC_UNSUPPORTED); our two pipe
- * ends are opened with uv_pipe_open and read / written by the same pull-style
- * code as the F.1 pipes (proc_pipe_read / _write), so back pressure and the
- * independent read / write slots are the same. POSIX (forkpty) is the next task:
- * until then proc_pty_spawn answers NOVA_PROC_UNSUPPORTED there.
+ * One duplex byte channel, its window size and the life of the attached child.
+ * Windows uses ConPTY (CreatePseudoConsole, Windows 10 1809+, resolved at run
+ * time); POSIX uses a controlling terminal and a SIGCHLD watcher. Both use the
+ * same pull-style stream operations and return end-of-stream after the last byte.
  *
- * The child is always the leader of its tree (Windows: a Job Object assigned
- * while the child is still suspended, so no grandchild can escape it); the tree
- * and the terminal do not outlive it: when the child exits, its stragglers are
- * killed and the terminal is closed, so the reader sees end of stream after the
- * last byte.
- *
- * `proc_pty_close` hangs the terminal up (ClosePseudoConsole: the attached
- * processes are told the console is gone), gives the child
- * NOVA_PROC_RELEASE_GRACE_MS to leave, kills the tree, and returns once it is
- * gone; idempotent. Returns / outs follow the Child functions above.
+ * The child leads its tree. On Windows it is assigned to a Job Object while
+ * suspended; on POSIX it leads a session. Closing hangs up the terminal, gives
+ * the child NOVA_PROC_RELEASE_GRACE_MS to leave, kills the remaining tree, and
+ * returns once it is gone; idempotent. Returns / outs follow the Child functions.
  */
 void*    proc_pty_spawn(const uint8_t* program, nova_int program_len,
                         const uint8_t* argv, nova_int argv_len, nova_int argc,

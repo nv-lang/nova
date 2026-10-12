@@ -11,6 +11,12 @@
  * Nova-visible handle here to keep pinned between separate calls.
  */
 
+#ifndef _WIN32
+#  ifndef _GNU_SOURCE
+#    define _GNU_SOURCE
+#  endif
+#endif
+
 #ifndef NOVA_USE_LIBUV
 #  error "Plan 265: NOVA_USE_LIBUV required."
 #endif
@@ -28,6 +34,12 @@
 #  include <io.h>
 #else
 #  include <unistd.h>
+#  include <fcntl.h>
+#  include <sys/ioctl.h>
+#  include <sys/wait.h>
+#  include <termios.h>
+#  include <pthread.h>
+extern char** environ;
 #endif
 
 /* ─── Cancel-scope helper (same pattern as net.c's _nn2_cancel_scope) ───── */
@@ -306,6 +318,7 @@ typedef struct NovaProcPipe {
     nova_int        read_n;
     int             read_err;      /* UV code */
     int             read_eof;
+    int             eio_eof;       /* PTY master: EIO means the child side is gone */
     nova_atomic_int read_done;
 
     /* write slot (independent: stdin writer and stdout reader are different fibers) */
@@ -395,7 +408,7 @@ static void _pp_read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     NovaProcPipe* p = (NovaProcPipe*)stream->data;
     if (nread == 0) return;  /* spurious wake-up: stay parked */
     uv_read_stop(stream);
-    if (nread == UV_EOF)   { p->read_n = 0; p->read_eof = 1; p->read_err = 0; }
+    if (nread == UV_EOF || (p->eio_eof && nread == UV_EIO)) { p->read_n = 0; p->read_eof = 1; p->read_err = 0; }
     else if (nread < 0)    { p->read_n = 0; p->read_err = (int)nread; }
     else                   { p->read_n = (nova_int)nread; p->read_err = 0; }
     nova_aint_store(&p->read_done, 1);
@@ -555,6 +568,10 @@ typedef struct NovaProcChild {
     int             group;         /* Tree.Group: every kill hits the whole tree */
 #ifdef _WIN32
     HANDLE          job;           /* Job Object holding the tree (group only; may be NULL) */
+#else
+    int             pty;           /* this is a forked PTY child, reaped by sigchld */
+    uv_signal_t     sigchld;
+    NovaProcPipe*   master;
 #endif
 } NovaProcChild;
 
@@ -575,8 +592,7 @@ static void _pc_close_cb(uv_handle_t* h) {
     _pc_release(c);   /* existence unit */
 }
 
-static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal) {
-    NovaProcChild* c = (NovaProcChild*)proc->data;
+static void _pc_note_exit(NovaProcChild* c, int64_t exit_status, int term_signal) {
     c->exit_status = exit_status;
 #ifdef _WIN32
     /* Windows has no signals: libuv reports its own uv_process_kill as "signal 9", while a
@@ -607,6 +623,11 @@ static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal
     NovaFiberQueue* sc = c->wait_scope; int sl = c->wait_slot;
     c->wait_scope = NULL;
     if (sc) nova_sched_wake(sc, sl);
+}
+
+static void _pc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_signal) {
+    NovaProcChild* c = (NovaProcChild*)proc->data;
+    _pc_note_exit(c, exit_status, term_signal);
     uv_close((uv_handle_t*)proc, _pc_close_cb);
 }
 
@@ -875,6 +896,9 @@ static void _pc_reap(NovaProcChild* c) {
 void proc_child_release(void* cv) {
     NovaProcChild* c = (NovaProcChild*)cv;
     if (!c) return;
+#ifndef _WIN32
+    if (c->pty) { proc_pty_close(c); return; }
+#endif
     int32_t zero = 0;
     if (!nova_aint_cas(&c->release_done, &zero, 1)) return;
     _pc_reap(c);                         /* no orphan survives its owner (D492 rule 6) */
@@ -1569,7 +1593,74 @@ void proc_pty_close(void* pv) {
     _pty_release(c);                         /* Nova unit */
 }
 
-#else  /* POSIX: forkpty is the next task (plan 294 F.3); the surface exists and says so. */
+#else  /* POSIX: plan 294 F.3, controlling terminal through a PTY master. */
+
+
+static int _pty_size_ok(nova_int rows, nova_int cols) {
+    return rows >= 1 && rows <= 32767 && cols >= 1 && cols <= 32767;
+}
+
+/* libuv reaps only the children IT spawned (waitpid on each of their pids), so this
+ * fork is reaped here — by its own pid, never waitpid(-1), which would steal libuv's. */
+static void _pty_sigchld_cb(uv_signal_t* h, int signum) {
+    (void)signum;
+    NovaProcChild* c = (NovaProcChild*)h->data;
+    if (nova_aint_load(&c->exited) != 0) return;
+    int status = 0;
+    pid_t r;
+    do r = waitpid((pid_t)c->pid, &status, WNOHANG); while (r == -1 && errno == EINTR);
+    if (r == 0) return;                          /* the SIGCHLD of another child */
+    int64_t code = -1;                           /* r == -1: reaped by someone else, cause unknown */
+    int sig = 0;
+    if (r == (pid_t)c->pid) {
+        if (WIFEXITED(status)) code = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status)) { code = 0; sig = WTERMSIG(status); }
+        else return;                             /* not an exit (no WUNTRACED: cannot happen) */
+    }
+    uv_signal_stop(h);
+    _pc_note_exit(c, code, sig);
+    uv_close((uv_handle_t*)h, _pc_close_cb);     /* existence unit */
+}
+
+static int _pty_cloexec_pipe(int fds[2]) {
+#ifdef __linux__
+    return pipe2(fds, O_CLOEXEC);
+#else
+    if (pipe(fds) != 0) return -1;
+    (void)fcntl(fds[0], F_SETFD, FD_CLOEXEC);
+    (void)fcntl(fds[1], F_SETFD, FD_CLOEXEC);
+    return 0;
+#endif
+}
+
+/* In the forked child: async-signal-safe calls only. Never returns. */
+static void _pty_child_exec(int slave, int errfd, const char* file, char** args,
+                            char** envp, const char* cwd) {
+    int n;
+    for (n = 1; n < 32; n++) {                   /* the parent's dispositions (SIG_IGN of SIGPIPE, ...) */
+        if (n == SIGKILL || n == SIGSTOP) continue;
+        (void)signal(n, SIG_DFL);
+    }
+    if (setsid() < 0) goto fail;                 /* a new session, no controlling terminal yet */
+    if (ioctl(slave, TIOCSCTTY, 0) < 0) goto fail;   /* ... and now the PTY is it */
+    if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0) goto fail;
+    if (slave > 2) (void)close(slave);
+    if (cwd && chdir(cwd) < 0) goto fail;
+    if (envp) environ = envp;
+    {
+        sigset_t none;
+        sigemptyset(&none);
+        (void)sigprocmask(SIG_SETMASK, &none, NULL);
+    }
+    execvp(file, args);
+fail:
+    {
+        int e = errno;
+        ssize_t w;
+        do w = write(errfd, &e, sizeof e); while (w < 0 && errno == EINTR);
+    }
+    _exit(127);
+}
 
 void* proc_pty_spawn(const uint8_t* program, nova_int program_len,
                      const uint8_t* argv_blob, nova_int argv_blob_len, nova_int argc,
@@ -1577,23 +1668,196 @@ void* proc_pty_spawn(const uint8_t* program, nova_int program_len,
                      nova_bool use_env,
                      const uint8_t* cwd, nova_int cwd_len,
                      nova_int rows, nova_int cols, nova_int* out_err) {
-    (void)program; (void)program_len; (void)argv_blob; (void)argv_blob_len; (void)argc;
-    (void)env_blob; (void)env_blob_len; (void)envc; (void)use_env; (void)cwd; (void)cwd_len;
-    (void)rows; (void)cols;
-    if (out_err) *out_err = NOVA_PROC_UNSUPPORTED;
-    return NULL;
-}
-nova_int proc_pty_read(void* pv, uint8_t* buf, nova_int cap) { (void)pv; (void)buf; (void)cap; return NOVA_PROC_CLOSED; }
-nova_int proc_pty_write(void* pv, const uint8_t* buf, nova_int len) { (void)pv; (void)buf; (void)len; return NOVA_PROC_CLOSED; }
-nova_int proc_pty_resize(void* pv, nova_int rows, nova_int cols) { (void)pv; (void)rows; (void)cols; return NOVA_PROC_UNSUPPORTED; }
-nova_int proc_pty_pid(void* pv) { (void)pv; return 0; }
-nova_int proc_pty_wait(void* pv, nova_int* out_code, nova_int* out_signal) {
-    (void)pv; (void)out_code; (void)out_signal; return NOVA_PROC_UNSUPPORTED;
-}
-nova_int proc_pty_try_wait(void* pv, nova_int* out_code, nova_int* out_signal) {
-    (void)pv; (void)out_code; (void)out_signal; return NOVA_PROC_UNSUPPORTED;
-}
-nova_int proc_pty_kill(void* pv, nova_int sig) { (void)pv; (void)sig; return NOVA_PROC_UNSUPPORTED; }
-void proc_pty_close(void* pv) { (void)pv; }
+    if (out_err) *out_err = 0;
+    if (!_pty_size_ok(rows, cols)) { if (out_err) *out_err = -22; return NULL; }
+    uv_loop_t* loop = nova_current_loop();
 
+    /* 1. The terminal: the master stays here, the slave becomes the child's stdio. Both
+     *    close-on-exec, so no other child spawned meanwhile keeps the terminal open. */
+#ifdef __linux__
+    int master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+#else
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master >= 0) (void)fcntl(master, F_SETFD, FD_CLOEXEC);
+#endif
+    if (master < 0) { if (out_err) *out_err = -(nova_int)errno; return NULL; }
+    char slave_name[128];
+    int slave = -1;
+    if (grantpt(master) != 0 || unlockpt(master) != 0 ||
+        ptsname_r(master, slave_name, sizeof slave_name) != 0 ||
+        (slave = open(slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC)) < 0) {
+        int e = errno;
+        (void)close(master);
+        if (out_err) *out_err = -(nova_int)(e ? e : EIO);
+        return NULL;
+    }
+    struct winsize ws;
+    memset(&ws, 0, sizeof ws);
+    ws.ws_row = (unsigned short)rows;
+    ws.ws_col = (unsigned short)cols;
+    (void)ioctl(master, TIOCSWINSZ, &ws);        /* the size the child sees from its first instruction */
+
+    /* 2. Everything the child needs, made before fork. */
+    int errpipe[2];
+    if (_pty_cloexec_pipe(errpipe) != 0) {
+        int e = errno;
+        (void)close(slave); (void)close(master);
+        if (out_err) *out_err = -(nova_int)e;
+        return NULL;
+    }
+    char* progz = _proc_dupz(program, program_len);
+    char** args = (char**)malloc(sizeof(char*) * (size_t)(argc + 2));
+    args[0] = progz;
+    _proc_split_into(argv_blob, argv_blob_len, argc, &args[1]);
+    args[argc + 1] = NULL;
+    char** envp = NULL;
+    if (use_env) {
+        envp = (char**)malloc(sizeof(char*) * (size_t)(envc + 1));
+        _proc_split_into(env_blob, env_blob_len, envc, envp);
+        envp[envc] = NULL;
+    }
+    char* cwdz = (cwd_len > 0) ? _proc_dupz(cwd, cwd_len) : NULL;
+
+    NovaProcChild* c = (NovaProcChild*)nova_alloc_uncollectable(sizeof(NovaProcChild));
+    memset(c, 0, sizeof(*c));
+    nova_aint_init(&c->refcount, 2);   /* existence (sigchld close_cb) + Nova owner */
+    nova_aint_init(&c->exited, 0);
+    nova_aint_init(&c->killing, 0);
+    nova_aint_init(&c->release_done, 0);
+    for (int i = 0; i < 3; i++) nova_aint_init(&c->taken[i], 1);   /* no pipes to hand out */
+    c->loop = loop;
+    c->group = 1;                      /* the child leads its session: kill reaches the tree */
+    c->pty = 1;
+    uv_signal_init(loop, &c->sigchld);
+    c->sigchld.data = c;
+    /* Watching BEFORE fork: an exit cannot slip between fork and the watch. */
+    int src = uv_signal_start(&c->sigchld, _pty_sigchld_cb, SIGCHLD);
+
+    pid_t pid = -1;
+    int fork_errno = 0;
+    if (src == 0) {
+        /* Signals blocked across fork (libuv's uv_spawn does the same): the child must not
+         * run a parent handler before it has reset the dispositions. */
+        sigset_t all, old;
+        sigfillset(&all);
+        sigdelset(&all, SIGKILL); sigdelset(&all, SIGSTOP); sigdelset(&all, SIGTRAP);
+        sigdelset(&all, SIGSEGV); sigdelset(&all, SIGBUS);  sigdelset(&all, SIGILL);
+        sigdelset(&all, SIGSYS);  sigdelset(&all, SIGABRT);
+        (void)pthread_sigmask(SIG_BLOCK, &all, &old);
+        pid = fork();
+        if (pid == 0) _pty_child_exec(slave, errpipe[1], progz, args, envp, cwdz);
+        fork_errno = errno;
+        (void)pthread_sigmask(SIG_SETMASK, &old, NULL);
+    }
+    (void)close(slave);
+    (void)close(errpipe[1]);
+
+    /* 3. Did exec happen? The pipe closes on exec (0 bytes) or carries the child's errno. */
+    int child_errno = 0;
+    if (pid > 0) {
+        ssize_t n;
+        do n = read(errpipe[0], &child_errno, sizeof child_errno); while (n < 0 && errno == EINTR);
+        if (n != (ssize_t)sizeof child_errno) child_errno = 0;
+        else if (child_errno == 0) child_errno = EIO;
+    }
+    (void)close(errpipe[0]);
+    free(progz); free(cwdz);
+    _proc_free_str_elems(&args[1], argc);
+    free(args);
+    _proc_free_str_elems(envp, use_env ? envc : 0);
+    free(envp);
+
+    if (src != 0 || pid < 0 || child_errno != 0) {
+        nova_int err = src != 0 ? _proc_neg_errno(src) : pid < 0 ? -(nova_int)fork_errno
+                                                              : -(nova_int)child_errno;
+        if (pid > 0) {                 /* the child is in _exit(127): reap it here */
+            int st;
+            while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+        }
+        (void)close(master);
+        nova_aint_store(&c->exited, 1);
+        if (src == 0) uv_signal_stop(&c->sigchld);
+        uv_close((uv_handle_t*)&c->sigchld, _pc_close_cb);   /* existence unit */
+        _pc_release(c);                                      /* Nova unit */
+        if (out_err) *out_err = err;
+        return NULL;
+    }
+    c->pid = (int)pid;
+
+    /* 4. The master as a libuv stream: read / write park the fiber like any pipe. */
+    NovaProcPipe* p = _pp_new(loop);
+    p->eio_eof = 1;
+    uv_pipe_init(loop, &p->handle, 0);
+    int orc = uv_pipe_open(&p->handle, master);
+    if (orc != 0) {
+        (void)close(master);           /* the hangup: SIGHUP to the session */
+        (void)kill(-pid, SIGKILL);
+        nova_aint_store(&p->stage, PP_CLOSING);
+        uv_close((uv_handle_t*)&p->handle, _pp_close_cb);
+        int32_t zero = 0;
+        if (nova_aint_cas(&p->user_release_done, &zero, 1)) _pp_release(p);
+        int32_t z2 = 0;
+        if (nova_aint_cas(&c->release_done, &z2, 1)) _pc_release(c);   /* the watcher reaps it */
+        if (out_err) *out_err = _proc_neg_errno(orc);
+        return NULL;
+    }
+    c->master = p;
+    return c;
+}
+
+nova_int proc_pty_resize(void* cv, nova_int rows, nova_int cols) {
+    NovaProcChild* c = (NovaProcChild*)cv;
+    if (!_pty_size_ok(rows, cols)) return -22;
+    if (nova_aint_load(&c->exited) != 0) return NOVA_PROC_CLOSED;
+    NovaProcPipe* p = c->master;
+    if (!p || nova_aint_load(&p->stage) >= PP_CLOSING) return NOVA_PROC_CLOSED;
+    uv_os_fd_t fd;
+    if (uv_fileno((uv_handle_t*)&p->handle, &fd) != 0) return NOVA_PROC_CLOSED;
+    struct winsize ws;
+    memset(&ws, 0, sizeof ws);
+    ws.ws_row = (unsigned short)rows;
+    ws.ws_col = (unsigned short)cols;
+    /* The kernel sends SIGWINCH to the terminal's foreground process group. */
+    if (ioctl(fd, TIOCSWINSZ, &ws) != 0) return -(nova_int)errno;
+    return 0;
+}
+
+void proc_pty_close(void* cv) {
+    NovaProcChild* c = (NovaProcChild*)cv;
+    if (!c) return;
+    int32_t zero = 0;
+    if (!nova_aint_cas(&c->release_done, &zero, 1)) return;
+    /* Closing the master hangs the terminal up (SIGHUP); then give the session its grace. */
+    if (c->master) _pp_user_close(c->master);
+    if (nova_aint_load(&c->exited) == 0) {
+        NovaFiberQueue* scope = _nova_active_scope;
+        int64_t deadline = _proc_now_ms() + NOVA_PROC_RELEASE_GRACE_MS;
+        while (nova_aint_load(&c->exited) == 0 && _proc_now_ms() < deadline) {
+            if (!scope || !mco_running()) break;
+            if (nova_cancel_mask_active() == 0 &&
+                nova_abool_load(&_proc_cancel_scope(scope)->cancel_requested)) break;
+            (void)time_sleep_ms(2);
+        }
+        (void)_pc_send(c, 9);
+        if (nova_aint_load(&c->exited) == 0 && scope) {
+            int slot = _nova_active_slot;
+            c->wait_scope = scope; c->wait_slot = slot;
+            nova_sched_park_until(scope, slot, _pc_exited, c);
+            c->wait_scope = NULL;
+        }
+    }
+    _pc_release(c);                    /* Nova unit */
+}
+
+
+nova_int proc_pty_read(void* pv, uint8_t* buf, nova_int cap) {
+    return proc_pipe_read(((NovaProcChild*)pv)->master, buf, cap);
+}
+nova_int proc_pty_write(void* pv, const uint8_t* buf, nova_int len) {
+    return proc_pipe_write(((NovaProcChild*)pv)->master, buf, len);
+}
+nova_int proc_pty_pid(void* pv) { return (nova_int)((NovaProcChild*)pv)->pid; }
+nova_int proc_pty_wait(void* pv, nova_int* code, nova_int* sig) { return proc_child_wait(pv, code, sig); }
+nova_int proc_pty_try_wait(void* pv, nova_int* code, nova_int* sig) { return proc_child_try_wait(pv, code, sig); }
+nova_int proc_pty_kill(void* pv, nova_int sig) { return proc_child_kill(pv, sig); }
 #endif
