@@ -152,14 +152,13 @@ release.
 
 ## Distribution
 
-- **Prepared local release assets (not public uploads):**
+- **Release assets (published on this page):**
   `nova-oracle-0.1.0-linux-x86_64.tar.gz`,
   `nova-oracle-0.1.0-windows-x86_64.zip`,
   `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual
-  Windows Oracle workflow produced a private, 14-day Actions artifact on
-  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901`, with a
-  clean-extraction default-GC smoke test. Other CI uploads (benchmark
-  results and test reports) are not release binaries.
+  Windows Oracle workflow ran a clean-extraction default-GC smoke test on
+  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901`. Other CI uploads
+  (benchmark results and test reports) are not release binaries.
 - The intended binary platforms are Linux and Windows x86_64. The archive
   contents and installation recipe were smoke-tested on their respective platforms;
   a C compiler is required because Nova compiles to C. See
