@@ -19,8 +19,9 @@
 // errno, the raw handle) stay in proc_ffi.nv and in the `real_pty_*` translators at the end of
 // this file, which `real_proc` calls.
 //
-// **Systems.** Windows: ConPTY, Windows 10 1809 or newer (older: `Err(Unsupported)`). POSIX
-// uses a controlling terminal; macOS is not claimed until its PTY/libuv path is verified.
+// **Systems.** Windows F.4: ConPTY on Windows 10 1809+; without ConPTY, `Err(Unsupported)`.
+// POSIX F.3: a controlling terminal, implemented and verified on Linux. macOS is not claimed
+// until its PTY/libuv path is verified.
 //
 // **Bytes are the terminal's, not the child's.** On POSIX the line discipline echoes input and
 // turns "\n" into "\r\n". ConPTY goes further: it RENDERS the child's output into a screen and
@@ -44,9 +45,10 @@ export type PtySize value { ro rows int, ro cols int }
 #stable(since = "0.1")
 export type PtyChild consume value priv { handle *() }
 
-/// Start the child on a new pseudo terminal of `size`. `Err(Unsupported)` when this system has
-/// no pseudo terminal for us (Windows before 10 1809, or an unsupported POSIX system). Otherwise the
-/// errors of `Command.start`. The program, arguments, environment and directory are taken as
+/// Start the child on a new pseudo terminal of `size`. POSIX F.3 is implemented and verified on
+/// Linux; Windows F.4 uses ConPTY. `Err(Unsupported)` when the platform has no PTY facility (for
+/// example, Windows before 10 1809 or without ConPTY). Otherwise the errors of `Command.start`.
+/// The program, arguments, environment and directory are taken as
 /// `Command.start` takes them; the `stdin` / `stdout` / `stderr` / `tree` settings do not apply
 /// (the terminal is all three streams, and the tree is always the child's).
 #stable(since = "0.1")

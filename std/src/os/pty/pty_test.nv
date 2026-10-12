@@ -9,8 +9,9 @@
 //          close() of a live child - returns, and the process is gone (4b);
 //   PTY-5  Ctrl-C typed on the keyboard ends the child the way Ctrl-C does.
 //
-// Systems. Windows: ConPTY; POSIX: controlling terminal. Platform helpers select `powershell` /
-// `ping` or `sh`; an unavailable terminal is explicitly checked as Unsupported and reported SKIP.
+// Systems. Windows F.4: ConPTY; POSIX F.3: controlling terminal (verified on Linux). Platform
+// helpers select `powershell` / `ping` or `sh`; when no PTY facility is available, the fixture
+// asserts Unsupported and reports SKIP.
 //
 // What a terminal sends is the TERMINAL's bytes, not the child's: echo, "\r\n", and on Windows a
 // screen ConPTY renders and re-encodes (D492, table 3.4). So the fixtures look for what the child
@@ -26,7 +27,7 @@ import std.os.{Command, PtyChild, PtySize, Signal, ExitStatus, kill_pid}
 import std.io.{IoError, ErrorKind}
 import std.time.duration
 
-const SKIP_REASON = "pseudo-terminal unavailable on this platform (Windows requires ConPTY / Windows 10 1809+)"
+const SKIP_REASON = "pseudo-terminal unavailable (Windows requires ConPTY / Windows 10 1809+; POSIX verified on Linux)"
 
 // ─── Platform helpers ──
 
