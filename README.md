@@ -238,17 +238,20 @@ programmer writes nothing special.
 ## Ecosystem
 
 The compiler, the standard library, and the specification live in this
-repository. Everything that does not have to ship with the compiler is a
-separate package, written in Nova itself and pulled in via `nova.lock.toml`:
+repository. Libraries and tools that can ship independently live in separate
+repositories; Nova packages are resolved and pinned via `nova.lock.toml`.
+Some packages include native C components alongside Nova code.
 
 | Package | What it is | Released |
 |---|---|---|
-| [nova-tls](https://github.com/nv-lang/nova-tls) | TLS client/server — handshake, ALPN, SNI, cert hot-reload | `v0.1.4` |
-| [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1 client + server — request/response, headers, URL, transport | `v0.1.1` |
-| [nova-compress](https://github.com/nv-lang/nova-compress) | `deflate` / `gzip` / `zlib` / `brotli` codecs | `v0.1.1` |
-| [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — web framework atop the HTTP core: router, extractors, middleware, auth, websockets | not yet tagged |
-| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Arbitrary-precision integers in pure Nova, no C dependencies | in progress |
-| [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Tree-sitter grammar for the language | `v0.1.0` |
+| [nova-tls](https://github.com/nv-lang/nova-tls) | TLS client/server over mbedTLS | [v0.2.1](https://github.com/nv-lang/nova-tls/tree/v0.2.1) |
+| [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1 client and protocol core; server framework is in Polaris | [v0.2.1](https://github.com/nv-lang/nova-http/tree/v0.2.1) |
+| [nova-compress](https://github.com/nv-lang/nova-compress) | `deflate` / `gzip` / `zlib` / Brotli codecs | [v0.1.3](https://github.com/nv-lang/nova-compress/tree/v0.1.3) |
+| [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — web framework: router, extractors, middleware, auth, websockets | [v0.2.4](https://github.com/nv-lang/nova-polaris/tree/v0.2.4) |
+| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Arbitrary-precision numbers in pure Nova, without C dependencies | [v0.1.0](https://github.com/nv-lang/nova-bignum/tree/v0.1.0) |
+| [nova-socks](https://github.com/nv-lang/nova-socks) | Pure-Nova SOCKS5 client (CONNECT, username/password authentication) | [v0.1.3](https://github.com/nv-lang/nova-socks/tree/v0.1.3) |
+| [nova-duckdb](https://github.com/nv-lang/nova-duckdb) | DuckDB binding for Nova, with native libraries | [v0.2.2](https://github.com/nv-lang/nova-duckdb/tree/v0.2.2) |
+| [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Tree-sitter grammar for Nova | [v0.1.0](https://github.com/nv-lang/tree-sitter-nova/tree/v0.1.0) |
 
 ## Status
 
@@ -414,9 +417,8 @@ overwritten by the next push, so please do not send patches to them.
 | GitVerse | [gitverse.ru/nv-lang](https://gitverse.ru/nv-lang) | mirror |
 | SourceCraft | [sourcecraft.dev/nv-lang](https://sourcecraft.dev/nv-lang/repos) | mirror |
 
-Every repository listed under [Ecosystem](#ecosystem) exists on all three
-hosts under the same name, so any of them can be cloned if GitHub is not
-reachable for you.
+The mirror table above describes the Nova repository; package repositories
+listed under [Ecosystem](#ecosystem) are linked to their GitHub sources.
 
 ## License
 
