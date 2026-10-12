@@ -11,6 +11,8 @@
 // EXPECT_STDOUT rem: r1 r2 1
 // EXPECT_STDOUT compound: i j k l 3
 // EXPECT_STDOUT receiver: h1 h2 method 5
+// EXPECT_STDOUT getter-literal: g1 true
+// EXPECT_STDOUT getter-call: g2 g3 5
 // EXPECT_STDOUT method-call: h3 a1 method-call 5
 // EXPECT_STDOUT call-args: a1 a2 a3 6
 // EXPECT_STDOUT and-false: l false
@@ -43,6 +45,8 @@ fn P685Box @combine(other int) -> int {
     print("method-call ")
     @value + other
 }
+
+fn P685Box @peek() -> int => @value
 
 fn make_box(s str, v int) -> P685Box {
     print("${s} ")
@@ -85,6 +89,10 @@ fn main() Io {
     println(values[0])
     print("receiver: ")
     println(make_box("h1", 2) + make_box("h2", 3))
+    print("getter-literal: ")
+    println(make_box("g1", 5).peek() == 5)
+    print("getter-call: ")
+    println(make_box("g2", 2).peek() + mark("g3", 3))
     print("method-call: ")
     println(make_box("h3", 2).combine(mark("a1", 3)))
     print("call-args: ")
