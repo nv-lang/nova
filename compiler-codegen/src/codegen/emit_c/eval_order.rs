@@ -130,10 +130,11 @@ fn is_hoistable(e: &Expr) -> bool {
 impl super::CEmitter {
     /// #1627, the door for a call. Operands in evaluation order: the receiver
     /// of a method call, then the arguments. When an operand after the first
-    /// may write statements, every hoistable operand up to and including the
-    /// last such one is evaluated, in order, into a temporary (the technique
-    /// of `emit_expr_with_reconsume_disarm`, which hoists consuming calls'
-    /// arguments the same way), and the call is rebuilt over those names.
+    /// emits statements or has observable effects, every hoistable operand up
+    /// to and including the last such one is evaluated, in order, into a
+    /// temporary (the technique of `emit_expr_with_reconsume_disarm`, which
+    /// hoists consuming calls' arguments the same way), and the call is rebuilt
+    /// over those names.
     /// `None` -- nothing to reorder, the call is emitted as it was.
     pub(super) fn order_operands(&mut self, e: &Expr) -> Result<Option<Expr>, String> {
         if let ExprKind::Index { obj, index } = &e.kind {
@@ -152,7 +153,9 @@ impl super::CEmitter {
         for a in args {
             ops.push(a.expr());
         }
-        let Some(last) = ops.iter().rposition(|o| may_write_statements(o)) else { return Ok(None) };
+        let Some(last) = ops.iter().rposition(|o| {
+            may_write_statements(o) || may_have_effects(o)
+        }) else { return Ok(None) };
         if last == 0 {
             return Ok(None);
         }
