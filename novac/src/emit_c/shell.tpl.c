@@ -5070,20 +5070,20 @@ static nova_unit Nova_char_method_debug(nova_char nova_self, Nova_FmtCtx* f);
 static nova_unit Nova_str_method_display(nova_str nova_self, Nova_FmtCtx* f);
 static nova_unit Nova_str_method_debug(nova_str nova_self, Nova_FmtCtx* f);
 static NovaVtable_Random* nova_fn_7prelude7effects11real_random(void);
-static nova_str nova_fn_11shell_probe11serde_probe(void);
-static nova_int nova_fn_11shell_probe14name_map_probe(nova_str k);
-static nova_bool nova_fn_11shell_probe14slice_eq_probe(Nova_Vec____nova_int* xs, Nova_Vec____nova_int* want);
-static nova_int nova_fn_11shell_probe11slice_probe(Nova_Vec____nova_str* a, nova_int from);
-static nova_int nova_fn_11shell_probe10last_slash(nova_str path);
-static Nova_Vec____nova_str* nova_fn_11shell_probe10argv_probe(void);
-static nova_int nova_fn_11shell_probe8eff_door(Nova_Vec____nova_str* a);
-static nova_unit nova_fn_11shell_probe15supervise_probe(void);
-static NovaRes_nova_int_nova_str* nova_fn_11shell_probe7res_int(nova_bool f);
-static Nova_Vec____nova_int* nova_fn_11shell_probe5three(void);
-static NovaOpt_nova_str nova_fn_11shell_probe7opt_str(nova_bool f);
-static NovaOpt_nova_int nova_fn_11shell_probe7opt_int(nova_bool f);
-static NovaOpt_nova_f64 nova_fn_11shell_probe7opt_f64(nova_bool f);
-static NovaOpt_nova_bool nova_fn_11shell_probe8opt_bool(nova_bool f);
+static nova_str nova_fn_5probe11shell_probe11serde_probe(void);
+static nova_int nova_fn_5probe11shell_probe14name_map_probe(nova_str k);
+static nova_bool nova_fn_5probe11shell_probe14slice_eq_probe(Nova_Vec____nova_int* xs, Nova_Vec____nova_int* want);
+static nova_int nova_fn_5probe11shell_probe11slice_probe(Nova_Vec____nova_str* a, nova_int from);
+static nova_int nova_fn_5probe11shell_probe10last_slash(nova_str path);
+static Nova_Vec____nova_str* nova_fn_5probe11shell_probe10argv_probe(void);
+static nova_int nova_fn_5probe11shell_probe8eff_door(Nova_Vec____nova_str* a);
+static nova_unit nova_fn_5probe11shell_probe15supervise_probe(void);
+static NovaRes_nova_int_nova_str* nova_fn_5probe11shell_probe7res_int(nova_bool f);
+static Nova_Vec____nova_int* nova_fn_5probe11shell_probe5three(void);
+static NovaOpt_nova_str nova_fn_5probe11shell_probe7opt_str(nova_bool f);
+static NovaOpt_nova_int nova_fn_5probe11shell_probe7opt_int(nova_bool f);
+static NovaOpt_nova_f64 nova_fn_5probe11shell_probe7opt_f64(nova_bool f);
+static NovaOpt_nova_bool nova_fn_5probe11shell_probe8opt_bool(nova_bool f);
 static nova_bool Nova_Duration_method_equal(NovaValue_Duration nova_self, NovaValue_Duration other);
 static nova_bool Nova_JsonValue_method_equal(Nova_JsonValue* nova_self, Nova_JsonValue* other);
 static nova_bool Nova_Monotonic_method_equal(NovaValue_Monotonic nova_self, NovaValue_Monotonic other);
@@ -9769,14 +9769,14 @@ static nova_unit Nova_PtyChild_consume_cleanup(NovaValue_PtyChild* nova_self, No
 static NovaRes_NovaValue_PtyChild_NovaValue_IoError* nova_fn_3std2os15real_pty_launch(NovaValue_Command cmd, NovaValue_PtySize size) {
     nova_preempt_check();
     NovaRes_Nova_Vec____nova_byte_p_NovaValue_IoError* _nv_tmp_714 = nova_fn_3std2os8join_nul((cmd.args));
-    if (_nv_tmp_714->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("pty.nv", 110); return nova_make_NovaRes_NovaValue_PtyChild_NovaValue_IoError_Err(_nv_tmp_714->payload.Err._0); }
+    if (_nv_tmp_714->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("pty.nv", 112); return nova_make_NovaRes_NovaValue_PtyChild_NovaValue_IoError_Err(_nv_tmp_714->payload.Err._0); }
     Nova_Vec____nova_byte* argv = (_nv_tmp_714->payload.Ok._0);
     nova_bool use_env = ((cmd.clear_env) || (!Vec____NovaValue_EnvVar_method_is_empty((cmd.envs))));
     Nova_Vec____NovaValue_EnvVar* deduped = nova_fn_3std2os11dedupe_envs((cmd.envs));
     Nova_Vec____nova_byte* _nv_if_715;
     if (use_env) {
         NovaRes_Nova_Vec____nova_byte_p_NovaValue_IoError* _nv_tmp_716 = nova_fn_3std2os11env_blob_of(deduped);
-        if (_nv_tmp_716->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("pty.nv", 113); return nova_make_NovaRes_NovaValue_PtyChild_NovaValue_IoError_Err(_nv_tmp_716->payload.Err._0); }
+        if (_nv_tmp_716->tag == NOVA_TAG_Result_Err) { nova_throw_trace_push("pty.nv", 115); return nova_make_NovaRes_NovaValue_PtyChild_NovaValue_IoError_Err(_nv_tmp_716->payload.Err._0); }
         _nv_if_715 = (_nv_tmp_716->payload.Ok._0);
     } else {
         Nova_Vec____nova_byte* _nv_tmp_717;
@@ -20713,7 +20713,7 @@ static NovaVtable_Random* nova_fn_7prelude7effects11real_random(void) {
 /*__NOVAC_STRLITS__*/
 /*__NOVAC_BODY__*/
 
-static nova_str nova_fn_11shell_probe11serde_probe(void) {
+static nova_str nova_fn_5probe11shell_probe11serde_probe(void) {
     nova_preempt_check();
     /* SRC: ro shapes = []ProbeShape.of(PsDot, PsCircle(5), PsRect(1, 2), PsNamed { title: "q", w: 3 }) */
     Nova_ProbeShape* _nv_tmp_2510 = nova_make_ProbeShape_PsCircle(((nova_int)5LL));
@@ -20745,7 +20745,7 @@ static nova_str nova_fn_11shell_probe11serde_probe(void) {
     return _nv_tmp_2518;
 }
 
-static nova_int nova_fn_11shell_probe14name_map_probe(nova_str k) {
+static nova_int nova_fn_5probe11shell_probe14name_map_probe(nova_str k) {
     nova_preempt_check();
     /* SRC: mut m = HashMap[str, int].new() */
     Nova_HashMap____nova_str__nova_int* _nv_tmp_2519;
@@ -20769,13 +20769,13 @@ static nova_int nova_fn_11shell_probe14name_map_probe(nova_str k) {
     return _nv_tmp_2525;
 }
 
-static nova_bool nova_fn_11shell_probe14slice_eq_probe(Nova_Vec____nova_int* xs, Nova_Vec____nova_int* want) {
+static nova_bool nova_fn_5probe11shell_probe14slice_eq_probe(Nova_Vec____nova_int* xs, Nova_Vec____nova_int* want) {
     /* preempt-check elided: provably-leaf (Plan 143.2) */
     /* SRC: xs == want */
     return (Vec____nova_int_method_equal(xs, want));
 }
 
-static nova_int nova_fn_11shell_probe11slice_probe(Nova_Vec____nova_str* a, nova_int from) {
+static nova_int nova_fn_5probe11shell_probe11slice_probe(Nova_Vec____nova_str* a, nova_int from) {
     nova_preempt_check();
     /* SRC: mut n = 0 */
     nova_int n = ((nova_int)0LL);
@@ -20818,7 +20818,7 @@ static nova_int nova_fn_11shell_probe11slice_probe(Nova_Vec____nova_str* a, nova
     return _nv_tmp_2537;
 }
 
-static nova_int nova_fn_11shell_probe10last_slash(nova_str path) {
+static nova_int nova_fn_5probe11shell_probe10last_slash(nova_str path) {
     nova_preempt_check();
     /* SRC: ro b = path.bytes() */
     Nova_Vec____nova_byte _nv_tmp_2538 = {0};
@@ -20847,7 +20847,7 @@ static nova_int nova_fn_11shell_probe10last_slash(nova_str path) {
     return _nv_tmp_2542;
 }
 
-static Nova_Vec____nova_str* nova_fn_11shell_probe10argv_probe(void) {
+static Nova_Vec____nova_str* nova_fn_5probe11shell_probe10argv_probe(void) {
     nova_preempt_check();
     /* SRC: with Os = real_os() { */
     NovaVtable_Os* _nv_tmp_2543 = nova_fn_3std2os7real_os(); /* GC root pin (TLS not scanned) */
@@ -20874,7 +20874,7 @@ static Nova_Vec____nova_str* nova_fn_11shell_probe10argv_probe(void) {
     return _nv_tmp_2548;
 }
 
-static nova_int nova_fn_11shell_probe8eff_door(Nova_Vec____nova_str* a) {
+static nova_int nova_fn_5probe11shell_probe8eff_door(Nova_Vec____nova_str* a) {
     nova_preempt_check();
     /* SRC: with Fs = real_fs(), Os = real_os() { */
     NovaVtable_Fs* _nv_tmp_2549 = nova_fn_3std2fs7real_fs(); /* GC root pin (TLS not scanned) */
@@ -20995,7 +20995,7 @@ typedef struct {
     NovaValue_AtomicInt* code;
     NovaFiberQueue* _nova_captured_scope_q;
 } NovaSpawnCtx_nova_spawn_1;
-static nova_unit nova_fn_11shell_probe15supervise_probe(void) {
+static nova_unit nova_fn_5probe11shell_probe15supervise_probe(void) {
     nova_preempt_check();
     /* SRC: mut code = AtomicInt.new(0) */
     NovaValue_AtomicInt code = Nova_AtomicInt_static_new(((nova_int)0LL));
@@ -21078,7 +21078,7 @@ static nova_unit nova_fn_11shell_probe15supervise_probe(void) {
     return NOVA_UNIT;
 }
 
-static NovaRes_nova_int_nova_str* nova_fn_11shell_probe7res_int(nova_bool f) {
+static NovaRes_nova_int_nova_str* nova_fn_5probe11shell_probe7res_int(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
     nova_unit _nv_if_2592;
@@ -21092,7 +21092,7 @@ static NovaRes_nova_int_nova_str* nova_fn_11shell_probe7res_int(nova_bool f) {
     return _nv_tmp_2593;
 }
 
-static Nova_Vec____nova_int* nova_fn_11shell_probe5three(void) {
+static Nova_Vec____nova_int* nova_fn_5probe11shell_probe5three(void) {
     nova_preempt_check();
     /* SRC: mut v = []int.new() */
     Nova_Vec____nova_int* _nv_tmp_2594;
@@ -21113,7 +21113,7 @@ static Nova_Vec____nova_int* nova_fn_11shell_probe5three(void) {
     return _nv_tmp_2595;
 }
 
-static NovaOpt_nova_str nova_fn_11shell_probe7opt_str(nova_bool f) {
+static NovaOpt_nova_str nova_fn_5probe11shell_probe7opt_str(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
     nova_unit _nv_if_2596;
@@ -21127,7 +21127,7 @@ static NovaOpt_nova_str nova_fn_11shell_probe7opt_str(nova_bool f) {
     return _nv_tmp_2597;
 }
 
-static NovaOpt_nova_int nova_fn_11shell_probe7opt_int(nova_bool f) {
+static NovaOpt_nova_int nova_fn_5probe11shell_probe7opt_int(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
     nova_unit _nv_if_2598;
@@ -21141,7 +21141,7 @@ static NovaOpt_nova_int nova_fn_11shell_probe7opt_int(nova_bool f) {
     return _nv_tmp_2599;
 }
 
-static NovaOpt_nova_f64 nova_fn_11shell_probe7opt_f64(nova_bool f) {
+static NovaOpt_nova_f64 nova_fn_5probe11shell_probe7opt_f64(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
     nova_unit _nv_if_2600;
@@ -21155,7 +21155,7 @@ static NovaOpt_nova_f64 nova_fn_11shell_probe7opt_f64(nova_bool f) {
     return _nv_tmp_2601;
 }
 
-static NovaOpt_nova_bool nova_fn_11shell_probe8opt_bool(nova_bool f) {
+static NovaOpt_nova_bool nova_fn_5probe11shell_probe8opt_bool(nova_bool f) {
     nova_preempt_check();
     /* SRC: if f { */
     nova_unit _nv_if_2602;
