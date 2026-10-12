@@ -1,6 +1,6 @@
 ---
-source_rev: 6759a7f11
-source_date: 2026-08-04
+source_rev: 0d3b6f8a3
+source_date: 2026-10-12
 ---
 
 > **Informative translation; the Russian text is normative.**
