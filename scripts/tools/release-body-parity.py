@@ -20,6 +20,7 @@ from pathlib import Path
 
 
 LINK = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)]+)\)")
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 API_ROOT = "https://api.github.com"
 
 
@@ -92,7 +93,10 @@ def normalize(text: str, repo: str, source_file: str, revision: str) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label, destination = match.groups()
-        if destination.startswith(("https://", "http://", "mailto:", "#", "/")):
+        if (
+            destination.startswith(("//", "#", "/"))
+            or URI_SCHEME.match(destination)
+        ):
             return match.group(0)
         path, marker, fragment = destination.partition("#")
         path_part, query_marker, query = path.partition("?")
@@ -117,6 +121,23 @@ def self_test() -> int:
     checked_in = "See [guide](../guide/tour.md#start).\n"
     release = "See [guide](https://github.com/acme/nova/blob/abc/docs/guide/tour.md#start).\n"
     assert compare(release, checked_in, "acme/nova", "docs/dev/notes.md", "abc")
+    relative = "[relative](../guide/tour.md)"
+    pinned = "[relative](https://github.com/acme/nova/blob/abc/docs/guide/tour.md)"
+    assert normalize(relative, "acme/nova", "docs/dev/notes.md", "abc") == pinned
+    print("SELFTEST GREEN: relative Markdown path rewritten to pinned blob")
+    absolute_destinations = (
+        "ftp://example.test/file",
+        "tel:+15551234567",
+        "data:text/plain,hello",
+        "custom+scheme:value",
+        "//cdn.example.test/file",
+        "#fragment",
+        "/root/path",
+    )
+    for index, destination in enumerate(absolute_destinations):
+        link = f"[probe{index}]({destination})"
+        assert normalize(link, "acme/nova", "docs/dev/notes.md", "abc") == link
+    print("SELFTEST GREEN: ftp:, tel:, data:, custom+scheme:, //, #, and / links preserved verbatim")
     checked_tree = "Browse [decisions](../../spec/decisions/).\n"
     release_tree = "Browse [decisions](https://github.com/acme/nova/tree/abc/spec/decisions/).\n"
     assert compare(release_tree, checked_tree, "acme/nova", "docs/dev/notes.md", "abc")
