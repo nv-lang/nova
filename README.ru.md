@@ -232,18 +232,21 @@ fn map_audio(samples []f32, gain f32) -> []f32 =>
 ## Экосистема
 
 Компилятор, стандартная библиотека и спецификация живут в этом
-репозитории. Всё, чему не обязательно быть в комплекте с компилятором, —
-отдельный пакет, написанный на самой Nova и подтягиваемый через
-`nova.lock.toml`:
+репозитории. Библиотеки и инструменты, которые можно поставлять независимо,
+живут в отдельных репозиториях; пакеты Nova разрешаются и фиксируются через
+`nova.lock.toml`. Некоторые пакеты включают нативные компоненты на C вместе
+с кодом на Nova.
 
 | Пакет | Что это | Выпущено |
 |---|---|---|
-| [nova-tls](https://github.com/nv-lang/nova-tls) | TLS-клиент/сервер — рукопожатие, ALPN, SNI, горячая перезагрузка сертификатов | `v0.1.4` |
-| [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1-клиент + сервер — запрос/ответ, заголовки, URL, транспорт | `v0.1.1` |
-| [nova-compress](https://github.com/nv-lang/nova-compress) | Кодеки `deflate` / `gzip` / `zlib` / `brotli` | `v0.1.1` |
-| [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — веб-фреймворк поверх HTTP-ядра: маршрутизатор, экстракторы, middleware, аутентификация, websocket'ы | тега пока нет |
-| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Числа произвольной точности на чистом Nova, без C-зависимостей | в работе |
-| [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Грамматика tree-sitter для языка | `v0.1.0` |
+| [nova-tls](https://github.com/nv-lang/nova-tls) | TLS-клиент/сервер на базе mbedTLS | [v0.2.1](https://github.com/nv-lang/nova-tls/tree/v0.2.1) |
+| [nova-http](https://github.com/nv-lang/nova-http) | HTTP/1.1-клиент и протокольное ядро; серверный фреймворк — в Polaris | [v0.2.1](https://github.com/nv-lang/nova-http/tree/v0.2.1) |
+| [nova-compress](https://github.com/nv-lang/nova-compress) | Кодеки `deflate` / `gzip` / `zlib` / Brotli | [v0.1.3](https://github.com/nv-lang/nova-compress/tree/v0.1.3) |
+| [nova-polaris](https://github.com/nv-lang/nova-polaris) | Polaris ⭐ — веб-фреймворк: маршрутизатор, экстракторы, middleware, аутентификация, websocket'ы | [v0.2.4](https://github.com/nv-lang/nova-polaris/tree/v0.2.4) |
+| [nova-bignum](https://github.com/nv-lang/nova-bignum) | Числа произвольной точности на чистом Nova, без C-зависимостей | [v0.1.0](https://github.com/nv-lang/nova-bignum/tree/v0.1.0) |
+| [nova-socks](https://github.com/nv-lang/nova-socks) | Клиент SOCKS5 на чистом Nova (CONNECT, аутентификация по имени и паролю) | [v0.1.3](https://github.com/nv-lang/nova-socks/tree/v0.1.3) |
+| [nova-duckdb](https://github.com/nv-lang/nova-duckdb) | Привязка DuckDB для Nova с нативными библиотеками | [v0.2.2](https://github.com/nv-lang/nova-duckdb/tree/v0.2.2) |
+| [tree-sitter-nova](https://github.com/nv-lang/tree-sitter-nova) | Грамматика tree-sitter для Nova | [v0.1.0](https://github.com/nv-lang/tree-sitter-nova/tree/v0.1.0) |
 
 ## Статус
 
@@ -413,9 +416,8 @@ tautologies, constant folding — без внешних зависимостей
 | GitVerse | [gitverse.ru/nv-lang](https://gitverse.ru/nv-lang) | зеркало |
 | SourceCraft | [sourcecraft.dev/nv-lang](https://sourcecraft.dev/nv-lang/repos) | зеркало |
 
-Каждый репозиторий из раздела [Экосистема](#экосистема) существует на всех
-трёх хостингах под тем же именем, так что любой из них можно клонировать,
-если GitHub недоступен.
+Таблица зеркал выше описывает репозиторий Nova; ссылки в разделе
+[Экосистема](#экосистема) ведут на GitHub-источники отдельных пакетов.
 
 ## Лицензия
 
