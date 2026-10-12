@@ -36564,24 +36564,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 };
                 // C does not sequence the operands of an ordinary binary
                 // expression. If either Nova operand is observable, snapshot
-                // both values in source order: even an apparently pure place
-                // read on the other side can be changed by that effect.
+                // non-constant values in source order: even an apparently pure
+                // place read on the other side can be changed by that effect.
+                // Keep literals and contextual `None` in the expression: the
+                // latter gets its payload type from its peer and is not a value
+                // that `infer_expr_c_type` may materialize independently.
                 // Statement-emitting RHS forms are already sequenced after the
                 // left spill above; their resulting value is then just a local.
                 if (eval_order::may_have_effects(left)
                     || eval_order::may_have_effects(right))
                     && !matches!(op, BinOp::And | BinOp::Or | BinOp::Implies)
                 {
-                    let left_tmp = self.fresh_tmp();
-                    self.line(&format!("{} {} = {};", lty, left_tmp, l));
-                    let right_tmp = self.fresh_tmp();
-                    self.line(&format!("{} {} = {};", rty, right_tmp, r));
-                    self.var_types.insert(left_tmp.clone(), lty.clone());
-                    self.var_types.insert(right_tmp.clone(), rty.clone());
-                    // Every downstream dispatch path (including @-method
-                    // receiver dispatch) now consumes ordered local values.
-                    l = left_tmp;
-                    r = right_tmp;
+                    if !eval_order::is_literal(left) && !eval_order::is_none_value(left) {
+                        let left_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", lty, left_tmp, l));
+                        self.var_types.insert(left_tmp.clone(), lty.clone());
+                        l = left_tmp;
+                    }
+                    if !eval_order::is_literal(right) && !eval_order::is_none_value(right) {
+                        let right_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", rty, right_tmp, r));
+                        self.var_types.insert(right_tmp.clone(), rty.clone());
+                        r = right_tmp;
+                    }
                 }
                 // If either operand is void* (erased generic or unknown stub), handle carefully:
                 // - void* vs nova_int/nova_bool: cast void* back to the concrete type and compare

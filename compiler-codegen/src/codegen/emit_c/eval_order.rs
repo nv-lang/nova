@@ -107,6 +107,17 @@ pub(super) fn is_literal(e: &Expr) -> bool {
     )
 }
 
+/// `None` is a context-typed constant, not an independently typed operand.
+/// Materializing it with `infer_expr_c_type` can freeze the fallback
+/// `Option[int]` before the neighboring operand supplies its payload type.
+pub(super) fn is_none_value(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(name) => name == "None",
+        ExprKind::Path(parts) => parts.last().is_some_and(|name| name == "None"),
+        _ => false,
+    }
+}
+
 /// Moved into a temporary when a later operand may write statements: not a
 /// place, not a literal, not a closure value.
 ///

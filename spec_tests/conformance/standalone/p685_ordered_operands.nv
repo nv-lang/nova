@@ -19,6 +19,8 @@
 // EXPECT_STDOUT or-false: rf rt true
 // EXPECT_STDOUT coalesce: before fallback 5
 // EXPECT_STDOUT coalesce-some: some-left 8
+// EXPECT_STDOUT option-none: true
+// EXPECT_STDOUT option-vec-none: true
 // Registry #685, D484 §6: call side effects and operand reads follow source
 // order. C leaves ordinary binary operand sequencing unspecified, so codegen
 // materializes Nova operands before forming the C operator/method call. The
@@ -48,6 +50,8 @@ fn make_box(s str, v int) -> P685Box {
 }
 
 fn maybe_none() -> Option[int] => None
+fn maybe_text() -> Option[str] => None
+fn maybe_vec() -> Option[[]int] => None
 
 fn sum3(a int, b int, c int) -> int => a + b + c
 
@@ -97,4 +101,8 @@ fn main() Io {
     println(mark("before", 1) + (maybe_none() ?? mark("fallback", 4)))
     print("coalesce-some: ")
     println(Some(mark("some-left", 8)) ?? mark("never3", 0))
+    print("option-none: ")
+    println(maybe_text() == None)
+    print("option-vec-none: ")
+    println(maybe_vec() == None)
 }
