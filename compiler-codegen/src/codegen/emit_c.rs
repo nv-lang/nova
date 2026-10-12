@@ -36549,12 +36549,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let rty = self.infer_expr_c_type(right);
                 let l = self.emit_expr(left)?;
                 let at = self.out.len();
-                let r = self.emit_expr(right)?;
+                let mut r = self.emit_expr(right)?;
                 // #1627 (D484, D46): the right operand wrote statements. They
                 // run before the statement holding this expression, so the left
                 // operand is evaluated first into a temporary, and the right
                 // side of a short-circuit operator keeps them inside its branch.
-                let l = if self.out.len() > at {
+                let mut l = if self.out.len() > at {
                     if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
                         return Ok(self.lazy_right(at, op, &l, &r));
                     }
@@ -36562,6 +36562,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     l
                 };
+                // C does not sequence the operands of an ordinary binary
+                // expression. If either Nova operand is observable, snapshot
+                // both values in source order: even an apparently pure place
+                // read on the other side can be changed by that effect.
+                // Statement-emitting RHS forms are already sequenced after the
+                // left spill above; their resulting value is then just a local.
+                if (eval_order::may_have_effects(left)
+                    || eval_order::may_have_effects(right))
+                    && !matches!(op, BinOp::And | BinOp::Or | BinOp::Implies)
+                {
+                    let left_tmp = self.fresh_tmp();
+                    self.line(&format!("{} {} = {};", lty, left_tmp, l));
+                    let right_tmp = self.fresh_tmp();
+                    self.line(&format!("{} {} = {};", rty, right_tmp, r));
+                    self.var_types.insert(left_tmp.clone(), lty.clone());
+                    self.var_types.insert(right_tmp.clone(), rty.clone());
+                    // Every downstream dispatch path (including @-method
+                    // receiver dispatch) now consumes ordered local values.
+                    l = left_tmp;
+                    r = right_tmp;
+                }
                 // If either operand is void* (erased generic or unknown stub), handle carefully:
                 // - void* vs nova_int/nova_bool: cast void* back to the concrete type and compare
                 // - void* vs nova_str: dereference void* as nova_str* and use str equality

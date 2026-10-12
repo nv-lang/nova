@@ -64,6 +64,30 @@ pub(super) fn may_write_statements(e: &Expr) -> bool {
     }
 }
 
+/// Whether evaluating an operand can be observed independently of the C
+/// expression which eventually contains it.  This is deliberately separate
+/// from `may_write_statements`: ordinary calls often emit no C statements,
+/// but their effects still must not be reordered by the C compiler.
+pub(super) fn may_have_effects(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::BoolLit(_) | ExprKind::UnitLit
+        | ExprKind::CharLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_)
+        | ExprKind::Path(_) | ExprKind::SelfAccess
+        | ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+        | ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => false,
+        ExprKind::Member { obj, .. } | ExprKind::TurboFish { base: obj, .. }
+        | ExprKind::As(obj, _) | ExprKind::Is(obj, _)
+        | ExprKind::Unary { operand: obj, .. } => may_have_effects(obj),
+        ExprKind::Index { obj, index } => may_have_effects(obj) || may_have_effects(index),
+        // A call is observable even when its codegen is a plain C expression.
+        ExprKind::Call { .. } => true,
+        ExprKind::Binary { left, right, .. } => may_have_effects(left) || may_have_effects(right),
+        // Unlisted forms can execute user code or emit runtime work.
+        _ => true,
+    }
+}
+
 /// A place: reading it has no effect, and a `mut` parameter needs its
 /// address -- it is never moved into a temporary.
 pub(super) fn is_place(e: &Expr) -> bool {
@@ -321,5 +345,13 @@ mod tests {
         assert!(!is_hoistable(&id("x")), "a place keeps its address for `mut`");
         assert!(!is_hoistable(&e(ExprKind::IntLit(1))));
         assert!(is_hoistable(&call("f", vec![])));
+    }
+
+    #[test]
+    fn ordinary_calls_are_observable_even_without_statement_emission() {
+        let call = call("effect", vec![]);
+        assert!(!may_write_statements(&call));
+        assert!(super::may_have_effects(&call));
+        assert!(!super::may_have_effects(&id("value")));
     }
 }
