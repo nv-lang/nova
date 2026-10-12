@@ -277,7 +277,7 @@ undeclared-transitive-effect and effect-erasure warnings to hard errors.
 module tour.effects_tour
 
 type Counter effect {
-    next() -> int
+    fn next() -> int
 }
 
 // `Counter` in the signature says: this function performs Counter's
@@ -292,7 +292,7 @@ fn count_three() Counter -> int {
 fn main() {
     mut state = 0
     with Counter = effect Counter {
-        next() {
+        next() -> int {
             state += 1
             return state
         }

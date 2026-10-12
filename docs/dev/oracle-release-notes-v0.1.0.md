@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
-# Nova Oracle 0.1.0 — release notes
+# Nova Oracle 0.1.0 — release notes (alpha)
 
 **Nova Oracle 0.1.0** is an early alpha release. Oracle compiles
 to C and then to a native binary — there is no interpreter. Every
@@ -125,10 +125,10 @@ release.
   every pattern or aggregate; types without this protocol keep their prior
   ownership rules.
 - The examples lock uses `http`, `tls`, `compress`, `socks`, and `polaris`;
-  `std.net` supplies the network effect. Their documented scopes and
-  boundaries are listed above. In particular, Router/extractors belong to
-  `polaris`, and current 274.11 evidence does not close all typed-extractor
-  acceptance.
+  `std.net` supplies the
+  network effect. Their documented scopes and boundaries are listed above.
+  In particular, Router/extractors belong to `polaris`, and current 274.11
+  evidence does not close all typed-extractor acceptance.
 
 ### Tooling
 
@@ -140,9 +140,8 @@ release.
   `nova run` (an interpreter entry point) is intentionally unsupported —
   Nova is compile-only.
 - **`nova-lsp`** — a language server (hover, diagnostics, symbol
-  lookup) with a VSCode extension (TextMate grammar plus LSP wiring;
-  Sublime/Vim/Emacs get syntax-highlighting-only grammars under
-  `editors/`).
+  lookup). Editor grammars under `editors/` provide syntax highlighting;
+  the VSCode extension is not included in this release.
 - **Docker recipe** (`docker/release/`) builds `nova-oracle:0.1.0`; no Docker
   image is published with this release.
 - Optional **Z3-backed contract verification** (`--features z3-backend`,
@@ -152,14 +151,13 @@ release.
 
 ## Distribution
 
-- **Prepared local release assets (not public uploads):**
+- **Release assets (published on this page):**
   `nova-oracle-0.1.0-linux-x86_64.tar.gz`,
   `nova-oracle-0.1.0-windows-x86_64.zip`,
   `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual
-  Windows Oracle workflow produced a private, 14-day Actions artifact on
-  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901`, with a
-  clean-extraction default-GC smoke test. Other CI uploads (benchmark
-  results and test reports) are not release binaries.
+  Windows Oracle workflow ran a clean-extraction default-GC smoke test on
+  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901`. Other CI uploads
+  (benchmark results and test reports) are not release binaries.
 - The intended binary platforms are Linux and Windows x86_64. The archive
   contents and installation recipe were smoke-tested on their respective platforms;
   a C compiler is required because Nova compiles to C. See
@@ -180,9 +178,9 @@ This is an early release; treat it accordingly.
 
 - **API and syntax are not frozen.** The language surface, standard library,
   and CLI may change; compatibility is not guaranteed before 1.0.
-- **Release assets are not CI outputs.** CI currently builds Oracle on
-  Ubuntu and Windows x86_64, but uploads no releasable binaries. Building on
-  a runner does not by itself prove that a distributable archive is ready.
+- **Release assets are manually prepared, not CI outputs.** CI also uploads
+  benchmark results and test reports; those are not release binaries. A
+  runner build alone does not establish that a distributable archive is ready.
 - **Contract verification beyond trivial cases needs Z3**, an optional
   external dependency; without it, only reflexive/constant-foldable
   contracts are statically proven, and the rest fall back to runtime
