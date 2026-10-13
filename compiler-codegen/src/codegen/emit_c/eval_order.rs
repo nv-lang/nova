@@ -134,12 +134,12 @@ pub(super) fn needs_binary_sequencing(left: &Expr, right: &Expr) -> bool {
 /// Moved into a temporary when a later operand may write statements: not a
 /// place, not a literal, not a closure value.
 ///
-/// A form that itself writes statements (`??`, `?`, a `match` value, ...) is
-/// not moved either: its effects run in those statements, in order, when it is
-/// emitted, and its value is a temporary or a field of one. Moving it would
-/// only add a copy -- typed by `infer_expr_c_type`, which answered the error
-/// type for `V.deserialize(sub)?` in a monomorphized body (measured on
-/// std/src/encoding/serde, 2026-10-02).
+/// Statement-emitting forms are not generally moved: their generated C type
+/// is not always independently inferable (`V.deserialize(sub)?` in a
+/// monomorphized body inferred the error type, measured on
+/// std/src/encoding/serde, 2026-10-02). `??` is the narrow exception: its
+/// result type is the Option/Result payload, and it must be emitted at its
+/// source position before a later call operand is hoisted.
 fn is_hoistable(e: &Expr) -> bool {
     !is_place(e)
         && !is_literal(e)
@@ -147,7 +147,7 @@ fn is_hoistable(e: &Expr) -> bool {
             &e.kind,
             ExprKind::Call { .. } | ExprKind::Binary { .. } | ExprKind::Unary { .. }
                 | ExprKind::Member { .. } | ExprKind::Index { .. } | ExprKind::As(..)
-                | ExprKind::Is(..) | ExprKind::TurboFish { .. }
+                | ExprKind::Is(..) | ExprKind::TurboFish { .. } | ExprKind::Coalesce(..)
         )
 }
 
@@ -409,6 +409,10 @@ mod tests {
         assert!(!is_hoistable(&id("x")), "a place keeps its address for `mut`");
         assert!(!is_hoistable(&e(ExprKind::IntLit(1))));
         assert!(is_hoistable(&call("f", vec![])));
+        assert!(is_hoistable(&e(ExprKind::Coalesce(
+            Box::new(id("maybe_value")),
+            Box::new(e(ExprKind::IntLit(0))),
+        ))));
     }
 
     #[test]

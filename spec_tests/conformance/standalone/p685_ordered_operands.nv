@@ -15,6 +15,7 @@
 // EXPECT_STDOUT getter-call: g2 g3 5
 // EXPECT_STDOUT method-call: h3 a1 method-call 5
 // EXPECT_STDOUT call-args: a1 a2 a3 6
+// EXPECT_STDOUT call-coalesce: ca1 ca2 ca3 6
 // EXPECT_STDOUT and-false: l false
 // EXPECT_STDOUT and-true: lt rt true
 // EXPECT_STDOUT or-true: r true
@@ -54,6 +55,7 @@ fn make_box(s str, v int) -> P685Box {
 }
 
 fn maybe_none() -> Option[int] => None
+fn maybe_value(v int) -> Option[int] => Some(v)
 fn maybe_text() -> Option[str] => None
 fn maybe_vec() -> Option[[]int] => None
 
@@ -97,6 +99,8 @@ fn main() Io {
     println(make_box("h3", 2).combine(mark("a1", 3)))
     print("call-args: ")
     println(sum3(mark("a1", 1), mark("a2", 2), mark("a3", 3)))
+    print("call-coalesce: ")
+    println(sum3(mark("ca1", 1), maybe_value(mark("ca2", 2)) ?? 0, mark("ca3", 3)))
     print("and-false: ")
     println(mark("l", 0) > 1 && mark("never", 1) > 0)
     print("and-true: ")
