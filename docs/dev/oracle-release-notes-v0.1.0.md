@@ -155,11 +155,11 @@ release.
 - **Release assets (published on this page):**
   `nova-oracle-0.1.0-linux-x86_64.tar.gz`,
   `nova-oracle-0.1.0-windows-x86_64.zip`,
-  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual Windows Oracle
-  workflow (run 38131440529) built the Windows archive on source SHA
-  `eee6eae882a46861d70e5eae48648d8a643c8901` and ran a clean-extraction
-  default-GC smoke test on it. Other CI uploads (benchmark results and test
-  reports) are not release binaries.
+  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual
+  Windows Oracle workflow (run 38131440529) built the Windows archive on
+  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901` and ran a
+  clean-extraction default-GC smoke test on it. Other CI uploads (benchmark
+  results and test reports) are not release binaries.
 - The intended binary platforms are Linux and Windows x86_64. The Windows
   archive and its installation recipe were smoke-tested in CI; the Linux archive
   has not been smoke-tested. A C compiler is required because Nova compiles to C. See
