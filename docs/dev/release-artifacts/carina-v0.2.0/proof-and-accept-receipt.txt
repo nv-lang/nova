@@ -1,0 +1,126 @@
+Carina 0.2.0 bootstrap proof — replacement candidate
+Status: prepared from the published Oracle 0.1.0 Windows x86_64 release asset; not yet uploaded.
+
+The previously published proof-and-accept-receipt.txt (release asset ID 631179653,
+SHA-256 9e3f509d21a8fb1c708cf1e42c67fa53415cff5b9fbd091212ad42832168a90e) says
+“Reused private Rust oracle” and records private-oracle SHA-256
+7c830cc31b94f25fd24827be0248c3a319feb25d4b5e78464a9cfdcaae916eee. That proof
+did not use the released Oracle binary. This replacement candidate records a separate
+reproduction using the published Oracle asset below; it does not retroactively change
+the provenance of the original proof. The prior receipt's provenance must not be
+attributed to this reproduction.
+
+Inputs and provenance
+---------------------
+Oracle release: https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0
+Oracle Windows asset: https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-windows-x86_64.zip
+  GitHub asset ID: 631158204
+  SHA-256 (matched published SHA256SUMS): 54093317b1474028f3e4ef5ace4ac2c59b38dd52074f2668cd425f5e2670141f
+  Extracted nova.exe SHA-256: ebe1dc72c52317a9f7f9dc649ecc1c10eb49f759ade458259c47b10f7761a41e
+Oracle SHA256SUMS asset ID: 631148753
+Oracle source asset: https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-src.tar.gz
+  GitHub asset ID: 631163540
+  SHA-256 (matched published SHA256SUMS): 0ac9b18a09e00505a829e9c82bd8648c1660c020efc355c8c24b16e9727042d3
+  SOURCE-SHA in that archive: eee6eae882a46861d70e5eae48648d8a643c8901
+
+Carina source: https://github.com/nv-lang/nova/releases/download/carina-v0.2.0/nova-carina-0.2.0-src.tar.gz
+  GitHub asset ID: 631172559
+  SHA-256 (matched published SHA256SUMS): dd286cf2c661f42028222212565272b42f7ce9395b61ea615150d9a6ef735c36
+  SOURCE-SHA in that archive: 99756a8867f913bd6156ed10accf8a20edea00d1
+
+Reproduction environment
+------------------------
+Windows x86_64; clang 22.1.5, target x86_64-pc-windows-msvc; Git Bash.
+Carina source archive was freshly extracted. Oracle archive was freshly extracted.
+The released nova.exe from the Oracle archive was used as A; no private Rust oracle
+or source build of A was used. The only build configuration was the released Oracle
+runtime paths and NOVA_CLANG pointing to the installed clang.exe.
+
+Commands (Git Bash; replace the two directory values with extraction locations)
+------------------------------------------------------------------------------
+CARINA=/d/path/to/nova-carina-0.2.0-src
+ORACLE=/d/path/to/nova-oracle-0.1.0-windows-x86_64
+mkdir -p "$CARINA/nova-cli/target/release"
+cp "$ORACLE/nova.exe" "$CARINA/nova-cli/target/release/nova.exe"
+cd "$CARINA"
+export NOVA_STD_PATH="$ORACLE/std"
+export NOVA_CG_INCLUDE="$ORACLE"
+export NOVA_RT_DIR="$ORACLE/nova_rt"
+export NOVA_GC_LIB_DIR="$ORACLE/gc/lib"
+export NOVA_GC_INCLUDE_DIR="$ORACLE/gc/include"
+export NOVA_CLANG='/c/Program Files/LLVM/bin/clang.exe'
+export DOUBLE_BUILD_TREE="$CARINA"
+export DOUBLE_BUILD_DEADLINE=900
+bash scripts/tools/double-build.sh
+
+Observed build results
+----------------------
+A built by the released Oracle: 4,363,264 bytes; SHA-256
+7cca77e984716953859602410f05d900f0b731d9731ce26a6167dd1aec208466.
+A check on Carina's own source: accepted 214/214.
+B generated C: 13,250,302 bytes; C generated C: 13,250,302 bytes.
+B executable: 3,874,304 bytes; C executable: 3,874,304 bytes.
+B executable SHA-256: f2b70da8b6036afa48327f93e9815994773b7768f4c133c5c89399efdd95550e
+C executable SHA-256: f2b70da8b6036afa48327f93e9815994773b7768f4c133c5c89399efdd95550e
+B.c SHA-256: de274aa144b3fcc0cf884eade0ebea0aea131135690ba3ca3a5834acec9b9d41
+C.c SHA-256: de274aa144b3fcc0cf884eade0ebea0aea131135690ba3ca3a5834acec9b9d41
+cmp results: B executable == C executable; B.c == C.c; B executable == an independent
+relink of B.o. All comparisons returned 0 (identical).
+Build verdict: B ≡ C: B/novac.exe and C/novac.exe byte-identical (3874304 bytes),
+B.c and C.c byte-identical (13250302 bytes).
+
+Published acceptance smoke and negative input
+---------------------------------------------
+For each of B and C, scripts/tools/novac-e1-smoke.sh examples/basics/hello.nv
+reported identical behavior to the published Oracle build, stdout byte-for-byte,
+exit 0. Both smoke invocations passed. To repeat after the build above, run from
+the Carina source root with the same Oracle environment:
+W=target/receipt-evidence
+mkdir -p "$W"
+NOVAC_BIN=target/double-build/B/novac.exe NOVAC_SMOKE_CACHE="$W/smoke-B-cache" NOVAC_SMOKE_EXE_CACHE="$W/smoke-B-exe" sh scripts/tools/novac-e1-smoke.sh examples/basics/hello.nv
+NOVAC_BIN=target/double-build/C/novac.exe NOVAC_SMOKE_CACHE="$W/smoke-C-cache" NOVAC_SMOKE_EXE_CACHE="$W/smoke-C-exe" sh scripts/tools/novac-e1-smoke.sh examples/basics/hello.nv
+
+Negative-input command (from the Carina source root):
+mkdir -p target/receipt-evidence
+for stage in B C; do
+  bin="target/double-build/$stage/novac.exe"
+  if "$bin" check novac/fixtures/call/neg_1.nv > "target/receipt-evidence/wrong-input-$stage.log" 2>&1; then
+    echo "WRONG-INPUT $stage UNEXPECTED ACCEPT"; exit 1
+  else
+    rc=$?; echo "WRONG-INPUT $stage rejected exit=$rc"
+    cat "target/receipt-evidence/wrong-input-$stage.log"
+    test "$rc" -eq 1 || exit "$rc"
+  fi
+done
+For each of B and C, `novac/fixtures/call/neg_1.nv` was passed to `check`.
+Both rejected it with exit 1 and the same diagnostic:
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"novac/fixtures/call/neg_1.nv","start":46,"end":47},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+Comparator sabotage
+-------------------
+Repeatable sabotage/restore command (from the Carina source root; it operates only
+on a copy of C.exe):
+W=target/receipt-evidence
+mkdir -p "$W"
+cp target/double-build/C/novac.exe "$W/C-sabotaged.exe"
+powershell.exe -NoProfile -Command '$p=Join-Path (Get-Location) "target/receipt-evidence/C-sabotaged.exe"; $b=[IO.File]::ReadAllBytes($p); $b[100]=$b[100] -bxor 1; [IO.File]::WriteAllBytes($p,$b)'
+if sh scripts/tools/double-build.sh --compare target/double-build/B/novac.exe "$W/C-sabotaged.exe"; then
+  echo 'SABOTAGE UNEXPECTED GREEN'; exit 1
+else
+  rc=$?; test "$rc" -eq 1 || exit "$rc"
+  echo 'SABOTAGE RED: expected DIFFER'
+fi
+cp target/double-build/C/novac.exe "$W/C-sabotaged.exe"
+sh scripts/tools/double-build.sh --compare target/double-build/B/novac.exe "$W/C-sabotaged.exe"
+echo 'SABOTAGE RESTORED GREEN'
+
+Observed result: after changing byte 101 of the copy, the comparator reported DIFFER
+at byte 101 (`cmp`: files differ at char 101, line 1). After restoring the unmodified
+C.exe, the comparator reported IDENTICAL. This probes the comparison used for the
+proof; no product source or tests were changed.
+
+The build, smoke, negative-input, SHA-256, cmp, and sabotage outputs above were
+captured from the commands described here. This candidate is not the original
+published receipt and is not uploaded. The existing release asset must not be
+replaced until independent candidate CI and explicit release-asset replacement
+verification are complete.
