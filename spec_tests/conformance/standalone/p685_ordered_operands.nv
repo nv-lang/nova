@@ -1,0 +1,116 @@
+// EXPECT_STDOUT add: p q 3
+// EXPECT_STDOUT nested: x1 x2 3
+// EXPECT_STDOUT mul-sub: m n o 11
+// EXPECT_STDOUT divide: d1 d2 4
+// EXPECT_STDOUT bits: b1 b2 2
+// EXPECT_STDOUT bit-or: bo1 bo2 7
+// EXPECT_STDOUT bit-xor: bx1 bx2 5
+// EXPECT_STDOUT shift: sh1 sh2 8
+// EXPECT_STDOUT compare: c1 c2 true
+// EXPECT_STDOUT equal: e1 e2 true
+// EXPECT_STDOUT rem: r1 r2 1
+// EXPECT_STDOUT compound: i j k l 3
+// EXPECT_STDOUT receiver: h1 h2 method 5
+// EXPECT_STDOUT getter-literal: g1 true
+// EXPECT_STDOUT getter-call: g2 g3 5
+// EXPECT_STDOUT method-call: h3 a1 method-call 5
+// EXPECT_STDOUT call-args: a1 a2 a3 6
+// EXPECT_STDOUT and-false: l false
+// EXPECT_STDOUT and-true: lt rt true
+// EXPECT_STDOUT or-true: r true
+// EXPECT_STDOUT or-false: rf rt true
+// EXPECT_STDOUT coalesce: before fallback 5
+// EXPECT_STDOUT coalesce-some: some-left 8
+// EXPECT_STDOUT option-none: true
+// EXPECT_STDOUT option-vec-none: true
+// Registry #685, D484 §6: call side effects and operand reads follow source
+// order. C leaves ordinary binary operand sequencing unspecified, so codegen
+// materializes Nova operands before forming the C operator/method call. The
+// short-circuit/coalesce cases also prove the right side remains conditional.
+module standalone.p685_ordered_operands
+
+fn mark(s str, v int) -> int {
+    print("${s} ")
+    v
+}
+
+type P685Box value { value int }
+
+fn P685Box @plus(other P685Box) -> int {
+    print("method ")
+    @value + other.value
+}
+
+fn P685Box @combine(other int) -> int {
+    print("method-call ")
+    @value + other
+}
+
+fn P685Box @peek() -> int => @value
+
+fn make_box(s str, v int) -> P685Box {
+    print("${s} ")
+    P685Box { value: v }
+}
+
+fn maybe_none() -> Option[int] => None
+fn maybe_text() -> Option[str] => None
+fn maybe_vec() -> Option[[]int] => None
+
+fn sum3(a int, b int, c int) -> int => a + b + c
+
+fn main() Io {
+    print("add: ")
+    println(mark("p", 1) + mark("q", 2))
+    print("nested: ")
+    println(mark("x1", 1) + mark("x2", 2) + 0)
+    print("mul-sub: ")
+    println(mark("m", 3) * mark("n", 4) - mark("o", 1))
+    print("divide: ")
+    println(mark("d1", 8) / mark("d2", 2))
+    print("bits: ")
+    println(mark("b1", 6) & mark("b2", 3))
+    print("bit-or: ")
+    println(mark("bo1", 6) | mark("bo2", 3))
+    print("bit-xor: ")
+    println(mark("bx1", 6) ^ mark("bx2", 3))
+    print("shift: ")
+    println(mark("sh1", 2) << mark("sh2", 2))
+    print("compare: ")
+    println(mark("c1", 2) < mark("c2", 3))
+    print("equal: ")
+    println(mark("e1", 2) == mark("e2", 2))
+    print("rem: ")
+    println(mark("r1", 7) % mark("r2", 3))
+    print("compound: ")
+    mut values = []int.of(5)
+    values[mark("i", 0)] += mark("j", 2)
+    values[mark("k", 0)] %= mark("l", 4)
+    println(values[0])
+    print("receiver: ")
+    println(make_box("h1", 2) + make_box("h2", 3))
+    print("getter-literal: ")
+    println(make_box("g1", 5).peek() == 5)
+    print("getter-call: ")
+    println(make_box("g2", 2).peek() + mark("g3", 3))
+    print("method-call: ")
+    println(make_box("h3", 2).combine(mark("a1", 3)))
+    print("call-args: ")
+    println(sum3(mark("a1", 1), mark("a2", 2), mark("a3", 3)))
+    print("and-false: ")
+    println(mark("l", 0) > 1 && mark("never", 1) > 0)
+    print("and-true: ")
+    println(mark("lt", 2) > 1 && mark("rt", 3) > 0)
+    print("or-true: ")
+    println(mark("r", 1) > 0 || mark("never2", 1) > 0)
+    print("or-false: ")
+    println(mark("rf", 0) > 0 || mark("rt", 1) > 0)
+    print("coalesce: ")
+    println(mark("before", 1) + (maybe_none() ?? mark("fallback", 4)))
+    print("coalesce-some: ")
+    println(Some(mark("some-left", 8)) ?? mark("never3", 0))
+    print("option-none: ")
+    println(maybe_text() == None)
+    print("option-vec-none: ")
+    println(maybe_vec() == None)
+}

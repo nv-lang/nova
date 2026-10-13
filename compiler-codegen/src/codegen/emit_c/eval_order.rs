@@ -64,6 +64,30 @@ pub(super) fn may_write_statements(e: &Expr) -> bool {
     }
 }
 
+/// Whether evaluating an operand can be observed independently of the C
+/// expression which eventually contains it.  This is deliberately separate
+/// from `may_write_statements`: ordinary calls often emit no C statements,
+/// but their effects still must not be reordered by the C compiler.
+pub(super) fn may_have_effects(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
+        | ExprKind::HexBlobLit(_) | ExprKind::BoolLit(_) | ExprKind::UnitLit
+        | ExprKind::CharLit(_) | ExprKind::NullPtrLit | ExprKind::Ident(_)
+        | ExprKind::Path(_) | ExprKind::SelfAccess
+        | ExprKind::Lambda { .. } | ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
+        | ExprKind::HandlerLit { .. } | ExprKind::ProtocolLit { .. } => false,
+        ExprKind::Member { obj, .. } | ExprKind::TurboFish { base: obj, .. }
+        | ExprKind::As(obj, _) | ExprKind::Is(obj, _)
+        | ExprKind::Unary { operand: obj, .. } => may_have_effects(obj),
+        ExprKind::Index { obj, index } => may_have_effects(obj) || may_have_effects(index),
+        // A call is observable even when its codegen is a plain C expression.
+        ExprKind::Call { .. } => true,
+        ExprKind::Binary { left, right, .. } => may_have_effects(left) || may_have_effects(right),
+        // Unlisted forms can execute user code or emit runtime work.
+        _ => true,
+    }
+}
+
 /// A place: reading it has no effect, and a `mut` parameter needs its
 /// address -- it is never moved into a temporary.
 pub(super) fn is_place(e: &Expr) -> bool {
@@ -81,6 +105,30 @@ pub(super) fn is_literal(e: &Expr) -> bool {
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_) | ExprKind::HexBlobLit(_)
             | ExprKind::BoolLit(_) | ExprKind::UnitLit | ExprKind::CharLit(_) | ExprKind::NullPtrLit
     )
+}
+
+/// `None` is a context-typed constant, not an independently typed operand.
+/// Materializing it with `infer_expr_c_type` can freeze the fallback
+/// `Option[int]` before the neighboring operand supplies its payload type.
+pub(super) fn is_none_value(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Ident(name) => name == "None",
+        ExprKind::Path(parts) => parts.last().is_some_and(|name| name == "None"),
+        _ => false,
+    }
+}
+
+/// Whether an ordinary binary expression needs explicit sequencing. A pure
+/// literal/contextual `None` has no observable evaluation to order. Otherwise,
+/// an effect on either side requires the peer value to be snapshotted too: the
+/// effect may change a place or a pure expression that reads it.
+pub(super) fn needs_binary_sequencing(left: &Expr, right: &Expr) -> bool {
+    let left_effect = may_have_effects(left);
+    let right_effect = may_have_effects(right);
+    let left_value = !is_literal(left) && !is_none_value(left);
+    let right_value = !is_literal(right) && !is_none_value(right);
+
+    (left_effect && (right_effect || right_value)) || (right_effect && left_value)
 }
 
 /// Moved into a temporary when a later operand may write statements: not a
@@ -104,12 +152,50 @@ fn is_hoistable(e: &Expr) -> bool {
 }
 
 impl super::CEmitter {
+    /// Return the result type of a C call after call emission has selected its
+    /// concrete overload. `infer_expr_c_type` is the fallback, but for
+    /// overloaded pointer-receiver methods it can pick a same-name sibling
+    /// with a different arity/return type (e.g. ro `peek() -> int` vs mut
+    /// `peek(v) -> ()`). A sequencing temporary must use the callee that was
+    /// actually emitted, not the speculative name-only inference.
+    pub(super) fn emitted_call_result_c_type(
+        &self,
+        expr: &Expr,
+        emitted: &str,
+    ) -> Option<String> {
+        if !matches!(&expr.kind, ExprKind::Call { .. }) {
+            return None;
+        }
+        let c_name = emitted.trim().trim_start_matches('(')
+            .split('(').next()?.trim();
+        if let Some(sig) = self.method_overloads.values()
+            .flat_map(|sigs| sigs.iter())
+            .find(|sig| sig.c_name == c_name)
+        {
+            return Some(sig.return_c_type.clone());
+        }
+        if expr.id.is_set() {
+            if let Some(span) = self.resolved_callees.get(&expr.id) {
+                if let Some(ret) = self.fn_ret_by_span.get(span) {
+                    return Some(ret.clone());
+                }
+            }
+        }
+        // Do not re-resolve a free function by its source name here:
+        // free_fn_c_name_at_call intentionally fails loud when a duplicate
+        // module name has no resolved-callee channel (registry #1090). In that
+        // case retain infer_expr_c_type's result rather than manufacture a C
+        // symbol from an ambiguous name.
+        None
+    }
+
     /// #1627, the door for a call. Operands in evaluation order: the receiver
     /// of a method call, then the arguments. When an operand after the first
-    /// may write statements, every hoistable operand up to and including the
-    /// last such one is evaluated, in order, into a temporary (the technique
-    /// of `emit_expr_with_reconsume_disarm`, which hoists consuming calls'
-    /// arguments the same way), and the call is rebuilt over those names.
+    /// emits statements or has observable effects, every hoistable operand up
+    /// to and including the last such one is evaluated, in order, into a
+    /// temporary (the technique of `emit_expr_with_reconsume_disarm`, which
+    /// hoists consuming calls' arguments the same way), and the call is rebuilt
+    /// over those names.
     /// `None` -- nothing to reorder, the call is emitted as it was.
     pub(super) fn order_operands(&mut self, e: &Expr) -> Result<Option<Expr>, String> {
         if let ExprKind::Index { obj, index } = &e.kind {
@@ -128,7 +214,9 @@ impl super::CEmitter {
         for a in args {
             ops.push(a.expr());
         }
-        let Some(last) = ops.iter().rposition(|o| may_write_statements(o)) else { return Ok(None) };
+        let Some(last) = ops.iter().rposition(|o| {
+            may_write_statements(o) || may_have_effects(o)
+        }) else { return Ok(None) };
         if last == 0 {
             return Ok(None);
         }
@@ -321,5 +409,26 @@ mod tests {
         assert!(!is_hoistable(&id("x")), "a place keeps its address for `mut`");
         assert!(!is_hoistable(&e(ExprKind::IntLit(1))));
         assert!(is_hoistable(&call("f", vec![])));
+    }
+
+    #[test]
+    fn ordinary_calls_are_observable_even_without_statement_emission() {
+        let effect_call = call("effect", vec![]);
+        assert!(!may_write_statements(&effect_call));
+        assert!(super::may_have_effects(&effect_call));
+        assert!(!super::may_have_effects(&id("value")));
+        assert!(!super::needs_binary_sequencing(&effect_call, &e(ExprKind::IntLit(5))));
+        assert!(super::needs_binary_sequencing(&effect_call, &id("value")));
+        assert!(super::needs_binary_sequencing(&effect_call, &call("effect2", vec![])));
+    }
+
+    #[test]
+    fn a_single_effect_against_a_literal_needs_no_typed_temporary() {
+        let none = e(ExprKind::Ident("None".into()));
+        let literal = e(ExprKind::IntLit(5));
+        assert!(!super::needs_binary_sequencing(&call("effect", vec![]), &literal));
+        assert!(!super::needs_binary_sequencing(&call("effect", vec![]), &none));
+        assert!(super::needs_binary_sequencing(&call("effect", vec![]), &id("value")));
+        assert!(super::needs_binary_sequencing(&call("effect", vec![]), &call("other", vec![])));
     }
 }

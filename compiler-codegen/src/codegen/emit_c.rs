@@ -36545,16 +36545,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
             ExprKind::Binary { op, left, right } => {
                 // Infer types before emitting (emit_expr may add temporaries)
-                let lty = self.infer_expr_c_type(left);
-                let rty = self.infer_expr_c_type(right);
+                let lty_inferred = self.infer_expr_c_type(left);
+                let rty_inferred = self.infer_expr_c_type(right);
                 let l = self.emit_expr(left)?;
+                let lty = self.emitted_call_result_c_type(left, &l)
+                    .unwrap_or(lty_inferred);
                 let at = self.out.len();
-                let r = self.emit_expr(right)?;
+                let mut r = self.emit_expr(right)?;
+                let rty = self.emitted_call_result_c_type(right, &r)
+                    .unwrap_or(rty_inferred);
                 // #1627 (D484, D46): the right operand wrote statements. They
                 // run before the statement holding this expression, so the left
                 // operand is evaluated first into a temporary, and the right
                 // side of a short-circuit operator keeps them inside its branch.
-                let l = if self.out.len() > at {
+                let mut l = if self.out.len() > at {
                     if matches!(op, BinOp::And | BinOp::Or | BinOp::Implies) {
                         return Ok(self.lazy_right(at, op, &l, &r));
                     }
@@ -36562,6 +36566,31 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else {
                     l
                 };
+                // C does not sequence the operands of an ordinary binary
+                // expression. If an observable effect is paired with another
+                // non-constant value, snapshot both in source order: even a
+                // pure place read on the other side can be changed by the effect.
+                // Keep literals and contextual `None` in the expression: the
+                // latter gets its payload type from its peer and is not a value
+                // that `infer_expr_c_type` may materialize independently.
+                // Statement-emitting RHS forms are already sequenced after the
+                // left spill above; their resulting value is then just a local.
+                if eval_order::needs_binary_sequencing(left, right)
+                    && !matches!(op, BinOp::And | BinOp::Or | BinOp::Implies)
+                {
+                    if !eval_order::is_literal(left) && !eval_order::is_none_value(left) {
+                        let left_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", lty, left_tmp, l));
+                        self.var_types.insert(left_tmp.clone(), lty.clone());
+                        l = left_tmp;
+                    }
+                    if !eval_order::is_literal(right) && !eval_order::is_none_value(right) {
+                        let right_tmp = self.fresh_tmp();
+                        self.line(&format!("{} {} = {};", rty, right_tmp, r));
+                        self.var_types.insert(right_tmp.clone(), rty.clone());
+                        r = right_tmp;
+                    }
+                }
                 // If either operand is void* (erased generic or unknown stub), handle carefully:
                 // - void* vs nova_int/nova_bool: cast void* back to the concrete type and compare
                 // - void* vs nova_str: dereference void* as nova_str* and use str equality
