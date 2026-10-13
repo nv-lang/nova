@@ -49,9 +49,10 @@ experimentation.
 - **Contracts** (`requires`/`ensures`/`old`/`result`/`invariant`/
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`),
   optional and gradual: without them the code behaves like an ordinary
-  imperative language; with them the compiler attempts static proof and
-  falls back to a stripped-in-release runtime check for what it can't
-  prove.
+  imperative language. Static verification is off by default (`--verify`
+  opts in); ordinary contract checks run at runtime in both development
+  and release builds unless soundly proven redundant. Only explicitly
+  `#debug`-marked checks are development-only and removed in release builds.
 - Folder-modules (a module is a single file or a folder of peer files
   sharing one namespace, Go-style), cross-file imports with cycle
   detection, file-level `#forbid Net, Fs` capability attributes.
@@ -154,13 +155,14 @@ release.
 - **Release assets (published on this page):**
   `nova-oracle-0.1.0-linux-x86_64.tar.gz`,
   `nova-oracle-0.1.0-windows-x86_64.zip`,
-  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual
-  Windows Oracle workflow ran a clean-extraction default-GC smoke test on
-  source SHA `eee6eae882a46861d70e5eae48648d8a643c8901`. Other CI uploads
-  (benchmark results and test reports) are not release binaries.
-- The intended binary platforms are Linux and Windows x86_64. The archive
-  contents and installation recipe were smoke-tested on their respective platforms;
-  a C compiler is required because Nova compiles to C. See
+  `nova-oracle-0.1.0-src.tar.gz`, and `SHA256SUMS`. The manual Windows Oracle
+  workflow (run 38131440529) built the Windows archive on source SHA
+  `eee6eae882a46861d70e5eae48648d8a643c8901` and ran a clean-extraction
+  default-GC smoke test on it. Other CI uploads (benchmark results and test
+  reports) are not release binaries.
+- The intended binary platforms are Linux and Windows x86_64. The Windows
+  archive and its installation recipe were smoke-tested in CI; the Linux archive
+  has not been smoke-tested. A C compiler is required because Nova compiles to C. See
   [docs/guide/quickstart.md](../guide/quickstart.md).
 - **Linux source build**: follow [docs/guide/linux-build.md](../guide/linux-build.md)
   (Debian/Ubuntu packages, Rust toolchain, libuv submodule, build, smoke
@@ -181,10 +183,11 @@ This is an early release; treat it accordingly.
 - **Release assets are manually prepared, not CI outputs.** CI also uploads
   benchmark results and test reports; those are not release binaries. A
   runner build alone does not establish that a distributable archive is ready.
-- **Contract verification beyond trivial cases needs Z3**, an optional
-  external dependency; without it, only reflexive/constant-foldable
-  contracts are statically proven, and the rest fall back to runtime
-  checks (stripped in release builds unless proven false).
+- **Contract verification is opt-in** (`--verify` is off by default).
+  Verification beyond trivial cases needs Z3, an optional external
+  dependency; the dependency-free backend handles only simple proofs.
+  Unproven ordinary contracts remain runtime-checked even in release builds;
+  only checks explicitly marked `#debug` are removed there (D421).
 - **A vector literal reserves the default growth capacity, not the
   element count.** `[7, 8]` gives `len=2 cap=8` today; the spec (D239)
   pins the capacity to the element count, and the self-hosted compiler

@@ -1,5 +1,5 @@
-Carina 0.2.0 bootstrap proof — replacement candidate
-Status: prepared from the published Oracle 0.1.0 Windows x86_64 release asset; not yet uploaded.
+Carina 0.2.0 bootstrap proof — published replacement receipt
+Status: published as carina-v0.2.0 release asset ID 635759780 on 2026-10-13.
 
 The previously published proof-and-accept-receipt.txt (release asset ID 631179653,
 SHA-256 9e3f509d21a8fb1c708cf1e42c67fa53415cff5b9fbd091212ad42832168a90e) says
@@ -120,7 +120,8 @@ C.exe, the comparator reported IDENTICAL. This probes the comparison used for th
 proof; no product source or tests were changed.
 
 The build, smoke, negative-input, SHA-256, cmp, and sabotage outputs above were
-captured from the commands described here. This candidate is not the original
-published receipt and is not uploaded. The existing release asset must not be
-replaced until independent candidate CI and explicit release-asset replacement
-verification are complete.
+captured from the commands described here. This reproduction is not the original
+acceptance receipt. The sanitized replacement was uploaded after independent
+candidate CI and asset verification. This retrospective status correction changes
+the repository file; the published asset remains the original 7232-byte version
+with SHA-256 cb3466a2067914eadcee0fcf3487b18b6951e4740370909bb3f6099a0b34566d.
