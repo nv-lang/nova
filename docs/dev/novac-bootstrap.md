@@ -204,19 +204,29 @@ C = novac, собранный компилятором B
 вердикт — первая строка `target/double-build-verdict.txt`, её читает `rung-distance.sh`. Гонять
 через очередь машины: три сборки novac.
 
-**После S5 нужен закреплённый бутстрап-бинарник.** Так делают Go и Rust: хранится
-выпущенная сборка, которой собирается следующая. Иначе цепочку невозможно восстановить с
-нуля. Форма остаётся открытым вопросом владельца в [274.11 §89](../plans/274.11-carina-release.md);
-умолчание до решения — опубликованный release asset плюс проверяемый checksum.
+**Решение владельца 2026-10-14: pin — опубликованный release asset + SHA-256.**
+Опубликованный asset immutable; исправление выпускается под новым отличимым
+именем. Git manifest содержит только метаданные: asset name, URL, SHA-256,
+source SHA/version и compiler provenance; несовпадение должно дать ясный отказ.
+Manifest меняется только в отдельно owner-named task; здесь его не редактировать.
 
 **Для Carina 0.3 — отдельный pin/provenance protocol, см. [274.16 Ш.0–Ш.7](../plans/274.16-carina-all-examples-and-packages.md).**
-Windows seed берётся из опубликованного Carina B asset с digest из `SHA256SUMS`.
-Linux seed разрешён после отдельного 0.2.1 A→B→C доказательства и pin; Windows
-Ш.1 может идти раньше, но Linux CI не считается пройденным до Linux B. На каждом
-seed — `B_seed → B1 → B2` с одним source SHA/platform, B1≡B2 и по C, и по native
-binary. Неверный seed, протухший/mismatched SHA или Oracle fallback — fail-closed.
-Это не меняет и не переименовывает историческую A→B→C приёмку 0.2: её сохранённый
-receipt подтверждает только exact-SHA 0.2, не Linux seed и не 0.3 provenance.
+Windows seed — опубликованный `nova-carina-0.2.0-windows-x86_64.zip` с digest из
+`SHA256SUMS`. Linux pinned B появится после отдельного A→B→C proof и выпуска
+0.2.1. До этого разрешён только явно названный временный режим: Oracle — stage-A
+compiler Carina source → Carina B → Carina C на том же source SHA/platform.
+Linux examples/packages запускаются только под Carina-built B/C; CI report
+сохраняет stage provenance и явно помечает Oracle stage-A exception. Это не
+Linux B pin: до отдельного 0.2.1 proof/release нельзя утверждать B≡C или
+Oracle-free bootstrap. Specs и golden outputs остаются нормативным судьёй;
+Oracle никогда не судит поведение. Fail closed при не объявленном stage-A
+fallback либо если Oracle используется как тестируемый compiler/binary; mismatch
+опубликованного asset/SHA также обязан давать ясный отказ.
+
+Для уже опубликованного pinned seed запускать `B_seed → B1 → B2` на одном source
+SHA/platform; `B1` и `B2` должны совпасть по generated C и native binary. Этот
+протокол и временное Linux исключение не меняют историческую A→B→C приёмку 0.2:
+её receipt подтверждает только exact-SHA 0.2, не Linux seed и не 0.3 provenance.
 
 ## 6. Открытые вопросы не закрываются реализацией
 
