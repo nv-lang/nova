@@ -1,0 +1,10 @@
+{
+  "asset_name": "nova-oracle-0.1.0-linux-x86_64.tar.gz",
+  "asset_url": "https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-linux-x86_64.tar.gz",
+  "sha256": "08257eb1a005296bc42fbad643c0acf4ae637fd9d04762f0f825c23c6aa5b2d0",
+  "platform": "linux-x86_64",
+  "source_revision": "eee6eae882a46861d70e5eae48648d8a643c8901",
+  "compiler_provenance": "oracle:eee6eae882a46861d70e5eae48648d8a643c8901",
+  "stage": "oracle-a",
+  "caveat": "Temporary Oracle stage A only. This published archive has not been smoke-tested here; it does not establish Linux Carina B or B≡C. Downstream tested binaries must be Carina B/C."
+}

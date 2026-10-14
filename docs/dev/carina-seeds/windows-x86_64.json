@@ -1,0 +1,9 @@
+{
+  "asset_name": "nova-carina-0.2.0-windows-x86_64.zip",
+  "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.0/nova-carina-0.2.0-windows-x86_64.zip",
+  "sha256": "f9f973e2c83a930a68053b4952da47f4b72f8d50624fc6e86742da22fc4e12bf",
+  "platform": "windows-x86_64",
+  "source_revision": "99756a8867f913bd6156ed10accf8a20edea00d1",
+  "compiler_provenance": "carina:99756a8867f913bd6156ed10accf8a20edea00d1",
+  "stage": "carina-b"
+}
