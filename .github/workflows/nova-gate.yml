@@ -241,6 +241,11 @@ jobs:
           NOVAC_TIER: ${{ (github.event_name == 'schedule' || inputs.tier == 'full') && 'full' || 'push' }}
         run: NOVAC_SMOKE_EXE_CACHE="$HOME/.cache/novac-oracle-exe" bash scripts/gate-novac.sh "$(pwd)"
 
+      # Carina-first infrastructure selftest uses temporary fixture descriptors;
+      # it does not consume or create the separately owner-authorized live seed manifest.
+      - name: Carina seed and spec-golden gate selftest
+        run: python scripts/guards/selftest/test-carina-gate.py
+
       # Saved even when the gate is red: the binaries are the oracle's, not a
       # verdict. Binaries of other oracle keys are dropped first (the smoke writes
       # the current key beside them), and the save key is the content of what is
