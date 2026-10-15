@@ -50,8 +50,8 @@ experimentation.
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`),
   optional and gradual: without them the code behaves like an ordinary
   imperative language; with them the compiler attempts static proof and
-  falls back to a stripped-in-release runtime check for what it can't
-  prove.
+  falls back to a runtime check for what it can't prove, including in
+  release builds; a violation fails fast.
 - Folder-modules (a module is a single file or a folder of peer files
   sharing one namespace, Go-style), cross-file imports with cycle
   detection, file-level `#forbid Net, Fs` capability attributes.
@@ -183,8 +183,8 @@ This is an early release; treat it accordingly.
   runner build alone does not establish that a distributable archive is ready.
 - **Contract verification beyond trivial cases needs Z3**, an optional
   external dependency; without it, only reflexive/constant-foldable
-  contracts are statically proven, and the rest fall back to runtime
-  checks (stripped in release builds unless proven false).
+  contracts are statically proven, and the rest remain runtime checks in
+  release builds; violations fail fast.
 - **A vector literal reserves the default growth capacity, not the
   element count.** `[7, 8]` gives `len=2 cap=8` today; the spec (D239)
   pins the capacity to the element count, and the self-hosted compiler
