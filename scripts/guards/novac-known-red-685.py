@@ -11,6 +11,7 @@ import sys
 RECORD_REL = pathlib.Path("scripts/guards/novac-known-red-685.json")
 FIXTURE_REL = "novac/fixtures/call_operands/pos_1.nv"
 REGISTRY_REL = "docs/plans/221.1-bug-sweep.md"
+FIXTURE_NORMALIZATION = "crlf-to-lf"
 OBSERVATION_KEYS = {"exit", "stdout_b64", "stderr_b64"}
 
 
@@ -62,11 +63,13 @@ def load_record(root):
     if not isinstance(entries, list) or len(entries) != 1:
         fail("record must contain exactly one KNOWN-RED entry (№685)")
     entry = entries[0]
-    fields = {"issue", "fixture", "registry", "fixture_sha256", "platforms"}
+    fields = {"issue", "fixture", "registry", "fixture_normalization", "fixture_sha256", "platforms"}
     if not isinstance(entry, dict) or set(entry) != fields:
         fail("KNOWN-RED entry has missing or unknown fields")
     if entry["issue"] != 685 or entry["fixture"] != FIXTURE_REL or entry["registry"] != REGISTRY_REL:
         fail("only №685 / " + FIXTURE_REL + " / " + REGISTRY_REL + " is permitted")
+    if entry["fixture_normalization"] != FIXTURE_NORMALIZATION:
+        fail("fixture_normalization must be exactly " + FIXTURE_NORMALIZATION)
     registry = root / REGISTRY_REL
     if not registry.is_file():
         fail("missing registry link target: " + REGISTRY_REL)
@@ -79,7 +82,8 @@ def load_record(root):
     fixture = root / FIXTURE_REL
     if not fixture.is_file():
         fail("missing known-red fixture: " + FIXTURE_REL)
-    fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    canonical_fixture = fixture.read_bytes().replace(b"\r\n", b"\n")
+    fixture_hash = hashlib.sha256(canonical_fixture).hexdigest()
     pinned_fixture_hash = entry["fixture_sha256"]
     if (not isinstance(pinned_fixture_hash, str) or len(pinned_fixture_hash) != 64
             or any(character not in "0123456789abcdef" for character in pinned_fixture_hash)):

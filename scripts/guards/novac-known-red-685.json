@@ -5,7 +5,8 @@
       "issue": 685,
       "fixture": "novac/fixtures/call_operands/pos_1.nv",
       "registry": "docs/plans/221.1-bug-sweep.md",
-      "fixture_sha256": "cf891011fa4ab84bdfd7216c0db276dd8ab32d529b722134004e7a0e5611b8ec",
+      "fixture_normalization": "crlf-to-lf",
+      "fixture_sha256": "45e4e8d4e8e2a3efa844302e9c20eb863951cfc8f9dc4185105e2978662a2e14",
       "platforms": {
         "windows": {
           "oracle": {

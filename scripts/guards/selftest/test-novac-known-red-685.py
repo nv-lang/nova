@@ -206,11 +206,19 @@ exit 0
                 "broken registry link target must be RED:\n" + broken_registry.stdout)
         registry.write_bytes(pinned_registry)
 
-        fixture.write_bytes(fixture.read_bytes() + b"\n")
+        raw_fixture = FIXTURE.read_bytes()
+        fixture.write_bytes(raw_fixture.replace(b"\r\n", b"\n"))
+        canonical_checkout = run_guard(root, novac)
+        require(canonical_checkout.returncode == 0,
+                "LF checkout equivalent to canonical content must stay green:\n" + canonical_checkout.stdout)
+
+        mutated_source = bytearray(raw_fixture)
+        mutated_source[mutated_source.index(b"call_operands")] ^= 1
+        fixture.write_bytes(mutated_source)
         changed_fixture = run_guard(root, novac)
         require(changed_fixture.returncode != 0 and "fixture changed" in changed_fixture.stdout,
-                "changed fixture must be RED:\n" + changed_fixture.stdout)
-        fixture.write_bytes(FIXTURE.read_bytes())
+                "one-byte source-content mutation must be RED:\n" + changed_fixture.stdout)
+        fixture.write_bytes(raw_fixture)
         fixture.unlink()
         missing_fixture = run_guard(root, novac)
         require(missing_fixture.returncode != 0 and "missing known-red fixture" in missing_fixture.stdout,
