@@ -145,6 +145,11 @@ jobs:
         run: |
           set -uo pipefail
           bash scripts/guards/check-doc-examples.sh "$(pwd)"
+      - name: Check main-fiber invariant links
+        run: |
+          set -uo pipefail
+          bash scripts/guards/selftest/test-check-main-fiber-invariant.sh
+          bash scripts/guards/check-main-fiber-invariant.sh "$(pwd)"
 
   # ── novac: самохостящийся компилятор ОБЯЗАН собираться в CI ─────────────
   # Замер 2026-08-15 (сигнал окна 274): до этой работы `novac` в CI не

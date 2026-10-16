@@ -6,8 +6,11 @@ export LC_ALL=C
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 G="$ROOT/scripts/guards/check-main-fiber-invariant.sh"
 FAILED=0
+PASS=0
+TOTAL=0
 ok() { echo "  ok: $1"; }
-bad() { echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
+pass() { PASS=$((PASS + 1)); TOTAL=$((TOTAL + 1)); ok "$1"; }
+bad() { TOTAL=$((TOTAL + 1)); echo "  ПРОВАЛ: $1" >&2; FAILED=1; }
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 
@@ -33,7 +36,7 @@ cat > "$T/compiler-codegen/nova_rt/fibers.h" <<'EOF'
 EOF
 
 if bash "$T/scripts/guards/check-main-fiber-invariant.sh" "$T" >/dev/null; then
-    ok "принимает связанный D493/D446 и обе runtime-двери"
+    pass "принимает связанный D493/D446 и обе runtime-двери"
 else
     bad "ложно краснит на полном наборе invariant links"
 fi
@@ -51,19 +54,19 @@ OUT=$(bash "$T/scripts/guards/check-main-fiber-invariant.sh" "$T" 2>&1); RC=$?
 if [ "$RC" -ne 0 ] && echo "$OUT" | grep -q 'spec/decisions/06-concurrency.md' \
    && grep -q 'Context before invariant.' "$T/spec/decisions/06-concurrency.md" \
    && grep -q 'Context after invariant.' "$T/spec/decisions/06-concurrency.md"; then
-    ok "удаление только абзаца инварианта RED с именем файла; соседний текст сохранён"
+    pass "удаление только абзаца инварианта RED с именем файла; соседний текст сохранён"
 else
     bad "удаление абзаца инварианта не стало RED/соседний текст потерян (код $RC): $OUT"
 fi
 mv "$T/spec/decisions/06-concurrency.saved" "$T/spec/decisions/06-concurrency.md"
 if bash "$T/scripts/guards/check-main-fiber-invariant.sh" "$T" >/dev/null; then
-    ok "восстановление строки инварианта GREEN"
+    pass "восстановление строки инварианта GREEN"
 else
     bad "после восстановления invariant line guard всё ещё красный"
 fi
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "селфтест check-main-fiber-invariant: 3/3 ok"
+    echo "селфтест check-main-fiber-invariant: $PASS/$TOTAL ok"
     exit 0
 fi
 echo "селфтест check-main-fiber-invariant: ЕСТЬ ПРОВАЛЫ" >&2
