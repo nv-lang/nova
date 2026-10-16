@@ -223,10 +223,90 @@ Oracle никогда не судит поведение. Fail closed при н�
 fallback либо если Oracle используется как тестируемый compiler/binary; mismatch
 опубликованного asset/SHA также обязан давать ясный отказ.
 
-Для уже опубликованного pinned seed запускать `B_seed → B1 → B2` на одном source
-SHA/platform; `B1` и `B2` должны совпасть по generated C и native binary. Этот
-протокол и временное Linux исключение не меняют историческую A→B→C приёмку 0.2:
-её receipt подтверждает только exact-SHA 0.2, не Linux seed и не 0.3 provenance.
+Для уже опубликованного pinned seed общее правило остаётся прежним: запускать
+`B_seed → B1 → B2` на одном source SHA/platform; `B1` и `B2` должны совпасть
+побайтно по generated C и native EXE/PDB/LIB.
+
+**Условная ветка для seed с доказанно старой std (решение владельца 2026-10-16).**
+Если bundled std в seed отличается от std точного source SHA испытания, сначала
+показать конкретный source delta и сохранить `B1 ≠ B2` как RED, без нормализации.
+Это не автоматическое исключение для любого расхождения. Только для такого
+доказанного случая и после независимой проверки владелец может принять более
+позднюю точку: `B_seed → B1 → C1 → B2 → C2 → B3`, где `C1` — self-emit B1,
+`C2` — self-emit B2; требуются raw `C1 ≡ C2` и `B2 ≡ B3` по конечным
+EXE/PDB/LIB, плюс sabotage одного байта в копии EXE (RED; восстановление GREEN).
+Это внутреннее условное доказательство старого seed, не переименование RED
+`B1 ≠ B2`, не выпуск и не pin. Воспроизводимость бинарей требует стабильных
+input/output paths и документированного Windows link recipe `-g -fuse-ld=lld
+-Wl,-Brepro`; сравниваются исходные байты, не нормализованные представления.
+
+**Измеренный старый Windows seed (диагностика #94, source SHA
+`57a468573018e0ea89c73d4eabd3330cbbd60d55`; не выпуск 0.2.1).** Публичный
+B0 остаётся историческим `nova-carina-0.2.0-windows-x86_64.zip` (SHA-256
+`f9f973e2c83a930a68053b4952da47f4b72f8d50624fc6e86742da22fc4e12bf`), содержащим
+`novac.exe` SHA-256 `b3df460726e92eca612d7df3497c1a6184c07f415bf58f80001717cb2cf8536f`,
+с provenance исходной версии `99756a8867f913bd6156ed10accf8a20edea00d1`. На
+source SHA57 pinned B0 дал `C0` (13,250,302 bytes, SHA-256
+`17e9ec674739011c9f30cad0289a4f8510087d915636404686f438e2074f2c52`); fresh B1
+self-emit дал `C1` (13,250,302 bytes, SHA-256
+`25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0`). Их raw
+diff — ровно два байта: C offset `0x9FD8A` (`30→32`) и `0x9FFF5` (`33→35`),
+то есть `std/os/pty.nv` trace line `110→112` и `113→115`.
+Между source provenance 997 и 57 в `std/src/os/pty.nv` два comment hunks,
+каждый добавляет строку перед неизменными `join_nul(cmd.args)?` и
+`env_blob_of(deduped)?`; diff сохранён в task evidence. Это объясняет сдвиг
+trace mapping, но не следует выдавать его за отдельное доказательство причины
+всех PE/PDB metadata differences.
+
+Toolchain: Clang/LLD 22.1.5 (`llvm-project@5ea218a153f4d2f815b8244eab3e4b4ba5e00e6c`), target
+`x86_64-pc-windows-msvc`, VS Build Tools 18 `vcvars64`; compile flags
+`-O0 -g -Wno-everything -ffunction-sections -fdata-sections -DNOVA_GC_BOEHM
+-DGC_THREADS -DNOVA_USE_LIBUV=1 -DNOVA_MAX_EFFECT_STORAGES=11`, link flags
+include `-g -fuse-ld=lld -Wl,-Brepro -Wl,/stack:0x1000000`. Runtime source SHA
+is 57a4685; pinned runtime submodule gitlinks and their full SHAs are reproducible
+with `git ls-tree 57a468573018e0ea89c73d4eabd3330cbbd60d55 compiler-codegen/nova_rt/gc compiler-codegen/nova_rt/libuv compiler-codegen/nova_rt/libatomic_ops`;
+the command reports mode `160000` for each gitlink. Linked archive SHA-256 values:
+`libuv.lib` `2c13429c4a238aa3299ca25028745d6ef171681bdd8c7e25ebbbd3b6fb5c4afe`,
+`gc.lib` `72e3407a8385344afb2d263762cc256ed6b57b1f32649e7a804273b040b12a49`,
+`atomic_ops.lib` `044400fe3b084f24ad0a98d6e20e3e888af8851c665da48c230c6de8cfe83a68`.
+Final native `B1` (from C0): EXE SHA-256
+`00d035b842da5160a5f7e068c4d629d7e15bf2c5b15093cdad5da66082b98fc3`, PDB
+`3e0f55652f11773592c1234a0c7e7e80d02e87b26d81d76f0354b64f5bce0ee1`, LIB
+`6fc9e8cadaf5ec15ce9841e38378b4c8af075836c8bfead0e264405d7d93ba3c`; `B2`
+(from C1): EXE `9cdccecb3dd83003443b1a5af094d223993d6d6236c32c0c4f6c3b96d1d5fda8`,
+PDB `0e93e5532fae8e12628475694421113b2f9b06c858ad247a2eb7579cebaf6d89`, same
+LIB. `B1/B2` raw `fc /b`: EXE RED (20 changed bytes: COFF timestamp at
+`0x80..0x83`, CodeView debug-entry timestamp at `0x3FD190..0x3FD193`, Repro
+debug-entry timestamp at `0x3FD1AC..0x3FD1AF`, and RSDS GUID at
+`0x3FD1C8..0x3FD1CF`); PDB RED (28 changed bytes at
+`0x44E9C6..0x44E9D5`, `0xB2B004..0xB2B007`, and `0xB2B00C..0xB2B013`); LIB
+GREEN. The B1/B2 RED is recorded alongside the demonstrated C0/C1 old-std
+trace-line shift; the final PE/PDB metadata differences and their complete
+causal link remain a separate unresolved observation. The raw diff is retained
+without normalization. The earlier preliminary 14-byte diff is a different
+historical pair, with its own raw logs and snapshots. Under the owner-approved
+conditional diagnostic,
+`C1/C2` raw compare is GREEN and `B2/B3` EXE/PDB/LIB are GREEN with SHA-256 values
+identical to B2; one-byte damage at offset `0x217C00` in a B2 EXE copy (`00→01`,
+damaged-copy SHA-256 `c9777f6f8cd58006ba8fc00a34e4ebfc1b8065bf4c744d3cdad6101517259b5a`)
+made `fc /b` RED (exit 1); restoring the copy to B2 SHA-256
+`9cdccecb3dd83003443b1a5af094d223993d6d6236c32c0c4f6c3b96d1d5fda8` made it
+GREEN (exit 0). Independent review
+confirmed these raw comparisons. This milestone does not prove `B1 ≡ B2` and does
+not complete the 0.2.1 release. Public receipt mismatch №1881 remains separate;
+asset, SHA/pin, tag, Oracle and release actions remain HOLD pending owner GO.
+
+Primary machine-run records: fresh B1 build and preliminary B2 from preserved C1
+`1792174358612-be2y1z`, B1 self-emit C1 `1792174460341-7zs62l`, final B2 build
+from byte-identical fresh C1 `1792174597726-r9hhwy`, B2 self-emit C2
+`1792175150492-dqcsho`, and B3 from C2 `1792175300032-pzowcg`.
+Exact hashes, commands, raw comparisons and sabotage are retained in the
+executor's session scratchpad manifests; the B2→C2 invocation is preserved in
+crew-watch record `1792175150492-dqcsho.json` (the separate scratch note is marked
+as reconstructed, not as the original invocation log). This proof is a diagnostic
+milestone only: it does not alter the historical 0.2 receipt, pin or release.
+The 0.2.0 receipt still proves only its exact source SHA; it is not Linux seed or
+Carina 0.3 provenance.
 
 ## 6. Открытые вопросы не закрываются реализацией
 
