@@ -58,7 +58,8 @@ experimentation.
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`),
   optional and gradual: without them the code behaves like an ordinary
   imperative language; with them the compiler attempts static proof and
-  falls back to a runtime check for what it can't prove.
+  falls back to a runtime check for what it can't prove, including in
+  release builds; a violation fails fast.
 - Folder-modules (a module is a single file or a folder of peer files
   sharing one namespace, Go-style), cross-file imports with cycle
   detection, file-level `#forbid Net, Fs` capability attributes.
