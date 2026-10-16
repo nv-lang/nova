@@ -179,15 +179,15 @@
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 
-<div class="wrap">
+  <div class="wrap">
   <header>
     <div>
       <div class="eyebrow">Nova Carina · план 274 · самосборный компилятор</div>
       <h1>Карта Карины</h1>
-      <p class="lead">Компилятор Nova, написанный на Nova и печатающий C. Что из конвейера уже работает, куда он идёт по архитектуре, и чем каждое утверждение доказано.</p>
+      <p class="lead">Компилятор Nova, написанный на Nova и печатающий C. Ниже отдельно показаны принятая Windows-ступень 0.2.0, текущая архитектурная граница и ещё не завершённый путь к 0.3.</p>
     </div>
     <div class="meta">
-      <div>Снято 6 сентября 2026 · ветка <code>p274-novac</code></div>
+      <div>Срез 16 октября 2026 · <code>origin/main</code> <code>57a468573018e0ea89c73d4eabd3330cbbd60d55</code></div>
       <div class="legend">
         <span class="pill ok">сделано</span>
         <span class="pill wip">в работе</span>
@@ -199,51 +199,48 @@
 
   <section>
     <h2>Конвейер сегодня</h2>
-    <p class="sub">Один файл проходит станции слева направо. Проходы существуют только в <code>pipeline</code>; каждая станция — один модуль карты (папка = модуль), у каждого класса задач ровно одна дверь.</p>
+    <p class="sub">Это схема целевых слоёв, а не заявление о полноте сегодняшнего подмножества: выпущенный B0 пока не строит текущий novac, включая отказы <code>E_NOVAC_ICE</code> и <code>#cfg</code> как <code>E_NOVAC_SUBSET</code>. Релиз и архитектурная цель — разные утверждения.</p>
     <div class="line-scroll">
       <div class="line">
-        <div class="station ok"><div class="name">source</div><div class="role">текст, спаны, строчный индекс</div><div class="note ok">закрыто в Э1</div></div>
-        <div class="station ok"><div class="name">lex</div><div class="role">токены с тривией</div><div class="note ok">продолжение строки читается</div></div>
-        <div class="station ok"><div class="name">parse → tree</div><div class="role">зелёное дерево, восстановление после ошибок</div><div class="note wip">№983: поля через запятую</div></div>
-        <div class="station ok"><div class="name">sem</div><div class="role">реестры типов и вызываемых; жатва поданных деклараций std</div><div class="note ok">W6: свободные функции std</div></div>
-        <div class="station wip"><div class="name">names · resolve</div><div class="role">имя → объявление; подбор перегрузки по типам</div><div class="note wip">W5: пространства имён (№976–978)</div></div>
-        <div class="station ok"><div class="name">check</div><div class="role">типизация и правила; единственный писатель канала</div><div class="note wip">растёт по корпусу (274.7)</div></div>
-        <div class="station wip"><div class="name">lower</div><div class="role">MIR: локалы, блоки, одна дверь размещения</div><div class="note wip">M0–M2b-1 есть, M2b-2 · M2c · M3 впереди</div></div>
-        <div class="station ok"><div class="name">mono</div><div class="role">достижимость, инстансы обобщённых</div><div class="note todo">переезд на IR — M3</div></div>
-        <div class="station ok"><div class="name">emit_c</div><div class="role">печать C поверх оболочки оракула</div><div class="note wip">ещё читает дерево (until:E4)</div></div>
-        <div class="station ok ext"><div class="name">clang / tcc</div><div class="role">C → бинарь, один рантайм на линковке</div><div class="note ok">смоук байт-в-байт</div></div>
+        <div class="station ok"><div class="name">source</div><div class="role">вход компилятора — поданный текст</div><div class="note ok">карта модулей — 274.1 §2–3</div></div>
+        <div class="station ok"><div class="name">lex</div><div class="role">токены с тривией</div><div class="note ok">часть novac</div></div>
+        <div class="station ok"><div class="name">parse → tree</div><div class="role">дерево исходника</div><div class="note ok">часть novac</div></div>
+        <div class="station ok"><div class="name">names · resolve</div><div class="role">имя → объявление и выбор вызова</div><div class="note ok">целевые двери — архитектура §2–3</div></div>
+        <div class="station ok"><div class="name">check · sem · types</div><div class="role">решения чекера и канон типов</div><div class="note ok">код novac; полнота 0.3 не заявлена</div></div>
+        <div class="station ok"><div class="name">lower · MIR</div><div class="role">понижение и IR</div><div class="note ok">M3 закрыт в плане 274.8</div></div>
+        <div class="station ok"><div class="name">mono</div><div class="role">достижимые инстансы</div><div class="note ok">архитектурный слой, не пакетный драйвер</div></div>
+        <div class="station ok"><div class="name">emit_c</div><div class="role">бэкенд C поверх пониженной формы</div><div class="note ok">MIR-переход см. 274.8</div></div>
+        <div class="station todo ext"><div class="name">nova build / test</div><div class="role">целевой пользовательский CLI и драйвер</div><div class="note todo">условия 0.3, не доказаны</div></div>
       </div>
     </div>
 
     <div class="band">
-      <div class="fig"><div class="num">60 / 115</div><div class="lbl">файлов корпуса <code>examples/**</code> принимают оба компилятора; 58 из 60 — вывод совпал байт-в-байт с оракулом</div></div>
-      <div class="fig"><div class="num">32 / 32</div><div class="lbl">фикстур контракта <code>novac/fixtures</code>: поведение совпало с оракулом, отказы — с названной причиной</div></div>
-      <div class="fig"><div class="num">6 / 94</div><div class="lbl">собственных файлов Карина читает чисто; 87 — честные отказы подмножества, 1 — ICE (№984, класс №918)</div></div>
-      <div class="fig"><div class="num">87</div><div class="lbl">стражей <code>check-novac-*</code> в гейте; базы — храповики, двигаются только замером и слагаемыми</div></div>
+      <div class="fig"><div class="num">0.2.0</div><div class="lbl">выпущенная alpha; принятая самосборка относится к Windows x86_64 и SHA <code>99756a88…</code></div></div>
+      <div class="fig"><div class="num">0.2.1</div><div class="lbl">будущий отдельный Windows seed proof; Linux proof/release ещё отсутствует</div></div>
+      <div class="fig"><div class="num">0.3</div><div class="lbl">план согласован, реализация не начата; нужны примеры, package build/test и CI</div></div>
+      <div class="fig"><div class="num">—</div><div class="lbl">свежие размеры корпуса и число стражей здесь не заявлены: нужен воспроизводимый замер на exact SHA</div></div>
     </div>
   </section>
 
   <section>
     <h2>Целевая архитектура</h2>
-    <p class="sub">Оракул — нынешний компилятор на Rust — неподвижная точка <i>поведения</i> (тот же вывод, тот же код возврата), но не образец устройства. Целевой граф читается сверху вниз; пунктир — рёбра, которые архитектура объявила временными до прихода <code>lower</code>.</p>
+    <p class="sub">Целевая архитектура описана в <a href="novac-architecture.md">novac-architecture.md</a> §1–3. Oracle и текущий LSP заморожены; Oracle не является ежедневным seed или судьёй ожидаемого поведения. Целевые CLI/LSP входят в novac, пакетный граф и toolchain остаются драйверу.</p>
     <div class="two">
       <div class="diagram">
         <svg id="arch" viewBox="0 0 900 580" width="100%" role="img" aria-label="Граф модулей Карины: фронтенд, семантика, понижение и бэкенды; временные рёбра пунктиром"></svg>
         <div class="glegend">
           <span><i class="sw solid"></i> ребро таблицы §3</span>
-          <span><i class="sw tmp"></i> временное ребро, until:E4 → снимается на M3</span>
-          <span><i class="sw plan"></i> запланировано (Э3, Э4+)</span>
+          <span><i class="sw tmp"></i> временное ребро карты архитектуры</span>
+          <span><i class="sw plan"></i> граница/будущая работа</span>
         </div>
       </div>
       <div>
         <h3>Что меняется по дороге к цели</h3>
         <ul class="changes" style="margin-top:12px">
-          <li><b>Эмиттер читает только IR.</b> Сегодня <code>emit_c</code> держит временные рёбра к дереву, лексеру и типам; на M3 они уходят из таблицы §3, и любой взгляд эмиттера в дерево краснит <code>check-novac-deps</code>.</li>
-          <li><b>Одно понижение вместо восьми дверей.</b> Восемь позиций, где эмиттер сам решал «куда положить значение», уже идут через <code>FnBuilder.place</code>; страж считает оставшиеся армы (40 → 35) и допускает только убыль.</li>
-          <li><b><code>mono</code> ходит по IR</b>, а не по дереву: строка 141 таблицы рёбер ждёт этого с августа.</li>
-          <li><b>Терминаторы структурные</b> — <code>If</code> с точкой слияния, <code>Loop</code> с выходом: тот же CFG, что у rustc, но C печатается без релупера, и побайтовый дифф C остаётся критерием переноса. Вопрос владельцу записан в §5 плана 274.8 с этим умолчанием.</li>
-          <li><b>Эффекты и <code>consume</code></b> — пассы над MIR (класс К5), слоты в терминаторах заведены с M0, заполняются позже.</li>
-          <li><b>Второй бэкенд возможен по построению</b>: IR один, печатей две; кандидаты (libFirm, свой) сравниваются на Э4, решение не принято.</li>
+          <li><b>MIR — реализованная архитектурная ступень.</b> План 274.8 сообщает о закрытии M3 и переносе ядра понижения в <code>lower/</code>; это не означает завершения всех этапов Carina.</li>
+          <li><b>Эмиттер потребляет пониженную форму.</b> Нормативная карта слоёв и рёбер — <code>novac-architecture.md</code> §2–3; её старые числа нельзя считать свежими без повторной команды на exact SHA.</li>
+          <li><b>CLI и драйвер разделены.</b> <code>nova build</code>/<code>nova test</code> входят в критерии 0.3 — отдельный этап от самосборки 0.2.</li>
+          <li><b>Нативный backend</b> — будущая возможность, не заявленный результат.</li>
         </ul>
       </div>
     </div>
@@ -256,13 +253,12 @@
     <table>
       <thead><tr><th>Этап · план</th><th>Что это</th><th>Состояние</th><th>Чем доказано</th></tr></thead>
       <tbody>
-        <tr><td class="k">Э0 · 274.1</td><td>Архитектура из референсов: карта модулей, рёбра с «что течёт», корни и владельцы</td><td><span class="pill ok">закрыт</span></td><td>стражи <code>deps</code>, <code>edge-payload</code>, <code>arch-class-proofs</code>, <code>arch-invariants</code> зелёные на карте</td></tr>
-        <tr><td class="k">Э1</td><td>MVP: <code>hello</code> до бинаря вертикальным срезом</td><td><span class="pill ok">ядро взято</span></td><td>смоук байт-в-байт, оболочка оракула регенерируется из probe</td></tr>
-        <tr><td class="k">Э2 · 274.4–274.7</td><td>Ширина: подмножество растёт по корпусу; одна дверь на корень (274.4 пройден 29.08); Э2-б1/б2/б3 закрыты</td><td><span class="pill wip">идёт</span></td><td>дифференциал 60/115 · 58, самосборка 6/94, волны W1–W4 и W6 закрыты, W5 впереди</td></tr>
-        <tr><td class="k">Э3</td><td>LSP на фронтенде Карины, за флагом; девять сканеров разметки</td><td><span class="pill todo">впереди</span></td><td>требование «имя не несёт модуля» записано (9.1д)</td></tr>
-        <tr><td class="k">Э4 · 274.8</td><td>MIR и полный чекер: форма, одна дверь размещения, эмиттер читает только IR</td><td><span class="pill wip">начат 06.09</span></td><td>M0–M2b-1: держатели 26/26, C корпуса побайтово прежний, страж дверей 40 → 34</td></tr>
-        <tr><td class="k">274.5</td><td>Чтение собственного исходника (самосборка) — главный носитель отказов</td><td><span class="pill wip">в работе</span></td><td>класс «not a callable» 20 файлов → 0 после W6; остаток — формы подмножества</td></tr>
-        <tr><td class="k">274.2 · 274.3</td><td>Цена итерации; классы находок ревью</td><td><span class="pill wip">в работе</span></td><td>бюджет гейта — храповик с условием снятия; фуззер 4189 мутаций / 60 файлов</td></tr>
+        <tr><td class="k">Э0 · 274.1</td><td>Архитектурная карта: модули и рёбра</td><td><span class="pill ok">план закрыт</span></td><td><a href="../plans/274.1-novac-architecture.md">274.1</a>; слои и рёбра — <a href="novac-architecture.md">§2–3</a></td></tr>
+        <tr><td class="k">0.2 · 274.11</td><td>Самосборка на принятом Windows SHA, release <code>carina-v0.2.0</code></td><td><span class="pill ok">выпущен</span></td><td><a href="https://github.com/nv-lang/nova/releases/tag/carina-v0.2.0">Release</a>; exact-source SHA <code>99756a8867f913bd6156ed10accf8a20edea00d1</code>, CI <a href="https://github.com/nv-lang/nova/actions/runs/38080300506">38080300506</a></td></tr>
+        <tr><td class="k">0.2.1 · seed proof</td><td>Одноразовый Oracle A для нового Windows seed; после pin Oracle вне цепочки, проверка — CI</td><td><span class="pill todo">ещё не выпущен</span></td><td>Решение владельца 2026-10-16: отдельная доказательная задача/выпуск обязательны. Прежняя формулировка Linux stage-A в 274.16 — временное расхождение; этот срез следует более свежему решению.</td></tr>
+        <tr><td class="k">Linux · 0.2.1</td><td>Linux B cross-emit от нового seed с <code>#cfg target_os</code> / <code>--target-os</code> (#92)</td><td><span class="pill todo">proof/release отсутствуют</span></td><td>В 0.2.0 нет Linux asset; Linux B≡C и Linux proof не заявлены. #92 — отдельная работа, сюда не запускается.</td></tr>
+        <tr><td class="k">0.3 · 274.16</td><td>Все примеры, <code>nova build</code>/<code>nova test</code> во всех package roots, exact-SHA CI</td><td><span class="pill todo">план согласован, код не начат</span></td><td><a href="../plans/274.16-carina-all-examples-and-packages.md">Ш.0–Ш.7</a>; согласование плана не является доказательством выполнения.</td></tr>
+        <tr><td class="k">Oracle / текущий LSP</td><td>Заморожены; целевые CLI/LSP входят в novac</td><td><span class="pill todo">граница решения</span></td><td>См. 274 §9 и <a href="novac-architecture.md">архитектуру novac</a>.</td></tr>
       </tbody>
     </table>
     </div>
@@ -270,29 +266,27 @@
 
   <section>
     <h2>MIR — путь волнами</h2>
-    <p class="sub">Подплан 274.8. Каждая волна принимается одинаково: держатели, дифференциал без сдвига, страж одной двери — база вниз, и C корпуса побайтово прежний (либо прежний после нормализации имён временных — M2c).</p>
+    <p class="sub">План 274.8 — источник статуса MIR. M3 закрыт; старые числа отдельных подшагов на исходной странице не являются свежими замерами.</p>
     <div class="waves">
-      <div class="wave ok"><div class="w">M0</div><div class="t">Форма и дверь</div><div class="d"><code>lower/ir.nv</code>: Fn, Block, Stmt, Terminator; <code>FnBuilder.place</code>; страж с базой 40</div></div>
-      <div class="wave ok"><div class="w">M1</div><div class="t">Восемь позиций → одна дверь</div><div class="d">один принтер <code>emit_place</code>; C побайтово; emit_c.nv 998 → 884 строк</div></div>
-      <div class="wave ok"><div class="w">M2a</div><div class="t">Операторы без потока</div><div class="d">вызовы-операторы, присваивания — из IR; emit_c.nv 829 строк</div></div>
-      <div class="wave ok"><div class="w">M2b-1</div><div class="t">Терминаторы при потоковой печати</div><div class="d">if / else if / else, while, диапазонный и коллекционный for, return, if-значение, if let — <code>If</code>/<code>Loop</code> с названными join/exit; события билдера, <code>emit_flow.nv</code>; C побайтово, дефект №991 найден пробой и починен</div></div>
-      <div class="wave todo"><div class="w">M2b-1г</div><div class="t">match как Switch</div><div class="d">образцы, дизъюнкции, guard, обе позиции; флаг matched остаётся у принтера — в форме его нет</div></div>
-      <div class="wave todo"><div class="w">M2b-2</div><div class="t">Один обход печати</div><div class="d">вложенные позиции значения понижаются ДО печати; идёт вместе с M2c — нумерация временных сдвигается по построению</div></div>
-      <div class="wave todo"><div class="w">M2c</div><div class="t">Имена временных</div><div class="d">по индексу локала; C меняется только в именах — дифф после нормализации пуст</div></div>
-      <div class="wave todo"><div class="w">M3</div><div class="t">Эмиттер читает только IR</div><div class="d">временные рёбра сняты, <code>mono</code> по IR, <code>emit_expr</code> исчезает как модуль дерева</div></div>
+      <div class="wave ok"><div class="w">M0–M1</div><div class="t">IR и единая дверь</div><div class="d">Ранние MIR-подшаги приняты; исторические критерии и пробы — в плане 274.8.</div></div>
+      <div class="wave ok"><div class="w">M2a–M2b</div><div class="t">Поток и значения</div><div class="d">Промежуточные подшаги не являются текущим TODO; сверять историю и критерии в 274.8.</div></div>
+      <div class="wave ok"><div class="w">M2</div><div class="t">Понижение управления</div><div class="d">План 274.8 описывает интегрированные шаги и проверки; промежуточные TODO исходного снимка устарели.</div></div>
+      <div class="wave ok"><div class="w">M2c</div><div class="t">Стабильные имена локалов</div><div class="d">План фиксирует закрытие нормализованного C-diff и обратную пробу.</div></div>
+      <div class="wave ok"><div class="w">M3</div><div class="t">MIR-переход закрыт</div><div class="d">Ядро понижения перенесено из <code>emit_c/</code> в <code>lower/lowering.nv</code> (274.8).</div></div>
+      <div class="wave todo"><div class="w">Дальше</div><div class="t">Не сводится к MIR</div><div class="d">Ширина языка, seed proof и CLI/package acceptance имеют отдельные статусы и критерии в 274.*.</div></div>
     </div>
   </section>
 
   <section>
     <h2>Как это доказывается</h2>
-    <p class="sub">Пять доказательств на каждую волну — форма §3 плана 274. Ни одно не заменяет другое.</p>
+    <p class="sub">Срез страницы: 2026-10-16, дерево <code>57a468573018e0ea89c73d4eabd3330cbbd60d55</code>. Корпусные числа не переносятся без повторного прогона.</p>
     <div class="proofs">
-      <div class="proof"><h3>Носитель байт-в-байт</h3><p>Файл корпуса собирается обоими компиляторами; stdout и код возврата совпадают. Смоук — <code>novac-e1-smoke.sh</code>.</p></div>
-      <div class="proof"><h3>Обратная проба</h3><p>Условие ломается руками — держатель или страж обязан покраснеть, затем восстановить. Зелёное без красного ничего не доказывает.</p></div>
-      <div class="proof"><h3>Держатели</h3><p>Модульные тесты рядом с модулем, 26 файлов, один пачечный прогон в гейте.</p></div>
-      <div class="proof"><h3>Дифференциал</h3><p>Корпус и фикстуры против оракула; базы 66 / 58 двигаются только вместе с работой, в обе стороны.</p></div>
-      <div class="proof"><h3>Стражи и базы</h3><p>87 стражей Карины: рёбра, двери, поверхность, размер файлов, слово «tuple», ICE-тексты. Храповики двигают слагаемыми.</p></div>
-      <div class="proof"><h3>C побайтово при переносе</h3><p>Снимок эмиссии всего корпуса старым бинарём до пересборки, новым — после; <code>diff -r</code> пуст. Так принят каждый шаг MIR.</p></div>
+      <div class="proof"><h3>0.2.0 — exact SHA</h3><p><a href="https://github.com/nv-lang/nova/releases/tag/carina-v0.2.0">Release asset</a> <code>nova-carina-0.2.0-windows-x86_64.zip</code>, SHA-256 <code>f9f973e2c83a930a68053b4952da47f4b72f8d50624fc6e86742da22fc4e12bf</code>. Release body и <a href="https://github.com/nv-lang/nova/releases/download/carina-v0.2.0/proof-and-accept-receipt.txt">опубликованная расписка</a> заявляют принятую A→B→C; exact-SHA CI — <a href="../plans/274.11-carina-release.md">274.11 §0</a>.</p></div>
+      <div class="proof"><h3>Receipt digest mismatch</h3><p>Proof asset API сообщает digest <code>cb3466…</code>, опубликованный <code>SHA256SUMS</code> — <code>9e3f50…</code>. Спорные byte counts не приводятся; оба файла требуют независимой сверки.</p></div>
+      <div class="proof"><h3>CI exact SHA</h3><p>Принятый SHA <code>99756a8867f913bd6156ed10accf8a20edea00d1</code>; <a href="https://github.com/nv-lang/nova/actions/runs/38080300506">run 38080300506</a> — exact-SHA success по 274.11 §0.</p></div>
+      <div class="proof"><h3>Текущее дерево и CI</h3><p><code>origin/main</code> <code>57a468573018e0ea89c73d4eabd3330cbbd60d55</code>; <a href="https://github.com/nv-lang/nova/actions/runs/38840585806">nova-gate 38840585806</a> завершён success на этом SHA (срез 2026-10-16).</p></div>
+      <div class="proof"><h3>Ограничение B0</h3><p>Текущий B0 не строит нынешний novac: известны <code>E_NOVAC_ICE</code> и <code>#cfg</code> отказы <code>E_NOVAC_SUBSET</code>. Receipt 0.2 не снимает эти ограничения.</p></div>
+      <div class="proof"><h3>0.3 — отдельная приёмка</h3><p>274.16 требует все примеры, <code>build</code>/<code>test</code> во всех пакетах и exact-SHA CI. Одобрение плана и Oracle differential не являются доказательством completion.</p></div>
     </div>
   </section>
 
@@ -326,17 +320,17 @@
       parse:   { x: 396, y: 68,  nm: 'parse',    sb: 'восстановление' },
       tree:    { x: 546, y: 68,  nm: 'tree',     sb: 'зелёное дерево' },
       pipe:    { x: 760, y: 50,  nm: 'pipeline', sb: 'единственный владелец порядка проходов', w: 224, h: 40 },
-      lsp:     { x: 760, y: 92,  nm: 'LSP',      sb: 'сканеры на фронтенде, Э3 · за флагом', w: 224, h: 30, kind: 'plan' },
+      lsp:     { x: 760, y: 92,  nm: 'LSP',      sb: 'нынешний LSP заморожен', w: 224, h: 30, kind: 'plan' },
       names:   { x: 96,  y: 204, nm: 'names',    sb: 'имя → объявление' },
       resolve: { x: 246, y: 204, nm: 'resolve',  sb: 'подбор перегрузки' },
       check:   { x: 396, y: 204, nm: 'check',    sb: 'типизация и правила' },
       sem:     { x: 546, y: 204, nm: 'sem',      sb: 'реестры · канал' },
       types:   { x: 696, y: 204, nm: 'types',    sb: 'канон типа, интернер' },
-      lower:   { x: 396, y: 344, nm: 'lower · MIR', sb: 'локалы · блоки · терминаторы', w: 176, h: 52, kind: 'wip' },
+      lower:   { x: 396, y: 344, nm: 'lower · MIR', sb: 'понижение · M3 закрыт', w: 176, h: 52 },
       mono:    { x: 696, y: 344, nm: 'mono',     sb: 'инстансы обобщённых' },
-      emitc:   { x: 396, y: 474, nm: 'emit_c',   sb: 'бэкенд A: печать C' },
+      emitc:   { x: 396, y: 474, nm: 'emit_c',   sb: 'бэкенд: печать C' },
       out:     { x: 130, y: 474, nm: 'C → clang / tcc', sb: 'бинарь, один рантайм', w: 190, kind: 'ext' },
-      native:  { x: 696, y: 474, nm: 'бэкенд B', sb: 'нативный, Э4+ · кандидат не выбран', w: 190, kind: 'plan' }
+      native:  { x: 696, y: 474, nm: 'CLI · драйвер', sb: 'build / test — критерии 0.3', w: 190, kind: 'plan' }
     };
     function box(n) { var w = n.w || W, h = n.h || H; return { x: n.x - w / 2, y: n.y - h / 2, w: w, h: h }; }
     // arrow markers
@@ -353,7 +347,6 @@
       ['sem', 'lower'], ['tree', 'lower'],
       ['lower', 'mono'], ['lower', 'emitc'], ['mono', 'emitc'],
       ['emitc', 'out'], ['lower', 'native', 'plan'],
-      ['emitc', 'tree', 'tmp', 'until:E4 → M3'], ['mono', 'tree', 'tmp', 'until:E4 → M3'],
       ['lsp', 'tree', 'plan']
     ];
     function clip(a, b) {
@@ -404,7 +397,7 @@
   </script>
 
   <footer>
-    Источники: <code>docs/dev/novac-architecture.md</code> §2–3 (карта модулей и рёбра), планы <code>274</code>, <code>274.7</code>, <code>274.8</code>, вывод гейта и дифференциала 6 сентября 2026. Цифры корпуса и самосборки — замеры того дня; статусы — строки статуса планов.
+    Источники: <a href="../plans/274.11-carina-release.md">274.11 §0</a> (release asset, receipt, exact-SHA CI); <a href="../plans/274.16-carina-all-examples-and-packages.md">274.16 Ш.0–Ш.7</a> (0.3/Linux); <a href="../plans/274.8-novac-mir.md">274.8</a> (MIR); <a href="novac-architecture.md">novac-architecture.md §1–3</a> (слои). Срез 2026-10-16: <code>git ls-remote origin refs/heads/main</code> → <code>57a468573018e0ea89c73d4eabd3330cbbd60d55</code>. Измерения на этом SHA: <code>Get-ChildItem examples -Recurse -File -Filter *.nv</code> → 118 файлов; <code>Get-ChildItem scripts/guards -File -Filter check-novac-*</code> → 100 файлов (инвентаризация, не число успешных правил); <code>bash scripts/guards/check-rules-page-complete.sh .</code> → 233 правила, 40 legacy baseline, новых неназванных нет. Release proof asset SHA-256 API <code>cb3466a2067914eadcee0fcf3487b18b6951e4740370909bb3f6099a0b34566d</code> расходится с digest расписанного файла в опубликованном <code>SHA256SUMS</code> (<code>9e3f509d21a8fb1c708cf1e42c67fa53415cff5b9fbd091212ad42832168a90e</code>); спорные byte counts не утверждаются.
   </footer>
 </div>
 </body>
