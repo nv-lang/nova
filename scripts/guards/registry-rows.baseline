@@ -1,3 +1,6 @@
+# Task #95: row 1882 documented; independent review pending.
+#   Direct recount rows=1792 -> 1793, max=1881 -> 1882. №1882 is the B1
+#   absolute NOVAC_SELF_PATH ICE finding; gaps from main after #91 are unchanged.
 # Task #91 merge commit 609db90ea: row 1880 arrives alongside #93 row 1881;
 #   direct recount rows=1791 -> 1792, max remains 1881. №1880 is the D62
 #   default-warning gap; №1881 is the Carina receipt-provenance finding already
@@ -1735,8 +1738,8 @@
 #   1784 main rows + task #52 row 1872 = 1785, max 1874 unchanged.
 #   Rows 1868 and 1870 came from main; row 1872 came from task #52.
 #   All three are present and must not be gaps; reserved row 1873 stays.
-rows=1792
-max=1881
+rows=1793
+max=1882
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
