@@ -17,7 +17,7 @@
 
 ## Команды A/B по сохранённым прогонам
 
-Записанный `emit-c1.bat` работал из cwd `D:\Sources\nv-lang\worktrees\nova-opencode-94-vypustit-windows-seed-carina-0-2-1`, задавал абсолютный `NOVA_STD_PATH` на `<B1_TREE>\std\src`, затем абсолютный `NOVAC_SELF_PATH` на `<B1_TREE>\novac\src`. Нормализованная форма A (исполняемые файлы и outputs лежали в `%LOCALAPPDATA%\Temp\opencode\ses_mvanjiglayrltuom7q`):
+Записанный `emit-c1.bat` работал из cwd `<B1_TREE>`, задавал абсолютный `NOVA_STD_PATH` на `<B1_TREE>\std\src`, затем абсолютный `NOVAC_SELF_PATH` на `<B1_TREE>\novac\src`. Нормализованная форма A (исполняемые файлы и outputs лежали в `%LOCALAPPDATA%\Temp\opencode\ses_mvanjiglayrltuom7q`):
 
 ```bat
 cd /d <B1_TREE>
@@ -45,7 +45,7 @@ set NOVAC_SELF_PATH=novac/src
 
 Сохранённые `link-stage-b1.bat` и response files показывают сборку `native-b1.exe` из `seed-b0-emitted.c` (C0; 13,250,302 байта, SHA-256 `17e9ec674739011c9f30cad0289a4f8510087d915636404686f438e2074f2c52`) плюс C runtime sources из worktree задачи #94. Скрипт вызывает VS 2026 Build Tools Developer Command Prompt v18.0 для x64 и LLVM clang с target `x86_64-pc-windows-msvc`; сохранённые флаги включают `-O0 -g`, `-DNOVA_GC_BOEHM`, `-DGC_THREADS`, `-DNOVA_USE_LIBUV=1` и `-DNOVA_MAX_EFFECT_STORAGES=11`. `compile-stage-b1.bat` — syntax-only проверка C0, не полная сборка.
 
-Для побайтно воспроизводимой сборки сохранённых данных недостаточно: нет зафиксированных `clang --version`/версии MSVC, hashes runtime/vcpkg inputs и полного неизменяемого snapshot дерева, на которое ссылаются абсолютные пути `.bat`/`.rsp`. Отдельный `.bat` относительного A/B прогона не сохранён; сохранены только `b1-emit-relative-exit.txt`, C1 и пустой stderr. Поэтому команды выше точно задают executable arguments и path variation для проверки, но не выдаются за полный повтор B1 build provenance.
+По отчёту #94 зафиксированы LLVM clang/clang-cl 22.1.5, Visual Studio Build Tools 18 (`vcvars` x64) и pinned submodule revisions из source tree 57a4685: `gc` `ee59af3722e56de8404de6cd0c21c2493cc4d855`, `libuv` `1cfa32ff59c076ffb6ed735bbc8c18361558661f`, `libatomic_ops` `4c00f978cbafe4eb76929dace4ba8f456e800fec`. Зафиксированы и SHA-256 библиотек: `libuv.lib` — `2c13429c4a238aa3299ca25028745d6ef171681bdd8c7e25ebbbd3b6fb5c4afe`, `gc.lib` — `72e3407a8385344afb2d263762cc256ed6b57b1f32649e7a804273b040b12a49`, `atomic_ops.lib` — `044400fe3b084f24ad0a98d6e20e3e888af8851c665da48c230c6de8cfe83a68`. Для точного побайтного повтора всё же недостаёт полного неизменяемого vcpkg binary-package manifest/snapshot, связанного с этим прогоном; кроме того, отдельный `.bat` относительного A/B прогона не сохранён (есть exit record, C1 и пустой stderr). Поэтому наличие записанных версий и библиотечных SHA не доказывает точную воспроизводимость B1 build; относительная команда выше нормализована по сохранённым результатам.
 
 ## Статус выполнения этой задачи
 
