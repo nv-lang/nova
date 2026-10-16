@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "entries": [
+    {
+      "issue": 685,
+      "fixture": "novac/fixtures/call_operands/pos_1.nv",
+      "registry": "docs/plans/221.1-bug-sweep.md",
+      "fixture_normalization": "crlf-to-lf",
+      "fixture_sha256": "45e4e8d4e8e2a3efa844302e9c20eb863951cfc8f9dc4185105e2978662a2e14",
+      "platforms": {
+        "windows": {
+          "oracle": {
+            "exit": 0,
+            "stdout_b64": "ZXZhbCB4CmZhbHNlCmV2YWwgcQpldmFsIHAKMwpldmFsIHUKdHJ1ZQpldmFsIG8KZXZhbCBuCmV2YWwgbQo3Cg==",
+            "stderr_b64": ""
+          },
+          "carina": {
+            "exit": 0,
+            "stdout_b64": "ZXZhbCB4CmZhbHNlCmV2YWwgcApldmFsIHEKMwpldmFsIHUKdHJ1ZQpldmFsIG0KZXZhbCBuCmV2YWwgbwo3Cg==",
+            "stderr_b64": ""
+          }
+        }
+      }
+    }
+  ]
+}

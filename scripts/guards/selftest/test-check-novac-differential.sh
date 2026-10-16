@@ -101,7 +101,7 @@ mkbin 'case "$2" in *pos_n4.nv) exit 1;; esac; exit 0'
 mksmoke 'exit 0'
 NOVAC_POOL_JOBS=3 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/pool.out" 2>&1
 check "семь старых фикстур и registered negative на три потока — зелёный" "$?" "0"
-grep -q 'ПОВЕДЕНИЕ: 6 из 8 байт-в-байт.*не судились 2.*потоков 3' "$TMP/pool.out"
+grep -q 'ПОВЕДЕНИЕ: совпали 6 из 8 байт-в-байт.*KNOWN-RED count=0.*не судились 2.*потоков 3' "$TMP/pool.out"
 check "сводка считает все восемь: 6 совпали, 2 не судились, потоков 3" "$?" "0"
 grep -q 'pos_n4.nv: не судилась — novac отверг' "$TMP/pool.out"
 check "несудимая фикстура названа поимённо с причиной" "$?" "0"
@@ -187,7 +187,7 @@ scoped; check "restored manifest — green" "$RC" "0"
 : > "$SMOKE_TRACE"
 NOVAC_POOL_JOBS=1 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/discovery.out" 2>&1
 check "default discovery retains legacy plus registered fixtures" "$?" "0"
-grep -q 'ПОВЕДЕНИЕ: 2 из 3 байт-в-байт.*не судились 1' "$TMP/discovery.out"
+grep -q 'ПОВЕДЕНИЕ: совпали 2 из 3 байт-в-байт.*KNOWN-RED count=0.*не судились 1' "$TMP/discovery.out"
 check "default counts the union without duplicates" "$?" "0"
 grep -q '/pos_probe.nv$' "$SMOKE_TRACE" && grep -q '/registered_positive.nv$' "$SMOKE_TRACE"
 check "default actually runs both legacy and registered positives" "$?" "0"
@@ -198,7 +198,7 @@ check "extra arguments cannot silently select another scope" "$?" "1"
 : > "$MANIFEST"
 NOVAC_POOL_JOBS=1 NOVAC_CORPUS=0 sh "$G" "$FIX" "$TMP/bin.sh" > "$TMP/discovery.out" 2>&1
 check "empty extra manifest preserves a nonempty legacy selection" "$?" "0"
-grep -q 'ПОВЕДЕНИЕ: 1 из 1 байт-в-байт.*не судились 0' "$TMP/discovery.out"
+grep -q 'ПОВЕДЕНИЕ: совпали 1 из 1 байт-в-байт.*KNOWN-RED count=0.*не судились 0' "$TMP/discovery.out"
 check "empty registration adds no phantom fixture to legacy" "$?" "0"
 
 echo "итог: $PASS ok, $FAIL FAIL"

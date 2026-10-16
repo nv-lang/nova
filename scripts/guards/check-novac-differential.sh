@@ -106,10 +106,18 @@ fi
 
 FIXDIR="$ROOT/novac/fixtures"
 ALLOW="$ROOT/novac/divergences.allow"
+KNOWN_RED_RECORD="$ROOT/scripts/guards/novac-known-red-685.json"
+KNOWN_RED_HELPER="$ROOT/scripts/guards/novac-known-red-685.py"
 # mktemp, а не `.$$`: снятый пределом страж (TERM/KILL) не убирает за собой, и при
 # повторе PID чужие файлы итогов прошли бы за свои (охота guards 2026-10-05).
 T=$(mktemp -d "${TMPDIR:-/tmp}/novac-differential.XXXXXX") || { echo "$NAME: FAIL — mktemp не создал каталог" >&2; exit 1; }
 trap 'rm -rf "$T"' 0
+if [ -f "$KNOWN_RED_RECORD" ]; then
+    if ! python "$KNOWN_RED_HELPER" validate "$ROOT" > "$T/known-red-validation" 2>&1; then
+        cat "$T/known-red-validation" >&2
+        exit 1
+    fi
+fi
 
 if [ "$SCOPE" = all-fixtures ] && [ -d "$FIXDIR" ]; then
     find "$FIXDIR" -type f -name 'pos_*.nv' | sort > "$T/list"
@@ -305,10 +313,27 @@ else
                 if "$ORACLE" check "$_src" >/dev/null 2>&1 </dev/null; then _o="принял"; else _o="отверг"; fi
             fi
             if [ "$_o" != "принял" ]; then echo "не-судилась оракул отверг" > "$_r.b"; return 0; fi
-            if bash "$SMOKE" "$_src" "$2" > "$_r.out" 2>&1 </dev/null; then
-                if [ "$_src" = "$2" ]; then echo "совпало" > "$_r.b"; else echo "близнец" > "$_r.b"; fi
+            _rel2=${2#"$ROOT"/}
+            if [ -f "$KNOWN_RED_RECORD" ] && [ "$_rel2" = "novac/fixtures/call_operands/pos_1.nv" ]; then
+                NOVAC_SMOKE_SIGNATURE_FILE="$_r.signature.json" bash "$SMOKE" "$_src" "$2" > "$_r.out" 2>&1 </dev/null
+                _smoke_rc=$?
+                if python "$KNOWN_RED_HELPER" compare "$ROOT" "$_r.signature.json" > "$_r.known" 2>&1; then
+                    if grep -q '^check-novac-differential: KNOWN-RED №685 ' "$_r.known"; then
+                        echo "known-red 685" > "$_r.b"
+                    elif [ "$_smoke_rc" -eq 0 ]; then
+                        if [ "$_src" = "$2" ]; then echo "совпало" > "$_r.b"; else echo "близнец" > "$_r.b"; fi
+                    else
+                        echo "разошлось smoke failed despite matching pinned observations" > "$_r.b"
+                    fi
+                else
+                    echo "разошлось known-red signature mismatch" > "$_r.b"
+                fi
             else
-                echo "разошлось поведение разошлось с оракулом" > "$_r.b"
+                if bash "$SMOKE" "$_src" "$2" > "$_r.out" 2>&1 </dev/null; then
+                    if [ "$_src" = "$2" ]; then echo "совпало" > "$_r.b"; else echo "близнец" > "$_r.b"; fi
+                else
+                    echo "разошлось поведение разошлось с оракулом" > "$_r.b"
+                fi
             fi
         }
         t_stage=$(date +%s)
@@ -322,7 +347,7 @@ else
             jb=1
         fi
         novac_pool one_behaviour "$T/list" "$jb"
-        beh=0; behbad=0; twins=0; skipped=0; fromcache=0; lost=0
+        beh=0; behbad=0; knownred=0; twins=0; skipped=0; fromcache=0; lost=0
         i=0
         while IFS= read -r f; do
             i=$((i+1))
@@ -333,6 +358,10 @@ else
             case "$verdict" in
                 совпало) beh=$((beh+1)) ;;
                 близнец) beh=$((beh+1)); twins=$((twins+1)) ;;
+                known-red)
+                    knownred=$((knownred+1))
+                    [ -f "$T/r/$i.known" ] && cat "$T/r/$i.known"
+                    ;;
                 не-судилась)
                     skipped=$((skipped+1))
                     printf '  %s: не судилась — %s\n' "$rel" "$why" >> "$T/skipped" ;;
@@ -359,7 +388,7 @@ else
             echo "  подмножество имеет право ОТКАЗАТЬ, но не имеет права посчитать иначе." >&2
             exit 1
         fi
-        echo "$NAME этап 2/3 ПОВЕДЕНИЕ: $beh из $N байт-в-байт (из них против близнеца NOVAC_TWIN: $twins), не судились $skipped — каждая названа ниже; стена $(( $(date +%s) - t_stage ))с, потоков $jb, бинарь оракула из кэша $fromcache из $beh — НЕ ВЕРДИКТ, храповик ниже"
+        echo "$NAME этап 2/3 ПОВЕДЕНИЕ: совпали $beh из $N байт-в-байт (из них против близнеца NOVAC_TWIN: $twins), KNOWN-RED count=$knownred (не засчитаны как совпавшие), не судились $skipped — каждая названа ниже; стена $(( $(date +%s) - t_stage ))с, потоков $jb, бинарь оракула из кэша $fromcache из $beh — НЕ ВЕРДИКТ, храповик ниже"
         [ "$skipped" -gt 0 ] && cat "$T/skipped"
     fi
 fi

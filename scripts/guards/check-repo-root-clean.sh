@@ -71,6 +71,7 @@ ALLOWED_DIRS='
 .vscode
 bench
 compiler-codegen
+crew-projects
 docker
 docs
 editors
@@ -99,6 +100,7 @@ THIRD_PARTY
 # .opencode — обвязка OpenCode, как .claude для Claude Code (2026-10-03): отслеживаются
 # .opencode/agents/{defect-hunter,spec-reader}.md — указатели на агентов из .claude/agents.
 # Каталог конфигурации инструмента, а не черновик окна; удалять нельзя — агенты пропадут.
+# crew-projects — именованные настройки отдельных satellite-проектов CrewHarness, не scratch.
 
 FOUND=$(git -C "$ROOT" ls-files --full-name 2>/dev/null | grep -v '/')
 # core.quotepath=off: иначе путь с не-ASCII внутри приходит в кавычках и

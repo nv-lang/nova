@@ -283,14 +283,42 @@ eval "\"$REAL_CLANG\" $(tr '\n' ' ' < "$LINKCMD") -o \"$T/emitted_prog.exe\" \"$
     || fail "clang не слинковал: $(head -5 "$T/link.out")"
 
 # ---- 4. behavior diff ---------------------------------------------------
-"$ORACLE_EXE" > "$T/out.oracle" 2>&1 </dev/null; e_o=$?
-"$T/emitted_prog.exe"  > "$T/out.novac"  2>&1 </dev/null; e_n=$?
+"$ORACLE_EXE" > "$T/out.oracle" 2> "$T/err.oracle" </dev/null; e_o=$?
+"$T/emitted_prog.exe"  > "$T/out.novac"  2> "$T/err.novac" </dev/null; e_n=$?
+# Optional exact observation sidecar for the one registry-backed known-red.
+# Keep stdout and stderr separate; normalize only Windows CRLF to LF so the
+# signature describes program behavior rather than the host text mode.
+if [ -n "${NOVAC_SMOKE_SIGNATURE_FILE:-}" ]; then
+    python - "$NOVAC_SMOKE_SIGNATURE_FILE" "$T/out.oracle" "$T/err.oracle" "$e_o" \
+        "$T/out.novac" "$T/err.novac" "$e_n" <<'PY'
+import base64, json, pathlib, sys
+
+def observed(out_path, err_path, status):
+    def read(path):
+        return pathlib.Path(path).read_bytes().replace(b"\r\n", b"\n")
+    return {
+        "exit": int(status),
+        "stdout_b64": base64.b64encode(read(out_path)).decode("ascii"),
+        "stderr_b64": base64.b64encode(read(err_path)).decode("ascii"),
+    }
+
+payload = {
+    "oracle": observed(sys.argv[2], sys.argv[3], sys.argv[4]),
+    "carina": observed(sys.argv[5], sys.argv[6], sys.argv[7]),
+}
+pathlib.Path(sys.argv[1]).write_text(
+    json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+    encoding="utf-8",
+)
+PY
+fi
 # `head -3` показывал только «1c1», строку оракула и разделитель — НАШЕЙ строки
 # в отчёте не было вовсе (замерено 2026-08-27 на `[7, 8].cap()`: видно «< 8»,
 # не видно «> 2»). Отчёт, показывающий одну сторону расхождения, заставляет
 # лезть за второй руками — и это тот же класс, что «молчание читается как
 # успех». Двенадцать строк: хватает на несколько расходящихся строк вывода.
 cmp -s "$T/out.oracle" "$T/out.novac" || fail "stdout расходится (< оракул, > novac): $(diff "$T/out.oracle" "$T/out.novac" | head -12)"
+cmp -s "$T/err.oracle" "$T/err.novac" || fail "stderr расходится (< оракул, > novac): $(diff "$T/err.oracle" "$T/err.novac" | head -12)"
 [ "$e_o" -eq "$e_n" ] || fail "exit-коды расходятся: oracle=$e_o novac=$e_n"
 echo "novac-e1-smoke ok: $FILE — поведение идентично оракулу (stdout байт-в-байт, exit $e_o; оракул $EXE_FROM)"
 exit 0
