@@ -2,9 +2,13 @@
 # Nova Oracle 0.1.0 — release notes (alpha)
 
 **Nova Oracle 0.1.0** is an early alpha release. Oracle compiles
-to C and then to a native binary — there is no interpreter. Every
-function's side effects (`Db`, `Net`, `Io`, `Time`, `Fail`, ...) are part of
-its type signature and checked by the compiler. Memory is managed by a
+to C and then to a native binary — there is no interpreter. A function's
+direct effects (`Db`, `Net`, `Io`, `Time`, `Fail`, ...) are reflected in its
+type (inferred for private functions and explicit for exported APIs).
+Undeclared transitive capability effects are not reported by default in
+Oracle 0.1.0 (D62 specifies a warning, not implemented in this release).
+Experimental `--strict-effects` rejects them with
+`E_UNDECLARED_TRANSITIVE_EFFECT`; `Fail` is checked more strictly. Memory is managed by a
 Boehm GC by default; a type that opts into `@cleanup` gets an automatically
 inserted exit callback only for supported named bare consume-bindings
 (`consume x = ...`) when the value is still live (D432). Other binding forms
@@ -22,7 +26,11 @@ experimentation.
 ### Language
 
 - **Effects in function signatures** (`fn f(...) Db Net Fail -> T`):
-  side effects a function performs are visible in its type; a handler is
+  direct effects of a function are visible in its type; undeclared
+  transitive capability effects are not reported by default in Oracle
+  0.1.0 (D62 specifies a warning, not implemented in this release).
+  Experimental `--strict-effects` rejects them with
+  `E_UNDECLARED_TRANSITIVE_EFFECT`; `Fail` is checked more strictly. A handler is
   substituted via `with Handler = ... { body }`, which is also Nova's
   answer to mocking in tests — swap a handler, no mocking framework.
 - **`consume`/ownership with `defer`**: `defer { ... }` runs at every scope
@@ -50,8 +58,7 @@ experimentation.
   `reads`/`modifies`/`decreases`/`ghost let`/`assume`/`assert_static`),
   optional and gradual: without them the code behaves like an ordinary
   imperative language; with them the compiler attempts static proof and
-  falls back to a runtime check for what it can't prove, including in
-  release builds; a violation fails fast.
+  falls back to a runtime check for what it can't prove.
 - Folder-modules (a module is a single file or a folder of peer files
   sharing one namespace, Go-style), cross-file imports with cycle
   detection, file-level `#forbid Net, Fs` capability attributes.
@@ -59,9 +66,10 @@ experimentation.
   operations must now declare their full signature (`now() -> Timestamp
   =>`, ...; D434) instead of leaving it inferred. The built-in `Time`
   effect is fully typed end to end (`sleep(d Duration)`, `now() ->
-  Timestamp`, `now_monotonic() -> Monotonic`), and — like `Fs`/`Net` — it
-  must appear explicitly in a function's effect row; the previous
-  "ambient" carve-out for `Time` is gone (D62 retraction). An effect
+  Timestamp`, `now_monotonic() -> Monotonic`). Direct `Time` operations
+  must be declared explicitly in exported functions; private functions
+  infer direct effects (D28/D62). The previous "ambient" carve-out for
+  `Time` is gone (D62 retraction). An effect
   with one obvious default implementation can declare it once with
   `#default_handler(...)` (D431) for an opted-in effect instead of every
   call site wiring a handler by hand. Under strict effects, callers still
@@ -181,10 +189,10 @@ This is an early release; treat it accordingly.
 - **Release assets are manually prepared, not CI outputs.** CI also uploads
   benchmark results and test reports; those are not release binaries. A
   runner build alone does not establish that a distributable archive is ready.
-- **Contract verification beyond trivial cases needs Z3**, an optional
-  external dependency; without it, only reflexive/constant-foldable
-  contracts are statically proven, and the rest remain runtime checks in
-  release builds; violations fail fast.
+- **Unproven contracts are checked in release builds.** For `requires`,
+  `ensures`, and record `invariant`, conditions not proven by the compiler
+  remain runtime checks; violations fail fast. This behavior was verified
+  with the published Windows Oracle 0.1.0 archive using Clang.
 - **A vector literal reserves the default growth capacity, not the
   element count.** `[7, 8]` gives `len=2 cap=8` today; the spec (D239)
   pins the capacity to the element count, and the self-hosted compiler
