@@ -73,12 +73,13 @@
   * { box-sizing: border-box; }
   body {
     margin: 0;
+    overflow-x: clip;
     background: var(--bg);
     color: var(--ink);
     font: 16px/1.55 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   }
   a { color: var(--accent-ink); }
-  code, .mono { font-family: "IBM Plex Mono", Consolas, monospace; font-size: .92em; }
+  code, .mono { font-family: "IBM Plex Mono", Consolas, monospace; font-size: .92em; overflow-wrap: anywhere; }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 36px 24px 64px; }
   h1, h2, h3 { font-family: "Cormorant Garamond", Georgia, serif; text-wrap: balance; margin: 0; }
   h1 { font-size: 52px; line-height: 1.02; font-weight: 700; letter-spacing: -.01em; }
@@ -88,8 +89,8 @@
   .lead { font-size: 18px; color: var(--muted); max-width: 62ch; margin-top: 12px; }
   .eyebrow { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
   header { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
-  .meta { display: grid; gap: 8px; justify-items: end; font-size: 14px; color: var(--muted); }
-  .legend { display: flex; flex-wrap: wrap; gap: 8px; }
+  .meta { display: grid; min-width: 0; gap: 8px; justify-items: end; font-size: 14px; color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; max-width: 100%; gap: 8px; }
   .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; letter-spacing: .02em; white-space: nowrap; }
   .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
   .pill.ok { background: var(--ok-bg); color: var(--ok); }
@@ -102,7 +103,7 @@
 
   /* the line of stations */
   .line-scroll { overflow-x: auto; padding-bottom: 8px; }
-  .line { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(148px, 1fr); gap: 0; position: relative; min-width: 1060px; }
+  .line { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 0; position: relative; }
   .station { position: relative; padding: 34px 10px 0 10px; }
   .station::before { content: ""; position: absolute; left: 0; right: 0; top: 13px; height: 4px; background: var(--line); }
   .station.ok::before { background: var(--ok); }
@@ -123,8 +124,8 @@
   .fig .num { font-family: "Cormorant Garamond", Georgia, serif; font-size: 40px; line-height: 1; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--accent-ink); }
   .fig .lbl { font-size: 13.5px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
 
-  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 8px 4px; overflow-x: auto; box-shadow: var(--shadow); }
-  .diagram svg { display: block; min-width: 640px; font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
+  .diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 8px 4px; min-width: 0; overflow-x: hidden; box-shadow: var(--shadow); }
+  .diagram svg { display: block; width: 100%; min-width: 0; height: auto; font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif; }
   .diagram .band { fill: var(--surface-2); stroke: none; }
   .diagram .band-t { fill: var(--muted); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; font-weight: 600; }
   .diagram .node rect { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; }
@@ -146,20 +147,21 @@
   .glegend .sw { display: inline-block; width: 26px; height: 0; border-top: 2px solid var(--muted); vertical-align: middle; margin-right: 6px; }
   .glegend .sw.tmp { border-top-style: dashed; border-top-color: var(--tmp); }
   .glegend .sw.plan { border-top-style: dotted; border-top-color: var(--todo); }
-  .two { display: grid; grid-template-columns: 1.35fr 1fr; gap: 24px; align-items: start; }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
   @media (max-width: 860px) { .two { grid-template-columns: 1fr; } header { grid-template-columns: 1fr; } .meta { justify-items: start; } }
   ul.changes { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 10px; }
   ul.changes li { padding-left: 18px; position: relative; font-size: 15px; }
   ul.changes li::before { content: ""; position: absolute; left: 0; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
   ul.changes li b { font-weight: 600; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 15px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 15px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
   th { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--surface-2); }
   tr:last-child td { border-bottom: 0; }
   td.k { font-family: "IBM Plex Mono", Consolas, monospace; white-space: nowrap; font-size: 14px; }
   td.n { font-variant-numeric: tabular-nums; }
   .tscroll { overflow-x: auto; }
+  .tscroll .pill { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
   .waves { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
   .wave { background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--line); border-radius: 8px; padding: 12px 14px; }
