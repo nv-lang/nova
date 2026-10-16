@@ -488,9 +488,16 @@ and method gets a "safe" tag; what is not proven is unsafe
 (`E_FIBER_UNSAFE_CALL` on a call inside `spawn`/`detach`/`parallel for`, with
 the chain to the cause); the tag rests on no shared mutable state, a live lock,
 or a checked safe type. **Named limit:** an indirect call (a closure held in a
-local, a parameter or a field) is not judged by default yet — registry #866;
-the direction is accepted: a safety marker in the type of a function value
-(like Swift's `@Sendable`), its form a separate decision.
+ local, a parameter or a field) is not judged by default yet — registry #866;
+ the accepted specification direction is recorded in
+ [D493](decisions/04-effects.md#d493-маркерные-эффекты-безопасности-в-строках),
+ not a claim about current implementation: its marker set remains empty until a
+ separate stage, and this decision does not implement stages E1–E3. D493 makes
+ `forbid` in an effect row a guarantee only for marker effects; for capabilities
+ it is a documentary contract, while actual protection remains
+ `forbid X { body }` under D63. The specified `Exclusive` marker belongs in a
+ closure function type when capture aliases require exclusive access; an
+ undecided analysis is rejected (fail-closed).
 
 ## Roles — `throw` / `Fail[E]` / handler
 

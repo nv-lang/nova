@@ -1456,7 +1456,12 @@ static void _worker_main(void* arg) {
             }
         }
 
-        /* (3.5) Plan 83-go-cmn Ф.4: ONE post-steal global re-poll — a fiber may
+        /* [INV-GUARD: check-main-fiber-invariant.sh] The root main fiber must
+         * never migrate to a worker OS
+         * thread or enter the worker global run queue. This
+         * post-steal re-poll is worker-only; preserve that separation if the
+         * scheduler queues or steals are refactored.
+         * (3.5) Plan 83-go-cmn Ф.4: ONE post-steal global re-poll — a fiber may
          * have spilled into _nova_global_runq DURING the steal scan (which walks
          * every peer). Cheap single check before parking; no spin. */
         if (!co) {

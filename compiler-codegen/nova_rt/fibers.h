@@ -3123,7 +3123,12 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
  *
  * Если fiber-error appears — printf to stderr (диагностика), но
  * нормальный exit. */
-/* ─── 221.1 №1406: the main thread's blocking pump wait ────────────────────
+/* [INV-GUARD: check-main-fiber-invariant.sh] The root main fiber is resumed
+ * only by the main-thread pump;
+ * it never migrates to a worker OS thread. Any change that lets this pump
+ * dispatch the main fiber elsewhere must revisit the safety invariant in
+ * spec/decisions/06-concurrency.md.
+ * ─── 221.1 №1406: the main thread's blocking pump wait ────────────────────
  *
  * Every "all fibers parked — wait for an event" point on the main thread goes
  * through here. `_main_wake` (runtime.c) is uv_unref'd so that it never keeps
