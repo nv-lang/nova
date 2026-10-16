@@ -1,4 +1,36 @@
 {
   "project": "nova-duckdb",
-  "root": "../../../nova-duckdb"
+  "root": "../../../nova-duckdb",
+  "model_profiles": {
+    "codex": {
+      "heavy": {
+        "model": "openai/gpt-6-astra",
+        "context": 525000,
+        "input": 461000,
+        "output": 128000
+      },
+      "medium": {
+        "model": "openai/gpt-6.1-sol",
+        "context": 525000,
+        "input": 461000,
+        "output": 128000
+      },
+      "light": {
+        "model": "openai/gpt-6-luna",
+        "context": 525000,
+        "input": 461000,
+        "output": 128000
+      }
+    }
+  },
+  "profile_sets": {
+    "codex": {
+      "develop": { "family": "codex", "tier": "task" },
+      "accept": { "family": "codex", "tier": "task" },
+      "plan": { "family": "codex", "tier": "task" },
+      "plan_accept": { "family": "codex", "tier": "task" }
+    }
+  },
+  "profile_set": "codex",
+  "tier_max": "light"
 }
