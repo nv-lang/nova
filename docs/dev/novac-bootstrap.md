@@ -211,13 +211,13 @@ source SHA/version и compiler provenance; несовпадение должно
 Manifest меняется только в отдельно owner-named task; здесь его не редактировать.
 
 **Для Carina 0.3 — отдельный pin/provenance protocol, см. [274.16 Ш.0–Ш.7](../plans/274.16-carina-all-examples-and-packages.md).**
-Windows seed — опубликованный `nova-carina-0.2.0-windows-x86_64.zip` с digest из
-`SHA256SUMS`. Linux pinned B появится после отдельного A→B→C proof и выпуска
-0.2.1. До этого разрешён только явно названный временный режим: Oracle — stage-A
-compiler Carina source → Carina B → Carina C на том же source SHA/platform.
+Windows seed — Carina 0.2.1 alpha asset `nova-carina-0.2.1-windows-x86_64.zip`
+с digest из `SHA256SUMS`; его B/C fixed point не доказан. Linux остаётся
+отдельной будущей работой: до отдельного Linux A→B→C proof допустим только
+явно названный временный режим: Oracle — stage-A compiler Carina source → Carina B → Carina C на том же source SHA/platform.
 Linux examples/packages запускаются только под Carina-built B/C; CI report
 сохраняет stage provenance и явно помечает Oracle stage-A exception. Это не
-Linux B pin: до отдельного 0.2.1 proof/release нельзя утверждать B≡C или
+Для Linux до отдельного proof/release нельзя утверждать B≡C или
 Oracle-free bootstrap. Specs и golden outputs остаются нормативным судьёй;
 Oracle никогда не судит поведение. Fail closed при не объявленном stage-A
 fallback либо если Oracle используется как тестируемый compiler/binary; mismatch

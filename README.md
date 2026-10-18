@@ -269,6 +269,10 @@ repository also contains **Carina**, Nova's self-hosted compiler, under
 development in [`novac/`](https://github.com/nv-lang/nova/tree/main/novac).
 Carina is not a separately versioned
 package, and this mention does not imply full examples or package support.
+The Windows x86_64 Carina 0.2.1 alpha is documented in the
+[release notes](docs/dev/carina-release-notes-v0.2.1.md); it is an experimental
+B1 candidate, does not prove B/C fixed-point equality, and makes no
+Oracle-free-bootstrap claim. Linux is a separate future release track.
 
 - **compiler-codegen** — Rust implementation with parser,
   type-checker, and C-backend codegen.

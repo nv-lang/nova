@@ -1,9 +1,9 @@
 {
-  "asset_name": "nova-carina-0.2.0-windows-x86_64.zip",
-  "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.0/nova-carina-0.2.0-windows-x86_64.zip",
-  "sha256": "f9f973e2c83a930a68053b4952da47f4b72f8d50624fc6e86742da22fc4e12bf",
+  "asset_name": "nova-carina-0.2.1-windows-x86_64.zip",
+  "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.1/nova-carina-0.2.1-windows-x86_64.zip",
+  "sha256": "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb",
   "platform": "windows-x86_64",
-  "source_revision": "99756a8867f913bd6156ed10accf8a20edea00d1",
-  "compiler_provenance": "carina:99756a8867f913bd6156ed10accf8a20edea00d1",
+  "source_revision": "3729abcce42ec2d94efc898ec6eafe91ff6210d5",
+  "compiler_provenance": "carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0",
   "stage": "carina-b"
 }
