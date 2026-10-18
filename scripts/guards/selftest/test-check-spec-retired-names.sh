@@ -98,5 +98,21 @@ mk '  ничего лишнего' 0
 rm -f "$T/g/names.baseline"
 expect red "отсутствующая база"
 
-[ "$rc" -eq 0 ] && echo "test-check-spec-retired-names ok: живая половина зелёная, десять подделок судятся верно"
+# ── 11. граничный паттерн имени (форма `@name([^A-Za-z0-9_]|$)`): префикс
+#        живого имени не судится, вернувшееся снятое — красно (задача #101) ──
+# mk перезаписывает names.list дефолтом — свой список кладём ПОСЛЕ mk.
+mk11() {
+    mk "$1" 0
+    printf '%s\n' '@eq([^A-Za-z0-9_]|$) # D363 Plan 91.8b: == ушёл на Equal.@equal' \
+        '@le([^A-Za-z0-9_]|$) # D363 Plan 91.8b: <= ушёл на Compare.@compare' \
+        > "$T/g/names.list"
+}
+mk11 '  `s.@eq_ignore_ascii_case(t)` и `@len` — живые имена'
+expect green "граница имени: @eq_ignore_ascii_case и @len не судятся"
+mk11 '  fn User @eq(other Self) -> bool => @id == other.id'
+expect red "вернувшийся @eq в живом примере"
+mk11 '  fn User @le(other Self) -> bool => true'
+expect red "вернувшийся @le в живом примере"
+
+[ "$rc" -eq 0 ] && echo "test-check-spec-retired-names ok: живая половина зелёная, тринадцать подделок судятся верно"
 exit "$rc"

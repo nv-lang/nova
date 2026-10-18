@@ -27,3 +27,9 @@
 # ХРАПОВИК ВНИЗ: список пополняется, когда находится новое снятое имя;
 # сокращается, если имя вернулось в язык (тогда и правило про него исчезает).
 with_capacity # амендмент D372 от 2026-07-06 — заменён на `Self.new(cap)` плюс сеттер `mut @cap(n)`; std/src/collections/hash_map/core.nv:108,173 называет его «removed»/«ex-», оракул требует `.new()` + `.cap(n)` + `insert_new` (compiler-codegen/src/ast/mod.rs:893)
+@eq([^A-Za-z0-9_]|$) # D363 (Plan 91.8b, 2026-06-17): `==`/`!=` диспатчатся через Equal.@equal; граница обязательна — иначе матчит @eq_ignore_ascii_case; живые примеры сняты задачей #101 (2026-10-18)
+@lt([^A-Za-z0-9_]|$) # D363 (Plan 91.8b): `<` диспатчится через Compare.@compare
+@le([^A-Za-z0-9_]|$) # D363 (Plan 91.8b): `<=` через Compare.@compare; граница обязательна — иначе матчит @len
+@gt([^A-Za-z0-9_]|$) # D363 (Plan 91.8b): `>` через Compare.@compare
+@ge([^A-Za-z0-9_]|$) # D363 (Plan 91.8b): `>=` через Compare.@compare; граница обязательна — иначе матчит @get
+Nova_str_method_eq([^A-Za-z0-9_]|$) # D-R4 (Plan 152.5a): C-символ операторного сравнения str — Nova_str_method_equal (emit_c.rs nova_str BinOp arm); граница обязательна — иначе матчит префикс _equal

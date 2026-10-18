@@ -1238,9 +1238,19 @@ default = public. Convention `_prefix` для conventionally-private
 видимость через `export` / приватно ([07-modules.md → D47](07-modules.md#d47)).
 
 Зарезервированные имена для operator overloading: `@plus`, `@minus`,
-`@times`, `@div`, `@rem`, `@neg`, `@or`, `@and`, `@xor`, `@shl`,
-`@shr`, `@eq`, `@lt`, `@le`, `@gt`, `@ge`, `@not`, `@get`, `@set` —
-[D46](#d46-перегрузка-операторов-через--методы).
+`@times`, `@div`, `@rem`, `@neg`, `@bitor`, `@bitand`, `@bitxor`,
+`@bitnot`, `@shl`, `@shr` —
+[D46](#d46-перегрузка-операторов-через--методы); индексирование — `@index`
+([D238](#d238-indexk-v-protocol---akey-magic) /
+[D240](#d240-mutindexk-v-protocol---akey--val-magic)). Операторы сравнения
+идут не через magic-имена, а через протоколы `Equal.@equal` /
+`Compare.@compare`
+([D363](#d363-operator-dispatch-via-protocols--замена-magic-methods-plan-918b)).
+(Список приведён к факту 2026-10-18 по `compiler-codegen/src/codegen/operator_dispatch.rs`:
+прежние operator-dispatch имена `@eq`/`@lt`/`@le`/`@gt`/`@ge` удалены
+(Plan 91.8b); `@or`/`@and`/`@xor`/`@not` переименованы в
+`@bitor`/`@bitand`/`@bitxor`/`@bitnot`, причём `@not` retracted
+(D46-AMEND 2026-08-02, правило 5а); `@get`/`@set` вытеснены `@index`.)
 
 Test-имена — строки естественного языка: `test "insert and get" { ... }`.
 
@@ -3172,8 +3182,9 @@ fn Vector @times(other Vector) -> f64 => // dot product
 - [02-types.md](02-types.md) — отсутствие trait/impl.
 
 ### Эволюция
-Закрывает Q16 (bitflags): `type Permission(int)` с `@or`/`@and`/`@not`
-для `|`/`&`/`!`.
+Закрывает Q16 (bitflags): `type Permission(int)` с `@bitor`/`@bitand`/`@bitnot`
+для `|`/`&`/`~` (`!` не перегружается — D46-AMEND 2026-08-02, правило 5а;
+прежние имена `@or`/`@and`/`@not` retracted тем же амендментом 2026-07-27).
 
 ---
 
@@ -12190,12 +12201,18 @@ locale-НЕзависимое, как Rust/Go). Locale-aware collation — от�
 
 ### D-R4 ✅ DONE (2026-06-13) — декомиссия str-operator C-lowering
 `==`/`!=`/`<`/`<=`/`>`/`>=`/`+` для `str` теперь синтезируются из Nova-body методов
-(`emit_c.rs` nova_str BinOp arm): `==`/`!=` → `Nova_str_method_eq`, `<`/`<=`/`>`/`>=`
+(`emit_c.rs` nova_str BinOp arm): `==`/`!=` → `Nova_str_method_equal`, `<`/`<=`/`>`/`>=`
 → `Nova_str_method_compare(l,r) OP 0`, `+` → `Nova_str_method_concat`. Хардкод C
-`nova_str_lt`/`le`/`gt`/`ge` в operator-lowering снят; реестр str (`runtime_registry.rs`
-+ `str_method_to_rt`) теперь содержит **только `@hash`** (SipHash crypto-seed,
-неустраним). Method-form `s.eq(t)`/`s.lt(t)` falls through к тем же Nova-body.
-- **Nova-body на RawMem-примитивах:** `@eq` = length-first + `RawMem.compare` (memcmp);
+`nova_str_lt`/`le`/`gt`/`ge` в operator-lowering снят; из operator-dispatch записей
+реестра str остался **только `@hash`** (SipHash crypto-seed,
+неустраним): `runtime_registry.rs::str_runtime()` пуст (сам `@hash` захардкожен в
+`emit_c.rs`, Plan 172), а `str_method_to_rt` держит `@hash` и O(1) byte-примитивы
+(`@len`/`@byte_len`/`@byte_at`). Method-form `s.equal(t)`/`s.compare(t)` falls through
+к тем же Nova-body. (Имена приведены по факту на 2026-10-18: после Plan 91.8b/D363
+Nova-body методы называются `@equal`/`@compare`, C-символ `Nova_str_method_equal`;
+первоначальный текст блока писал `@eq`/`Nova_str_method_eq`/`s.eq(t)`/`s.lt(t)`
+по состоянию на 2026-06-13.)
+- **Nova-body на RawMem-примитивах:** `@equal` = length-first + `RawMem.compare` (memcmp);
   `@compare` = `RawMem.compare` + length-tiebreak; `@concat` = `with_capacity` + 2×
   `Vec.append` (memcpy) + steal. Те же примитивы, что и в снятых C-функциях.
 - **Бенч-паритет подтверждён:** 5M сравнений + 200k concat — before (C-операторы,
