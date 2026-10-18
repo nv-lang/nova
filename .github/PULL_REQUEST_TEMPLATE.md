@@ -7,11 +7,15 @@
 ## Registry entry
 
 <!-- Nova tracks defects in docs/plans/221.1-bug-sweep.md. If this fixes one,
-     name it: "Closes #NNN" (the registry number, not a GitHub issue number).
-     If it fixes something not yet recorded, say so — a maintainer will assign
-     a number. Work with no entry is invisible to planning. -->
+     name it with the registry form: "reg NNN" (no hash). "#N" is reserved for
+     GitHub issues and PRs — GitHub links every "#N" and CLOSES the issue on
+     the words closes/fixes/resolves, so a registry number written as "#NNN"
+     would point at, or close, an unrelated GitHub issue. If the PR fixes a
+     GitHub issue, that is where "Closes #NNN" belongs. If it fixes something
+     not yet recorded, say so — a maintainer will assign a number. Work with
+     no entry is invisible to planning. -->
 
-- Registry: #
+- Registry: reg 
 - Plan (if any):
 
 ## Fixing the class, not the carrier

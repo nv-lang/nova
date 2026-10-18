@@ -2,8 +2,14 @@
 """Ядро стража check-fixed-but-open.
 
 Считает строки реестра, которые стоят ОТКРЫТЫМИ, хотя коммит с заголовком
-`fix(#N)` / `feat(#N)` уже в истории СУДИМОГО ДЕРЕВА (`HEAD`, не `--all`:
+`fix(reg N)` / `feat(reg N)` уже в истории СУДИМОГО ДЕРЕВА (`HEAD`, не `--all`:
 ссылки других worktree в общем .git — не его история).
+
+ДВЕ ФОРМЫ НОМЕРА, и обе читаются НАВСЕГДА (задача 103, решение владельца
+2026-10-18: «закрепить #{N} за номером issue на github»). История несёт старую
+форму `fix(#N)` и не переписывается; новые коммиты пишут `fix(reg N)` — голое
+`#N` в новом сообщении отклоняет `check-commit-issue-refs.py` (хук commit-msg).
+Сканер обязан видеть обе, иначе он слепнет либо к прошлому, либо к будущему.
 
 Вывод — машинно-читаемые строки:
     unexpected=<N>      строк вне базы (это и есть отказ)
@@ -40,6 +46,11 @@ ST = re.compile(u"\\**\u0421\u0442\u0430\u0442\u0443\u0441\\**\\s*:\\s*\\**\\s*"
                 u"([A-Za-z\u0410-\u042f\u0430-\u044f]+)")
 OPEN_WORDS = (u"OPEN", u"\u041e\u0422\u041a\u0420\u042b\u0422")
 ROW = re.compile(r"^\|\s*(\d{2,4})\s*\|")
+
+# Номер строки реестра в скобке fix/feat/revert: старая форма `#628`
+# (история, не переписывается) и новая `reg 628` (задача 103, 2026-10-18).
+# Ограничение 2-4 цифры — прежнее, одинаковое для обеих форм.
+NUM = re.compile(r"(?:#|\breg\s+)(\d{2,4})")
 
 
 def rows_of(path):
@@ -88,7 +99,7 @@ def fixed_numbers(root, histfile):
         _sha, subj = line.split("|", 1)
         rm = re.match(r"^revert\(([^)]*)\)", subj.split(":", 1)[0])
         if rm:
-            for num in re.findall(r"#(\d{2,4})", rm.group(1)):
+            for num in NUM.findall(rm.group(1)):
                 reverted.add(int(num))
     for line in raw.split("\n"):
         if "|" not in line:
@@ -105,7 +116,7 @@ def fixed_numbers(root, histfile):
         m = re.match(r"^(?:fix|feat)\(([^)]*)\)", head)
         if not m:
             continue
-        for num in re.findall(r"#(\d{2,4})", m.group(1)):
+        for num in NUM.findall(m.group(1)):
             if int(num) in reverted:
                 continue
             seen.setdefault(int(num), sha.strip())

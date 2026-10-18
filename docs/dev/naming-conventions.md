@@ -104,6 +104,8 @@ _Нет открытых._ (M:N-рантайм получил имя **Vela** 20
 |---|---|---|
 | План | `docs/plans/NNN-kebab-case.md` | `222-http-framework.md` |
 | Под-план | `docs/plans/NNN.M-kebab-case.md` | `222.4-middleware.md` |
+| Задача CrewHarness | `task NNN` — минимум три цифры, БЕЗ `#` (норма про `#N`/`reg N` — в [dev-workflow.md §7](dev-workflow.md), один дом) | `task 094`, `task 1000` |
+| Строка реестра 221.1 в коммите | `reg N`, без `#` (там же; старая форма `fix(#N)` — только история) | `fix(reg 628)` |
 | Маркер незакрытой работы | `[M-kebab-case]`, живёт в `docs/plans/backlog-followups.md` | `[M-fn-newtype-return-position-broken]` |
 | D-блок спеки | `DNNN` в `spec/decisions/NN-тема.md` | `D246` в `02-types.md` |
 

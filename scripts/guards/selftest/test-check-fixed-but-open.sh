@@ -154,6 +154,29 @@ printf '%s\n' \
 mk "907:open"
 check "a revert of a DIFFERENT number cancels nothing" "$(run)" "1"
 
+# 17. НОВАЯ форма `fix(reg N)` (задача 103, решение владельца 2026-10-18:
+#     `#N` закреплено за GitHub issue/PR) читается так же, как старая: строка
+#     открыта, правка слита новой формой, базы нет -> отказ.
+printf '%s\n' \
+  'aaaaaaa|fix(reg 910): a landed fix in the post-103 form' > "$HIST"
+: > "$BASE"
+mk "910:open"
+check "the reg N form of a landed fix is read" "$(run)" "1"
+
+# 18. И обратная сторона: строка закрыта — новая форма зелёная (страж не стал
+#     строже самого себя, он лишь читает вторую форму записи).
+mk "910:closed"
+check "the reg N form against a closed row is green" "$(run)" "0"
+
+# 19. Откат новой формой отменяет фикс новой формы — та же пара, что 15/16,
+#     но на `reg N`: иначе 17 не доказывает, что откат виден.
+printf '%s\n' \
+  'eeeeeee|revert(reg 911): the fix is removed' \
+  'fffffff|fix(reg 911): a fix that was later reverted' > "$HIST"
+: > "$BASE"
+mk "911:open"
+check "a later revert(reg N) cancels fix(reg N)" "$(run)" "0"
+
 echo "  passed: $PASS   failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
