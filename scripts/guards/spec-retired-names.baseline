@@ -20,11 +20,18 @@
 #   Первый прогон до этой правки давал 58; четыре ушли с исключением
 #   `history/`, одно — правкой D55 (№844), где снятый метод стоял в ПРОТОКОЛЕ,
 #   то есть тип, написанный по спеке, получил бы CC-FAIL на ровном месте.
-spec/decisions/02-types.md 22
-spec/decisions/03-syntax.md 16
+# 2026-10-18 — список пополнен именами D363 (Plan 91.8b): `@eq`/`@lt`/`@le`/
+#   `@gt`/`@ge` и C-символом `Nova_str_method_eq`, все с обязательной границей
+#   `([^A-Za-z0-9_]|$)` (иначе `@le` матчит `@len`, `@ge` — `@get`, а
+#   `Nova_str_method_eq` — префикс `_equal`). Живые примеры 02-types/03-syntax/
+#   08-runtime переведены на `@equal`/`@compare` задачей #101; остаток —
+#   законная история (записи об удалении в 03-syntax и README) и строки с
+#   маркером «снят». База пересчитана командой из шапки.
+spec/decisions/02-types.md 23
+spec/decisions/03-syntax.md 33
 spec/decisions/05-memory.md 1
 spec/decisions/06-concurrency.md 6
 spec/decisions/08-runtime.md 5
 spec/decisions/09-tooling.md 1
 spec/decisions/10-overloading.md 1
-spec/decisions/README.md 1
+spec/decisions/README.md 3

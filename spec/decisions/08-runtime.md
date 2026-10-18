@@ -4442,9 +4442,12 @@ Codegen диспатчит `obj.method(...)` для `obj: str` через Plan 5
 3. Фильтр `!is_external` — Nova-body методы получают `is_external = false`
 4. Генерируется вызов `Nova_str_method_<name>(obj, args...)`
 
-External fn методы (`@len`, `@eq`, `@split`, ...) имеют `is_external = true`
+External fn методы (`@len`, `@byte_at`, `@hash`, ...) имеют `is_external = true`
 и **не перехватываются** Plan 54 Ф.2 — они продолжают диспатчиться через
 `str_method_to_rt` → прямые C функции (без изменения поведения).
+(Примеры обновлены 2026-10-18 по факту `str_method_to_rt`: `@eq` снят с
+C-диспатча декомиссией D-R4, `@split` мигрирован в Nova-body Plan 139.2 Ф.2 —
+в исходном тексте блока стояли они.)
 
 #### 4. Generated C names
 
@@ -4489,10 +4492,11 @@ static inline nova_str Nova_StringBuilder_consume_into(Nova_StringBuilder* b) {
   `std.prelude.collections.{StringBuilder}` разрывают цикл `prelude → string → prelude`.
 - **Single source of truth** — логика `replace` (concat-loop вместо
   `[]str.join`) написана один раз на Nova; C bootstrap shim'ы удалены.
-- **Backward compatible** — external fn методы (`@len`, `@eq`, `@split`, ...)
+- **Backward compatible** — external fn методы (`@len`, `@byte_at`, `@hash`, ...)
   продолжают использовать `str_method_to_rt` без изменений. Фильтр
   `!is_external` в Plan 54 Ф.2 гарантирует, что только Nova-body методы
-  перехватываются.
+  перехватываются. (Примеры обновлены 2026-10-18: `@eq`/`@split` сняты из
+  external — D-R4 и Plan 139.2 Ф.2 соответственно.)
 
 ### Связь
 

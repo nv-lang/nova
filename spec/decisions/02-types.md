@@ -615,7 +615,7 @@ match @buckets[idx] {
 4. **Парсинг `type X Y` (newtype) vs `type X` (unit)** — различие по
    следующему токену (тип vs конец строки). Просто, но требует
    внимательности.
-5. **`|` имеет двойную роль** — разделитель в sum и `@or` в
+5. **`|` имеет двойную роль** — разделитель в sum и `@bitor` в
    операторах ([D46](03-syntax.md#d46)). Парсер различает по
    контексту.
 
@@ -633,7 +633,7 @@ match @buckets[idx] {
 - [03-syntax.md → D44](03-syntax.md#d44) — числовые литералы
   (`0xFF`, `1_000`, негативные) — используются для discriminants.
 - [03-syntax.md → D46](03-syntax.md#d46) — `|` в operator
-  overloading (`@or`) — разрешается компилятором по контексту.
+  overloading (`@bitor`) — разрешается компилятором по контексту.
   Полная семантика overloading — [D84](10-overloading.md#d84).
 
 ### Открытые вопросы
@@ -902,7 +902,7 @@ type Result[T, E] enum                   // многострочный — | о�
 - [D53](#d53-унификация-protocol-под-type-protocol-как-kind-токен) — `protocol`/`effect` kind-токены в той же системе
 - [D310](#d310-type-set-bounds-plan-1723) — `set` kind-токен в той же системе; `|` в type-set тоже разделитель, не оператор
 - [D55](#d55-literal-coercion-в-позиции-с-явным-типом-sum-конструкторы-и-record-литералы) — literal coercion в позиции sum-type (inline `enum` тоже)
-- [03-syntax.md → D46](03-syntax.md#d46) — `|` как `@or` оператор — разрешается по контексту (keyword `enum`/`set` или expr-контекст)
+- [03-syntax.md → D46](03-syntax.md#d46) — `|` как `@bitor` оператор — разрешается по контексту (keyword `enum`/`set` или expr-контекст)
 - [Plan 105](../../docs/plans/105-sum-type-explicit-base.md) — явный базовый тип discriminants
 - [D478](#d478-разрешение-голого-имени-варианта-по-ожидаемому-типу-иначе-квалификация-2026-09-16) — как читается имя варианта, написанное БЕЗ имени типа
 
@@ -4637,7 +4637,7 @@ fn dump_one(x Hash) -> u64 => x.hash()
 protocol-тип через `protocol { ... }` (D53):
 
 ```nova
-fn min[T protocol { @lt(other Self) -> bool, @eq(other Self) -> bool }](xs []T) -> T
+fn min[T protocol { @compare(other Self) -> int, @equal(other Self) -> bool }](xs []T) -> T
 ```
 
 Долго, но без специального синтаксиса для intersection bound'ов.
@@ -4645,8 +4645,8 @@ fn min[T protocol { @lt(other Self) -> bool, @eq(other Self) -> bool }](xs []T) 
 
 ```nova
 type Ord protocol {
-    @lt(other Self) -> bool
-    @eq(other Self) -> bool
+    @compare(other Self) -> int
+    @equal(other Self) -> bool
 }
 
 fn min[T Ord](xs []T) -> T => ...
@@ -4709,9 +4709,10 @@ protocol'а** (структурно). Никаких явных `impl`/declarati
 type User { id u64 }
 
 fn User @hash() -> u64 => @id
-fn User @eq(other Self) -> bool => @id == other.id
+fn User @equal(other Self) -> bool => @id == other.id
 
-// User автоматически удовлетворяет Hash, потому что есть @hash и @eq
+// Hash требует только @hash (std/prelude/protocols.nv); @equal нужен
+// для `==` на ключах при разрешении коллизий (D363)
 ro m HashMap[User, str] = HashMap.new()       // ok
 ```
 
@@ -7666,7 +7667,7 @@ fn close_all(items []protocol { close() -> () }) {
     for it in items { it.close() }
 }
 
-fn min[T protocol { @lt(other Self) -> bool }](xs []T) -> Option[T] => ...
+fn min[T protocol { @compare(other Self) -> int }](xs []T) -> Option[T] => ...
 ```
 
 Body анонимного protocol — **тот же синтаксис**, что у named: bare-имена =
@@ -12471,7 +12472,7 @@ Field's effective priv_field = first matching:
 priv field access РАЗРЕШЁН только из методов own type'а:
 - Instance methods: `fn TypeX @method() { @priv_field }`
 - Static methods: `fn TypeX.factory(...) { ... }`
-- **Cross-instance:** `fn TypeX @eq(other TypeX) -> bool => @f == other.f` — доступ к `priv` полям **другого экземпляра того же типа** разрешён внутри метода этого типа. `other` — параметр типа `TypeX`, метод принадлежит `TypeX` → privacy scope совпадает.
+- **Cross-instance:** `fn TypeX @equal(other TypeX) -> bool => @f == other.f` — доступ к `priv` полям **другого экземпляра того же типа** разрешён внутри метода этого типа. `other` — параметр типа `TypeX`, метод принадлежит `TypeX` → privacy scope совпадает.
 
 priv field access ЗАПРЕЩЁН во всех других контекстах:
 - Read: `outside.priv_field` → E_PRIV_FIELD_READ
@@ -16661,7 +16662,7 @@ Module-private field (из type-level `priv` default, без explicit field `pri
 
 Type-private field (explicit `priv(type)` field, OR type-level `priv(type)` default):
 - **Same module, non-method:** read → `E_PRIV_FIELD_READ` (D220 error codes unchanged).
-- **Own-type method:** РАЗРЕШЁН — включая cross-instance: `fn T @eq(other T) -> bool => @f == other.f` читает `other.f` внутри метода `T` (см. D220 §3).
+- **Own-type method:** РАЗРЕШЁН — включая cross-instance: `fn T @equal(other T) -> bool => @f == other.f` читает `other.f` внутри метода `T` (см. D220 §3).
 
 #### §4 Error codes
 
