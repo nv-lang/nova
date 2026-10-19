@@ -21,6 +21,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+pub use nova_driver_support::{parse_size_to_bytes, FfiConfig, RuntimeConfig};
 use std::process::Command;
 
 /// Plan 03.1: git-пин зависимости.
@@ -195,70 +196,6 @@ pub struct Manifest {
     /// Триггерит `W_OVERRIDE_TOML_DEPRECATED` (`manifest_warnings`). `false`,
     /// если override-файла нет вовсе, либо присутствует новое имя.
     pub override_legacy_name_used: bool,
-}
-
-/// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
-///
-/// `fiber_stack` — per-fiber stack slot size (human-friendly `"4MB"` или bare
-/// bytes `"4194304"`). `fibers_per_worker` — max concurrent fibers per worker
-/// (`"16384"`). Both baked as compile-time `-D...DEFAULT` flags; the
-/// corresponding env var (NOVA_FIBER_STACK / NOVA_FIBERS_PER_WORKER) overrides at
-/// runtime. Stored as raw strings; `parse_size_to_bytes` converts to the raw
-/// integer the C `#define` consumes.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RuntimeConfig {
-    /// "4MB" | "4194304" — per-fiber stack slot size.
-    pub fiber_stack: Option<String>,
-    /// "16384" — max concurrent fibers per worker.
-    pub fibers_per_worker: Option<String>,
-}
-
-/// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section config.
-///
-/// Все пути относительные к директории `nova.toml`. Test_runner +
-/// build pipeline резолвят их в absolute paths перед передачей clang.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct FfiConfig {
-    /// Список C / header файлов для compilation. Header-only inline shim'ы
-    /// (как `nova_rt/sqlite_mini_ffi.h`) включаются через `#include`,
-    /// .c файлы compilation units компилируются и линкуются.
-    pub c_shims: Vec<String>,
-    /// Include directories для clang `-I`. Дают доступ к user shim header'ам
-    /// и third-party C library headers.
-    pub include_dirs: Vec<String>,
-    /// Plan 193 Ф.2 gap-1: library search directories для linker `-L`
-    /// (Clang/GCC) / `/LIBPATH:` (MSVC) — non-default-path native libs
-    /// (напр. vcpkg install без system-wide регистрации). Пусто → только
-    /// toolchain default search path (Windows: нет системного аналога
-    /// `/usr/lib` — без `lib_dirs` non-default `.lib` не найдётся).
-    pub lib_dirs: Vec<String>,
-    /// System library names для clang `-l<name>` linking. Например
-    /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
-    pub libs: Vec<String>,
-    /// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): vendored C source
-    /// directories to build-and-cache when a declared `libs` entry is
-    /// missing from `lib_dirs` — generic "195-pattern" extension of the
-    /// monorepo's libuv one-time-build-and-cache precedent
-    /// (`detect_or_build_libuv` in `test_runner.rs`), so ANY native module
-    /// can vendor upstream C sources instead of requiring a prebuilt
-    /// system/vcpkg lib. All `.c` files directly under each declared dir
-    /// (non-recursive — matches typical upstream `library/`-style flat
-    /// layouts, e.g. mbedTLS) are compiled + archived into `lib_dirs[0]`
-    /// under EVERY name declared in `libs` (see
-    /// `test_runner::build_missing_vendor_ffi_libs`). Empty (default) — no
-    /// vendor build attempted, unchanged legacy behaviour (falls through to
-    /// the existing `first_missing_ffi_lib` detect-and-degrade probe).
-    pub vendor_src_dirs: Vec<String>,
-    /// D466 (2026-09-09): the package links a C++ library, so the LINK step must
-    /// run through a C++ driver (`clang++`/`g++`) instead of the C one. A static
-    /// C++ archive does not carry its standard library: MSVC picks it up from
-    /// directives inside the objects, ELF toolchains have no such thing and rely
-    /// on the driver to add it. Declaring the LANGUAGE of the library is the true
-    /// fact; `libs.linux = ["stdc++"]` would make every package author re-derive
-    /// per platform what the toolchain already knows, and on Windows such an entry
-    /// degrades the package into a SILENT FfiLibNotFound skip (measured on
-    /// nova-duckdb, 2026-09-09). Default false — unchanged behaviour.
-    pub cxx: bool,
 }
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
@@ -997,36 +934,6 @@ pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning>
 /// Plan 149 D233: parse a human-friendly size/count string into a raw integer
 /// (bytes for stack, count for fibers) — the value baked into a C `#define`.
 ///
-/// Mirrors the C `_nova_parse_size_env` parser: bare integer, or KB/K/MB/M/GB/G
-/// suffix (case-insensitive, binary: KB=1024, MB=1024², GB=1024³). Returns
-/// `None` on garbage (caller emits a build warning and SKIPS the -D, falling
-/// back to the builtin #define) so the compiler never receives a malformed
-/// `#define X <garbage>`.
-pub fn parse_size_to_bytes(s: &str) -> Option<u64> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-    // Split leading digits from optional suffix.
-    let digit_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    if digit_end == 0 {
-        return None; // no leading digits
-    }
-    let num: u64 = s[..digit_end].parse().ok()?;
-    let suffix = s[digit_end..].trim();
-    let mult: u64 = match suffix.to_ascii_uppercase().as_str() {
-        "" => 1,
-        "K" | "KB" => 1024,
-        "M" | "MB" => 1024 * 1024,
-        "G" | "GB" => 1024 * 1024 * 1024,
-        _ => return None, // unknown suffix
-    };
-    if num == 0 {
-        return None; // zero is not a valid size/count
-    }
-    num.checked_mul(mult)
-}
-
 /// Plan 62.F.bis Ф.1: sanitize edition string для filesystem path + Nova
 /// identifier rules.
 ///
@@ -2240,5 +2147,16 @@ mod parse_tests {
         std::fs::write(std_dir.join("nova.toml"), "[package]\nname = \"std\"\n").unwrap();
         assert_eq!(resolve_std_path(&dir), std_dir);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+
+impl nova_driver_support::ManifestFfiView for Manifest {
+    fn manifest_dir(&self) -> &Path {
+        &self.manifest_dir
+    }
+
+    fn ffi_config(&self) -> Option<&FfiConfig> {
+        self.ffi.as_ref()
     }
 }

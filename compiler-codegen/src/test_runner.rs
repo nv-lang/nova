@@ -433,7 +433,21 @@ pub fn parse_expect(src: &str) -> Vec<ExpectMarker> {
 
 // ---------- toolchain detection ----------
 
-pub use nova_driver_support::{bytes_to_string, detect_toolchain, Mode, Toolchain, ToolchainOpts, ToolchainPref};
+pub use nova_driver_support::{bytes_to_string, detect_toolchain, strip_verbatim_prefix, BoehmConfig, BuildOpts, GcKind, GcKindTag, LibuvConfig, Mode, ResolvedFfiConfig, Toolchain, ToolchainOpts, ToolchainPref};
+use crate::link_prep::first_missing_ffi_lib;
+pub use crate::link_prep::build_missing_vendor_ffi_libs;
+
+fn ffi_have_defines(ffi: &ResolvedFfiConfig) -> Vec<String> {
+    if ffi.lib_dirs.is_empty() || !ffi.libs.is_empty() && first_missing_ffi_lib(ffi).is_some() {
+        return Vec::new();
+    }
+    ffi.libs.iter().map(|lib| {
+        let sanitized: String = lib.chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
+            .collect();
+        format!("NOVA_FFI_HAVE_{}", sanitized)
+    }).collect()
+}
 
 /// Поиск исполняемого в `PATH` — кросс-платформенный аналог `which` / `Get-Command`.
 fn which(name: &str) -> Option<PathBuf> {
@@ -563,236 +577,6 @@ fn march_flag_for(native: bool) -> &'static str {
 
 fn march_flag() -> String {
     march_flag_for(std::env::var("NOVA_MARCH_NATIVE").as_deref() == Ok("1")).to_string()
-}
-
-/// Plan 22: конфигурация libuv для линковки в test-exe.
-/// Plan 22 F2: libuv mandatory. detect_or_build_libuv больше не возвращает
-/// None — panic'ит если libuv не build'ится. Option<&'a LibuvConfig> в
-/// BuildOpts остаётся для API gradual transition, но в реальном flow
-/// всегда Some(_).
-/// path + library file + extra runtime sources.
-#[derive(Clone)]
-pub struct LibuvConfig {
-    pub include_dir: PathBuf,    /* path to libuv/include */
-    pub lib_file: PathBuf,       /* path to libuv.lib (Windows) / libuv.a (Unix) */
-    pub eventloop_src: PathBuf,  /* nova_rt/eventloop.c */
-}
-
-/// Plan 27 Ф.D (audit 2026-05-12): Boehm GC paths resolved at startup.
-///
-/// На Windows: vcpkg-installed gc.lib + atomic_ops.lib + headers.
-/// Lookup order:
-///   1. `$NOVA_GC_LIB_DIR` + `$NOVA_GC_INCLUDE_DIR` env override (CI/custom).
-///   2. Local vcpkg: `<cg_include>/vcpkg_installed/x64-windows-static/`.
-///   3. Global vcpkg: `$VCPKG_ROOT/installed/x64-windows-static/`.
-///
-/// На Linux/macOS: system libgc через `-lgc` (path-less). `include_dir`
-/// проверяется только для diagnostic-hint'а (`/usr/include/gc.h` etc.).
-///
-/// Если backend = Boehm и detection fail → `detect_boehm` возвращает None
-/// с graceful eprintln-hint'ом (см. resolve_gc_or_exit).
-#[derive(Clone)]
-pub struct BoehmConfig {
-    /// Headers path (для `-I`). На Linux/macOS может быть None (system include).
-    pub include_dir: Option<PathBuf>,
-    /// Library directory (для `-L`/MSVC `/link <dir>\gc.lib`). На Linux/macOS
-    /// = None → линкер ищет в system path через `-lgc`.
-    pub lib_dir: Option<PathBuf>,
-}
-
-/// GC backend selection. Wired through BuildOpts → build_command.
-/// Malloc = plain malloc, no GC (internal/benchmark only — any loop that
-/// allocates will OOM eventually; not for production use).
-/// Plan 27 Ф.4: Boehm is the default GC backend.
-/// Malloc kept for runtime benchmarks/development (--gc malloc).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum GcKind {
-    Malloc,
-    #[default]
-    Boehm,
-}
-
-impl GcKind {
-    pub fn parse(s: &str) -> Result<Self> {
-        match s {
-            "malloc" => Ok(GcKind::Malloc),
-            "boehm"  => Ok(GcKind::Boehm),
-            _ => Err(anyhow!("unknown gc backend `{}` (expected malloc|boehm)", s)),
-        }
-    }
-
-    pub fn alloc_c_name(self) -> &'static str {
-        match self {
-            GcKind::Malloc => "alloc.c",
-            GcKind::Boehm  => "alloc_boehm.c",
-        }
-    }
-
-    /// Конвертирует в GcKindTag (без данных) для AllocConstraint проверки.
-    pub fn tag(self) -> GcKindTag {
-        match self {
-            GcKind::Malloc => GcKindTag::Malloc,
-            GcKind::Boehm  => GcKindTag::Boehm,
-        }
-    }
-}
-
-/// Plan 115 D214 [M-115-ffi-build-pipeline]: resolved [ffi] config.
-/// Paths уже абсолютные (resolved от nova.toml dir).
-#[derive(Debug, Clone, Default)]
-pub struct ResolvedFfiConfig {
-    pub c_shims: Vec<PathBuf>,
-    pub include_dirs: Vec<PathBuf>,
-    /// Plan 193 Ф.2 gap-1: linker search directories (`-L`/MSVC
-    /// `/LIBPATH:`) for `libs` below — resolved absolute, same
-    /// manifest-dir-relative contract as `c_shims`/`include_dirs`.
-    pub lib_dirs: Vec<PathBuf>,
-    pub libs: Vec<String>,
-    /// Plan 193 Ф.2 gate-3: vendored C source dirs for generic
-    /// build-and-cache (`manifest::FfiConfig::vendor_src_dirs` doc-comment).
-    pub vendor_src_dirs: Vec<PathBuf>,
-    /// D466: link through a C++ driver. See `manifest::FfiConfig::cxx`.
-    pub cxx: bool,
-}
-
-/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): Windows
-/// `std::fs::canonicalize` always returns a `\\?\`-verbatim-prefixed path —
-/// the origin here is `manifest::find_manifest`'s canonicalize call, which
-/// `ResolvedFfiConfig::from_manifest`'s `manifest_dir.join(p)` inherits for
-/// EVERY `[ffi]`-declared path. Empirically confirmed (both cl.exe AND
-/// clang, so not an MSVC-only quirk): a `\\?\`-prefixed path given as a
-/// SOURCE FILE or `-I`/`/I` search directory fails to resolve (`c1: fatal
-/// error C1083` / `fatal error: '...' file not found`) even though the
-/// underlying file/dir exists and the SAME path minus the prefix compiles
-/// clean — this had simply never been exercised end-to-end before
-/// (existing `[ffi]` consumers' shims are either header-free or don't
-/// `#include` anything from their own declared `include_dirs`). Strip the
-/// prefix once, here, at the one place ALL `[ffi]` paths are constructed —
-/// every downstream consumer (`build_command`'s 3 toolchain branches, the
-/// vendor build-and-cache mechanism below) inherits the fix for free.
-/// A no-op on non-Windows (canonicalize there never adds this prefix).
-/// `pub(crate)` (Ф.1 #268 link-prep extraction, 2026-08-02): `link_prep.rs`
-/// (vendor-FFI build-and-cache, moved out of this file) needs it too — the
-/// contract/ownership stays HERE (this is where `[ffi]` paths are first
-/// constructed, in `ResolvedFfiConfig::from_manifest` below), `link_prep`
-/// just imports it.
-pub(crate) fn strip_verbatim_prefix(p: &Path) -> PathBuf {
-    match p.to_string_lossy().strip_prefix(r"\\?\") {
-        Some(rest) => PathBuf::from(rest),
-        None => p.to_path_buf(),
-    }
-}
-
-impl ResolvedFfiConfig {
-    /// Plan 115: собрать resolved `[ffi]` из манифеста (paths → абсолютные
-    /// от директории `nova.toml`, D214 doc-contract — см.
-    /// `manifest::FfiConfig`). Plan 193 Ф.1 continuation (2026-07-12): было
-    /// `m.source_root`, которая расходится с `nova.toml`-директорией для
-    /// канонической раскладки `[lib] src = "<subdir>"` (эталон — `nova-tls`,
-    /// `src = "src"`; амендмент Plan 195, а не back-compat),
-    /// ломая `c_shims`/`include_dirs` на любом пакете с non-trivial `[lib]
-    /// src` — `manifest_dir` всегда = директория `nova.toml`.
-    /// None — у манифеста нет `[ffi]`.
-    pub fn from_manifest(m: &crate::manifest::Manifest) -> Option<Self> {
-        let cfg = m.ffi.as_ref()?;
-        let base = m.manifest_dir.clone();
-        Some(ResolvedFfiConfig {
-            c_shims: cfg.c_shims.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
-            include_dirs: cfg.include_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
-            lib_dirs: cfg.lib_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
-            libs: cfg.libs.clone(),
-            vendor_src_dirs: cfg.vendor_src_dirs.iter().map(|p| strip_verbatim_prefix(&base.join(p))).collect(),
-            cxx: cfg.cxx,
-        })
-    }
-
-    /// Plan 03.1 (ext-dep native/FFI propagation): смёржить `[ffi]` внешней
-    /// (`path`/`git`) зависимости в СВОЙ resolved config. `c_shims` /
-    /// `include_dirs` / `lib_dirs` / `libs` — конкатенация (свои первыми,
-    /// `lib_dirs`/`libs` дедуплицируются).
-    pub fn merge(&mut self, other: ResolvedFfiConfig) {
-        self.c_shims.extend(other.c_shims);
-        self.include_dirs.extend(other.include_dirs);
-        for dir in other.lib_dirs {
-            if !self.lib_dirs.contains(&dir) {
-                self.lib_dirs.push(dir);
-            }
-        }
-        for lib in other.libs {
-            if !self.libs.contains(&lib) {
-                self.libs.push(lib);
-            }
-        }
-        for dir in other.vendor_src_dirs {
-            if !self.vendor_src_dirs.contains(&dir) {
-                self.vendor_src_dirs.push(dir);
-            }
-        }
-    }
-}
-
-/// Ф.1 (#268 [M-tls-vendor-autobuild-not-on-build-path], 2026-08-02):
-/// `ffi_lib_candidate_names`/`first_missing_ffi_lib` moved to
-/// `crate::link_prep` — the shared link-preparation module now called from
-/// BOTH `nova build` (`nova-cli::cmd_build`) and `nova test` (`run_one`
-/// below), instead of living only in this test-runner file. Re-exported
-/// here via `use` so the rest of this file's call sites (`ffi_have_defines`,
-/// `run_one`) need no further changes beyond the `link_prep::` prefix.
-use crate::link_prep::first_missing_ffi_lib;
-
-/// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): generic compile-time
-/// feature-gate defines for `[ffi] libs` — `NOVA_FFI_HAVE_<LIB>` (sanitized
-/// uppercase) per lib name, emitted ONLY when `first_missing_ffi_lib`
-/// confirms all declared libs are actually present (never emitted on a path
-/// that's about to SKIP — a shim gated on this define must never reference
-/// symbols the linker won't find). Lets a package's own `.c` shim tell real
-/// backend from feature-gate-stub at compile time WITHOUT the compiler
-/// hardcoding any specific library's name (mirrors the now-guarded-off
-/// built-in `NOVA_USE_MBEDTLS` monorepo special-case one层 up, generalized —
-/// nova-tls's `native/tls_c_shim.c` checks `NOVA_FFI_HAVE_MBEDTLS`).
-/// `lib_dirs` empty (no explicit search path, same precedent as
-/// `first_missing_ffi_lib`) → no defines (can't verify presence, and the
-/// legacy system-`-l`-search consumers predate this mechanism / don't need
-/// it — unchanged behaviour).
-fn ffi_have_defines(ffi: &ResolvedFfiConfig) -> Vec<String> {
-    if ffi.lib_dirs.is_empty() || !ffi.libs.is_empty() && first_missing_ffi_lib(ffi).is_some() {
-        return Vec::new();
-    }
-    ffi.libs.iter().map(|lib| {
-        let sanitized: String = lib.chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
-            .collect();
-        format!("NOVA_FFI_HAVE_{}", sanitized)
-    }).collect()
-}
-
-/// Ф.1 (#268 [M-tls-vendor-autobuild-not-on-build-path], 2026-08-02):
-/// `VENDOR_FFI_BUILD_LOCK`/`build_missing_vendor_ffi_libs`/
-/// `build_vendor_ffi_lib` moved to `crate::link_prep` (the shared
-/// link-preparation module now called from both `nova build` and
-/// `nova test`) — re-exported here so `run_one` below needs no further
-/// changes beyond this `use`.
-pub use crate::link_prep::build_missing_vendor_ffi_libs;
-
-/// Параметры сборки одного теста.
-pub struct BuildOpts<'a> {
-    pub c_file: &'a Path,
-    pub exe_file: &'a Path,
-    pub obj_dir: &'a Path,
-    pub cg_include: &'a Path,
-    pub rt_dir: &'a Path,
-    pub mode: Mode,
-    pub libuv: Option<&'a LibuvConfig>,
-    /// Plan 27 Ф.1: GC backend. Default = Malloc (current behavior).
-    pub gc_kind: GcKind,
-    /// Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI shim files + libs
-    /// from `[ffi]` section в package nova.toml. None — нет [ffi] config'а
-    /// для test_file's package; пустой Some(...) — секция есть но пуста.
-    pub ffi: Option<&'a ResolvedFfiConfig>,
-    /// Plan 149 D233: `[runtime]` fiber arena tuning from package nova.toml.
-    /// Baked as -DNOVA_FIBER_STACK_DEFAULT / -DNOVA_FIBERS_PER_WORKER_DEFAULT (raw
-    /// integers). None — нет [runtime] секции → builtin #define defaults.
-    pub runtime: Option<&'a crate::manifest::RuntimeConfig>,
 }
 
 /// Windows system libs needed by libuv (linker dependencies).
@@ -2214,24 +1998,6 @@ pub fn compile_multi_tu_to_exe(
 }
 
 // ---------- Plan 27 Ф.6 / Б.2-Б.7: AllocConstraint + helper parsers ----------
-
-/// Tag-enum без данных — используется в AllocConstraint чтобы избежать
-/// circular dep между AllocConstraint и GcKind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GcKindTag { Malloc, Boehm }
-
-impl GcKindTag {
-    fn parse(s: &str) -> Option<Self> {
-        match s.trim() {
-            "malloc" => Some(GcKindTag::Malloc),
-            "boehm"  => Some(GcKindTag::Boehm),
-            _ => None,
-        }
-    }
-    pub fn as_str(self) -> &'static str {
-        match self { GcKindTag::Malloc => "malloc", GcKindTag::Boehm => "boehm" }
-    }
-}
 
 /// Из заголовка теста: `// ALLOC_REQUIRES boehm` / `// ALLOC_EXCLUDES malloc`.
 #[derive(Debug, Clone, Copy)]

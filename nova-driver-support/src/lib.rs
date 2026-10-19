@@ -6,6 +6,271 @@ use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Find the nearest package root for an existing source file.
+///
+/// This driver-facing helper deliberately depends only on filesystem
+/// operations; compiler source-index caching is not part of driver behavior.
+pub fn find_package_dir(file: &Path) -> Option<PathBuf> {
+    let absolute = std::fs::canonicalize(file).ok()?;
+    let mut dir = absolute.parent()?.to_path_buf();
+    loop {
+        if dir.join("nova.toml").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Plan 149 D233: `[runtime]` section config — fiber arena tuning.
+///
+/// `fiber_stack` — per-fiber stack slot size (human-friendly `"4MB"` или bare
+/// bytes `"4194304"`). `fibers_per_worker` — max concurrent fibers per worker
+/// (`"16384"`). Both baked as compile-time `-D...DEFAULT` flags; the
+/// corresponding env var (NOVA_FIBER_STACK / NOVA_FIBERS_PER_WORKER) overrides at
+/// runtime. Stored as raw strings; `parse_size_to_bytes` converts to the raw
+/// integer the C `#define` consumes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RuntimeConfig {
+    /// "4MB" | "4194304" — per-fiber stack slot size.
+    pub fiber_stack: Option<String>,
+    /// "16384" — max concurrent fibers per worker.
+    pub fibers_per_worker: Option<String>,
+}
+
+/// Parse the runtime `[runtime]` size representation used by native build flags.
+pub fn parse_size_to_bytes(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let digit_end = value
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(value.len());
+    if digit_end == 0 {
+        return None;
+    }
+    let number: u64 = value[..digit_end].parse().ok()?;
+    let multiplier: u64 = match value[digit_end..].trim().to_ascii_uppercase().as_str() {
+        "" => 1,
+        "K" | "KB" => 1024,
+        "M" | "MB" => 1024 * 1024,
+        "G" | "GB" => 1024 * 1024 * 1024,
+        _ => return None,
+    };
+    if number == 0 {
+        return None;
+    }
+    number.checked_mul(multiplier)
+}
+
+/// Generic view of the FFI fields a native build driver consumes.
+pub trait ManifestFfiView {
+    fn manifest_dir(&self) -> &Path;
+    fn ffi_config(&self) -> Option<&FfiConfig>;
+}
+
+/// FFI paths resolved against the manifest directory.
+#[derive(Debug, Clone, Default)]
+pub struct ResolvedFfiConfig {
+    pub c_shims: Vec<PathBuf>,
+    pub include_dirs: Vec<PathBuf>,
+    pub lib_dirs: Vec<PathBuf>,
+    pub libs: Vec<String>,
+    pub vendor_src_dirs: Vec<PathBuf>,
+    pub cxx: bool,
+}
+
+pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    match path.to_string_lossy().strip_prefix(r"\\?\") {
+        Some(rest) => PathBuf::from(rest),
+        None => path.to_path_buf(),
+    }
+}
+
+impl ResolvedFfiConfig {
+    pub fn from_manifest<M: ManifestFfiView>(manifest: &M) -> Option<Self> {
+        let cfg = manifest.ffi_config()?;
+        let base = manifest.manifest_dir();
+        Some(Self {
+            c_shims: cfg
+                .c_shims
+                .iter()
+                .map(|p| strip_verbatim_prefix(&base.join(p)))
+                .collect(),
+            include_dirs: cfg
+                .include_dirs
+                .iter()
+                .map(|p| strip_verbatim_prefix(&base.join(p)))
+                .collect(),
+            lib_dirs: cfg
+                .lib_dirs
+                .iter()
+                .map(|p| strip_verbatim_prefix(&base.join(p)))
+                .collect(),
+            libs: cfg.libs.clone(),
+            vendor_src_dirs: cfg
+                .vendor_src_dirs
+                .iter()
+                .map(|p| strip_verbatim_prefix(&base.join(p)))
+                .collect(),
+            cxx: cfg.cxx,
+        })
+    }
+
+    pub fn merge(&mut self, other: Self) {
+        self.c_shims.extend(other.c_shims);
+        self.include_dirs.extend(other.include_dirs);
+        for dir in other.lib_dirs {
+            if !self.lib_dirs.contains(&dir) {
+                self.lib_dirs.push(dir);
+            }
+        }
+        for lib in other.libs {
+            if !self.libs.contains(&lib) {
+                self.libs.push(lib);
+            }
+        }
+        for dir in other.vendor_src_dirs {
+            if !self.vendor_src_dirs.contains(&dir) {
+                self.vendor_src_dirs.push(dir);
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct LibuvConfig {
+    pub include_dir: PathBuf,
+    pub lib_file: PathBuf,
+    pub eventloop_src: PathBuf,
+}
+
+#[derive(Clone)]
+pub struct BoehmConfig {
+    pub include_dir: Option<PathBuf>,
+    pub lib_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GcKind {
+    Malloc,
+    #[default]
+    Boehm,
+}
+
+impl GcKind {
+    pub fn parse(s: &str) -> Result<Self> {
+        match s {
+            "malloc" => Ok(Self::Malloc),
+            "boehm" => Ok(Self::Boehm),
+            _ => Err(anyhow!(
+                "unknown gc backend `{}` (expected malloc|boehm)",
+                s
+            )),
+        }
+    }
+
+    pub fn alloc_c_name(self) -> &'static str {
+        match self {
+            Self::Malloc => "alloc.c",
+            Self::Boehm => "alloc_boehm.c",
+        }
+    }
+
+    pub fn tag(self) -> GcKindTag {
+        match self {
+            Self::Malloc => GcKindTag::Malloc,
+            Self::Boehm => GcKindTag::Boehm,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GcKindTag {
+    Malloc,
+    Boehm,
+}
+
+impl GcKindTag {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "malloc" => Some(Self::Malloc),
+            "boehm" => Some(Self::Boehm),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Malloc => "malloc",
+            Self::Boehm => "boehm",
+        }
+    }
+}
+
+pub struct BuildOpts<'a> {
+    pub c_file: &'a Path,
+    pub exe_file: &'a Path,
+    pub obj_dir: &'a Path,
+    pub cg_include: &'a Path,
+    pub rt_dir: &'a Path,
+    pub mode: Mode,
+    pub libuv: Option<&'a LibuvConfig>,
+    pub gc_kind: GcKind,
+    pub ffi: Option<&'a ResolvedFfiConfig>,
+    pub runtime: Option<&'a RuntimeConfig>,
+}
+
+/// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section config.
+///
+/// Все пути относительные к директории `nova.toml`. Test_runner +
+/// build pipeline резолвят их в absolute paths перед передачей clang.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FfiConfig {
+    /// Список C / header файлов для compilation. Header-only inline shim'ы
+    /// (как `nova_rt/sqlite_mini_ffi.h`) включаются через `#include`,
+    /// .c файлы compilation units компилируются и линкуются.
+    pub c_shims: Vec<String>,
+    /// Include directories для clang `-I`. Дают доступ к user shim header'ам
+    /// и third-party C library headers.
+    pub include_dirs: Vec<String>,
+    /// Plan 193 Ф.2 gap-1: library search directories для linker `-L`
+    /// (Clang/GCC) / `/LIBPATH:` (MSVC) — non-default-path native libs
+    /// (напр. vcpkg install без system-wide регистрации). Пусто → только
+    /// toolchain default search path (Windows: нет системного аналога
+    /// `/usr/lib` — без `lib_dirs` non-default `.lib` не найдётся).
+    pub lib_dirs: Vec<String>,
+    /// System library names для clang `-l<name>` linking. Например
+    /// `libs = ["sqlite3", "png"]` → `-lsqlite3 -lpng`.
+    pub libs: Vec<String>,
+    /// Plan 193 Ф.2 gate-3 (mbedtls-vendored, 2026-07-12): vendored C source
+    /// directories to build-and-cache when a declared `libs` entry is
+    /// missing from `lib_dirs` — generic "195-pattern" extension of the
+    /// monorepo's libuv one-time-build-and-cache precedent
+    /// (`detect_or_build_libuv` in `test_runner.rs`), so ANY native module
+    /// can vendor upstream C sources instead of requiring a prebuilt
+    /// system/vcpkg lib. All `.c` files directly under each declared dir
+    /// (non-recursive — matches typical upstream `library/`-style flat
+    /// layouts, e.g. mbedTLS) are compiled + archived into `lib_dirs[0]`
+    /// under EVERY name declared in `libs` (see
+    /// `test_runner::build_missing_vendor_ffi_libs`). Empty (default) — no
+    /// vendor build attempted, unchanged legacy behaviour (falls through to
+    /// the existing `first_missing_ffi_lib` detect-and-degrade probe).
+    pub vendor_src_dirs: Vec<String>,
+    /// D466 (2026-09-09): the package links a C++ library, so the LINK step must
+    /// run through a C++ driver (`clang++`/`g++`) instead of the C one. A static
+    /// C++ archive does not carry its standard library: MSVC picks it up from
+    /// directives inside the objects, ELF toolchains have no such thing and rely
+    /// on the driver to add it. Declaring the LANGUAGE of the library is the true
+    /// fact; `libs.linux = ["stdc++"]` would make every package author re-derive
+    /// per platform what the toolchain already knows, and on Windows such an entry
+    /// degrades the package into a SILENT FfiLibNotFound skip (measured on
+    /// nova-duckdb, 2026-09-09). Default false — unchanged behaviour.
+    pub cxx: bool,
+}
+
 // ---------- toolchain detection ----------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,7 +299,11 @@ pub enum ToolchainPref {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_to_string, Mode, ToolchainPref};
+    use super::{
+        bytes_to_string, find_package_dir, parse_size_to_bytes, FfiConfig, ManifestFfiView, Mode,
+        ResolvedFfiConfig, ToolchainPref,
+    };
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn mode_and_toolchain_parse_contract() {
@@ -49,6 +318,54 @@ mod tests {
         assert_eq!(
             bytes_to_string(b"native build output"),
             "native build output"
+        );
+    }
+
+    #[test]
+    fn package_lookup_finds_crate_root() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(
+            find_package_dir(&root.parent().unwrap().join("compiler-codegen/src/lib.rs")),
+            Some(root.parent().unwrap().canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn runtime_size_parse_contract() {
+        assert_eq!(parse_size_to_bytes("4MB"), Some(4 * 1024 * 1024));
+        assert_eq!(parse_size_to_bytes(" 8192 "), Some(8192));
+        assert_eq!(parse_size_to_bytes("0"), None);
+        assert_eq!(parse_size_to_bytes("4XB"), None);
+    }
+
+    #[test]
+    fn ffi_manifest_paths_resolve_from_manifest_directory() {
+        struct FixtureManifest {
+            dir: std::path::PathBuf,
+            ffi: Option<FfiConfig>,
+        }
+        impl ManifestFfiView for FixtureManifest {
+            fn manifest_dir(&self) -> &Path {
+                &self.dir
+            }
+            fn ffi_config(&self) -> Option<&FfiConfig> {
+                self.ffi.as_ref()
+            }
+        }
+
+        let manifest = FixtureManifest {
+            dir: std::path::PathBuf::from("package"),
+            ffi: Some(FfiConfig {
+                c_shims: vec!["native/shim.c".into()],
+                include_dirs: vec!["native/include".into()],
+                ..FfiConfig::default()
+            }),
+        };
+        let resolved = ResolvedFfiConfig::from_manifest(&manifest).unwrap();
+        assert_eq!(resolved.c_shims, [PathBuf::from("package/native/shim.c")]);
+        assert_eq!(
+            resolved.include_dirs,
+            [PathBuf::from("package/native/include")]
         );
     }
 }
