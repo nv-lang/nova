@@ -25,6 +25,17 @@
 
 module novac.builtins
 
+/// Whether a spelling is an integral scalar type in the C shell ABI.
+/// The emitter uses this closed set to avoid treating pointer, aggregate,
+/// floating, and arbitrary typedef initializers as constant expressions.
+#realtime nogc
+export fn is_c_integral_type(t str) -> bool {
+    t == "nova_int" || t == "nova_uint" || t == "nova_byte" ||
+    t == "nova_char" || t == "nova_bool" || t == "int8_t" ||
+    t == "uint8_t" || t == "int16_t" || t == "uint16_t" ||
+    t == "int32_t" || t == "uint32_t" || t == "int64_t" || t == "uint64_t"
+}
+
 
 /// What a registry type IS — selects which row table the off/cnt range
 /// addresses (record -> fields, sum -> variants; primitives own no rows).
