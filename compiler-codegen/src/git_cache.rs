@@ -38,23 +38,7 @@ pub struct GitResolution {
     pub commit: String,
 }
 
-/// Plan 233 §1: корень пользовательских Nova-данных — `$NOVA_HOME`, иначе
-/// `~/.nova`. Общий базис для кэша git-зависимостей (`git_cache_root`,
-/// `<root>/git`) и глобального `[net] proxy`-конфига
-/// (`pkg_proxy::global_config_proxy`, `<root>/config.toml`) — обе точки
-/// уважают один и тот же `NOVA_HOME`-override.
-pub fn nova_home_dir() -> Result<PathBuf> {
-    if let Some(h) = std::env::var_os("NOVA_HOME") {
-        return Ok(PathBuf::from(h));
-    }
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or_else(|| anyhow!(
-            "не удалось определить домашнюю директорию Nova \
-             (ни HOME, ни USERPROFILE, ни NOVA_HOME не заданы)"
-        ))?;
-    Ok(PathBuf::from(home).join(".nova"))
-}
+pub use nova_driver_support::git_cache::nova_home_dir;
 
 /// Корень кэша git-зависимостей: `$NOVA_HOME/git`, иначе `~/.nova/git`.
 pub fn git_cache_root() -> Result<PathBuf> {
