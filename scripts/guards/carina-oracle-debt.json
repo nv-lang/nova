@@ -67,8 +67,8 @@
     "path": "docs/dev/novac-bootstrap.md",
     "pattern": "oracle-stage-a",
     "count": 3,
-    "lines_sha256": "5b3090d642de23bdba41ac8282f00fd30761a73392d448eb92ad555a70b5c725",
-    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "lines_sha256": "9e3dd24e75732f89b6ddbe6488e16ea6950aed8e097c09f6e984c312a3451bd6",
+    "reason": "task105 historical Linux caveat wording changed, same 3 lines/no new Oracle execution",
     "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
   },
   {
