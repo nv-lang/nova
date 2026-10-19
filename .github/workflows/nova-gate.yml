@@ -181,6 +181,13 @@ jobs:
           # a commit that never touched novac (2026-08-16, first CI run of the split).
           fetch-depth: 0
 
+      # Baseline-only guard: report new Oracle paths, but do not block merges
+      # while REQUIRED F1/fixture checks still have fingerprinted legacy debt.
+      # Promote to a required check only after the pinned-B1 driver replaces F1.
+      - name: Carina anti-Oracle guard (baseline advisory)
+        continue-on-error: true
+        run: python scripts/guards/check-carina-no-oracle-build.py "$(pwd)"
+
       - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
         uses: dtolnay/rust-toolchain@stable
         with:

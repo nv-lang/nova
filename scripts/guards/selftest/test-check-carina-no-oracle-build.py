@@ -2,6 +2,7 @@
 """Sabotage proof for the Carina Oracle-debt guard."""
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -18,7 +19,8 @@ def call(root):
 
 
 def main():
-    with tempfile.TemporaryDirectory(prefix="carina-oracle-guard-") as td:
+    scratch = os.environ.get("NOVA_TEST_TMPDIR") or os.environ.get("TMPDIR")
+    with tempfile.TemporaryDirectory(prefix="carina-oracle-guard-", dir=scratch) as td:
         root = pathlib.Path(td)
         gate = root / "scripts/gate-novac.sh"
         gate.parent.mkdir(parents=True)
@@ -46,6 +48,23 @@ def main():
         p = call(root)
         assert p.returncode == 0 and "new matches=0" in p.stdout, (p.stdout, p.stderr)
         print("PROBE Oracle build removed GREEN: " + p.stdout.strip())
+
+        # Empty ledger is the retirement state, not an unchecked bypass:
+        # no hits => GREEN; restore one active Oracle build => RED.
+        gate.write_text("\n", encoding="utf-8")
+        debt.write_text("[]\n", encoding="utf-8")
+        p = call(root)
+        assert p.returncode == 0 and "legacy Oracle debt matches=0" in p.stdout, (p.stdout, p.stderr)
+        print("PROBE empty debt with no Oracle use GREEN: " + p.stdout.strip())
+        debt.unlink()
+        p = call(root)
+        assert p.returncode != 0 and "missing debt ledger" in p.stderr, (p.stdout, p.stderr)
+        print("PROBE missing debt ledger RED: " + p.stderr.splitlines()[1].strip())
+        debt.write_text("[]\n", encoding="utf-8")
+        gate.write_text('"$ORACLE" build novac/src/main.nv -o novac/target/novac\n', encoding="utf-8")
+        p = call(root)
+        assert p.returncode != 0 and "NEW" in p.stderr, (p.stdout, p.stderr)
+        print("PROBE empty debt with new Oracle build RED: " + p.stderr.splitlines()[1].strip())
 
     print("test-check-carina-no-oracle-build PASS")
 

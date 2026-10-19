@@ -141,8 +141,11 @@ def load_debt(path: pathlib.Path) -> tuple[dict[tuple[str, str], tuple[int, str]
         rows = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return allowed, details, ["cannot read debt ledger: " + str(exc)]
-    if not isinstance(rows, list) or not rows:
-        return allowed, details, ["debt ledger must be a non-empty array until Oracle paths are removed"]
+    if not isinstance(rows, list):
+        return allowed, details, ["debt ledger must be a JSON array"]
+    # Clearing the ledger is the promotion point after all legacy hits have
+    # actually disappeared. A missing or malformed file remains fail-closed;
+    # an empty array is GREEN only when the scan itself finds no Oracle hits.
     for n, row in enumerate(rows, 1):
         if not isinstance(row, dict) or not all(isinstance(row.get(k), str) and row[k].strip()
                                                 for k in ("path", "pattern", "lines_sha256", "reason", "due")):
