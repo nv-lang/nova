@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Tests for the narrow, token-aware file-scope integral-constant rewrite.
+
+module novac.emit_c
+
+test "C const dependency rewrite: chains preserve objects and unrelated rows" {
+    ro input = "static const long long BASE = 125;\nstatic const long long STEP = (BASE - 64);\nstatic const unsigned long long NESTED = STEP * 2ULL;\nstatic const long long UNRELATED = 9;\n"
+    ro output = normalize_integral_c_initializers(input) ?? ""
+    assert(output.contains("static const long long BASE = 125;"), output)
+    assert(output.contains("static const long long STEP = ((125) - 64);"), output)
+    assert(output.contains("static const unsigned long long NESTED = (((125) - 64)) * 2ULL;"), output)
+    assert(output.contains("static const long long UNRELATED = 9;"), output)
+}
+
+test "C const dependency rewrite: comments, strings, macros and enum names are not rewritten" {
+    ro input = "static const int BASE = 11;\nstatic const int NEXT = BASE /* BASE is comment text */ + 1;\nstatic const int ENUM_VALUE = ENUM_VALUE_FROM_C;\nstatic const int FROM_MACRO = TRUSTED_CONST_MACRO(7);\nstatic const char *label = \"BASE\";\n// BASE in a comment\n#define BASE_ALIAS BASE\n"
+    ro output = normalize_integral_c_initializers(input) ?? ""
+    assert(output.contains("static const int NEXT = (11) /* BASE is comment text */ + 1;"), output)
+    assert(output.contains("static const int ENUM_VALUE = ENUM_VALUE_FROM_C;"), output)
+    assert(output.contains("static const int FROM_MACRO = TRUSTED_CONST_MACRO(7);"), output)
+    assert(output.contains("static const char *label = \"BASE\";"), output)
+    assert(output.contains("// BASE in a comment"), output)
+    assert(output.contains("#define BASE_ALIAS BASE"), output)
+}
+
+test "C const dependency rewrite: forward/cyclic and unsupported dependent shapes fail closed" {
+    ro cycle = "static const int FIRST = SECOND + 1;\nstatic const int SECOND = FIRST + 1;\n"
+    assert(!normalize_integral_c_initializers(cycle).is_some(), "forward/cyclic dependency must refuse")
+    ro call = "static const int BASE = 1;\nstatic const int NEXT = helper(BASE);\n"
+    assert(!normalize_integral_c_initializers(call).is_some(), "unsupported call-shaped dependency must refuse")
+    ro unknown = "static const int BASE = TRUSTED_CONST_MACRO(7);\nstatic const int NEXT = BASE + 1;\n"
+    assert(!normalize_integral_c_initializers(unknown).is_some(), "a recognized dependency with an opaque initializer must refuse")
+}
