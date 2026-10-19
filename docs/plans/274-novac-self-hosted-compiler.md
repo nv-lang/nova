@@ -1075,10 +1075,14 @@ optional diagnostic, не критерий правильности и не об
 граница линковки; подтверждать её следует декларациями/линковкой и runtime
 фикстурами. Совпадение `novac/src/emit_c/shell.tpl.c` с текущей Oracle emission
 не является ABI-нормой и не может запрещать собственную Carina C-эмиссию.
-`check-novac-shell-freshness.sh` и Oracle-derived часть
-`check-novac-mangle-fixed-point.sh` — legacy проверки для старого Oracle-backed
-Carina lane; их обязательное Carina CI применение снимается отдельной gate-работой
-106. До её завершения фактическое wiring остаётся и не должно называться новой нормой.
+`check-novac-shell-freshness.sh` Oracle-parity half заменяется проверкой shell/C
+по pinned B1 C-baseline `check-carina-bootstrap-c`; обязательная проверка C
+artifact/provenance сохраняется. `check-novac-mangle-fixed-point.sh` тоже остаётся
+обязательной ABI symbol/coverage проверкой: task 106 меняет только источник
+символов с Oracle emission на проверенный shell C baseline плюс фактические
+runtime headers. До успешной замены обеих реализаций старые gate-вызовы физически
+остаются на месте; ABI declarations/link и fixture coverage не отключаются и
+не ослабляются.
 
 **std в эту границу НЕ входит.** Указание владельца: «ты сам должен компилировать
 std, мы не должны и не будем быть совместимы с оракулом, там слишком много
@@ -4654,7 +4658,7 @@ grammar», которую §9.4 отменяет как класс.
 | `check-novac-no-global-state.py` | нет общего изменяемого состояния (§4 п.5): `static mut`/`thread_local`/глобальный `RefCell`-аналог вне явного write-once списка — красный |
 | `check-novac-grammar-fixture-coverage.sh` | карта «форма грамматики × наблюдающие фикстуры» (К7): форма без фикстур — красная. Дифф-базный `check-test-fixture-coverage.sh` этому не судья (слеп к слиянию без новых кодов) |
 | `check-novac-lsp-parity.sh` | потребители вне карты (LSP/линт/CLI) зовут `pipeline`; форма, принятая компилятором, обязана совпасть у потребителей (К4, №541) | 🕐 Э3 |
-| `check-novac-mangle-fixed-point.sh` | **LEGACY Oracle-derived symbol check.** Runtime ABI compatibility остаётся нормой, но Oracle shell symbol inventory не является нормативной таблицей Carina имен и не запрещает собственную `.c` эмиссию. Перевод/отвязка из mandatory Carina lane — gate migration task 106; до неё guard физически wired, это описывает текущее состояние, не owner policy. |
+| `check-novac-mangle-fixed-point.sh` | Обязательная ABI symbol/coverage проверка сохраняется. Task 106 меняет только Oracle-derived input: сравнивает emitted names с verified shell C baseline и текущими runtime headers; до успешного прогона замены старый gate call остаётся. Runtime declarations/link и fixture coverage не ослабляются. |
 | `check-novac-no-name-hardcode.py` | никакого хардкода имён Nova в компиляторе (конвенция П5, уроки D109/№576); имя языка/std строкой вне таблиц деклараций — красное. Этап Э2 |
 | `check-novac-guard-registry.py` | МЕТА-страж (274.3/F12): реестр стражей в §10.3/§10.3а ↔ файлы `scripts/guards/` ↔ ВЫЗОВЫ в `scripts/gate.sh` ↔ самотесты — четыре множества обязаны совпадать; страж без вызова/самотеста и имя без файла — красные — ✅ В ГЕЙТЕ |
 | `check-novac-second-door.py` | вторая дверь ловится ФОРМОЙ, а не именем: дословные копии тел (жёстко, 0) и вопросы чужого реестра мимо его двери (храповик; 2026-08-18: две функции с разными именами и совпадением 1.00, вторую написал автор через шесть часов после первой) |
@@ -4664,7 +4668,7 @@ grammar», которую §9.4 отменяет как класс.
 | `check-guard-honesty.py` | страж не врёт и не молчит вместо проверки: CRLF в индексе, слепота к linux-имени бинаря, апостроф в двойных кавычках (2026-08-18: из-за первых двух форм дифф-страж месяц не выполнялся на CI зелёным молчанием, а два стража показывали своё падение как нарушение правила) |
 | `check-novac-plan-liveline.py` | живая строка §9 не отстаёт от кода больше чем на два дня (2026-08-18: строка стояла с 14-го, пока четыре дня шёл Э2 — правило было записано, но ничем не держалось) |
 | `check-novac-module-tests.sh` | каждый `novac/src/*/*_test.nv` проходит — тесты модулей гоняет ГЕЙТ, не только CI (2026-08-18: волна оставила два красных теста, которых локальный прогон не показывал) |
-| `check-novac-shell-freshness.sh` | **LEGACY Oracle-parity guard.** Изначально требовал `novac/src/emit_c/shell.tpl.c` == свежая Oracle emission по probe. Решение владельца 2026-10-19 снимает это как требование для Carina: её `.c` вправе отличаться от Oracle; runtime ABI проверяется по реальным C declarations/link tests, а поведение — по spec/goldens. Guard пока физически wired в `gate-novac.sh`; обязательный Carina-lane вызов снимает task 106. Физическое наличие guard — текущее состояние миграции, не норма и не требование сохранить его для Oracle. |
+| `check-novac-shell-freshness.sh` | Oracle byte-parity check заменяется task 106 на обязательный pinned-B1 shell/C baseline check. Совпадение с Oracle emission не требуется, но shell C baseline, runtime declarations/link и fixture contracts продолжают проверяться. Пока новая реализация не доказана, старый guard остаётся физически wired и gate не ослабляется. |
 | `check-novac-iteration-cost.sh` | цена цикла в бюджете (конвенция П14, план 274.2): просадка сверх бюджета и ускорение без поднятия базы — оба красные — ✅ В ГЕЙТЕ |
 | `check-novac-type-field-docs.py` | документация у каждого типа, поля и функции (конвенция П13; форма — D104 rev-2, строгость по `oracle-pin`) — ✅ В ГЕЙТЕ |
 | `check-novac-commit-forms.sh` | коммит, меняющий `novac/src/parse`, обязан назвать ПЕРЕЧИСЛЕНИЕ форм, которые он затрагивает (строка `Forms:`): без неё форма реализуется дважды двумя окнами — ✅ В ГЕЙТЕ |

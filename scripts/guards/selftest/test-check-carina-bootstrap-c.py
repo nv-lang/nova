@@ -142,6 +142,13 @@ for text in ("Windows C-level fixed point", "Native B2 executable/PDB/LIB equali
              "критерий Windows Carina 0.2.1 выше уточнён решением владельца"):
     if text not in plan_274:
         fail(f"274 parent missing superseding Windows criterion: {text}")
+plan_2743 = (ROOT / "docs/plans/274.3-review-findings-classes.md").read_text(encoding="utf-8")
+migration_docs = (" ".join(plan_274.split()) + " " + " ".join(plan_27411.split()) + " "
+                 + " ".join(plan_2743.split())).lower()
+for text in ("обязательной abi symbol/coverage проверкой",
+             "runtime headers", "старые gate-вызовы физически", "не отключаются"):
+    if text not in migration_docs:
+        fail(f"274 migration wording must preserve mandatory coverage: {text}")
 if "update_reason" not in baseline_doc or "any future digest/source/asset change requires an explicit reviewed edit" not in baseline_doc:
     fail("managed baseline has no reason field")
 print("PASS: verifier selftest — asset/source/C sabotage RED; restoration GREEN")
