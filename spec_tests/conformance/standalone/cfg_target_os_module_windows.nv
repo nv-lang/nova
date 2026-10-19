@@ -1,0 +1,7 @@
+// EXPECT_STDOUT cfg-module-windows
+#cfg(target_os = "windows")
+module cfg_target_os_module_windows
+
+fn main() Io -> () {
+    println("cfg-module-windows")
+}

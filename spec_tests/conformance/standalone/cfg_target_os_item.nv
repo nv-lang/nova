@@ -8,8 +8,8 @@ fn selected_os() -> str => "posix"
 fn main() Io -> () {
     ro selected = selected_os()
     if selected == "windows" {
-        print("cfg-ok")
+        println("cfg-ok")
     } else {
-        print("cfg-ok")
+        println("cfg-ok")
     }
 }

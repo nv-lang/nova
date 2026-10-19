@@ -2,4 +2,6 @@
 #cfg(target_os = "windows" || target_os = "linux" || target_os = "macos")
 module cfg_target_os_module
 
-fn main() Io -> () => print("cfg-module")
+fn main() Io -> () {
+    println("cfg-module")
+}

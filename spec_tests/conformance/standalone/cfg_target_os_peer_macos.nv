@@ -2,4 +2,6 @@
 #cfg(target_os = "macos")
 module cfg_target_os_peer_macos
 
-fn main() Io -> () => print("cfg-peer")
+fn main() Io -> () {
+    println("cfg-peer")
+}
