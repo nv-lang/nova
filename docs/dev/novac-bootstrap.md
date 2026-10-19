@@ -223,10 +223,18 @@ Oracle никогда не судит поведение. Fail closed при н�
 fallback либо если Oracle используется как тестируемый compiler/binary; mismatch
 опубликованного asset/SHA также обязан давать ясный отказ.
 
-Для уже опубликованного pinned seed запускать `B_seed → B1 → B2` на одном source
-SHA/platform; `B1` и `B2` должны совпасть по generated C и native binary. Этот
-протокол и временное Linux исключение не меняют историческую A→B→C приёмку 0.2:
-её receipt подтверждает только exact-SHA 0.2, не Linux seed и не 0.3 provenance.
+**Решение владельца 2026-10-19 — Windows Carina self-emit criterion:**
+Oracle-free для Windows Carina self-emit означает, что B1, опубликованный
+исполняемый файл Carina 0.2.1, выдаёт C bytewise equal stage A emitted C на
+том же pinned source. Native EXE/PDB/LIB bytewise equality — отдельная цель
+reproducible build, не gate. Ограниченный proof использует stage A Oracle
+0.1.0, GC headers Oracle 0.1.0 и saved run2 libraries/source3729; verifier
+Oracle не запускает. Команда и digest определены в [274.16 Ш.0](../plans/274.16-carina-all-examples-and-packages.md).
+
+Это Windows C-level решение не доказывает Linux fixed point. Linux остаётся
+отдельной работой, а критерии 0.3 build/test/examples/packages не меняются.
+Историческая A→B→C приёмка 0.2 также не меняется: её receipt подтверждает
+только exact-SHA Windows 0.2, не Linux seed и не 0.3 provenance.
 
 ## 6. Открытые вопросы не закрываются реализацией
 
