@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 from io import BytesIO
 from pathlib import Path
+import tempfile
 import zipfile
 
 
@@ -56,11 +57,13 @@ print(module.validate_c_observation(c_bytes, baseline))
 
 archive_buffer = BytesIO()
 with zipfile.ZipFile(archive_buffer, "w") as zf:
-    zf.writestr("package/novac.exe", exe_bytes)
+    zf.writestr("package/carina-bin", exe_bytes)
 archive_bytes = archive_buffer.getvalue()
 baseline["asset_name"] = "published.zip"
 baseline["asset_sha256"] = hashlib.sha256(archive_bytes).hexdigest()
-if module.validate_zip_data("published.zip", archive_bytes, baseline) != (exe_bytes, "package/novac.exe"):
+baseline["executable_member"] = "package/carina-bin"
+zip_exe, zip_member = module.validate_zip_data("published.zip", archive_bytes, baseline)
+if (zip_exe, zip_member) != (exe_bytes, baseline["executable_member"]):
     fail("valid published ZIP bytes rejected")
 sabotaged = copy.deepcopy(baseline)
 sabotaged["asset_sha256"] = "0" * 64
@@ -105,6 +108,13 @@ except module.VerificationError as exc:
 else:
     fail("sabotaged workspace source marker was accepted")
 print("GREEN: source tree ancestry/content/cleanliness match managed test baseline")
+
+with tempfile.TemporaryDirectory(prefix="carina-door-selftest-") as scratch:
+    pinned_b1 = Path(scratch) / "pinned-b1"
+    pinned_b1.write_bytes(exe_bytes)
+    if module.select_b1_through_door(ROOT, pinned_b1) != pinned_b1.resolve():
+        fail("novac_bin door did not select the explicit pinned B1")
+print("GREEN: explicit pinned B1 selected through novac_bin door")
 
 plan = PLAN.read_text(encoding="utf-8")
 bootstrap = BOOTSTRAP.read_text(encoding="utf-8")

@@ -1076,7 +1076,7 @@ optional diagnostic, не критерий правильности и не об
 фикстурами. Совпадение `novac/src/emit_c/shell.tpl.c` с текущей Oracle emission
 не является ABI-нормой и не может запрещать собственную Carina C-эмиссию.
 `check-novac-shell-freshness.sh` Oracle-parity half заменяется проверкой shell/C
-по pinned B1 C-baseline `check-carina-bootstrap-c`; обязательная проверка C
+по pinned B1 C-baseline verifier; обязательная проверка C
 artifact/provenance сохраняется. `check-novac-mangle-fixed-point.sh` тоже остаётся
 обязательной ABI symbol/coverage проверкой: task 106 меняет только источник
 символов с Oracle emission на проверенный shell C baseline плюс фактические

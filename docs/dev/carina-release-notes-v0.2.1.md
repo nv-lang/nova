@@ -28,7 +28,7 @@ empty stderr. The managed expected-C baseline is
 [`scripts/guards/carina-bootstrap-c.baseline`](../../scripts/guards/carina-bootstrap-c.baseline);
 repeat it with the published ZIP or shipped executable and an explicit pinned
 source tree using
-`python scripts/guards/check-carina-bootstrap-c.py <pinned-source-tree> --asset <published-zip-or-novac.exe> --work-dir <scratchpad>`.
+`python scripts/tools/verify-carina-bootstrap-c.py <pinned-source-tree> --asset <published-zip-or-executable> --work-dir <scratchpad>`.
 
 **Historical provenance (not hidden):** published Oracle 0.1.0 built the
 initial Carina A; A emitted `B1.c`; Clang built the published B1 executable

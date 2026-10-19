@@ -4,6 +4,7 @@
   "asset_name": "nova-carina-0.2.1-windows-x86_64.zip",
   "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.1/nova-carina-0.2.1-windows-x86_64.zip",
   "asset_sha256": "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb",
+  "executable_member": "nova-carina-0.2.1-windows-x86_64/novac.exe",
   "b1_exe_sha256": "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4",
   "source_revision": "3729abcce42ec2d94efc898ec6eafe91ff6210d5",
   "source_paths": [

@@ -33,7 +33,7 @@ def load_baseline(path: Path = BASELINE) -> dict:
         raise VerificationError("RED: managed Carina C baseline is missing or invalid") from exc
     required = {
         "schema", "platform", "asset_name", "asset_url", "asset_sha256",
-        "b1_exe_sha256", "source_revision", "source_paths", "self_path",
+        "executable_member", "b1_exe_sha256", "source_revision", "source_paths", "self_path",
         "std_path", "workspace_manifest", "nested_novac_manifest",
         "expected_c_bytes", "expected_c_sha256", "provenance",
         "update_reason",
@@ -106,10 +106,11 @@ def validate_zip_data(asset_name: str, raw: bytes, baseline: dict) -> tuple[byte
         raise VerificationError("RED: published ZIP SHA-256 mismatch")
     try:
         with zipfile.ZipFile(BytesIO(raw)) as archive:
-            names = [n for n in archive.namelist() if PurePosixPath(n).name.lower() == "novac.exe"]
-            if len(names) != 1:
-                raise VerificationError("RED: ZIP must contain exactly one novac.exe")
-            exe = archive.read(names[0])
+            members = archive.namelist()
+            member = baseline["executable_member"]
+            if members.count(member) != 1:
+                raise VerificationError("RED: ZIP must contain exactly one pinned executable member")
+            exe = archive.read(member)
             for member in archive.infolist():
                 posix = PurePosixPath(member.filename)
                 windows = PureWindowsPath(member.filename)
@@ -118,12 +119,12 @@ def validate_zip_data(asset_name: str, raw: bytes, baseline: dict) -> tuple[byte
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
         raise VerificationError("RED: cannot read published ZIP") from exc
     validate_b1_executable(exe, baseline)
-    return exe, names[0]
+    return exe, baseline["executable_member"]
 
 
 def validate_b1_executable(exe: bytes, baseline: dict) -> bytes:
     if sha256(exe) != baseline["b1_exe_sha256"]:
-        raise VerificationError("RED: published B1 novac.exe SHA-256 mismatch")
+        raise VerificationError("RED: published B1 executable SHA-256 mismatch")
     return exe
 
 
@@ -162,16 +163,18 @@ def verify(source: Path, asset: Path, work_dir: Path) -> None:
         if relative_exe is not None:
             with zipfile.ZipFile(asset) as archive:
                 archive.extractall(scratch_dir)
-            exe = scratch_dir / Path(relative_exe)
+            exe = scratch_dir.joinpath(*PurePosixPath(relative_exe).parts)
         else:
-            exe = scratch_dir / "novac.exe"
+            exe = scratch_dir.joinpath(*PurePosixPath(baseline["executable_member"]).parts)
+            exe.parent.mkdir(parents=True, exist_ok=True)
             exe.write_bytes(asset.read_bytes())
+        executable = select_b1_through_door(source, exe)
         env = {key: value for key, value in os.environ.items()
                if not key.upper().startswith(("NOVA_", "NOVAC_"))}
         env["NOVA_STD_PATH"] = str(source / baseline["std_path"])
         env["NOVAC_SELF_PATH"] = baseline["self_path"]
         result = subprocess.run(
-            [str(exe), "emit", "novac/src/main.nv"],
+            [str(executable), "emit", "novac/src/main.nv"],
             cwd=source,
             env=env,
             capture_output=True,
@@ -187,6 +190,27 @@ def verify(source: Path, asset: Path, work_dir: Path) -> None:
     print(f"PASS: source content {baseline['source_revision']}; input asset SHA-256 {asset_sha}; B1 SHA-256 {baseline['b1_exe_sha256']}")
     print("PROVENANCE: " + " ".join(baseline["provenance"].values()))
     print("SCOPE: Windows Carina 0.2.1 C-level bootstrap proof; no native EXE/PDB/LIB equality or Linux claim")
+    print(f"verify-carina-bootstrap-c ok: pinned B1 emitted the managed C baseline ({baseline['expected_c_bytes']} bytes)")
+
+
+def select_b1_through_door(source: Path, executable: Path) -> Path:
+    lib = Path(__file__).resolve().parents[1] / "guards" / "lib"
+    sys.path.insert(0, str(lib))
+    from novac_bin import novac_bin
+
+    had_novac = "NOVAC" in os.environ
+    previous_novac = os.environ.get("NOVAC")
+    os.environ["NOVAC"] = str(executable.resolve())
+    try:
+        selected = Path(novac_bin(str(source))).resolve()
+    finally:
+        if had_novac:
+            os.environ["NOVAC"] = previous_novac or ""
+        else:
+            os.environ.pop("NOVAC", None)
+    if selected != executable.resolve():
+        raise VerificationError("RED: novac_bin did not select the explicit pinned B1 input")
+    return selected
 
 
 def main() -> int:
@@ -194,7 +218,7 @@ def main() -> int:
     parser.add_argument("source_tree", type=Path,
                         help="pinned source tree with novac/src and std/src unchanged")
     parser.add_argument("--asset", type=Path, required=True,
-                        help="published ZIP or its shipped novac.exe")
+                        help="explicit published ZIP or its pinned executable")
     parser.add_argument("--work-dir", type=Path, required=True,
                         help="existing session scratchpad directory")
     args = parser.parse_args()
