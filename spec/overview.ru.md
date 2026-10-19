@@ -52,6 +52,12 @@
    test` (см. [`docs/dev/read-project.md`](../docs/dev/read-project.md)).
    Тестируется и шипится код тоже только через C-codegen — нет
    отдельного «интерпретируемого» пути с другой семантикой.
+   Платформенные реализации выбираются на этапе компиляции через `#cfg`
+   и OS-суффиксы файлов ([D99](decisions/07-modules.md#d99-conditional-compilation-filename-suffix--cfg)).
+   В Carina `novac emit --target-os <windows|linux|macos>` задаёт ОС эмиссии;
+   если флага нет, используется `NOVA_TARGET_OS`, затем ОС host. Этот выбор
+   отбирает исходники, но сам по себе не выбирает C toolchain: `--target`
+   зарезервирован для отдельной интеграции кросс-компилятора.
 2. **Память: managed по умолчанию (current: Boehm conservative GC; v1.0+:
    concurrent GC), regions opt-in для real-time.** Программист пишет код без
    префиксов памяти — циклы освобождаются автоматически. **Текущее состояние
