@@ -58,6 +58,11 @@ export fn args() Os -> []str {
     out
 }
 
+/// The platform this process was built for (`windows`, `linux`, `macos`, or
+/// `unknown`). This is the host default for compiler cfg selection; it does not
+/// describe or select a C toolchain target.
+export fn host_os() -> str => os_host_os()
+
 // ─── Environment ──
 
 /// One environment variable (a `key`/`value` pair) from `vars()`.

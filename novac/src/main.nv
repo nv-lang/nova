@@ -30,6 +30,7 @@ import ./sem.{InteropTable}
 import ./sem.{EmbedTable, embed_literals, embed_lit_path, embed_dir_of, embed_join, embed_normalize}
 import ./sem.{embed_inside, embed_is_absolute, EMBED_READ, EMBED_NOT_FOUND, EMBED_IS_A_DIR, EMBED_OUTSIDE}
 import ./pipeline.{compile_with_embeds, compile_to_c_with_embeds, parse_decls, interop_surface, mark_program}
+import ./pipeline.{cfg_file_active, target_peer_active}
 import ./pipeline.{Unit, unit_of, same_dir, path_base}
 import ./pipeline.{compile_program_to_c, named_by_file}
 import ./diag.{to_json, json_escape}
@@ -59,8 +60,11 @@ fn Verdict @code() -> int => match @ {
 fn worse(a Verdict, b Verdict) -> Verdict => if b.code() > a.code() { b } else { a }
 
 /// Emit C for one file: print diagnostics, or the C text when there are none.
-fn emit_one(text str, file str, decls []Node, interop InteropTable, embeds EmbedTable) -> Verdict {
-    ro (diags, c_text) = compile_to_c_with_embeds(text, decls, interop, path_base(file), embeds)
+fn emit_one(text str, file str, decls []Node, interop InteropTable, embeds EmbedTable,
+            target_os str) -> Verdict {
+    if !target_peer_active(file, target_os) { return Verdict.Clean }
+    ro (diags, c_text) = compile_to_c_with_embeds(text, decls, interop, path_base(file), embeds,
+                                                 target_os: target_os)
     if diags.len() > 0 {
         mut i = 0
         for d in diags {
@@ -79,7 +83,8 @@ fn emit_one(text str, file str, decls []Node, interop InteropTable, embeds Embed
 /// named. One C file on stdout, or every unit's diagnostics, each named by its
 /// file. An entry outside the root is a unit of its own.
 fn emit_program(entry str, paths []str, texts []str, decls []Node, interop InteropTable,
-                mut embeds EmbedTable) Fs -> Verdict {
+                mut embeds EmbedTable, target_os str) Fs -> Verdict {
+    if !target_peer_active(entry, target_os) { return Verdict.Clean }
     mut units = []Unit.new()
     mut at = 0 - 1
     mut used = []bool.new()
@@ -133,7 +138,8 @@ fn emit_program(entry str, paths []str, texts []str, decls []Node, interop Inter
     } else {
         // The entry is a file of the root: its directory's unit is the entry's.
     }
-    ro (diags, c_text) = compile_program_to_c(units, at, decls, interop, embeds)
+     ro (diags, c_text) = compile_program_to_c(units, at, decls, interop, embeds,
+                                               target_os: target_os)
     if diags.len() > 0 {
         mut i = 0
         for d in diags {
@@ -147,8 +153,9 @@ fn emit_program(entry str, paths []str, texts []str, decls []Node, interop Inter
 }
 
 /// Check one file: print §7 diagnostics one per line, one JSON per line.
-fn compile_one(text str, file str, decls []Node, interop InteropTable, embeds EmbedTable) -> Verdict {
-    ro diags = compile_with_embeds(text, decls, interop, embeds)
+fn compile_one(text str, file str, decls []Node, interop InteropTable, embeds EmbedTable,
+               target_os str) -> Verdict {
+    ro diags = compile_with_embeds(text, decls, interop, embeds, target_os: target_os)
     mut i = 0
     for d in diags {
         println(to_json(d, i, file))
@@ -170,8 +177,9 @@ fn compile_one(text str, file str, decls []Node, interop InteropTable, embeds Em
 /// where that run began in its file, so the printed line names a real file
 /// and a real position. Nothing in the tree or the channel knows about
 /// several files -- only this door does.
-fn compile_unit(u Unit, decls []Node, interop InteropTable, embeds EmbedTable) -> Verdict {
-    ro diags = compile_with_embeds(u.text, decls, interop, embeds)
+fn compile_unit(u Unit, decls []Node, interop InteropTable, embeds EmbedTable,
+                target_os str) -> Verdict {
+    ro diags = compile_with_embeds(u.text, decls, interop, embeds, target_os: target_os)
     mut i = 0
     for d in diags {
         // A table that covers every byte answers for every span; `<unit>` is for
@@ -187,14 +195,17 @@ fn compile_unit(u Unit, decls []Node, interop InteropTable, embeds EmbedTable) -
 }
 
 /// Read a module's files and compile them as one unit.
-fn check_unit(paths []str, decls []Node, interop InteropTable, mut embeds EmbedTable) Fs -> Verdict {
+fn check_unit(paths []str, decls []Node, interop InteropTable, mut embeds EmbedTable,
+              target_os str) Fs -> Verdict {
     mut texts = []str.new()
     mut kept = []str.new()
     for p in paths {
+        if !target_peer_active(p, target_os) { continue }
         match read(p.to_path()) {
             Ok(bytes) => {
                 match bytes.to_str() {
                     Ok(text) => {
+                        if !cfg_file_active(text, target_os) { continue }
                         texts.push(text)
                         kept.push(p)
                     }
@@ -220,11 +231,11 @@ fn check_unit(paths []str, decls []Node, interop InteropTable, mut embeds EmbedT
     }
     if texts.len() < paths.len() {
         ro u = unit_of(kept, texts)
-        ro v = compile_unit(u, decls, interop, embeds)
+        ro v = compile_unit(u, decls, interop, embeds, target_os)
         return worse(v, Verdict.DoorError)
     }
     ro u = unit_of(kept, texts)
-    compile_unit(u, decls, interop, embeds)
+    compile_unit(u, decls, interop, embeds, target_os)
 }
 
 /// THE DOOR READS WHAT `embed("path")` NAMES (D412) -- the compiler reads nothing
@@ -331,17 +342,38 @@ fn project_root_of(dir str) Fs -> str {
 /// `names` gets the FILE NAME of every text returned, in the same order: a
 /// contract in a std body novac instantiates prints the file it was written in
 /// (274.11 E.10 step 4c), and only this door knows it.
-fn read_decls(dir str, mut names []str) Fs -> []str {
+fn read_decls(dir str, mut names []str, target_os str) Fs -> []str {
     mut out = []str.new()
     if dir == "" { return out }
     match read_dir(dir.to_path()) {
         Ok(entries) => {
+            mut entry_names = []str.new()
+            mut entry_dirs = []bool.new()
             for e in entries {
                 // A DirEntry carries the NAME (a Path), not the full path, so
                 // we join it ourselves; the name bytes become str through the
                 // same door as all other input.
                 ro nm = e.name.os_bytes().to_str() ?? ""
                 if nm == "" { continue }
+                entry_names.push(nm)
+                entry_dirs.push(e.kind.is_dir())
+            }
+            // Filesystem directory order is not a language rule. Sort names
+            // and their kind bits together before recursive discovery.
+            for i in 0..entry_names.len() {
+                for j in i + 1..entry_names.len() {
+                    if entry_names[i].compare(entry_names[j]) > 0 {
+                        ro swap_name = entry_names[i]
+                        entry_names[i] = entry_names[j]
+                        entry_names[j] = swap_name
+                        ro swap_dir = entry_dirs[i]
+                        entry_dirs[i] = entry_dirs[j]
+                        entry_dirs[j] = swap_dir
+                    }
+                }
+            }
+            for i in 0..entry_names.len() {
+                ro nm = entry_names[i]
                 // RECURSIVE since 2026-08-26, and the boundary decision is in
                 // the plan: novac reads the WHOLE std interface, because any
                 // narrower line is arbitrary and hand-maintained (today
@@ -350,8 +382,8 @@ fn read_decls(dir str, mut names []str) Fs -> []str {
                 // batch pays 2.6s at the full interface after the parse-once
                 // fix -- and paid 17.5s before it, which is why the order of
                 // these two steps was the other way around.
-                if e.kind.is_dir() {
-                    out.append(read_decls("${dir}/${nm}", names))
+                if entry_dirs[i] {
+                    out.append(read_decls("${dir}/${nm}", names, target_os))
                     continue
                 } else {
                     // A file: the two tests that decide its fate are the
@@ -359,6 +391,7 @@ fn read_decls(dir str, mut names []str) Fs -> []str {
                     // the `_test.nv` house rule. No other door sees it.
                 }
                 if !nm.ends_with(".nv") { continue }
+                if !target_peer_active(nm, target_os) { continue }
                 // Tests live beside the module (house rule), and a test is not
                 // an interface: it declares nothing a signature could name.
                 if nm.ends_with("_test.nv") { continue }
@@ -367,6 +400,7 @@ fn read_decls(dir str, mut names []str) Fs -> []str {
                     Ok(bytes) => {
                         match bytes.to_str() {
                             Ok(t) => {
+                                if !cfg_file_active(t, target_os) { continue }
                                 out.push(t)
                                 // The PATH, not the bare name: a refusal inside
                                 // a body of this file is printed against it
@@ -400,7 +434,9 @@ fn read_decls(dir str, mut names []str) Fs -> []str {
 
 /// Check one path (read + compile), printing diagnostics; the outcome is
 /// this file's contribution to the batch verdict.
-fn check_path(path str, decls []Node, interop InteropTable, mut embeds EmbedTable) Fs -> Verdict {
+fn check_path(path str, decls []Node, interop InteropTable, mut embeds EmbedTable,
+              target_os str) Fs -> Verdict {
+    if !target_peer_active(path, target_os) { return Verdict.Clean }
     match read(path.to_path()) {
         Ok(bytes) => {
             match bytes.to_str() {
@@ -408,7 +444,7 @@ fn check_path(path str, decls []Node, interop InteropTable, mut embeds EmbedTabl
                     ro home = embed_dir_of(path)
                     embeds.home = home
                     embeds_of(text, path, home, embeds)
-                    compile_one(text, path, decls, interop, embeds)
+                    compile_one(text, path, decls, interop, embeds, target_os)
                 }
                 Err(_) => {
                     println("novac: not UTF-8: ", path)
@@ -523,11 +559,48 @@ fn compiler_argv() -> []str {
     }
 }
 
+/// The only target OS spellings D99 permits for Carina's cfg selection.
+fn known_target_os(value str) -> bool =>
+    value == "windows" || value == "linux" || value == "macos"
+
 /// Everything novac does, now the body of a supervised child fiber.
 fn run(a []str) -> int {
     with Fs = real_fs(), Os = real_os() {
         if a.len() < 3 || (a[1] != "check" && a[1] != "emit") {
-            println("usage: novac check <file.nv>... | novac emit <file.nv>")
+            println("usage: novac check <file.nv>... | novac emit [--target-os <windows|linux|macos>] <file.nv>")
+            return Verdict.DoorError.code()
+        }
+        mut files = []str.new()
+        mut explicit_target = ""
+        mut saw_target = false
+        mut argi = 2
+        while argi < a.len() {
+            if a[argi] == "--target-os" {
+                if a[1] != "emit" || saw_target || argi + 1 >= a.len() {
+                    println("novac: --target-os is valid once on emit and requires a value")
+                    return Verdict.DoorError.code()
+                }
+                explicit_target = a[argi + 1]
+                saw_target = true
+                argi += 2
+            } else {
+                files.push(a[argi])
+                argi += 1
+            }
+        }
+        if files.len() == 0 {
+            println("usage: novac check <file.nv>... | novac emit [--target-os <windows|linux|macos>] <file.nv>")
+            return Verdict.DoorError.code()
+        }
+        mut target_os = explicit_target
+        if !saw_target {
+            match env("NOVA_TARGET_OS") {
+                Some(value) => { target_os = value }
+                None => { target_os = "unknown" }
+            }
+        }
+        if !known_target_os(target_os) {
+            println("novac: invalid target OS `${target_os}`; expected windows, linux, or macos")
             return Verdict.DoorError.code()
         }
         // std is FOUND the way nova-cli finds it, never passed by a flag
@@ -552,8 +625,8 @@ fn run(a []str) -> int {
         // the registry's last-put-wins shadowing hands its names back to the
         // file (measured before this wave, plan entry names the probe).
         mut decl_names = []str.new()
-        mut decl_texts = read_decls(std_dir, decl_names)
-        mut decls = parse_decls(decl_texts)
+        mut decl_texts = read_decls(std_dir, decl_names, target_os)
+        mut decls = parse_decls(decl_texts, target_os: target_os)
         // The interop surface, lifted from the embedded shell ONCE -- the second
         // input of every compile beside the declarations (sub-plan L).
         mut interop = interop_surface()
@@ -568,9 +641,9 @@ fn run(a []str) -> int {
                 // bodies are the program's, so a call into one is judged by its
                 // signature and named by its owner (274.11 E.10 step 2a).
                 in_program = true
-                self_texts = read_decls(self_dir, self_paths)
+                self_texts = read_decls(self_dir, self_paths, target_os)
                 decl_names.append(self_paths)
-                ro self_decls = parse_decls(self_texts)
+                ro self_decls = parse_decls(self_texts, target_os: target_os)
                 decl_texts.append(self_texts)
                 mark_program(interop, self_decls)
                 decls.append(self_decls)
@@ -584,11 +657,6 @@ fn run(a []str) -> int {
         mut embeds = EmbedTable.new()
         for i in 0..decl_texts.len() {
             embeds_of(decl_texts[i], decl_names[i], embed_dir_of(decl_names[i]), embeds)
-        }
-        ro argi = 2
-        if argi >= a.len() {
-            println("usage: novac check <file.nv>... | novac emit <file.nv>")
-            return Verdict.DoorError.code()
         }
         if a[1] == "check" {
             mut worst = Verdict.Clean
@@ -604,8 +672,8 @@ fn run(a []str) -> int {
             // unset meaning the old behaviour.
             ro unit_mode = env("NOVAC_UNIT") ?? ""
             if unit_mode == "" {
-                for path in a[argi..] {
-                    worst = worse(worst, check_path(path, decls, interop, embeds))
+                for path in files {
+                    worst = worse(worst, check_path(path, decls, interop, embeds, target_os))
                 }
                 return worst.code()
             } else {
@@ -626,11 +694,11 @@ fn run(a []str) -> int {
                 // So the sentence now says only what was measured, and the
                 // unmeasured half is named as unmeasured.
                 mut all = []str.new()
-                for k in argi..a.len() {
+                for k in 0..files.len() {
                     // The canon `x[a..b]` is a SLICE, and novac does not compile
                     // one yet (registry 1170), so the copy is by hand here.
                     // nova:allow W_MANUAL_SLICE_COPY -- slice not compiled yet, registry 1170
-                    all.push(a[k])
+                    all.push(files[k])
                 }
                 mut used = []bool.new()
                 for z in 0..all.len() {
@@ -661,17 +729,17 @@ fn run(a []str) -> int {
                             // and both are reached again by the outer scan.
                         }
                     }
-                    worst = worse(worst, check_unit(group, decls, interop, embeds))
+                    worst = worse(worst, check_unit(group, decls, interop, embeds, target_os))
                     i2 += 1
                 }
                 return worst.code()
             }
         }
-        ro path = a[argi]
+        ro path = files[0]
         if in_program {
             // THE PROGRAM, not the file (274.11 E.10 step 2b): `nova build <entry>`
             // builds what the entry's imports reach, and so does this door.
-            return emit_program(path, self_paths, self_texts, decls, interop, embeds).code()
+            return emit_program(path, self_paths, self_texts, decls, interop, embeds, target_os).code()
         } else {
             // One unit: the file alone, as before programs existed.
         }
@@ -682,7 +750,7 @@ fn run(a []str) -> int {
                         ro home = embed_dir_of(path)
                         embeds.home = home
                         embeds_of(text, path, home, embeds)
-                        return emit_one(text, path, decls, interop, embeds).code()
+                        return emit_one(text, path, decls, interop, embeds, target_os).code()
                     }
                     Err(_) => {
                         println("novac: not UTF-8: ", path)

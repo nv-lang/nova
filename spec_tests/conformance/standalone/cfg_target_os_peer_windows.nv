@@ -1,0 +1,5 @@
+// EXPECT_STDOUT cfg-peer
+#cfg(target_os = "windows")
+module cfg_target_os_peer_windows
+
+fn main() Io -> () => print("cfg-peer")

@@ -1,0 +1,6 @@
+// EXPECT_STDOUT cfg-ok
+#cfg(target_os = "windows")
+fn main() Io -> () => print("cfg-ok")
+
+#cfg((target_os = "linux" || target_os = "macos") && !target_os = "windows")
+fn main() Io -> () => print("cfg-ok")
