@@ -17,6 +17,7 @@ use nova_codegen::test_runner;
 
 mod bench;
 mod build_cache;
+mod carina_build;
 mod daemon;
 
 // ---------- Plan 36 R7: structured CLI error types ----------
@@ -4928,6 +4929,33 @@ fn cmd_daemon(sub: DaemonCmd) -> Result<()> {
 }
 
 fn cmd_build(
+    path: &Path,
+    output: Option<&Path>,
+    mode: &str,
+    toolchain: &str,
+    vcvars: Option<&Path>,
+    clang: Option<&Path>,
+    timeout_secs: u64,
+    keep_artifacts: bool,
+    mono_depth: Option<usize>,
+    contracts: &str,
+) -> Result<()> {
+    carina_build::build(
+        path,
+        output,
+        mode,
+        toolchain,
+        vcvars,
+        clang,
+        timeout_secs,
+        keep_artifacts,
+        mono_depth,
+        contracts,
+    )
+}
+
+#[allow(dead_code)]
+fn cmd_build_oracle(
     path: &Path,
     output: Option<&Path>,
     mode: &str,
