@@ -103,6 +103,8 @@ pulled via `nova.lock.toml`.
   `nova run` (interpreter) is unsupported — use `nova build` or `nova test`.
 * **LSP** (`nova-lsp/`); **`novac/`** (brand Carina): self-hosted compiler in Nova, developed against the Rust
   compiler as oracle ([docs/dev/novac-architecture.md](docs/dev/novac-architecture.md)); **stdlib** `std/` in `.nv`.
+* **Норма для Carina:** Карина собирается без Oracle; Oracle — только задача совместимости. Baseline-страж от новых
+  Oracle build/bootstrap paths: [`check-carina-no-oracle-build.py`](scripts/guards/check-carina-no-oracle-build.py).
 * **Nova workspace:** root [nova.toml](nova.toml) (D78), `members = ["std", "examples", "nova_tests", "spec_tests",
   "novac"]`; directory name == `package.name`; the Rust crates are not members.
 * **CI:** `.github/workflows/`; mirrored to GitVerse and SourceCraft, GitHub is the source of truth.

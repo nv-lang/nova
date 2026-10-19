@@ -23,6 +23,24 @@ export LC_ALL=C
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 
+# Carina Oracle policy — baseline mode on every branch. Existing fingerprinted
+# paths are debt; a new or changed Oracle compiler/build path blocks the push.
+# The CI step is advisory until the pinned-B1 driver replaces REQUIRED F1.
+CARINA_ORACLE_GUARD="$REPO_ROOT/scripts/guards/check-carina-no-oracle-build.py"
+if [ -f "$CARINA_ORACLE_GUARD" ]; then
+    PY_BIN=""
+    for _cand in python3 python; do
+        if command -v "$_cand" >/dev/null 2>&1 && [ "$("$_cand" -c 'print(42)' 2>/dev/null)" = "42" ]; then
+            PY_BIN="$_cand"; break
+        fi
+    done
+    if [ -z "$PY_BIN" ]; then
+        echo "pre-push ОСТАНОВИЛ отправку: нет рабочего python/python3 для anti-Oracle Carina guard." >&2
+        exit 1
+    fi
+    "$PY_BIN" "$CARINA_ORACLE_GUARD" "$REPO_ROOT" || exit 1
+fi
+
 # Пушим ли мы main? Хук получает строки '<local ref> <local sha> <remote ref> <remote sha>'.
 # ЧИТАЕМ STDIN ПЕРВЫМ ДЕЛОМ. До 2026-08-13 выше стоял ранний выход по
 # NOVA_SKIP_CI_CHECK=1, и он уносил с собой ВСЕ проверки хука, а не только ту,
