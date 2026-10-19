@@ -1,0 +1,282 @@
+[
+  {
+    "path": ".github/workflows/nova-gate.yml",
+    "pattern": "oracle-build-novac",
+    "count": 1,
+    "lines_sha256": "10a261b21207daae9957f8dd64d93b9a3ccc32565db99449a9232c3587b16733",
+    "reason": "Current REQUIRED Oracle-backed F1/fixture/module-test path; retained as explicit debt until the pinned-B1 external driver preserves its build/test/runtime assertions.",
+    "due": "Replace before switching REQUIRED F1/fixture paths and before promoting this guard to required CI."
+  },
+  {
+    "path": ".github/workflows/nova-gate.yml",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "a658f102ffcf90fa296a12caafa1433491d0bbbab843d20a53a1aeb68f895868",
+    "reason": "Current REQUIRED Oracle-backed F1/fixture/module-test path; retained as explicit debt until the pinned-B1 external driver preserves its build/test/runtime assertions.",
+    "due": "Replace before switching REQUIRED F1/fixture paths and before promoting this guard to required CI."
+  },
+  {
+    "path": ".github/workflows/windows-oracle-package.yml",
+    "pattern": "oracle-package",
+    "count": 7,
+    "lines_sha256": "aea1236e0cfab0fa8f1cb624d90cb2d89bba760ea36270041fb9152e19bf0e0a",
+    "reason": "Manual-only Windows Oracle compatibility package is outside task 106 scope.",
+    "due": "Out of scope; never wire into the required Carina gate."
+  },
+  {
+    "path": "docs/dev/carina-seeds/linux-x86_64.json",
+    "pattern": "oracle-package",
+    "count": 2,
+    "lines_sha256": "d5a090ac2cd58040f42b73d2371993d3cec41c3f6579eee600caec9b357dc5f5",
+    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
+  },
+  {
+    "path": "docs/dev/carina-seeds/linux-x86_64.json",
+    "pattern": "oracle-provenance",
+    "count": 1,
+    "lines_sha256": "02302703ced076ff72054f09dd84ea70d4bec2a441c16367068788636d40dd40",
+    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
+  },
+  {
+    "path": "docs/dev/carina-seeds/linux-x86_64.json",
+    "pattern": "oracle-stage-a",
+    "count": 1,
+    "lines_sha256": "cf998c206d23de31b5fc0878fc1bba78d25a3f3b6d0093d5ef2cc71433ba469b",
+    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
+  },
+  {
+    "path": "docs/dev/carina-seeds/linux-x86_64.json",
+    "pattern": "oracle-version",
+    "count": 1,
+    "lines_sha256": "eee4bee8346206766a2c9f1ff5840da2a69a9f545dc82cf912e31d75ae0bf3b8",
+    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
+  },
+  {
+    "path": "docs/dev/carina-seeds/windows-x86_64.json",
+    "pattern": "oracle-provenance",
+    "count": 1,
+    "lines_sha256": "2e6d43cbbc190ea13773673d553ebb1b0a9dc4206417363b371ab46dba97d68b",
+    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
+  },
+  {
+    "path": "docs/dev/novac-bootstrap.md",
+    "pattern": "oracle-stage-a",
+    "count": 3,
+    "lines_sha256": "5b3090d642de23bdba41ac8282f00fd30761a73392d448eb92ad555a70b5c725",
+    "reason": "Published Oracle A/GC provenance or declared temporary Linux stage-A caveat; preserve the factual release record, not a behavior judge.",
+    "due": "Retain historical provenance; before claiming Linux Carina gate Oracle-free, replace any stage-A execution by the separately proven Carina B/C path."
+  },
+  {
+    "path": "scripts/gate-novac.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "8ef0a9cb7e4e43fd85fafbcb1ddb633f47312d57b21d0b8c31ea4949a2b245bc",
+    "reason": "Current REQUIRED Oracle-backed F1/fixture/module-test path; retained as explicit debt until the pinned-B1 external driver preserves its build/test/runtime assertions.",
+    "due": "Replace before switching REQUIRED F1/fixture paths and before promoting this guard to required CI."
+  },
+  {
+    "path": "scripts/gate-novac.sh",
+    "pattern": "oracle-build-novac",
+    "count": 1,
+    "lines_sha256": "e9122cffd95baf08d0702d32485d1cce63f8ea48819995afb055c038a28ec47b",
+    "reason": "Current REQUIRED F1 Oracle build of novac; retained as explicit debt until the pinned-B1 external driver proves an equivalent native build/run path.",
+    "due": "Replace before switching REQUIRED F1 and before promoting this guard to required CI."
+  },
+  {
+    "path": "scripts/guards/check-novac-build-clean.sh",
+    "pattern": "oracle-build-novac",
+    "count": 1,
+    "lines_sha256": "4ace62fb49445a6ce91edbeeed9a67e7bb09435fd3507970093cb06631d4d759",
+    "reason": "Required push/full build-clean guard can rebuild novac through the Oracle when its build log is absent.",
+    "due": "Replace its build-log dependency with the pinned-B1 driver before promoting this guard to required CI."
+  },
+  {
+    "path": "scripts/guards/check-novac-differential.sh",
+    "pattern": "oracle-cli-call",
+    "count": 2,
+    "lines_sha256": "31877c76b23d78aa4ef1af5ef1f862875dfddfe35587fa7a5120413b8eef4d95",
+    "reason": "Current REQUIRED Oracle-backed F1/fixture/module-test path; retained as explicit debt until the pinned-B1 external driver preserves its build/test/runtime assertions.",
+    "due": "Replace before switching REQUIRED F1/fixture paths and before promoting this guard to required CI."
+  },
+  {
+    "path": "scripts/guards/check-novac-differential.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "4d9799f7dbf5cd3ddc5299b20885dfa9c245c3d69a283a786e89852a16b17bc7",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/guards/check-novac-lint.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "3f170d1a0724f7fee07b9bcd24fae3d3ce24d1d6b26bc5b2c61105c370c12967",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/guards/check-novac-module-tests.sh",
+    "pattern": "oracle-cli-call",
+    "count": 1,
+    "lines_sha256": "ce90c64a3d35f13cc5567118f69e9a55dce358f2a3197a268073f271e7345e9c",
+    "reason": "Current REQUIRED Oracle-backed F1/fixture/module-test path; retained as explicit debt until the pinned-B1 external driver preserves its build/test/runtime assertions.",
+    "due": "Replace before switching REQUIRED F1/fixture paths and before promoting this guard to required CI."
+  },
+  {
+    "path": "scripts/guards/check-novac-module-tests.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "bb4d8d345880a61e0e5a0fdf6fc7b7b2c0b5cc26d046c9d77d31b1dccbafe0db",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/guards/check-oracle-nesting-depth.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "85442ec5cd813343b8ec75769969fb8665cef0f09936cda2c63aa9bbb17018b9",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/guards/lib/novac.sh",
+    "pattern": "oracle-selector",
+    "count": 2,
+    "lines_sha256": "91d61fdf8144292e640cae1ee984a5b36229605eae0a54ad7af15c4d77de6281",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/carina-gate.py",
+    "pattern": "oracle-provenance",
+    "count": 2,
+    "lines_sha256": "35a5770887cea4c8f417b6d440b40fdfcb66953619f1d40edfcab02a3304f17e",
+    "reason": "Explicitly opt-in Oracle stage-A compatibility mode in the seed verifier; it is not an expected-output judge.",
+    "due": "Retain only for an explicitly declared Linux stage-A exception; remove the exception after proven Linux Carina B/C."
+  },
+  {
+    "path": "scripts/tools/carina-gate.py",
+    "pattern": "oracle-stage-a",
+    "count": 3,
+    "lines_sha256": "00b9c353bb06558fee249c9b4d24a3d5a456276e6f1bb497006dfe242d571460",
+    "reason": "Explicitly opt-in Oracle stage-A compatibility mode in the seed verifier; it is not an expected-output judge.",
+    "due": "Retain only for an explicitly declared Linux stage-A exception; remove the exception after proven Linux Carina B/C."
+  },
+  {
+    "path": "scripts/tools/cdb_session.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "fbe6fd8c281bc5573761231824caf03bd09e8dc20b4bee0ff825a3dc62fb1fb6",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/double-build.sh",
+    "pattern": "oracle-cli-call",
+    "count": 1,
+    "lines_sha256": "308606ebf2c522965a6d7f7807752a262616731b999287272bdad2dd0b121ec4",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/double-build.sh",
+    "pattern": "oracle-build-novac",
+    "count": 1,
+    "lines_sha256": "308606ebf2c522965a6d7f7807752a262616731b999287272bdad2dd0b121ec4",
+    "reason": "Bootstrap/double-build diagnostic's Stage-A carrier; not a judge of expected behavior and not in the current REQUIRED lane.",
+    "due": "Replace or keep explicitly diagnostic before promoting this guard to required CI; do not treat it as a Carina C fixed-point verdict."
+  },
+  {
+    "path": "scripts/tools/double-build.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "b5500a851a64012723959e8bc829d6b3dd4282b733dacc125488c73c0a86f32c",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-diff-corpus.sh",
+    "pattern": "oracle-cli-call",
+    "count": 1,
+    "lines_sha256": "3eb01e512881fc5f130407946826dceafa33ff699def5b2d2edf0ff1d1da8ff6",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-diff-corpus.sh",
+    "pattern": "oracle-selector",
+    "count": 2,
+    "lines_sha256": "243d7ecff02a58d46fd96ab2559cdde157f7c53122ddd42438bea3b75cc164ad",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-e1-smoke.sh",
+    "pattern": "oracle-cli-call",
+    "count": 3,
+    "lines_sha256": "ae6d53a5bc98fb98da8d8da784530edbf34b6fc9c1da6cdc85a33c9d31a27b2c",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-e1-smoke.sh",
+    "pattern": "oracle-selector",
+    "count": 3,
+    "lines_sha256": "1c09045196436a79cecca3c4970580a176fe58356badc9a47e54444a896c51a0",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-fuzz-mutations.sh",
+    "pattern": "oracle-cli-call",
+    "count": 1,
+    "lines_sha256": "8392f3e3696bedb007699090f12881873c43b2b4ff55e2972742154d9b7604b6",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-fuzz-mutations.sh",
+    "pattern": "oracle-selector",
+    "count": 2,
+    "lines_sha256": "88522e8e2fea228f6c4a7ca0450262ec880de053685079de7d7402ca670332c8",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-grammar-matrix.py",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "9451fa12fd338b1803a02766a4c662a2155ba1036672ad87b071eb293d27f1a6",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-regen-shell.sh",
+    "pattern": "oracle-cli-call",
+    "count": 1,
+    "lines_sha256": "42ef955773dfb0b16314da3b2dcf45c4fbcf3717f9d6f01d8a87d2e3b3654b6a",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/novac-regen-shell.sh",
+    "pattern": "oracle-selector",
+    "count": 2,
+    "lines_sha256": "243d7ecff02a58d46fd96ab2559cdde157f7c53122ddd42438bea3b75cc164ad",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": "scripts/tools/stress_bisect.sh",
+    "pattern": "oracle-selector",
+    "count": 1,
+    "lines_sha256": "fbe6fd8c281bc5573761231824caf03bd09e8dc20b4bee0ff825a3dc62fb1fb6",
+    "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
+    "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  }
+]
