@@ -255,6 +255,7 @@ but the compiler knows their special meaning in certain contexts.
 | `any` | top type | everywhere; runtime type-tag for downcasts | [D54](decisions/03-syntax.md#d54) |
 | `never` | bottom type | return type of non-returning functions (`throw`, `panic`, `loop`) | [D26](decisions/08-runtime.md#d26) |
 | `Option[T]`, `Some`, `None` | sum type in the prelude | everywhere | [D26](decisions/08-runtime.md#d26) |
+| `?T` in a type position | prefix shorthand for `Option[T]`; `Option[T]` remains canonical | type positions only; `x?` remains the D85 expression operator | [D494](decisions/03-syntax.md#d494-префиксный-синтаксис-типа-option) |
 | `Result[T, E]`, `Ok`, `Err` | sum type in the prelude | everywhere | [D26](decisions/08-runtime.md#d26) |
 | `Error` | record type in the prelude | for `throw err` | [D26](decisions/08-runtime.md#d26) |
 | `RuntimeError` | sum type in the prelude | bottom-level runtime errors | [D26](decisions/08-runtime.md#d26) |

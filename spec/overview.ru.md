@@ -244,6 +244,7 @@
 | `any` | top-type | везде; runtime type-tag для downcast'а | [D54](decisions/03-syntax.md#d54) |
 | `never` | bottom-type | return type не-возвращающих функций (`throw`, `panic`, `loop`) | [D26](decisions/08-runtime.md#d26) |
 | `Option[T]`, `Some`, `None` | sum-тип в prelude | везде | [D26](decisions/08-runtime.md#d26) |
+| `?T` в позиции типа | префиксный сахар для `Option[T]`; канон остаётся `Option[T]` | только в типах; `x?` остаётся expression-оператором D85 | [D494](decisions/03-syntax.md#d494-префиксный-синтаксис-типа-option) |
 | `Result[T, E]`, `Ok`, `Err` | sum-тип в prelude | везде | [D26](decisions/08-runtime.md#d26) |
 | `Error` | record-тип в prelude | для `throw err` | [D26](decisions/08-runtime.md#d26) |
 | `RuntimeError` | sum-тип в prelude | bottom-уровневые runtime-ошибки | [D26](decisions/08-runtime.md#d26) |
