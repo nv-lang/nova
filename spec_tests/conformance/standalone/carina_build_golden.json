@@ -1,0 +1,17 @@
+{
+  "fixture_count": 1,
+  "command": [
+    "python",
+    "scripts/tools/carina-build-golden.py",
+    "{source}"
+  ],
+  "fixtures": [
+    {
+      "path": "spec_tests/conformance/standalone/stdout_hello.nv",
+      "spec": "D89: stdout marker and native print behavior",
+      "stdout": "hello world from Nova\r\n",
+      "stderr": "",
+      "exit": 0
+    }
+  ]
+}
