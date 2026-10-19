@@ -3,6 +3,7 @@ pub mod fs_lock;
 pub mod git_cache;
 pub mod lockfile;
 pub mod manifest;
+pub mod native_runtime;
 pub mod pkg_proxy;
 pub mod resolver;
 pub mod semver;
