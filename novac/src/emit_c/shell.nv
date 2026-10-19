@@ -230,7 +230,10 @@ fn strlit_defs(lits []str, tag str) -> str {
 /// hands in every unit's pool, each under its own mark (274.11 E.10 step 2b).
 fn render_spelled(lit_defs str, body str, init str) -> str {
     ro tpl_bytes = shell_template()
-    ro tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:233", "emit: shell.tpl.c is not UTF-8")
+    ro raw_tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:233", "emit: shell.tpl.c is not UTF-8")
+    ro tpl = normalize_integral_c_initializers(raw_tpl) ?? ice_at(
+        "novac/src/emit_c/shell.nv:234",
+        "emit: unsupported or cyclic file-scope integral const dependency")
     consume out = StringBuilder.new()
     mut emitted_lits = false
     mut emitted_body = false

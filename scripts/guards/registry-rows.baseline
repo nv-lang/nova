@@ -1,6 +1,10 @@
 # Task #106: row 1888 added; direct recount rows 1798 -> 1799, max 1887 -> 1888,
 #   dupes=0. №1888 is the pinned Carina B1 D104 `E_DOC_BOTH_FORMS` negative
 #   diagnostic gap (open; asset/source SHA and carrier caveat are in 221.1).
+# Task 110: rows 1889-1891 added; direct recount rows 1799 -> 1802,
+#   max 1888 -> 1891, dupes=0, gaps unchanged. №1889 is the Carina driver
+#   consumer-root defect; №1890 is the MSVC file-scope const C2099; №1891 is
+#   mixed path spelling causing a separate Carina entry-unit ICE.
 # Task #101: rows 1884 and 1885 added (numbers assigned by the integrator
 #   at acceptance). Direct recount rows=1794 -> 1796, max=1883 -> 1885,
 #   dupes=0. №1884 is the spec-drift on retired operator-dispatch names
@@ -1755,8 +1759,8 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1799
-max=1888
+rows=1802
+max=1891
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

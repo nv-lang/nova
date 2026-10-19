@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/emit_c/const_init.nv -- C initializer dependency lowering for
+// Carina's pinned shell. Nova `const` references are compile-time values
+// (D184); a C `static const` object is not itself a C constant expression.
+
+module novac.emit_c
+
+import ../lex.{is_ident_start, is_ident_byte, is_space}
+
+/// A scalar integral C file-scope object from the shell and its C initializer.
+/// The stored initializer is already dependency-expanded, so chains close in
+/// one pass without changing the object or its addressability.
+type IntegralCConst value {
+    name str
+    initializer str
+    supported bool
+}
+
+/// Expand references to earlier file-scope integral constants in integral
+/// initializers only. The shell is an oracle-generated, immutable artifact;
+/// this deterministic output pass fixes C's file-scope constant-expression
+/// rule without editing or regenerating that artifact. Other declarations,
+/// comments, strings and preprocessor lines pass through byte-for-byte.
+fn normalize_integral_c_initializers(text str) -> Option[str] {
+    mut all = []IntegralCConst.new()
+    for line in text.lines() {
+        match integral_const_line(line) {
+            Some(row) => all.push(row)
+            None => { }
+        }
+    }
+
+    consume out = StringBuilder.new()
+    mut prior = []IntegralCConst.new()
+    for line in text.lines() {
+        match integral_const_line(line) {
+            Some(row) => {
+                ro expanded = expand_integral_initializer(row.initializer, row.name, prior, all)
+                if !expanded.is_some() { return fail_integral_output(out) }
+                ro expr = expanded ?? ""
+                ro line_parts = initializer_parts(line)
+                if expr == row.initializer {
+                    out.append(line)
+                } else {
+                    out.append(line_parts.0)
+                    out.append(expr)
+                    out.append(line_parts.1)
+                }
+                out.append("\n")
+                prior.push(IntegralCConst { name: row.name, initializer: expr, supported: integral_expr_supported(expr) })
+            }
+            None => {
+                out.append(line)
+                out.append("\n")
+            }
+        }
+    }
+    Some(out.into_str())
+}
+
+/// Recognize the deliberately narrow, generated-C shape: one file-scope
+/// `static const` integral scalar declarator with a single-line initializer.
+/// A non-matching C declaration is not ours to judge.
+fn integral_const_line(line str) -> Option[IntegralCConst] {
+    if !line.starts_with("static const ") { return None }
+    ro eq = line.find(" = ") ?? (0 - 1)
+    if eq < 0 { return None }
+    if !line.ends_with(";") { return None }
+    ro lhs = line[13..eq]
+    ro words = c_words(lhs)
+    if words.len() < 2 { return None }
+    ro name = words[words.len() - 1]
+    if !is_c_identifier(name) { return None }
+    consume ty = StringBuilder.new()
+    for i in 0..words.len() - 1 {
+        if i > 0 { ty.append(" ") }
+        ty.append(words[i])
+    }
+    ro type_text = ty.into_str()
+    if !is_integral_c_type(type_text) { return None }
+    ro init_start = eq + 3
+    ro init_end = line.byte_len() - 1
+    if init_start >= init_end { return None }
+    Some(IntegralCConst { name, initializer: line[init_start..init_end], supported: true })
+}
+
+/// Split the simple declaration left-hand side into whitespace-delimited C
+/// words without depending on `str.split`'s iterator in the bootstrap subset.
+fn c_words(text str) -> []str {
+    mut words = []str.new()
+    ro bytes = text.bytes()
+    mut i = 0
+    while i < bytes.len() {
+        while i < bytes.len() && is_space(bytes[i]) { i += 1 }
+        ro start = i
+        while i < bytes.len() && !is_space(bytes[i]) { i += 1 }
+        if start < i { words.push(text[start..i]) }
+    }
+    words
+}
+
+/// The only C types this pass judges: scalar integral spellings, including
+/// Nova's runtime aliases and the fixed-width C aliases. Records, pointers,
+/// arrays and floating types are intentionally outside this pass.
+fn is_integral_c_type(t str) -> bool {
+    t == "nova_int" || t == "nova_uint" || t == "nova_byte" || t == "nova_char" || t == "nova_bool" ||
+    t == "_Bool" || t == "bool" || t == "char" || t == "signed char" || t == "unsigned char" ||
+    t == "short" || t == "short int" || t == "signed short" || t == "signed short int" ||
+    t == "unsigned short" || t == "unsigned short int" || t == "int" || t == "signed" || t == "signed int" ||
+    t == "unsigned" || t == "unsigned int" || t == "long" || t == "long int" || t == "signed long" ||
+    t == "signed long int" || t == "unsigned long" || t == "unsigned long int" || t == "long long" ||
+    t == "long long int" || t == "signed long long" || t == "signed long long int" ||
+    t == "unsigned long long" || t == "unsigned long long int" || t == "int8_t" || t == "uint8_t" ||
+    t == "int16_t" || t == "uint16_t" || t == "int32_t" || t == "uint32_t" || t == "int64_t" ||
+    t == "uint64_t" || t == "intptr_t" || t == "uintptr_t" || t == "size_t" || t == "ptrdiff_t" ||
+    t == "intmax_t" || t == "uintmax_t"
+}
+
+/// The exact slices around the initializer in a recognized one-line row.
+fn initializer_parts(line str) -> (str, str) {
+    ro eq = line.find(" = ") ?? 0
+    (line[..eq + 3], line[line.byte_len() - 1..])
+}
+
+/// Recursively substitute only identifiers that are known prior integral C
+/// constants. Forward references/self references are cycles or unsupported
+/// declaration order and fail closed. Unknown C names (enum/macro/etc.) are
+/// untouched; the C compiler remains their judge.
+fn expand_integral_initializer(expr str, current str, prior []IntegralCConst,
+                               all []IntegralCConst) -> Option[str] {
+    consume out = StringBuilder.new()
+    ro bytes = expr.bytes()
+    mut i = 0
+    mut copied = 0
+    mut found_dependency = false
+    ro n = expr.byte_len()
+    while i < n {
+        if bytes[i] == ('\"' as u8) || bytes[i] == ('\'' as u8) {
+            ro next = quoted_end(expr, i)
+            if next < 0 { return fail_integral_output(out) }
+            i = next
+            continue
+        }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('/' as u8) { break }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('*' as u8) {
+            ro next = comment_end(expr, i)
+            if next < 0 { return fail_integral_output(out) }
+            i = next
+            continue
+        }
+        if is_ident_start(bytes[i]) {
+            ro start = i
+            while i < n && is_ident_byte(bytes[i]) { i += 1 }
+            ro name = expr[start..i]
+            if has_integral_const(all, name) {
+                if name == current || !has_integral_const(prior, name) { return fail_integral_output(out) }
+                if !integral_expr_supported(expr) { return fail_integral_output(out) }
+                ro dependency = match integral_const(prior, name) {
+                    Some(row) => row
+                    None => return fail_integral_output(out)
+                }
+                if !dependency.supported { return fail_integral_output(out) }
+                found_dependency = true
+                out.append(expr[copied..start])
+                out.append("(")
+                out.append(dependency.initializer)
+                out.append(")")
+                copied = i
+            }
+            continue
+        }
+        i += 1
+    }
+    if !found_dependency {
+        out.into_str()
+        return Some(expr)
+    }
+    out.append(expr[copied..])
+    Some(out.into_str())
+}
+
+/// Consume the output already built on a fail-closed path.
+fn fail_integral_output(consume out StringBuilder) -> Option[str] {
+    out.into_str()
+    None
+}
+
+/// Check the supported scalar C-expression surface before expanding a known
+/// dependency. A function call, member/index access, aggregate or other shape
+/// is named as unsupported rather than emitted as an invalid initializer.
+fn integral_expr_supported(expr str) -> bool {
+    mut i = 0
+    ro n = expr.byte_len()
+    ro bytes = expr.bytes()
+    while i < n {
+        if is_space(bytes[i]) { i += 1; continue }
+        if bytes[i] == ('\"' as u8) || bytes[i] == ('\'' as u8) {
+            ro next = quoted_end(expr, i)
+            if next < 0 { return false }
+            if bytes[i] == ('\"' as u8) { return false }
+            i = next
+            continue
+        }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('/' as u8) { return true }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('*' as u8) {
+            ro next = comment_end(expr, i)
+            if next < 0 { return false }
+            i = next
+            continue
+        }
+        if is_ident_start(bytes[i]) {
+            ro start = i
+            while i < n && is_ident_byte(bytes[i]) { i += 1 }
+            ro word = expr[start..i]
+            ro next = skip_space(expr, i)
+            if next < n && bytes[next] == ('(' as u8) && !is_integral_c_type(word) && word != "sizeof" {
+                return false
+            }
+            continue
+        }
+        ro c = bytes[i]
+        if c == ('(' as u8) || c == (')' as u8) || c == ('+' as u8) || c == ('-' as u8) ||
+           c == ('*' as u8) || c == ('/' as u8) || c == ('%' as u8) || c == ('&' as u8) ||
+           c == ('|' as u8) || c == ('^' as u8) || c == ('~' as u8) || c == ('!' as u8) ||
+           c == ('<' as u8) || c == ('>' as u8) || c == ('=' as u8) || c == ('?' as u8) || c == (':' as u8) {
+            i += 1
+            continue
+        }
+        if is_digit_byte(bytes[i]) {
+            while i < n && (is_ident_byte(bytes[i]) || bytes[i] == ('\'' as u8)) { i += 1 }
+            continue
+        }
+        return false
+    }
+    true
+}
+
+fn is_digit_byte(b u8) -> bool => b >= ('0' as u8) && b <= ('9' as u8)
+
+fn is_c_identifier(name str) -> bool {
+    ro bytes = name.bytes()
+    if bytes.len() == 0 || !is_ident_start(bytes[0]) { return false }
+    for i in 1..name.byte_len() {
+        if !is_ident_byte(bytes[i]) { return false }
+    }
+    true
+}
+
+fn has_integral_const(rows []IntegralCConst, name str) -> bool {
+    for row in rows { if row.name == name { return true } }
+    false
+}
+
+fn integral_const(rows []IntegralCConst, name str) -> Option[IntegralCConst] {
+    for row in rows { if row.name == name { return Some(row) } }
+    None
+}
+
+fn skip_space(text str, from int) -> int {
+    mut i = from
+    ro bytes = text.bytes()
+    while i < text.byte_len() && is_space(bytes[i]) { i += 1 }
+    i
+}
+
+/// Index just after a C quoted string/character literal, honoring escapes.
+fn quoted_end(text str, from int) -> int {
+    ro bytes = text.bytes()
+    ro quote = bytes[from]
+    mut i = from + 1
+    mut escaped = false
+    while i < text.byte_len() {
+        if escaped { escaped = false }
+        else if bytes[i] == ('\\' as u8) { escaped = true }
+        else if bytes[i] == quote { return i + 1 }
+        i += 1
+    }
+    -1
+}
+
+/// Index just after a C block comment, or -1 if it was not closed.
+fn comment_end(text str, from int) -> int {
+    ro bytes = text.bytes()
+    mut i = from + 2
+    while i + 1 < text.byte_len() {
+        if bytes[i] == ('*' as u8) && bytes[i + 1] == ('/' as u8) { return i + 2 }
+        i += 1
+    }
+    -1
+}
