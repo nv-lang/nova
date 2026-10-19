@@ -212,29 +212,35 @@ Manifest меняется только в отдельно owner-named task; з�
 
 **Для Carina 0.3 — отдельный pin/provenance protocol, см. [274.16 Ш.0–Ш.7](../plans/274.16-carina-all-examples-and-packages.md).**
 Windows seed — Carina 0.2.1 alpha asset `nova-carina-0.2.1-windows-x86_64.zip`
-с digest из `SHA256SUMS`; его B/C fixed point не доказан. Linux остаётся
-отдельной будущей работой: до отдельного Linux A→B→C proof допустим только
+с digest из `SHA256SUMS`; для Windows его C-level B1.c=B2raw.c proof доказан
+решением владельца 2026-10-19 и воспроизводим через managed baseline. Native B2
+EXE/PDB/LIB equality не проверялась и не требуется. Linux остаётся отдельной
+будущей работой: до отдельного Linux A→B→C proof допустим только
 явно названный временный режим: Oracle — stage-A compiler Carina source → Carina B → Carina C на том же source SHA/platform.
 Linux examples/packages запускаются только под Carina-built B/C; CI report
-сохраняет stage provenance и явно помечает Oracle stage-A exception. Это не
-Для Linux до отдельного proof/release нельзя утверждать B≡C или
+сохраняет stage provenance и явно помечает Oracle stage-A exception. Для Linux
+до отдельного proof/release нельзя утверждать B≡C или
 Oracle-free bootstrap. Specs и golden outputs остаются нормативным судьёй;
 Oracle никогда не судит поведение. Fail closed при не объявленном stage-A
 fallback либо если Oracle используется как тестируемый compiler/binary; mismatch
 опубликованного asset/SHA также обязан давать ясный отказ.
 
-**Решение владельца 2026-10-19 — Windows Carina self-emit criterion:**
-Oracle-free для Windows Carina self-emit означает, что B1, опубликованный
-исполняемый файл Carina 0.2.1, выдаёт C bytewise equal stage A emitted C на
-том же pinned source. Native EXE/PDB/LIB bytewise equality — отдельная цель
-reproducible build, не gate. Ограниченный proof использует stage A Oracle
-0.1.0, GC headers Oracle 0.1.0 и saved run2 libraries/source3729; verifier
-Oracle не запускает. Команда и digest определены в [274.16 Ш.0](../plans/274.16-carina-all-examples-and-packages.md).
+**Решение владельца 2026-10-19:** «Карина с0.2.1 собирается без запуска Oracle».
+Для опубликованной Windows alpha это означает, что B1 из закреплённого
+release asset при закреплённом source tree выдаёт C, побайтно равный C,
+выданному стадией A. Это C-level bootstrap fixed point; native B2 build не
+утверждается. Native EXE/PDB/LIB bytewise equality не доказана и не требуется;
+это отдельная цель reproducible build, не gate. Для Windows Carina 0.2.1 это
+решение заменяет общий native B/C equality criterion выше; оно не устанавливает
+общий Oracle-free toolchain criterion.
 
-Это Windows C-level решение не доказывает Linux fixed point. Linux остаётся
-отдельной работой, а критерии 0.3 build/test/examples/packages не меняются.
-Историческая A→B→C приёмка 0.2 также не меняется: её receipt подтверждает
-только exact-SHA Windows 0.2, не Linux seed и не 0.3 provenance.
+Историческая provenance сохраняется: published Oracle 0.1.0 построил
+первоначальную Carina A; A выдала B1.c; Clang построил опубликованный B1 из
+этого C. Использовались GC headers Oracle 0.1.0 и saved run2 libraries/source3729.
+При повторном B1 emit Oracle не запускается. Точная команда и управляемый
+baseline находятся в [274.16 Ш.0](../plans/274.16-carina-all-examples-and-packages.md).
+Windows результат не доказывает Linux; 0.3 build/test/examples/packages не
+изменяются. Историческая приёмка 0.2.0 остаётся исторической и не переписывается.
 
 ## 6. Открытые вопросы не закрываются реализацией
 

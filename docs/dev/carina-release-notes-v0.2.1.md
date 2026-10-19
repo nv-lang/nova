@@ -17,17 +17,33 @@ source archive `nova-carina-0.2.1-src.tar.gz` SHA-256 is
 `66ed06aba924491bfe8b292d392d9aebf27b0971a8f2a9a7ebf884b7ffa555d0`).
 
 The candidate is built from source revision
-`3729abcce42ec2d94efc898ec6eafe91ff6210d5`. The local evidence records Oracle
-0.1.0 as stage A, emission of B1, native/check/emit smoke checks, a packaged
-check, and a seed-pin verification. These local checks are not server CI and
-do not establish a B/C fixed point. B/C equality is **not proven**; this release
-makes no Oracle-free bootstrap claim.
+`3729abcce42ec2d94efc898ec6eafe91ff6210d5`. **Owner decision 2026-10-19:**
+«Карина с0.2.1 собирается без запуска Oracle». This claim is about the
+reproducible Windows C-level bootstrap, not a native B2 build: published B1
+emits `B2raw.c`, bytewise equal to the stage-A emitted `B1.c` for the pinned
+source. The independent post-release raw-output run observed both C files at
+13,250,302 bytes, SHA-256
+`25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0`, with
+empty stderr. The managed expected-C baseline is
+[`scripts/guards/carina-bootstrap-c.baseline`](../../scripts/guards/carina-bootstrap-c.baseline);
+repeat it with the published ZIP or shipped executable and an explicit pinned
+source tree using
+`python scripts/guards/check-carina-bootstrap-c.py <pinned-source-tree> --asset <published-zip-or-novac.exe> --work-dir <scratchpad>`.
 
-The Windows build used GC headers from Oracle 0.1.0 and saved runtime libraries
-from run2/source3729. Run1 bytes are unavailable, so no run1/run2 byte-equality
-claim is made. Linux binaries and PDB files are not shipped. Linux validation
-and any Linux release remain separate future work. Compiling the full examples
-and package ecosystem remains a Carina 0.3 criterion and is not done here.
+**Historical provenance (not hidden):** published Oracle 0.1.0 built the
+initial Carina A; A emitted `B1.c`; Clang built the published B1 executable
+from that C. Oracle 0.1.0 GC headers and saved run2 libraries/source3729 were
+used. Oracle was a one-time historical stage A and is not executed by the
+repeatable B1 emit verifier. The original post-release measurement used cwd
+`<source-tree>`, `NOVA_STD_PATH=<source-tree>/std/src`, relative
+`NOVAC_SELF_PATH=novac/src`, and `cmd` raw stdout redirection (not PowerShell
+text redirection). An absolute `NOVAC_SELF_PATH` was not tested.
+
+Native B2 executable/PDB/LIB byte equality is **not proven and is not required**
+for this C-level criterion; this is not a claim that a native B2 smoke/build
+was run. The Windows artifact is alpha. Linux binaries are not shipped and
+Linux bootstrap validation remains separate. Full examples/packages and
+Carina `build`/`test` remain 0.3 criteria and are not done here.
 
 This release is an alpha candidate; release availability and compatibility are
 not guaranteed. Use the included setup instructions and provide an external C

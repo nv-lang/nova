@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "platform": "windows-x86_64",
+  "asset_name": "nova-carina-0.2.1-windows-x86_64.zip",
+  "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.1/nova-carina-0.2.1-windows-x86_64.zip",
+  "asset_sha256": "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb",
+  "b1_exe_sha256": "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4",
+  "source_revision": "3729abcce42ec2d94efc898ec6eafe91ff6210d5",
+  "source_paths": [
+    "novac/src",
+    "std/src",
+    "nova.toml"
+  ],
+  "workspace_manifest": "nova.toml",
+  "nested_novac_manifest": "novac/nova.toml",
+  "self_path": "novac/src",
+  "std_path": "std/src",
+  "expected_c_bytes": 13250302,
+  "expected_c_sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+  "provenance": {
+    "stage_a": "Published Oracle 0.1.0 built the initial Carina A; Oracle is not executed by this verifier.",
+    "b1": "Stage A emitted B1.c; Clang built the published B1 executable from that C.",
+    "gc_headers": "Oracle 0.1.0 GC headers.",
+    "runtime_libraries": "Saved run2 libraries/source3729."
+  },
+  "update_reason": "Initial managed baseline from independent post-release Windows B1.c/B2raw.c equality; any future digest/source/asset change requires an explicit reviewed edit and a recorded reason here."
+}
