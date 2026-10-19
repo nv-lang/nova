@@ -20,6 +20,15 @@ const SEED_SOURCE: &str = "3729abcce42ec2d94efc898ec6eafe91ff6210d5";
 const SEED_ZIP_SHA256: &str = "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb";
 const SEED_EXE_SHA256: &str = "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4";
 const SEED_ASSET: &str = "nova-carina-0.2.1-windows-x86_64.zip";
+const CANDIDATE_B2_ASSET_NAME: &str = "carina-b2-clang-verification.exe";
+const CANDIDATE_B2_EXE_SHA256: &str =
+    "43ab0954543f53574b439b351f881ee2001fb0ffe9cbad16acae95274b5ffa43";
+const CANDIDATE_B2_BOOTSTRAP_C_SHA256: &str =
+    "abece62f26083692ae6ed8ebff198e8511f95a7439b60324bdfeccaf8357a7ae";
+const CANDIDATE_B2_SOURCE_TREE_GIT_SHA1: &str = "b4a86add7ccd28c137723aadfd6fbe4bf2cb48e3";
+const CANDIDATE_B2_SOURCE_COMMIT_GIT_SHA1: &str = "0f83a3e7b35f2f235c6af8721ddf4a25b0e6e7b5";
+const CANDIDATE_B2_DESCRIPTOR_CANONICAL_SHA256: &str =
+    "b83839565e8b4c75f5e73e9c4ecd128d03a87d42e849110010187c0fcc94a366";
 const SEED_URL: &str = "https://github.com/nv-lang/nova/releases/download/carina-v0.2.1/nova-carina-0.2.1-windows-x86_64.zip";
 const DRIVER_STAMP: &str = "NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1";
 
@@ -77,6 +86,7 @@ pub(crate) fn build(
     let manifest_path = package_dir.join("nova.toml");
     let manifest = nova_codegen::manifest::parse_manifest(&manifest_path, &package_dir)
         .ok_or_else(|| anyhow!("invalid package manifest: {}", manifest_path.display()))?;
+    let consumer_source_root = consumer_source_root(&manifest.source_root);
     // This is driver-owned package/lock resolution, not compiler work.
     nova_codegen::lockfile::sync(&package_dir)
         .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {:#}", e))?;
@@ -113,16 +123,20 @@ pub(crate) fn build(
         .args(&carina_args)
         .current_dir(&repo)
         .env("NOVA_STD_PATH", repo.join("std/src"))
-        .env("NOVAC_SELF_PATH", repo.join("novac/src"));
+        // `emit` needs the consumer's module tree, not Carina's own source
+        // tree. The latter made sibling imports in user programs disappear.
+        .env("NOVAC_SELF_PATH", &consumer_source_root);
     let emitted = carina
         .output()
         .context("could not start pinned Carina B1 emit")?;
     if !emitted.status.success() {
-        let detail = String::from_utf8_lossy(&emitted.stderr);
+        let stdout = output_preview(&emitted.stdout);
+        let stderr = output_preview(&emitted.stderr);
         bail!(
-            "Carina B1 emit failed (exit {}): {}",
+            "Carina B1 emit failed (exit {}): stdout={:?}; stderr={:?}",
             emitted.status.code().unwrap_or(1),
-            detail.trim()
+            stdout.trim(),
+            stderr.trim()
         );
     }
     let c_prefix = emitted
@@ -143,16 +157,32 @@ pub(crate) fn build(
     std::fs::write(&c_file, &emitted.stdout)
         .with_context(|| format!("cannot write generated C {}", c_file.display()))?;
     let c_sha = sha256_file(&c_file)?;
-    println!(
-        "nova build seed: driver_stamp=carina-b1-build-v1 {} cwd={} argv={:?} seed=carina-b asset_sha256={} b1_sha256={} source_sha={} seed_freshness=verified platform=windows-x86_64 generated_c_sha256={}",
-        DRIVER_STAMP,
-        repo.display(),
-        carina_args,
-        SEED_ZIP_SHA256,
-        SEED_EXE_SHA256,
-        SEED_SOURCE,
-        c_sha,
-    );
+    if let Some(candidate) = &seed.candidate_b2 {
+        println!(
+            "nova build seed: driver_stamp=carina-b1-build-v1 {} cwd={} argv={:?} seed=carina-b2-verification candidate_exe_sha256={} candidate_bootstrap_c_sha256={} candidate_source_commit_git_sha1={} candidate_source_tree_git_sha1={} parent_seed_sha256={} parent_b1_sha256={} generated_c_sha256={}",
+            DRIVER_STAMP,
+            repo.display(),
+            carina_args,
+            candidate.exe_sha256,
+            candidate.bootstrap_c_sha256,
+            candidate.source_commit_git_sha1,
+            candidate.source_tree_git_sha1,
+            candidate.parent_seed_sha256,
+            candidate.parent_b1_sha256,
+            c_sha,
+        );
+    } else {
+        println!(
+            "nova build seed: driver_stamp=carina-b1-build-v1 {} cwd={} argv={:?} seed=carina-b asset_sha256={} b1_sha256={} source_sha={} seed_freshness=verified platform=windows-x86_64 generated_c_sha256={}",
+            DRIVER_STAMP,
+            repo.display(),
+            carina_args,
+            SEED_ZIP_SHA256,
+            SEED_EXE_SHA256,
+            SEED_SOURCE,
+            c_sha,
+        );
+    }
 
     let pref = ToolchainPref::parse(toolchain)?;
     let tc = match test_runner::detect_toolchain(&ToolchainOpts {
@@ -274,9 +304,79 @@ pub(crate) fn build(
 
 struct Seed {
     exe: PathBuf,
+    candidate_b2: Option<CandidateB2Receipt>,
+}
+
+struct CandidateB2Receipt {
+    exe_sha256: String,
+    bootstrap_c_sha256: String,
+    source_tree_git_sha1: String,
+    source_commit_git_sha1: String,
+    parent_seed_sha256: String,
+    parent_b1_sha256: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateB2Descriptor {
+    schema: String,
+    asset_name: String,
+    platform: String,
+    stage: String,
+    exe_sha256: String,
+    bootstrap_c_sha256: String,
+    source_commit_git_sha1: String,
+    source_tree_git_sha1: String,
+    parent_seed_sha256: String,
+    parent_b1_sha256: String,
+    compiler_provenance: String,
+}
+
+fn output_preview(bytes: &[u8]) -> String {
+    const LIMIT: usize = 4096;
+    let shown = String::from_utf8_lossy(&bytes[..bytes.len().min(LIMIT)]).into_owned();
+    if bytes.len() > LIMIT {
+        format!("{shown} [truncated after {LIMIT} of {} bytes]", bytes.len())
+    } else {
+        shown
+    }
+}
+
+fn consumer_source_root(source_root: &Path) -> PathBuf {
+    normalize_verbatim_path(source_root)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::consumer_source_root;
+    use std::path::Path;
+
+    #[test]
+    fn carina_receives_the_consumer_package_source_root() {
+        let source_root = Path::new(r"\\?\D:\workspace\package\src");
+        let actual = consumer_source_root(source_root);
+
+        assert_eq!(actual, Path::new(r"D:\workspace\package\src"));
+        assert_ne!(actual, Path::new(r"D:\workspace\novac\src"));
+    }
 }
 
 fn prepare_seed(repo: &Path) -> Result<Seed> {
+    let candidate_exe = std::env::var_os("NOVA_CARINA_CANDIDATE_B2_EXE");
+    let candidate_descriptor = std::env::var_os("NOVA_CARINA_CANDIDATE_B2_DESCRIPTOR");
+    let candidate_source_repo = std::env::var_os("NOVA_CARINA_CANDIDATE_SOURCE_REPO");
+    match (candidate_exe, candidate_descriptor, candidate_source_repo) {
+        (Some(exe), Some(descriptor), Some(source_repo)) => {
+            return prepare_candidate_b2(
+                Path::new(&exe),
+                Path::new(&descriptor),
+                Path::new(&source_repo),
+            );
+        }
+        (None, None, None) => {}
+        _ => bail!("B2 verification opt-in requires NOVA_CARINA_CANDIDATE_B2_EXE, NOVA_CARINA_CANDIDATE_B2_DESCRIPTOR, and NOVA_CARINA_CANDIDATE_SOURCE_REPO"),
+    }
+
     let descriptor = repo.join("docs/dev/carina-seeds/windows-x86_64.json");
     let cache = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
@@ -359,7 +459,145 @@ fn prepare_seed(repo: &Path) -> Result<Seed> {
     if exe_sha != SEED_EXE_SHA256 {
         bail!("Carina B1 executable SHA256 mismatch: {}", exe_sha);
     }
-    Ok(Seed { exe })
+    Ok(Seed {
+        exe,
+        candidate_b2: None,
+    })
+}
+
+fn prepare_candidate_b2(exe: &Path, descriptor: &Path, source_repo: &Path) -> Result<Seed> {
+    let descriptor_bytes = std::fs::read(descriptor).with_context(|| {
+        format!(
+            "cannot read B2 candidate descriptor {}",
+            descriptor.display()
+        )
+    })?;
+    let spec: CandidateB2Descriptor = serde_json::from_slice(&descriptor_bytes)
+        .context("invalid B2 candidate descriptor JSON")?;
+    let canonical_fields = std::collections::BTreeMap::from([
+        ("schema", spec.schema.as_str()),
+        ("asset_name", spec.asset_name.as_str()),
+        ("platform", spec.platform.as_str()),
+        ("stage", spec.stage.as_str()),
+        ("exe_sha256", spec.exe_sha256.as_str()),
+        ("bootstrap_c_sha256", spec.bootstrap_c_sha256.as_str()),
+        (
+            "source_commit_git_sha1",
+            spec.source_commit_git_sha1.as_str(),
+        ),
+        ("source_tree_git_sha1", spec.source_tree_git_sha1.as_str()),
+        ("parent_seed_sha256", spec.parent_seed_sha256.as_str()),
+        ("parent_b1_sha256", spec.parent_b1_sha256.as_str()),
+        ("compiler_provenance", spec.compiler_provenance.as_str()),
+    ]);
+    let canonical = serde_json::to_vec(&canonical_fields)?;
+    let descriptor_sha = sha256_bytes(&canonical)?;
+    if descriptor_sha != CANDIDATE_B2_DESCRIPTOR_CANONICAL_SHA256 {
+        bail!("B2 candidate descriptor canonical SHA256 mismatch: {descriptor_sha}");
+    }
+    if spec.schema != "carina-b2-verification-v1"
+        || spec.platform != "windows-x86_64"
+        || spec.stage != "verification-only"
+    {
+        bail!("B2 candidate descriptor schema, platform, or stage is not supported");
+    }
+    let expected_exe_sha = spec.exe_sha256.as_str();
+    let bootstrap_c_sha = spec.bootstrap_c_sha256.as_str();
+    let source_commit = spec.source_commit_git_sha1.as_str();
+    let source_tree = spec.source_tree_git_sha1.as_str();
+    let parent_seed_sha = spec.parent_seed_sha256.as_str();
+    let parent_b1_sha = spec.parent_b1_sha256.as_str();
+    if spec.compiler_provenance != "B1 emitted from published seed; B2 built with Windows Clang" {
+        bail!("B2 candidate compiler provenance is not the approved verification route");
+    }
+    for (name, value, digits) in [
+        ("exe_sha256", expected_exe_sha, 64),
+        ("bootstrap_c_sha256", bootstrap_c_sha, 64),
+        ("source_commit_git_sha1", source_commit, 40),
+        ("source_tree_git_sha1", source_tree, 40),
+        ("parent_seed_sha256", parent_seed_sha, 64),
+        ("parent_b1_sha256", parent_b1_sha, 64),
+    ] {
+        if value.len() != digits
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            bail!("B2 candidate descriptor field `{name}` must be {digits} lowercase hexadecimal characters");
+        }
+    }
+    if spec.asset_name != CANDIDATE_B2_ASSET_NAME
+        || expected_exe_sha != CANDIDATE_B2_EXE_SHA256
+        || bootstrap_c_sha != CANDIDATE_B2_BOOTSTRAP_C_SHA256
+        || source_commit != CANDIDATE_B2_SOURCE_COMMIT_GIT_SHA1
+        || source_tree != CANDIDATE_B2_SOURCE_TREE_GIT_SHA1
+        || parent_seed_sha != SEED_ZIP_SHA256
+        || parent_b1_sha != SEED_EXE_SHA256
+    {
+        bail!("B2 candidate descriptor does not match the pinned verification candidate");
+    }
+    verify_candidate_source_tree(source_repo, source_commit, source_tree)?;
+    if !exe.is_file() {
+        bail!(
+            "B2 verification candidate executable is missing: {}",
+            exe.display()
+        );
+    }
+    if exe.file_name().and_then(|name| name.to_str()) != Some(CANDIDATE_B2_ASSET_NAME) {
+        bail!("B2 verification candidate executable name does not match its descriptor");
+    }
+    let actual_exe_sha = sha256_file(exe)?;
+    if actual_exe_sha != expected_exe_sha {
+        bail!("B2 verification candidate executable SHA256 mismatch: {actual_exe_sha}");
+    }
+    Ok(Seed {
+        exe: exe.to_path_buf(),
+        candidate_b2: Some(CandidateB2Receipt {
+            exe_sha256: expected_exe_sha.to_owned(),
+            bootstrap_c_sha256: bootstrap_c_sha.to_owned(),
+            source_commit_git_sha1: source_commit.to_owned(),
+            source_tree_git_sha1: source_tree.to_owned(),
+            parent_seed_sha256: parent_seed_sha.to_owned(),
+            parent_b1_sha256: parent_b1_sha.to_owned(),
+        }),
+    })
+}
+
+fn verify_candidate_source_tree(source_repo: &Path, commit: &str, tree: &str) -> Result<()> {
+    if !source_repo.is_dir() {
+        bail!(
+            "B2 candidate source repository is missing: {}",
+            source_repo.display()
+        );
+    }
+    let repo = source_repo.to_string_lossy();
+    let dirty = Command::new("git")
+        .args([
+            "-C",
+            repo.as_ref(),
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored",
+            "--",
+            "novac/src",
+        ])
+        .output()
+        .context("could not verify B2 candidate source cleanliness")?;
+    if !dirty.status.success() || !dirty.stdout.is_empty() {
+        bail!("B2 candidate source tree novac/src is dirty");
+    }
+    for (revision, label) in [("HEAD", "working source"), (commit, "pinned source commit")] {
+        let spec = format!("{revision}:novac/src");
+        let output = Command::new("git")
+            .args(["-C", repo.as_ref(), "rev-parse", &spec])
+            .output()
+            .context("could not identify B2 candidate source tree")?;
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != tree {
+            bail!("B2 candidate {label} tree does not match its pinned source-tree SHA1");
+        }
+    }
+    Ok(())
 }
 
 fn find_workspace_root(entry: &Path) -> Result<PathBuf> {
@@ -435,6 +673,31 @@ fn sha256_file(path: &Path) -> Result<String> {
         .context("Python is required for SHA256 build provenance")?;
     if !output.status.success() {
         bail!("could not calculate SHA256 for {}", path.display());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> Result<String> {
+    use std::io::Write;
+
+    let mut child = Command::new("python")
+        .args([
+            "-c",
+            "import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Python is required for B2 candidate descriptor verification")?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("could not open Python digest input"))?
+        .write_all(bytes)?;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        bail!("could not calculate B2 candidate descriptor SHA256");
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }

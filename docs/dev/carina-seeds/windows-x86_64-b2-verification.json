@@ -1,0 +1,13 @@
+{
+  "schema": "carina-b2-verification-v1",
+  "asset_name": "carina-b2-clang-verification.exe",
+  "platform": "windows-x86_64",
+  "stage": "verification-only",
+  "exe_sha256": "43ab0954543f53574b439b351f881ee2001fb0ffe9cbad16acae95274b5ffa43",
+  "bootstrap_c_sha256": "abece62f26083692ae6ed8ebff198e8511f95a7439b60324bdfeccaf8357a7ae",
+  "source_commit_git_sha1": "0f83a3e7b35f2f235c6af8721ddf4a25b0e6e7b5",
+  "source_tree_git_sha1": "b4a86add7ccd28c137723aadfd6fbe4bf2cb48e3",
+  "parent_seed_sha256": "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb",
+  "parent_b1_sha256": "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4",
+  "compiler_provenance": "B1 emitted from published seed; B2 built with Windows Clang"
+}
