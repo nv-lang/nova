@@ -24,179 +24,9 @@ use std::path::{Path, PathBuf};
 pub use nova_driver_support::{parse_size_to_bytes, FfiConfig, RuntimeConfig};
 use std::process::Command;
 
-/// Plan 03.1: git-пин зависимости.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GitPin {
-    Rev(String),
-    Tag(String),
-    Branch(String),
-    /// Plan 03.2: semver-диапазон — версия выбирается среди тегов
-    /// репозитория (наибольший подходящий semver-тег).
-    Version(crate::semver::VersionReq),
-    /// Пин не указан — резолвится в default-ветку (lockfile фиксирует commit).
-    Default,
-}
+pub use nova_driver_support::manifest::{DepSource, Dependency, GitPin};
 
-/// Plan 03.1: источник внешней зависимости.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DepSource {
-    /// Локальная path-зависимость: директория другого пакета.
-    Path(String),
-    /// Git-зависимость; pin — rev/tag/branch.
-    Git { url: String, pin: GitPin },
-    /// Версия из registry (registry — Plan 03.3; пока не резолвится).
-    Registry(String),
-    /// Некорректная запись (ни `path`, ни `git`, ни версия) — хранит
-    /// сырое значение для диагностики на этапе резолва.
-    Invalid(String),
-}
-
-/// Plan 03.1: одна запись `[dependencies]`.
-#[derive(Debug, Clone)]
-pub struct Dependency {
-    pub name: String,
-    pub source: DepSource,
-    /// Plan 03.4 Ф.3: capability-confined dep — `forbid = ["Net", "Fs"]`.
-    /// Запрещённые эффекты: компилятор проверяет, что effect-surface
-    /// зависимости их не содержит. Пусто — ограничений нет.
-    pub forbid: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Manifest {
-    pub package_name: String,
-    pub source_root: PathBuf,
-    /// Directory containing `nova.toml` itself (the package root). Usually
-    /// identical to `source_root` — they diverge for the canonical
-    /// `src/` layout, `[lib] src = "<subdir>"` (D78 + the Plan 195 amendment,
-    /// standard for new packages, NOT back-compat; reference: `nova-tls`'s
-    /// `src = "src"`). `[ffi]` paths are documented (see [`FfiConfig`]) as
-    /// relative to **this** directory, not `source_root` — found 2026-07-12
-    /// while fixing the `nova-tls` standalone-package D133 regression:
-    /// `ResolvedFfiConfig::from_manifest` previously joined against
-    /// `source_root`, so `c_shims = ["native/tls_c_shim.c"]` resolved to
-    /// `<pkg>/src/native/...` instead of `<pkg>/native/...` for any package
-    /// using a non-trivial `[lib] src`.
-    pub manifest_dir: PathBuf,
-    /// **Plan 62.F.bis Ф.1 (edition versioning, 2026-05-18):**
-    /// `[package].edition = "2026.05"` — pin для prelude content. None →
-    /// rolling (uses `std/prelude.nv` facade). Some("X.Y") → resolver
-    /// проверяет наличие `std/prelude/<sanitized>.nv` (где `.` → `_`)
-    /// перед fallback'ом на rolling facade.
-    ///
-    /// Mirrors Rust's `edition = "2021"` и Go's `go 1.21` — stability
-    /// через explicit pin. Безопасно extends prelude content без
-    /// breaking existing packages.
-    pub edition: Option<String>,
-    /// Plan 71 / D127: opt-in строгий enforcement правила
-    /// `public-missing-stability` (Plan 45 §11.5 №7).
-    ///
-    /// Source: `[lib] enforce-stability = true` в `nova.toml`.
-    /// Default (если flag не задан) — `false`: lint emit Warning, не
-    /// блокирует `nova doc --check`. `true` — Error, exit 1.
-    ///
-    /// Test/example/bench paths игнорируют этот flag (см.
-    /// `doc::lints::LintConfig::fixture_dirs`) — там lint всегда skip'ается.
-    pub enforce_stability: bool,
-    /// Plan 03.1: внешние зависимости из `[dependencies]`. Пусто, если
-    /// секция отсутствует.
-    pub dependencies: Vec<Dependency>,
-    /// Plan 100.6 (D164 §6): `[exports.consume_types]` — пакетный контракт
-    /// на consume-статус типов. Ключ = имя типа, значение = версия контракта
-    /// (semver major-string, напр. `"1.0"`). Пусто, если секция отсутствует.
-    ///
-    /// Семантика: потребители могут полагаться на неизменность consume-статуса
-    /// типа в рамках указанной major-версии. Изменение consume-статуса без
-    /// major-bump — ABI-break (D164 §2).
-    ///
-    /// Пример в nova.toml:
-    /// ```toml
-    /// [exports.consume_types]
-    /// Transaction = "1.0"
-    /// Resource    = "1.0"
-    /// ```
-    pub exports_consume_types: HashMap<String, String>,
-    /// Plan 115 D214 [M-115-ffi-build-pipeline]: `[ffi]` section — user FFI
-    /// build pipeline. Объявляет C shim header'ы, include-каталоги и
-    /// system libraries которые передаются clang при сборке тестов и
-    /// бинарей этого пакета.
-    ///
-    /// Все paths относительные к директории `nova.toml`.
-    ///
-    /// Пример в nova.toml:
-    /// ```toml
-    /// [ffi]
-    /// c_shims      = ["src/sqlite3_shim.c", "src/libpng_shim.c"]
-    /// include_dirs = ["src/", "third_party/sqlite3/"]
-    /// lib_dirs     = ["third_party/sqlite3/lib/"]
-    /// libs         = ["sqlite3", "png"]
-    /// ```
-    ///
-    /// Семантика: `c_shims` — дополнительные `.c` или `.h` файлы для
-    /// compilation (header-only inline shims OK); `include_dirs` →
-    /// clang `-I` flags; `lib_dirs` (Plan 193 Ф.2 gap-1) → linker
-    /// search-directory flags (`-L`/MSVC `/LIBPATH:`) для non-default-path
-    /// native libs; `libs` → clang `-l<name>` / MSVC `<name>.lib` flags для
-    /// linking. `lib_dirs` пустой (не задан) → только default toolchain
-    /// search path (как раньше).
-    ///
-    /// Detect-and-degrade (Plan 193 Ф.2 gap-1): когда `lib_dirs` задан явно,
-    /// но объявленный `libs`-файл не найден ни в одной из директорий —
-    /// test_runner деградирует ЭТОТ пакет к SKIP («lib not found»), а не
-    /// hard CC/link-FAIL (мирроринг retired built-in
-    /// MbedtlsConfig/BrotliConfig graceful-degrade контракта, обобщённый
-    /// для generic `[ffi] libs`).
-    ///
-    /// Пусто (None), если секция отсутствует.
-    pub ffi: Option<FfiConfig>,
-    /// Plan 149 D233: `[runtime]` section — fiber arena tuning baked as
-    /// compile-time defaults (-DNOVA_FIBER_STACK_DEFAULT / -DNOVA_FIBERS_PER_WORKER_DEFAULT).
-    /// Precedence env > nova.toml(-D) > builtin #define. None если секция
-    /// отсутствует.
-    pub runtime: Option<RuntimeConfig>,
-    /// Plan 204: `[replace]` section — dev-override источника зависимости,
-    /// объявленной в `[dependencies]` (school Go `replace`-директивы /
-    /// Cargo `[patch]`). Ключ — имя зависимости (должно совпадать с
-    /// записью в `[dependencies]`); значение — источник, который
-    /// РЕАЛЬНО резолвится вместо декларированного (обычно `path = "../..."`
-    /// поверх релизной `{ git = "...", version = "..." }` формы).
-    ///
-    /// Разделение «что требуется» (`[dependencies]`) / «откуда взять
-    /// СЕЙЧАС» (`[replace]`) — go-школа (D-block Q-dependency-versioning).
-    /// Пусто, если секция отсутствует. См. [`Manifest::effective_source`].
-    ///
-    /// **Plan 204 дофикс №2 / Plan 233 §2а (переименование):** объединяет
-    /// ДВА источника — `[replace]` из самого `nova.toml` (закоммиченный,
-    /// см. `replace_in_committed_manifest`) и `[replace]` из необязательного
-    /// соседнего override-файла (машино-локальный, не коммитится — новое
-    /// имя `nova.override.toml`, legacy `nova.local.toml` читается тоже, с
-    /// deprecation warning, см. `override_legacy_name_used`). Override-файл
-    /// побеждает при совпадении ключа (более специфичный, машино-локальный
-    /// оверрайд). Само по себе это поле НЕ учитывает go-scope (корень vs
-    /// зависимость) — это делает `Manifest::effective_source`'s caller
-    /// (`imports::lookup_dependency`), консультируя его ТОЛЬКО когда
-    /// текущий манифест — корень собираемого дерева.
-    pub replace: HashMap<String, DepSource>,
-    /// **Plan 204 дофикс №2:** `true`, если `[replace]` объявлен
-    /// непосредственно в ЭТОМ `nova.toml` (закоммиченном файле) — а не
-    /// только в соседнем override-файле. Триггерит `W_REPLACE_IN_MANIFEST`
-    /// (`manifest_warnings`): закоммиченный `[replace]` ломает чистый клон
-    /// (путь, валидный на машине автора, отсутствует у клонирующего).
-    pub replace_in_committed_manifest: bool,
-    /// **Plan 204 дофикс №2 / Plan 233 §2а:** секции/ключи override-файла,
-    /// отличные от `[replace]` — эта волна поддерживает в нём ТОЛЬКО
-    /// `[replace]`. Каждая запись — метка вида `"section"` (секция целиком)
-    /// или `"section.key"` (конкретный ключ) для diagnostic message.
-    /// Пусто, если override-файл отсутствует либо полностью валиден.
-    /// Триггерит `W_OVERRIDE_TOML_UNSUPPORTED_KEY`.
-    pub override_toml_unsupported: Vec<String>,
-    /// **Plan 233 §2а:** `true`, если override-данные (`[replace]` и/или
-    /// `override_toml_unsupported`) взяты из LEGACY-имени `nova.local.toml`
-    /// — новое имя `nova.override.toml` в той же директории ОТСУТСТВОВАЛО.
-    /// Триггерит `W_OVERRIDE_TOML_DEPRECATED` (`manifest_warnings`). `false`,
-    /// если override-файла нет вовсе, либо присутствует новое имя.
-    pub override_legacy_name_used: bool,
-}
+pub use nova_driver_support::manifest::{Manifest, ManifestWarning};
 
 /// Plan 03.1 / 03.4: quote- и bracket-aware разбор тела inline-таблицы
 /// TOML (`key = "v", key2 = ["a", "b"]`) — запятая внутри `"..."` либо
@@ -667,29 +497,11 @@ fn parse_manifest_uncached(toml_path: &Path, dir: &Path) -> Option<Manifest> {
     })
 }
 
-impl Manifest {
-    /// Plan 204: эффективный источник зависимости `dep` — `[replace]`
-    /// override, если объявлен под её именем, иначе декларированный
-    /// `dep.source` без изменений. Единая точка резолва для всех
-    /// потребителей (`imports.rs` module-path resolution, `lockfile.rs`
-    /// dep-graph walk) — добавление/снятие override не требует правок
-    /// на call-сайтах.
-    pub fn effective_source(&self, dep: &Dependency) -> DepSource {
-        self.replace.get(&dep.name).cloned().unwrap_or_else(|| dep.source.clone())
-    }
-}
-
 /// Plan 204: диагностики манифеста по dependency-versioning схеме.
 /// Не фатальны (warning) — публикуемая форма (`git` + `version`) станет
 /// обязательной отдельным будущим ужесточением (после появления `nova
 /// publish`), сейчас существующий corpus (path-only deps, Plan 202/203)
 /// не должен ломаться.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ManifestWarning {
-    pub code: &'static str,
-    pub message: String,
-}
-
 /// Plan 204 дофикс №2 (owner correction): найти корень git-репозитория —
 /// ближайший вверх по дереву каталог с `.git` (файл ИЛИ директория —
 /// покрывает и обычный репозиторий, и git-worktree, где `.git` внутри
@@ -2147,16 +1959,5 @@ mod parse_tests {
         std::fs::write(std_dir.join("nova.toml"), "[package]\nname = \"std\"\n").unwrap();
         assert_eq!(resolve_std_path(&dir), std_dir);
         let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
-
-impl nova_driver_support::ManifestFfiView for Manifest {
-    fn manifest_dir(&self) -> &Path {
-        &self.manifest_dir
-    }
-
-    fn ffi_config(&self) -> Option<&FfiConfig> {
-        self.ffi.as_ref()
     }
 }

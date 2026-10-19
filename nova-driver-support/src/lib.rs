@@ -1,7 +1,10 @@
 //! Compiler-free build-driver support extracted from the Oracle test runner.
 pub mod fs_lock;
 pub mod git_cache;
+pub mod lockfile;
+pub mod manifest;
 pub mod pkg_proxy;
+pub mod resolver;
 pub mod semver;
 use anyhow::{anyhow, Result};
 use std::ffi::OsString;
