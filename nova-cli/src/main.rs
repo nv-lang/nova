@@ -17,6 +17,7 @@ use nova_codegen::test_runner;
 
 mod bench;
 mod build_cache;
+#[cfg(target_os = "windows")]
 mod carina_build;
 mod daemon;
 
@@ -4940,18 +4941,40 @@ fn cmd_build(
     mono_depth: Option<usize>,
     contracts: &str,
 ) -> Result<()> {
-    carina_build::build(
-        path,
-        output,
-        mode,
-        toolchain,
-        vcvars,
-        clang,
-        timeout_secs,
-        keep_artifacts,
-        mono_depth,
-        contracts,
-    )
+    // Select the build backend by host target, never by retrying a failed
+    // Carina build. Windows uses the pinned Carina vertical; other supported
+    // hosts keep their pre-existing backend until a native Carina seed exists.
+    // This is target selection, never a retry/fallback from a failed Carina build.
+    #[cfg(target_os = "windows")]
+    {
+        carina_build::build(
+            path,
+            output,
+            mode,
+            toolchain,
+            vcvars,
+            clang,
+            timeout_secs,
+            keep_artifacts,
+            mono_depth,
+            contracts,
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        cmd_build_oracle(
+            path,
+            output,
+            mode,
+            toolchain,
+            vcvars,
+            clang,
+            timeout_secs,
+            keep_artifacts,
+            mono_depth,
+            contracts,
+        )
+    }
 }
 
 #[allow(dead_code)]
