@@ -1,10 +1,13 @@
 //! Compiler-free build-driver support extracted from the Oracle test runner.
 pub mod fs_lock;
 pub mod git_cache;
+pub mod link_prep;
 pub mod lockfile;
 pub mod manifest;
+pub mod native_build;
 pub mod native_runtime;
 pub mod pkg_proxy;
+pub mod process;
 pub mod resolver;
 pub mod semver;
 use anyhow::{anyhow, Result};
@@ -437,7 +440,7 @@ impl Toolchain {
 }
 
 /// Поиск исполняемого в `PATH` — кросс-платформенный аналог `which` / `Get-Command`.
-fn which(name: &str) -> Option<PathBuf> {
+pub fn which(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var_os("PATH")?;
     let exe_name = if cfg!(target_os = "windows") && !name.ends_with(".exe") {
         format!("{}.exe", name)
