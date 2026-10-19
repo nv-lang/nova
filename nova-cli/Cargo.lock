@@ -145,6 +145,14 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "nova-driver-support",
+]
+
+[[package]]
+name = "nova-driver-support"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
 ]
 
 [[package]]
