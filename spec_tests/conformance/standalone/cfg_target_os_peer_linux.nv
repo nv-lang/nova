@@ -1,6 +1,6 @@
 // EXPECT_STDOUT cfg-peer
 #cfg(target_os = "linux")
-module cfg_target_os_peer_linux
+module standalone.cfg_target_os_peer_linux
 
 fn main() Io -> () {
     println("cfg-peer")

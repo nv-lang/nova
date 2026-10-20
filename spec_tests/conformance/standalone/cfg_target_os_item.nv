@@ -1,4 +1,6 @@
 // EXPECT_STDOUT cfg-ok
+module standalone.cfg_target_os_item
+
 #cfg(target_os = "windows")
 fn selected_os() -> str => "windows"
 
@@ -8,8 +10,8 @@ fn selected_os() -> str => "posix"
 fn main() Io -> () {
     ro selected = selected_os()
     if selected == "windows" {
-        println("cfg-ok")
+        println("cfg-ok-windows")
     } else {
-        println("cfg-ok")
+        println("cfg-ok-posix")
     }
 }
