@@ -26,7 +26,7 @@
 #   -SkipBuild   не собирать cargo — взять уже собранные
 #                nova-driver/target/release/nova.exe,
 #                nova-cli/target/release/nova.exe (compat) и
-#                nova-lsp/target/release/nova-lsp.exe.
+#                target/release/nova-lsp.exe (LSP's configured target-dir).
 #   -SmokeTest   после сборки zip: распаковать в чистую temp-папку, dot-source
 #                setup-env.ps1, собрать+прогнать hello.nv (реальная проверка
 #                std-discovery вне монорепы).
@@ -129,7 +129,7 @@ if (-not $SkipBuild) {
 
 $NovaCompatExe = Join-Path $RepoRoot "nova-cli\target\release\nova.exe"
 $NovaDriverExe = Join-Path $RepoRoot "nova-driver\target\release\nova.exe"
-$NovaLspExe = Join-Path $RepoRoot "nova-lsp\target\release\nova-lsp.exe"
+$NovaLspExe = Join-Path $RepoRoot "target\release\nova-lsp.exe"
 
 if (-not (Test-Path $NovaCompatExe)) {
     throw "nova compatibility CLI не найден: $NovaCompatExe (собери без -SkipBuild, либо cargo build --release --manifest-path nova-cli\Cargo.toml)"
@@ -138,7 +138,7 @@ if (-not (Test-Path $NovaDriverExe)) {
     throw "nova.exe driver не найден: $NovaDriverExe (собери без -SkipBuild, либо cargo build --release --manifest-path nova-driver\Cargo.toml)"
 }
 if (-not (Test-Path $NovaLspExe)) {
-    throw "nova-lsp.exe не найден: $NovaLspExe (собери без -SkipBuild, либо cargo build --release --manifest-path nova-lsp\Cargo.toml)"
+    throw "nova-lsp.exe не найден: $NovaLspExe (собери без -SkipBuild, либо cargo build --release из nova-lsp\; target-dir задаётся nova-lsp\.cargo\config.toml)"
 }
 
 Write-Host "nova.exe:     $NovaDriverExe"
