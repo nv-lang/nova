@@ -20,7 +20,7 @@ import ../tree.{Node, NodeKind}
 import ../types.{TyId, is_ty, no_ty, Interner, raw_ty}
 import ../names.{NameTable, NamespaceId, raw_decl}
 import ../builtins.{SLICE_HEAD, EMPTY_CTOR, VEC_INDEX_METHOD, VEC_INDEX_SET_OP, VEC_INDEX_RANGE_OP, RANGE_TYPE}
-import ../builtins.{HOST_OS_MODULE, HOST_OS_FN}
+import ../builtins.{HOST_OS_MODULE, HOST_OS_FN, HOST_OS_C_FN}
 
 /// The bodies of the handed callables, by row.
 export type HandedBodies {
@@ -143,7 +143,7 @@ export fn Ctx @is_host_os_bridge(row FnRow) -> bool {
     ro fd = @fns.rows[raw_row(row)]
     !@in_program(row) && fd.handed_from == HOST_OS_MODULE && fd.name == HOST_OS_FN &&
         !fd.has_recv && fd.param_cnt == 0 && fd.tparam_cnt == 0 &&
-        fd.ret_id == @prims.str_id
+        fd.ret_id == @prims.str_id && @interop.has(HOST_OS_C_FN)
 }
 
 /// The handed `FnDecl` of `row`, or `None` for a row read from nowhere (the
