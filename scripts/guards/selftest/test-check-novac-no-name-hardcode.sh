@@ -32,7 +32,7 @@ run() { python "$G" "$ROOT" "$SRC" > "$TMP/out" 2> "$TMP/err"; echo $?; }
 cat > "$SRC/builtins/builtins.nv" <<'EOF'
 /// The one legitimate home of std names (P5 remainder registry).
 fn builtin_method_names() -> Vec[str] {
-    return Vec[str].of("println", "byte_len", "[]int")
+    return Vec[str].of("println", "byte_len", "[]int", "int", "long", "unsigned", "int8_t", "nova_int")
 }
 EOF
 # Лексер: ключевые слова ГРАММАТИКИ — не сущности std, П5 их не судит.
@@ -69,6 +69,14 @@ check "чистое дерево (имя лишь в комментарии и �
 has "$TMP/out" 'имён в списке' "число имён списка напечатано"
 has "$TMP/out" 'хардкод-имён вне builtins.nv: 0' "итог напечатан числом"
 
+printf 'fn c_abi(t: str) -> str {\n    if t == "long" { return "unsigned" }\n    return "int8_t"\n}\n' >> "$SRC/sem/subset.nv"
+check "C ABI spellings in builtins are not classified as Nova names" "$(run)" "0"
+
+clean_subset
+printf 'fn source_type() -> str {\n    return "int"\n}\n' >> "$SRC/sem/subset.nv"
+check "overlapping Nova source type int remains governed by P5" "$(run)" "1"
+
+clean_subset
 printf 'fn f() -> str {\n    return "printlnx"\n}\n' >> "$SRC/sem/subset.nv"
 check "литерал ШИРЕ имени (\"printlnx\") — зелёный" "$(run)" "0"
 

@@ -8,6 +8,8 @@
 
 СПИСОК ИМЁН БЕРЁТСЯ ИЗ ДАННЫХ, а не зашит: все литералы-идентификаторы из
 `builtins.nv` плюс поверхность прелюдии (она движется только со спекой).
+Исключение — явные C ABI spellings: они не являются именами Nova, даже когда
+нужны emitter'у как типы или runtime names.
 
 КОММЕНТАРИЙ В `builtins.nv` СРЕЗАЕТСЯ ПОСИМВОЛЬНО, а не регекспом: `//` внутри
 строкового литерала (`"http://..."`) резал строку и прятал за собой всё
@@ -29,6 +31,14 @@ NAME = "check-novac-no-name-hardcode"
 RE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RE_LIT = re.compile(r'"[^"]*"')
 PRELUDE = ["Option", "Result", "Some", "None", "Ok", "Err", "Vec", "HashMap"]
+C_ABI_ONLY = {
+    "_Bool", "signed", "unsigned", "short", "long",
+    "nova_int", "nova_uint", "nova_byte", "nova_char", "nova_bool",
+    "nova_str", "nova_f32", "nova_f64", "nova_unit",
+    "int8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t",
+    "int64_t", "uint64_t", "intptr_t", "uintptr_t", "size_t", "ptrdiff_t",
+    "intmax_t", "uintmax_t",
+}
 
 
 def strip_comment(line):
@@ -86,7 +96,7 @@ def main():
                 if RE_IDENT.match(s):
                     from_builtins.add(s)
 
-    names = sorted(from_builtins | set(PRELUDE))
+    names = sorted((from_builtins - C_ABI_ONLY) | set(PRELUDE))
     if not names:
         print(f"{NAME}: FAIL — список имён пуст: ни builtins.nv, ни прелюдия "
               f"не дали ни одного имени", file=sys.stderr)

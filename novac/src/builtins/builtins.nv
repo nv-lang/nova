@@ -28,12 +28,24 @@ module novac.builtins
 /// Whether a spelling is an integral scalar type in the C shell ABI.
 /// The emitter uses this closed set to avoid treating pointer, aggregate,
 /// floating, and arbitrary typedef initializers as constant expressions.
+/// Multiword C spellings intentionally remain C ABI names, not Nova names.
 #realtime nogc
 export fn is_c_integral_type(t str) -> bool {
     t == "nova_int" || t == "nova_uint" || t == "nova_byte" ||
     t == "nova_char" || t == "nova_bool" || t == "int8_t" ||
     t == "uint8_t" || t == "int16_t" || t == "uint16_t" ||
-    t == "int32_t" || t == "uint32_t" || t == "int64_t" || t == "uint64_t"
+    t == "int32_t" || t == "uint32_t" || t == "int64_t" || t == "uint64_t" ||
+    t == "intptr_t" || t == "uintptr_t" || t == "size_t" || t == "ptrdiff_t" ||
+    t == "intmax_t" || t == "uintmax_t" || t == "_Bool" || t == "signed" ||
+    t == "unsigned" || t == "short" || t == "long" || t == "bool" || t == "char" ||
+    t == "int" || t == "signed char" || t == "unsigned char" ||
+    t == "short int" || t == "signed short" || t == "signed short int" ||
+    t == "unsigned short" || t == "unsigned short int" || t == "signed int" ||
+    t == "unsigned int" || t == "long int" || t == "signed long" ||
+    t == "signed long int" || t == "unsigned long" || t == "unsigned long int" ||
+    t == "long long" || t == "long long int" || t == "signed long long" ||
+    t == "signed long long int" || t == "unsigned long long" ||
+    t == "unsigned long long int"
 }
 
 
