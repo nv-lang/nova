@@ -233,7 +233,7 @@ fn render_spelled(lit_defs str, body str, init str) -> str {
     ro raw_tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:233", "emit: shell.tpl.c is not UTF-8")
     ro tpl = normalize_integral_c_initializers(raw_tpl) ?? ice_at(
         "novac/src/emit_c/shell.nv:234",
-        "emit: unsupported or cyclic file-scope integral const dependency")
+        "emit: duplicate, unsupported or cyclic file-scope integral const dependency")
     consume out = StringBuilder.new()
     mut emitted_lits = false
     mut emitted_body = false

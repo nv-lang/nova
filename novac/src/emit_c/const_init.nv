@@ -11,8 +11,7 @@
 module novac.emit_c
 
 import ../lex.{is_ident_start, is_ident_byte, is_space}
-import ../names.{NameTable, NamespaceId}
-import ../builtins/builtins.{is_c_integral_type}
+import ../builtins.{is_c_integral_type}
 
 /// A scalar integral C file-scope object from the shell and its C initializer.
 /// The stored initializer is already dependency-expanded, so chains close in
@@ -29,6 +28,12 @@ type CDeclaratorParts value {
     c_type str /// preceding scalar type spelling
 }
 
+/// Sorted C-identifier index into the owning declaration rows.
+type ConstNameEntry value {
+    name str
+    row_id int
+}
+
 /// Expand references to earlier file-scope integral constants in integral
 /// initializers only. The shell is an oracle-generated, immutable artifact;
 /// this deterministic output pass fixes C's file-scope constant-expression
@@ -36,11 +41,11 @@ type CDeclaratorParts value {
 /// comments, strings and preprocessor lines pass through byte-for-byte.
 fn normalize_integral_c_initializers(text str) -> Option[str] {
     mut all = []IntegralCConst.new()
-    mut all_names = NameTable.new(NamespaceId.NsInterop)
+    mut all_names = []ConstNameEntry.new()
     for line in text.lines() {
         match integral_const_line(line) {
             Some(row) => {
-                all_names.put(row.name, all.len())
+                if !insert_const_name(all_names, row.name, all.len()) { return None }
                 all.push(row)
             }
             None => { }
@@ -49,13 +54,13 @@ fn normalize_integral_c_initializers(text str) -> Option[str] {
 
     consume out = StringBuilder.new()
     mut prior = []IntegralCConst.new()
-    mut prior_names = NameTable.new(NamespaceId.NsInterop)
+    mut prior_names = []ConstNameEntry.new()
     for line in text.lines() {
         match integral_const_line(line) {
             Some(row) => {
                 ro expanded = expand_integral_initializer(
                     row.initializer, row.name, prior, prior_names, all_names)
-                if !expanded.is_some() { return fail_integral_output(out) }
+                if !expanded.is_some() { out.into_str(); return None }
                 ro expr = expanded ?? ""
                 ro line_parts = initializer_parts(line)
                 if expr == row.initializer {
@@ -66,7 +71,7 @@ fn normalize_integral_c_initializers(text str) -> Option[str] {
                     out.append(line_parts.1)
                 }
                 out.append("\n")
-                prior_names.put(row.name, prior.len())
+                if !insert_const_name(prior_names, row.name, prior.len()) { out.into_str(); return None }
                 prior.push(IntegralCConst {
                     name: row.name,
                     initializer: expr,
@@ -132,25 +137,24 @@ fn initializer_parts(line str) -> (str, str) {
 /// declaration order and fail closed. Unknown C names (enum/macro/etc.) are
 /// untouched; the C compiler remains their judge.
 fn expand_integral_initializer(expr str, current str, prior []IntegralCConst,
-                               prior_names NameTable, all_names NameTable) -> Option[str] {
+                               prior_names []ConstNameEntry, all_names []ConstNameEntry) -> Option[str] {
     consume out = StringBuilder.new()
     ro bytes = expr.bytes()
     mut i = 0
     mut copied = 0
     mut found_dependency = false
+    mut failed = false
     ro n = expr.byte_len()
     while i < n {
         if bytes[i] == ('\"' as u8) || bytes[i] == ('\'' as u8) {
             ro next = quoted_end(expr, i)
-            if next < 0 { return fail_integral_output(out) }
-            i = next
+            if next < 0 { failed = true; i = n } else { i = next }
             continue
         }
         if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('/' as u8) { break }
         if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('*' as u8) {
             ro next = comment_end(expr, i)
-            if next < 0 { return fail_integral_output(out) }
-            i = next
+            if next < 0 { failed = true; i = n } else { i = next }
             continue
         }
         if is_ident_start(bytes[i]) {
@@ -158,18 +162,28 @@ fn expand_integral_initializer(expr str, current str, prior []IntegralCConst,
             while i < n && is_ident_byte(bytes[i]) { i += 1 }
             ro name = expr[start..i]
             if has_integral_const(all_names, name) {
-                if name == current || !has_integral_const(prior_names, name) { return fail_integral_output(out) }
-                if !integral_expr_supported(expr) { return fail_integral_output(out) }
-                ro candidate = integral_const(prior, prior_names, name)
-                if Some(dependency) = candidate {
-                    if !dependency.supported { return fail_integral_output(out) }
-                    found_dependency = true
-                    out.append(expr[copied..start])
-                    out.append("(")
-                    out.append(dependency.initializer)
-                    out.append(")")
-                    copied = i
-                } else { return fail_integral_output(out) }
+                if name == current || !has_integral_const(prior_names, name) || !integral_expr_supported(expr) {
+                    failed = true
+                    i = n
+                } else {
+                    ro candidate = integral_const(prior, prior_names, name)
+                    if Some(dependency) = candidate {
+                        if !dependency.supported {
+                            failed = true
+                            i = n
+                        } else {
+                            found_dependency = true
+                            out.append(expr[copied..start])
+                            out.append("(")
+                            out.append(dependency.initializer)
+                            out.append(")")
+                            copied = i
+                        }
+                    } else {
+                        failed = true
+                        i = n
+                    }
+                }
             } else {
                 // Unknown C identifiers remain untouched for the C compiler.
             }
@@ -177,20 +191,15 @@ fn expand_integral_initializer(expr str, current str, prior []IntegralCConst,
         }
         if is_space(bytes[i]) || is_digit_byte(bytes[i]) || is_c_operator_byte(bytes[i]) {
             i += 1
-        } else { return fail_integral_output(out) }
+        } else { failed = true; i = n }
     }
+    if failed { out.into_str(); return None }
     if !found_dependency {
         out.into_str()
         return Some(expr)
     }
     out.append(expr[copied..])
     Some(out.into_str())
-}
-
-/// Consume the output already built on a fail-closed path.
-fn fail_integral_output(consume out StringBuilder) -> Option[str] {
-    out.into_str()
-    None
 }
 
 /// Check the supported scalar C-expression surface before expanding a known
@@ -266,14 +275,62 @@ fn is_c_identifier(name str) -> bool {
 
 /// Whether the C identifier is registered in the dependency index.
 #realtime nogc
-fn has_integral_const(names NameTable, name str) -> bool => names.find(name) >= 0
+fn has_integral_const(names []ConstNameEntry, name str) -> bool => find_const_name(names, name) >= 0
 
 /// Find a registered dependency by its indexed row number.
 #realtime nogc
-fn integral_const(rows []IntegralCConst, names NameTable, name str) -> Option[IntegralCConst] {
-    ro row = names.find(name)
+fn integral_const(rows []IntegralCConst, names []ConstNameEntry, name str) -> Option[IntegralCConst] {
+    ro row = find_const_name(names, name)
     if row < 0 { return None }
-    Some(rows[row])
+    ro row_id = names[row].row_id
+    if row_id < 0 || row_id >= rows.len() { return None }
+    Some(rows[row_id])
+}
+
+/// Insert one name in sorted order; duplicate C declarations are refused.
+/// Registration may shift rows; the read-only lookup below never allocates.
+fn insert_const_name(mut names []ConstNameEntry, name str, row_id int) -> bool {
+    ro at = const_name_lower_bound(names, name)
+    if at < names.len() && compare_c_ident(names[at].name, name) == 0 { return false }
+    names.push(ConstNameEntry { name, row_id })
+    mut i = names.len() - 1
+    while i > at {
+        names[i] = names[i - 1]
+        i -= 1
+    }
+    names[at] = ConstNameEntry { name, row_id }
+    true
+}
+
+/// O(log n), allocation-free lookup in a sorted ASCII C-identifier index.
+#realtime nogc
+fn find_const_name(names []ConstNameEntry, name str) -> int {
+    ro at = const_name_lower_bound(names, name)
+    if at < names.len() && compare_c_ident(names[at].name, name) == 0 { at } else { -1 }
+}
+
+#realtime nogc
+fn const_name_lower_bound(names []ConstNameEntry, name str) -> int {
+    mut lo = 0
+    mut hi = names.len()
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        if compare_c_ident(names[mid].name, name) < 0 { lo = mid + 1 } else { hi = mid }
+    }
+    lo
+}
+
+/// Compare generated ASCII C identifiers bytewise without allocating.
+#realtime nogc
+fn compare_c_ident(a str, b str) -> int {
+    ro a_bytes = a.bytes()
+    ro b_bytes = b.bytes()
+    ro common = if a_bytes.len() < b_bytes.len() { a_bytes.len() } else { b_bytes.len() }
+    for i in 0..common {
+        if a_bytes[i] < b_bytes[i] { return -1 }
+        if a_bytes[i] > b_bytes[i] { return 1 }
+    }
+    if a_bytes.len() < b_bytes.len() { -1 } else if a_bytes.len() > b_bytes.len() { 1 } else { 0 }
 }
 
 /// Skip C whitespace starting at a byte offset.

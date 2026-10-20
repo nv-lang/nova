@@ -31,3 +31,29 @@ test "C const dependency rewrite: forward/cyclic and unsupported dependent shape
     ro unknown = "static const int BASE = TRUSTED_CONST_MACRO(7);\nstatic const int NEXT = BASE + 1;\n"
     assert(!normalize_integral_c_initializers(unknown).is_some(), "a recognized dependency with an opaque initializer must refuse")
 }
+
+test "C const name index: sorted exact lookup and duplicate refusal" {
+    mut names = []ConstNameEntry.new()
+    assert(insert_const_name(names, "NOVA_BASE", 2))
+    assert(insert_const_name(names, "NOVA_ALPHA", 1))
+    assert(insert_const_name(names, "NOVA_BASE_SUFFIX", 3))
+    assert(find_const_name(names, "NOVA_ALPHA") == 1)
+    assert(find_const_name(names, "NOVA_BASE") == 1)
+    assert(find_const_name(names, "NOVA_BASE_SUFFIX") == 2)
+    assert(find_const_name(names, "NOVA_BASE_SUF") == -1)
+    assert(names[find_const_name(names, "NOVA_BASE")].row_id == 2)
+    assert(names[find_const_name(names, "NOVA_ALPHA")].row_id == 1)
+    assert(names[find_const_name(names, "NOVA_BASE_SUFFIX")].row_id == 3)
+    assert(!insert_const_name(names, "NOVA_BASE", 9))
+}
+
+test "C const dependency rewrite: duplicate definition names refuse" {
+    ro duplicate = "static const int SAME = 1;\nstatic const int SAME = 2;\n"
+    assert(!normalize_integral_c_initializers(duplicate).is_some(), "duplicate generated C identifiers must not overwrite index rows")
+}
+
+test "C const dependency rewrite: unregistered longer identifier is not a dependency" {
+    ro input = "static const int BASE = 1;\nstatic const int NEXT = BASE_SUFFIX + 1;\n"
+    ro output = normalize_integral_c_initializers(input) ?? ""
+    assert(output.contains("static const int NEXT = BASE_SUFFIX + 1;"), output)
+}
