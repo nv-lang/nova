@@ -1,0 +1,13 @@
+// EXPECT_STDOUT 61 122 73
+// Nova const references are compile-time substitutions (D184); a dependent
+// chain must preserve values across signed and unsigned integral types.
+module conformance.standalone.const_dependency_chain
+
+const BASE = 125
+const STEP = BASE - 64
+const NESTED = STEP * 2
+const UNSIGNED u64 = 73
+
+fn main() {
+    println(STEP, " ", NESTED, " ", UNSIGNED)
+}

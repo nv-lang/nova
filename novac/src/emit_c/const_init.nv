@@ -1,0 +1,315 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/emit_c/const_init.nv -- C initializer dependency lowering for
+// Carina's pinned shell. Nova `const` references are compile-time values
+// (D184); a C `static const` object is not itself a C constant expression.
+// Donor: none — this is a local emitted-C normalization with no structural
+// donor; the class is limited to integral scalar dependencies.
+// Role: C backend pass after shell generation, before returning emitted C.
+// Used by: the build driver on every Carina C result.
+// Guarded by: check-novac-module-tests.sh and the Carina Clang/MSVC fixtures.
+
+module novac.emit_c
+
+import ../lex.{is_ident_start, is_ident_byte, is_space}
+import ../names.{NameTable, NamespaceId}
+import ../builtins/builtins.{is_c_integral_type}
+
+/// A scalar integral C file-scope object from the shell and its C initializer.
+/// The stored initializer is already dependency-expanded, so chains close in
+/// one pass without changing the object or its addressability.
+type IntegralCConst value {
+    name str /// emitted C identifier
+    initializer str /// original or dependency-expanded initializer slice
+    supported bool /// whether this row is safe to substitute
+}
+
+/// The identifier and type slices parsed from one generated C declarator.
+type CDeclaratorParts value {
+    name str /// final C identifier
+    c_type str /// preceding scalar type spelling
+}
+
+/// Expand references to earlier file-scope integral constants in integral
+/// initializers only. The shell is an oracle-generated, immutable artifact;
+/// this deterministic output pass fixes C's file-scope constant-expression
+/// rule without editing or regenerating that artifact. Other declarations,
+/// comments, strings and preprocessor lines pass through byte-for-byte.
+fn normalize_integral_c_initializers(text str) -> Option[str] {
+    mut all = []IntegralCConst.new()
+    mut all_names = NameTable.new(NamespaceId.NsInterop)
+    for line in text.lines() {
+        match integral_const_line(line) {
+            Some(row) => {
+                all_names.put(row.name, all.len())
+                all.push(row)
+            }
+            None => { }
+        }
+    }
+
+    consume out = StringBuilder.new()
+    mut prior = []IntegralCConst.new()
+    mut prior_names = NameTable.new(NamespaceId.NsInterop)
+    for line in text.lines() {
+        match integral_const_line(line) {
+            Some(row) => {
+                ro expanded = expand_integral_initializer(
+                    row.initializer, row.name, prior, prior_names, all_names)
+                if !expanded.is_some() { return fail_integral_output(out) }
+                ro expr = expanded ?? ""
+                ro line_parts = initializer_parts(line)
+                if expr == row.initializer {
+                    out.append(line)
+                } else {
+                    out.append(line_parts.0)
+                    out.append(expr)
+                    out.append(line_parts.1)
+                }
+                out.append("\n")
+                prior_names.put(row.name, prior.len())
+                prior.push(IntegralCConst {
+                    name: row.name,
+                    initializer: expr,
+                    supported: integral_expr_supported(expr),
+                })
+            }
+            None => {
+                out.append(line)
+                out.append("\n")
+            }
+        }
+    }
+    Some(out.into_str())
+}
+
+/// Recognize the deliberately narrow, generated-C shape: one file-scope
+/// `static const` integral scalar declarator with a single-line initializer.
+/// A non-matching C declaration is not ours to judge.
+#realtime nogc
+fn integral_const_line(line str) -> Option[IntegralCConst] {
+    if !line.starts_with("static const ") { return None }
+    ro eq = line.find(" = ") ?? (0 - 1)
+    if eq < 0 { return None }
+    if !line.ends_with(";") { return None }
+    ro lhs = line[13..eq]
+    ro parts = c_declarator_parts(lhs)
+    if Some(declarator) = parts {
+        ro name = declarator.name
+        if !is_c_identifier(name) { return None }
+        ro type_text = declarator.c_type
+        if !is_c_integral_type(type_text) { return None }
+        ro init_start = eq + 3
+        ro init_end = line.byte_len() - 1
+        if init_start >= init_end { return None }
+        Some(IntegralCConst { name, initializer: line[init_start..init_end], supported: true })
+    } else { None }
+}
+
+/// Split a generated declaration into its final identifier and preceding type.
+#realtime nogc
+fn c_declarator_parts(text str) -> Option[CDeclaratorParts] {
+    ro bytes = text.bytes()
+    mut end = bytes.len()
+    while end > 0 && is_space(bytes[end - 1]) { end -= 1 }
+    mut start = end
+    while start > 0 && !is_space(bytes[start - 1]) { start -= 1 }
+    if start == 0 || end == start { return None }
+    mut type_end = start
+    while type_end > 0 && is_space(bytes[type_end - 1]) { type_end -= 1 }
+    if type_end == 0 { return None }
+    Some(CDeclaratorParts { name: text[start..end], c_type: text[..type_end] })
+}
+
+/// The exact slices around the initializer in a recognized one-line row.
+#realtime nogc
+fn initializer_parts(line str) -> (str, str) {
+    ro eq = line.find(" = ") ?? 0
+    (line[..eq + 3], line[line.byte_len() - 1..])
+}
+
+/// Recursively substitute only identifiers that are known prior integral C
+/// constants. Forward references/self references are cycles or unsupported
+/// declaration order and fail closed. Unknown C names (enum/macro/etc.) are
+/// untouched; the C compiler remains their judge.
+fn expand_integral_initializer(expr str, current str, prior []IntegralCConst,
+                               prior_names NameTable, all_names NameTable) -> Option[str] {
+    consume out = StringBuilder.new()
+    ro bytes = expr.bytes()
+    mut i = 0
+    mut copied = 0
+    mut found_dependency = false
+    ro n = expr.byte_len()
+    while i < n {
+        if bytes[i] == ('\"' as u8) || bytes[i] == ('\'' as u8) {
+            ro next = quoted_end(expr, i)
+            if next < 0 { return fail_integral_output(out) }
+            i = next
+            continue
+        }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('/' as u8) { break }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('*' as u8) {
+            ro next = comment_end(expr, i)
+            if next < 0 { return fail_integral_output(out) }
+            i = next
+            continue
+        }
+        if is_ident_start(bytes[i]) {
+            ro start = i
+            while i < n && is_ident_byte(bytes[i]) { i += 1 }
+            ro name = expr[start..i]
+            if has_integral_const(all_names, name) {
+                if name == current || !has_integral_const(prior_names, name) { return fail_integral_output(out) }
+                if !integral_expr_supported(expr) { return fail_integral_output(out) }
+                ro candidate = integral_const(prior, prior_names, name)
+                if Some(dependency) = candidate {
+                    if !dependency.supported { return fail_integral_output(out) }
+                    found_dependency = true
+                    out.append(expr[copied..start])
+                    out.append("(")
+                    out.append(dependency.initializer)
+                    out.append(")")
+                    copied = i
+                } else { return fail_integral_output(out) }
+            } else {
+                // Unknown C identifiers remain untouched for the C compiler.
+            }
+            continue
+        }
+        if is_space(bytes[i]) || is_digit_byte(bytes[i]) || is_c_operator_byte(bytes[i]) {
+            i += 1
+        } else { return fail_integral_output(out) }
+    }
+    if !found_dependency {
+        out.into_str()
+        return Some(expr)
+    }
+    out.append(expr[copied..])
+    Some(out.into_str())
+}
+
+/// Consume the output already built on a fail-closed path.
+fn fail_integral_output(consume out StringBuilder) -> Option[str] {
+    out.into_str()
+    None
+}
+
+/// Check the supported scalar C-expression surface before expanding a known
+/// dependency. A function call, member/index access, aggregate or other shape
+/// is named as unsupported rather than emitted as an invalid initializer.
+fn integral_expr_supported(expr str) -> bool {
+    mut i = 0
+    ro n = expr.byte_len()
+    ro bytes = expr.bytes()
+    while i < n {
+        if is_space(bytes[i]) { i += 1; continue }
+        if bytes[i] == ('\"' as u8) || bytes[i] == ('\'' as u8) {
+            ro next = quoted_end(expr, i)
+            if next < 0 { return false }
+            if bytes[i] == ('\"' as u8) { return false }
+            i = next
+            continue
+        }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('/' as u8) { return true }
+        if bytes[i] == ('/' as u8) && i + 1 < n && bytes[i + 1] == ('*' as u8) {
+            ro next = comment_end(expr, i)
+            if next < 0 { return false }
+            i = next
+            continue
+        }
+        if is_ident_start(bytes[i]) {
+            ro start = i
+            while i < n && is_ident_byte(bytes[i]) { i += 1 }
+            ro word = expr[start..i]
+            ro next = skip_space(expr, i)
+            if next < n && bytes[next] == ('(' as u8) && !is_c_integral_type(word) && word != "sizeof" {
+                return false
+            }
+            continue
+        }
+        ro c = bytes[i]
+        if c == ('(' as u8) || c == (')' as u8) || c == ('+' as u8) || c == ('-' as u8) ||
+           c == ('*' as u8) || c == ('/' as u8) || c == ('%' as u8) || c == ('&' as u8) ||
+           c == ('|' as u8) || c == ('^' as u8) || c == ('~' as u8) || c == ('!' as u8) ||
+           c == ('<' as u8) || c == ('>' as u8) || c == ('=' as u8) || c == ('?' as u8) || c == (':' as u8) {
+            i += 1
+            continue
+        }
+        if is_digit_byte(bytes[i]) {
+            while i < n && (is_ident_byte(bytes[i]) || bytes[i] == ('\'' as u8)) { i += 1 }
+            continue
+        }
+        return false
+    }
+    true
+}
+
+/// Whether a byte is C whitespace or punctuation allowed by the scalar grammar.
+fn is_c_operator_byte(c u8) -> bool =>
+    c == ('(' as u8) || c == (')' as u8) || c == ('+' as u8) || c == ('-' as u8) ||
+    c == ('*' as u8) || c == ('/' as u8) || c == ('%' as u8) || c == ('&' as u8) ||
+    c == ('|' as u8) || c == ('^' as u8) || c == ('~' as u8) || c == ('!' as u8) ||
+    c == ('<' as u8) || c == ('>' as u8) || c == ('=' as u8) || c == ('?' as u8) ||
+    c == (':' as u8)
+
+/// Whether a byte is an ASCII decimal digit.
+fn is_digit_byte(b u8) -> bool => b >= ('0' as u8) && b <= ('9' as u8)
+
+/// Whether a token is a C identifier in the generated shell.
+fn is_c_identifier(name str) -> bool {
+    ro bytes = name.bytes()
+    if bytes.len() == 0 || !is_ident_start(bytes[0]) { return false }
+    for i in 1..name.byte_len() {
+        if !is_ident_byte(bytes[i]) { return false }
+    }
+    true
+}
+
+/// Whether the C identifier is registered in the dependency index.
+#realtime nogc
+fn has_integral_const(names NameTable, name str) -> bool => names.find(name) >= 0
+
+/// Find a registered dependency by its indexed row number.
+#realtime nogc
+fn integral_const(rows []IntegralCConst, names NameTable, name str) -> Option[IntegralCConst] {
+    ro row = names.find(name)
+    if row < 0 { return None }
+    Some(rows[row])
+}
+
+/// Skip C whitespace starting at a byte offset.
+#realtime nogc
+fn skip_space(text str, from int) -> int {
+    mut i = from
+    ro bytes = text.bytes()
+    while i < text.byte_len() && is_space(bytes[i]) { i += 1 }
+    i
+}
+
+/// Index just after a C quoted string/character literal, honoring escapes.
+/// The range traversal advances exactly once per byte.
+#realtime nogc
+fn quoted_end(text str, from int) -> int {
+    ro bytes = text.bytes()
+    ro quote = bytes[from]
+    mut escaped = false
+    for i in from + 1..text.byte_len() {
+        if escaped {
+            escaped = false
+        } else {
+            if bytes[i] == ('\\' as u8) { escaped = true } else { escaped = false }
+            if !escaped && bytes[i] == quote { return i + 1 }
+        }
+    }
+    -1
+}
+
+/// Index just after a C block comment, or -1 if it was not closed.
+fn comment_end(text str, from int) -> int {
+    ro bytes = text.bytes()
+    mut i = from + 2
+    while i + 1 < text.byte_len() {
+        if bytes[i] == ('*' as u8) && bytes[i + 1] == ('/' as u8) { return i + 2 }
+        i += 1
+    }
+    -1
+}
