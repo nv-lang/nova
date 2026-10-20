@@ -35,7 +35,7 @@ import ./pipeline.{Unit, unit_of, same_dir, path_base}
 import ./pipeline.{compile_program_to_c, named_by_file}
 import ./diag.{to_json, json_escape}
 import std.fs.{read, read_dir, real_fs, canonicalize}
-import std.os.{args, env, exit_process, real_os}
+import std.os.{args, env, exit_process, host_os, real_os}
 
 /// How one file ended. The process exit code is a VIEW of this outcome
 /// (see @code), never the value passed around: §7 fixes the legal set at
@@ -596,7 +596,7 @@ fn run(a []str) -> int {
         if !saw_target {
             match env("NOVA_TARGET_OS") {
                 Some(value) => { target_os = value }
-                None => { target_os = "unknown" }
+                None => { target_os = host_os() }
             }
         }
         if !known_target_os(target_os) {

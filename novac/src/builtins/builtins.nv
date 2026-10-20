@@ -18,8 +18,8 @@
 // What is NOT legitimate here (and what was REMOVED 2026-08-16 by the owner's
 // rule «no temporary hardcode»): names of std types and methods — they are
 // DECLARATIONS, read by `sem` from the signatures handed to novac; instances
-// of generics (they come from `mono`); and C names of anything but primitives
-// (they come from the mangling door, `sem/mangle`).
+// of generics (they come from `mono`); and C names from the mangling door,
+// except the one owner-approved host OS ABI mapping below.
 //
 // Its own module (the rustc_span::sym model): every layer that must SPELL a
 // name imports this leaf — check, sem, emit_c — and no edge points back.
