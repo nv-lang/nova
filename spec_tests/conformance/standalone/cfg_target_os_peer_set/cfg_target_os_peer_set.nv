@@ -1,0 +1,10 @@
+// EXPECT_STDOUT cfg-peer:
+module standalone.cfg_target_os_peer_set
+
+fn main() Io -> () {
+    println(selected_peer())
+}
+
+test "filename suffix selects the OS peer (D99)" {
+    assert(selected_peer().contains("cfg-peer:"))
+}
