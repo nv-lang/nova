@@ -141,7 +141,7 @@ fn Ctx @is_extern_handed(row FnRow) -> bool {
 export fn Ctx @is_host_os_bridge(row FnRow) -> bool {
     if raw_row(row) < 0 || raw_row(row) >= @fns.rows.len() { return false }
     ro fd = @fns.rows[raw_row(row)]
-    fd.handed_from == HOST_OS_MODULE && fd.name == HOST_OS_FN &&
+    !@in_program(row) && fd.handed_from == HOST_OS_MODULE && fd.name == HOST_OS_FN &&
         !fd.has_recv && fd.param_cnt == 0 && fd.tparam_cnt == 0 &&
         fd.ret_id == @prims.str_id
 }
