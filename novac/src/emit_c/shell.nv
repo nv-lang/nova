@@ -27,6 +27,7 @@ import ../lex.{is_ident_start, is_ident_byte, is_space}
 import ../sem.{LitPool}
 import ../sem.{literal_as_c_text}
 import ../sem.{InteropTable, CNames}
+import ../builtins.{HOST_OS_C_FN}
 import ../diag.{ice_at}
 import ../lower.{FnBuilder, Lowerer}
 
@@ -94,7 +95,7 @@ export fn shell_surface() -> InteropTable {
     }
     // Header-only host hook: C identifiers in included headers are not in the
     // embedded template text, so name its ABI here for the next Carina stage.
-    t.add("os_host_os")
+    t.add(HOST_OS_C_FN)
     t
 }
 
