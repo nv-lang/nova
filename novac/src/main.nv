@@ -369,6 +369,8 @@ fn read_decls(dir str, mut names []str, target_os str) Fs -> []str {
                         ro swap_dir = entry_dirs[i]
                         entry_dirs[i] = entry_dirs[j]
                         entry_dirs[j] = swap_dir
+                    } else {
+                        // This pair is already in the canonical sorted order.
                     }
                 }
             }
@@ -598,6 +600,8 @@ fn run(a []str) -> int {
                 Some(value) => { target_os = value }
                 None => { target_os = host_os() }
             }
+        } else {
+            // The explicit flag already supplied target_os; do not consult fallbacks.
         }
         if !known_target_os(target_os) {
             println("novac: invalid target OS `${target_os}`; expected windows, linux, or macos")

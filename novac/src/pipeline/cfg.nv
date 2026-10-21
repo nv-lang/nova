@@ -7,7 +7,7 @@
 module novac.pipeline
 
 import ../tree.{Node, NodeKind, branch}
-import ../sem.{branch_children, leaf_kind, leaf_text}
+import ../sem.{branch_children, file_decls, leaf_kind, leaf_text}
 import ../lex.{TokenKind}
 import ../parse.{parse}
 
@@ -23,8 +23,8 @@ export fn filter_cfg(tree Node, target str) -> Node {
         Branch { id, kind, children } => {
             if kind != NodeKind.File { return branch(id, kind, children) }
             mut has_module = false
-            for child in children {
-                if child.kind_of() == NodeKind.ModuleDecl { has_module = true }
+            for child in file_decls(tree) {
+                has_module = has_module || child.kind_of() == NodeKind.ModuleDecl
             }
             mut before_module = has_module
             mut file_state = CFG_TRUE
@@ -37,10 +37,18 @@ export fn filter_cfg(tree Node, target str) -> Node {
                         ro state = cfg_attr_state(child, target)
                         if before_module {
                             file_state = cfg_and(file_state, state)
-                            if state == CFG_UNKNOWN { pending.push(child) }
+                            if state == CFG_UNKNOWN {
+                                pending.push(child)
+                            } else {
+                                // Known predicates have already contributed to file_state.
+                            }
                         } else {
                             item_state = cfg_and(item_state, state)
-                            if state == CFG_UNKNOWN { pending.push(child) }
+                            if state == CFG_UNKNOWN {
+                                pending.push(child)
+                            } else {
+                                // Known predicates have already contributed to item_state.
+                            }
                         }
                     } else {
                         pending.push(child)
@@ -51,9 +59,7 @@ export fn filter_cfg(tree Node, target str) -> Node {
                     if file_state == CFG_FALSE {
                         return branch(id, NodeKind.File, []Node.new())
                     }
-                    for attr in pending {
-                        out.push(attr)
-                    }
+                    out.append(pending)
                     pending = []Node.new()
                     out.push(child)
                     before_module = false
@@ -65,9 +71,7 @@ export fn filter_cfg(tree Node, target str) -> Node {
                     continue
                 }
                 if item_state != CFG_FALSE {
-                    for attr in pending {
-                        out.push(attr)
-                    }
+                    out.append(pending)
                     out.push(child)
                 } else {
                     // The inactive item and all of its leading attributes are
@@ -80,7 +84,9 @@ export fn filter_cfg(tree Node, target str) -> Node {
                 return branch(id, NodeKind.File, []Node.new())
             }
             if item_state != CFG_FALSE {
-                for attr in pending { out.push(attr) }
+                out.append(pending)
+            } else {
+                // An inactive trailing item has no declaration to preserve.
             }
             branch(id, NodeKind.File, out)
         }
@@ -129,40 +135,44 @@ fn cfg_attr_state(n Node, target str) -> int {
 
 fn cfg_or(kids []Node, start int, target str) -> (int, int) {
     ro (first, next) = cfg_and_expr(kids, start, target)
-    mut state = first
-    mut i = next
-    while i < kids.len() && leaf_kind(kids[i]) == TokenKind.PipePipe {
-        i += 1
-        ro (right, after_right) = cfg_and_expr(kids, i, target)
-        i = after_right
-        if state == CFG_TRUE || right == CFG_TRUE {
-            state = CFG_TRUE
-        } else if state == CFG_FALSE && right == CFG_FALSE {
-            state = CFG_FALSE
-        } else {
-            state = CFG_UNKNOWN
-        }
+    if next < kids.len() && leaf_kind(kids[next]) == TokenKind.PipePipe {
+        ro (right, after_right) = cfg_or(kids, next + 1, target)
+        ro state = cfg_or_state(first, right)
+        return (state, after_right)
+    } else {
+        (first, next)
     }
-    (state, i)
 }
 
 fn cfg_and_expr(kids []Node, start int, target str) -> (int, int) {
     ro (first, next) = cfg_not_expr(kids, start, target)
-    mut state = first
-    mut i = next
-    while i < kids.len() && leaf_kind(kids[i]) == TokenKind.AmpAmp {
-        i += 1
-        ro (right, after_right) = cfg_not_expr(kids, i, target)
-        i = after_right
-        if state == CFG_FALSE || right == CFG_FALSE {
-            state = CFG_FALSE
-        } else if state == CFG_TRUE && right == CFG_TRUE {
-            state = CFG_TRUE
-        } else {
-            state = CFG_UNKNOWN
-        }
+    if next < kids.len() && leaf_kind(kids[next]) == TokenKind.AmpAmp {
+        ro (right, after_right) = cfg_and_expr(kids, next + 1, target)
+        ro state = cfg_and_state(first, right)
+        return (state, after_right)
+    } else {
+        (first, next)
     }
-    (state, i)
+}
+
+fn cfg_or_state(left int, right int) -> int {
+    if left == CFG_TRUE || right == CFG_TRUE {
+        CFG_TRUE
+    } else if left == CFG_FALSE && right == CFG_FALSE {
+        CFG_FALSE
+    } else {
+        CFG_UNKNOWN
+    }
+}
+
+fn cfg_and_state(left int, right int) -> int {
+    if left == CFG_FALSE || right == CFG_FALSE {
+        CFG_FALSE
+    } else if left == CFG_TRUE && right == CFG_TRUE {
+        CFG_TRUE
+    } else {
+        CFG_UNKNOWN
+    }
 }
 
 fn cfg_not_expr(kids []Node, start int, target str) -> (int, int) {

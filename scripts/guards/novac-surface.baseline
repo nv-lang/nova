@@ -360,7 +360,11 @@
 #   `CHAR_TYPE_NAME` -- Nova's own primitive spellings that collide with a C keyword, exported so the
 #   C-name escape door (sem/mangle_spelling.nv) asks for them instead of retyping them (check-novac-
 #   no-name-hardcode.py flags a second literal of a P5 name wherever it appears outside builtins.nv).
-builtins 99
+# builtins 99 -> 102 (2026-10-21, task 092 / D99): `HOST_OS_MODULE`, `HOST_OS_FN`, and
+# `HOST_OS_C_FN` name the one registered std host-OS bridge. `sem/handed_bodies.nv`
+# validates its identity and ABI; `emit_c/emit_expr.nv` emits the approved C call and
+# `emit_c/shell.nv` registers the runtime symbol. Kept together in builtins by P5.
+builtins 102
 # 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
 #   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
 #   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.
@@ -579,7 +583,11 @@ parse 1
 # 2026-10-06, task #23 (274.11 E.10 step 2b): pipeline 16 -> 18: `compile_program_to_c` (the program
 #   to one C file, called by the door) and `named_by_file` (a unit's diagnostic named by its file:
 #   the door's `compile_unit` and the program take the one translation).
-pipeline 18
+# pipeline 18 -> 21 (2026-10-21, task 092 / D99): `filter_cfg` is shared by
+# `pipeline/pipeline.nv` and `pipeline/program.nv` to remove inactive items before
+# collection/checking; `cfg_file_active` and `target_peer_active` are used by
+# `main.nv` while discovering declaration files and OS-suffixed peers.
+pipeline 21
 # 2026-08-28 (274.4 step 3): the field root gets the same cut. sem 171 -> 169:
 # has_field and field_type moved OUT to resolve (FieldIndex); resolve 11 -> 15:
 # FieldIndex, build, has_field, field_type.
@@ -1256,7 +1264,11 @@ resolve 27
 # 2026-10-08, task #29, syncing main past task #22 (which had already moved the base to 397 on its
 #   own): sem 397 -> 398, same export as the 396 -> 397 note above (`c_ident`) -- that note named it
 #   against a base #22 later moved under it, during #29's rework rounds.
-sem 398
+# sem 398 -> 399 (2026-10-21, task 092 / D99): `Ctx @is_host_os_bridge` answers whether
+# a handed callable is exactly the registered `std.os.host_os` row with the approved
+# C ABI. `check/calls.nv` uses that identity for checking; `emit_c/emit_expr.nv` uses
+# the same door for the native call, avoiding separate name-only recognition.
+sem 399
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в
