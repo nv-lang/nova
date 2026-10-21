@@ -42,7 +42,7 @@
 | D96 | 03-syntax.md | Синтаксис атрибутов — `#name` без квадратных скобок (`#realtime`, `#pure`) |
 | D97 | 06-concurrency.md | Fiber stack allocation — per-thread mmap arena (Linux/macOS) / calloc (Windows) |
 | D98 | 06-concurrency.md | Work-stealing scheduler — per-worker runqueue, global queue fallback |
-| D99 | 09-tooling.md | Conditional compilation — `#if platform(...)` / `#if feature(...)` атрибуты |
+| D99 | 07-modules.md | Conditional compilation — OS filename suffixes and `#cfg` for target OS/features |
 | D100 | 07-modules.md | `_module.nv` — entry-point файл для folder-module |
 | D101 | 09-tooling.md | `#doc` атрибут — structured documentation comments |
 | D102 | 03-syntax.md | Named parameters — `f(x: 1, y: 2)` синтаксис вызова |

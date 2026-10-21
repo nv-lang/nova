@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR E_NOVAC_SUBSET
+module neg.cfg_malformed_predicate_neg
+
+// nova:expect E_NOVAC_SUBSET -- target_arch is outside D99 and must not silently select an item
+#cfg(target_arch = "x86_64")
+fn main() -> () {}

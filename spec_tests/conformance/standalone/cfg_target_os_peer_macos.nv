@@ -1,0 +1,7 @@
+// EXPECT_STDOUT cfg-peer
+#cfg(target_os = "macos")
+module standalone.cfg_target_os_peer_macos
+
+fn main() Io -> () {
+    println("cfg-peer")
+}

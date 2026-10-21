@@ -2134,11 +2134,25 @@ nova_tests/
 
 ### Семантика
 
+**Амендмент 2026-10-16 — выбор target OS для Carina emit (решение владельца).**
+Для `novac emit` target OS выбирается в следующем порядке:
+
+1. `novac emit --target-os <windows|linux|macos>` — явный выбор эмиссии;
+2. `NOVA_TARGET_OS=<windows|linux|macos>`;
+3. ОС host-компилятора.
+
+Явный флаг имеет приоритет над переменной окружения. Неподдерживаемое,
+пустое или повторно заданное значение — ошибка с ненулевым выходом; компилятор
+не откатывается к следующему источнику выбора. Выбранная ОС управляет только
+условной компиляцией (`#cfg(target_os)` и OS filename suffix): флаг не выбирает
+и не запускает C toolchain. `--target` зарезервирован для отдельной будущей
+интеграции C toolchain.
+
 | Mechanism | Scope | Detection |
 |---|---|---|
 | Filename suffix | peer-file / standalone test | filename stem suffix |
 | `#cfg(feature)` | **перед** module / **перед** item | `NOVA_FEATURES` env / `--features` CLI |
-| `#cfg(target_os)` | **перед** module / **перед** item | `NOVA_TARGET_OS` env / host OS default |
+| `#cfg(target_os)` | **перед** module / **перед** item | `novac emit --target-os` / `NOVA_TARGET_OS` env / host OS default |
 | `#cfg(... || && !)` | то же — operator predicate | рекурсивный eval |
 
 **Item-level `#cfg`** (Plan 42.14 Ф.2): `#cfg(...)` перед top-level
@@ -2156,8 +2170,9 @@ register peer_file, не recurse imports).
 - `#cfg` в expression position (`if #cfg(target_os = ...) { ... }`).
 - `#cfg(target_arch = ...)` — на ARM/x86 differences. Future, если
   понадобится.
-- Cross-compile toolchain integration — `--target=linux` на Windows-
-  host требует cross C-toolchain (separate plan).
+- Cross-compile toolchain integration — `--target-os` выбирает только
+  OS-ветви Nova и не является настройкой C toolchain. `--target` зарезервирован
+  для отдельного плана интеграции C toolchain.
 
 ### Почему
 

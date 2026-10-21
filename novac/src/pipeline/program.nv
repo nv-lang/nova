@@ -71,7 +71,7 @@ export fn named_by_file(u Unit, d Diagnostic) -> Diagnostic {
 /// file then lists the units the other way round, a module after what it
 /// imports. The program is the entry and what its imports reach.
 export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop InteropTable,
-                               mut embeds EmbedTable) -> ([]Diagnostic, str) {
+                               mut embeds EmbedTable, target_os str = "") -> ([]Diagnostic, str) {
     mut dirs = []str.new()
     mut mods = []str.new()
     mut efrom = []int.new()
@@ -80,7 +80,7 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         dirs.push(unit_dir(units[k]))
     }
     for k in 0..units.len() {
-        ro tree = parse_unit(units[k].text)
+        ro tree = parse_unit(units[k].text, target_os: target_os)
         mods.push(module_dotted(tree))
         for d in import_dirs(tree, dirs[k]) {
             ro t = index_of(dirs, d)
@@ -120,7 +120,7 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         // A unit's `embed`s were read against its own directory (main.nv): it is
         // typed under that key, as `check_unit` types it.
         embeds.home = if u.files.len() > 0 { embed_dir_of(u.files[0].path) } else { "" }
-        ro fr = front(u.text, decls, interop, embeds)
+        ro fr = front(u.text, decls, interop, embeds, target_os: target_os)
         ro { src, tree, ctx, .. } = fr
         ro (cdiags, chan) = check(tree, src, ctx)
         done[k] = true
@@ -205,7 +205,10 @@ type Checked {
 }
 
 /// The tree of a unit's text, for its module line and its imports.
-fn parse_unit(text str) -> Node => parse(tokens_of(text))
+fn parse_unit(text str, target_os str = "") -> Node {
+    ro parsed = parse(tokens_of(text))
+    if target_os == "" { parsed } else { filter_cfg(parsed, target_os) }
+}
 
 /// Depth first from `k` over the import edges: a unit goes into `topo` after
 /// every unit it imports. The graph of a program is acyclic (the language
