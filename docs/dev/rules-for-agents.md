@@ -150,6 +150,16 @@
   ночной прогон показывает до-фиксовое поведение при слитом фиксе. Список
   таких стражей ВЫВОДИТСЯ грепом по их исходникам, не пишется руками.
   Реестр №813.
+  **Compiler-free build target проверяется своим графом, не графом support.**
+  `check-nova-driver-no-codegen.py` вызывает `cargo tree --edges normal` для
+  production manifest `nova-driver/Cargo.toml` и явного Windows target
+  `x86_64-pc-windows-msvc`; compiler dependency или ошибка Cargo дают ненулевой
+  отказ, успех — машинную строку `ok:` с LF. Зовётся в
+  `.github/workflows/nova-driver-graph.yml`; `--self-test` проверяет распознавание
+  запрещённого edge. Прямой dependency sabotage и real Carina install/golden
+  — отдельные доказательства задачи 111, не заменяются этим self-test.
+  Граница: Linux compatibility и соседний Oracle CLI этим не объявляются
+  compiler-free; причины и проверенный partial scope — 274.16 Ш.4.
   `check-examples-strict-effects.sh` держит пункт A-E2 плана 221: КАЖДЫЙ
   пример вне `_wip/` собирается под `--strict-effects`. До него гейт судил
   ШЕСТЬ названных целей из `flagship-targets.txt`, а точек входа в `examples/`

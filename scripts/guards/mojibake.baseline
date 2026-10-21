@@ -25,7 +25,10 @@
 #
 # ЧТО НЕ СЧИТАЕТСЯ: `scripts/tools/demojibake.py`, ядро `mojibake-scan.py` и
 # самотест стража — они ХРАНЯТ образцы порчи как данные.
-mojibake_lines=144
+# Task 111 round 4: the moved CP1251 decoding table uses equivalent Unicode
+# escapes, not literal signature characters. Direct scan: 139 signature lines;
+# the old test_runner carrier now has none. Replacement-character debt unchanged.
+mojibake_lines=139
 #
 # ===== ВТОРАЯ МЕТРИКА: СИМВОЛ-ЗАМЕНА U+FFFD (заведена 2026-09-05, №972) =====
 #
@@ -104,7 +107,6 @@ mojibake_lines=144
 #   418 строк в 1 файлах; осмотрено файлов 7642.
 fffd_lines=418
 scanned_files=7642
-mojibake_file=compiler-codegen/src/test_runner.rs 5
 mojibake_file=docs/dev/simplifications.md 2
 mojibake_file=docs/plans/138.2-vec-in-prelude-novarray-retirement.md 1
 mojibake_file=docs/plans/139-str-as-nova-value-type.md 53

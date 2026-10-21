@@ -1,0 +1,25 @@
+name: nova-driver-graph
+
+on:
+  push:
+    branches: [main, integrate, 'integrate/**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-driver-graph:
+    name: Windows nova driver is compiler-free
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust with Windows target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.85
+          targets: x86_64-pc-windows-msvc
+      - name: Assert exact production target graph
+        run: python3 scripts/guards/check-nova-driver-no-codegen.py . --self-test
+      - name: Check Linux compatibility dispatcher build
+        run: cargo check --locked --manifest-path nova-driver/Cargo.toml
+      - name: Check Windows production target
+        run: cargo check --locked --manifest-path nova-driver/Cargo.toml --target x86_64-pc-windows-msvc

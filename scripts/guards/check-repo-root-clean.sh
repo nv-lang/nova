@@ -78,6 +78,8 @@ editors
 examples
 img
 nova-cli
+nova-driver
+nova-driver-support
 nova-lsp
 nova_tests
 nova_tests.old
@@ -101,6 +103,9 @@ THIRD_PARTY
 # .opencode/agents/{defect-hunter,spec-reader}.md — указатели на агентов из .claude/agents.
 # Каталог конфигурации инструмента, а не черновик окна; удалять нельзя — агенты пропадут.
 # crew-projects — именованные настройки отдельных satellite-проектов CrewHarness, не scratch.
+# nova-driver и nova-driver-support — штатные Cargo crates задачи 111: пользовательский
+# compiler-free build executable и общие manifest/lock/native APIs соответственно.
+# Их корневое размещение соответствует nova-cli/compiler-codegen, это не scratch.
 
 FOUND=$(git -C "$ROOT" ls-files --full-name 2>/dev/null | grep -v '/')
 # core.quotepath=off: иначе путь с не-ASCII внутри приходит в кавычках и
