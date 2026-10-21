@@ -300,6 +300,11 @@ pub fn load(pkg_dir: &Path) -> Result<Option<LockFile>> {
     Ok(None)
 }
 
+/// Manifest read-view supplied by the caller, without a compiler dependency.
+/// The default driver APIs use fresh filesystem reads. Compatibility callers
+/// can pass their existing snapshot reader; policy checks still run on that view.
+pub type ManifestProvider = fn(&Path, &Path) -> Option<crate::manifest::Manifest>;
+
 /// Собрать полный (транзитивный) граф зависимостей пакета `entry_pkg_dir`.
 ///
 /// Walks `[dependencies]` каждого пакета; `path`-deps резолвятся в
@@ -307,7 +312,14 @@ pub fn load(pkg_dir: &Path) -> Result<Option<LockFile>> {
 /// (с учётом уже загруженной lock-таблицы). Diamond-зависимости —
 /// один раз. Цикл зависимостей пакетов (A→B→A) → ошибка.
 pub fn collect_dep_graph(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
-    collect_dep_graph_ex(entry_pkg_dir, &HashMap::new())
+    collect_dep_graph_with_provider(entry_pkg_dir, crate::manifest::parse_manifest)
+}
+
+pub fn collect_dep_graph_with_provider(
+    entry_pkg_dir: &Path,
+    manifests: ManifestProvider,
+) -> Result<Vec<LockedDep>> {
+    collect_dep_graph_ex_with_provider(entry_pkg_dir, &HashMap::new(), manifests)
 }
 
 /// Plan 03.2 Ф.4: вариант с картой `url → resolved-version` (от
@@ -317,14 +329,25 @@ pub fn collect_dep_graph_ex(
     entry_pkg_dir: &Path,
     resolved_versions: &HashMap<String, String>,
 ) -> Result<Vec<LockedDep>> {
+    collect_dep_graph_ex_with_provider(
+        entry_pkg_dir,
+        resolved_versions,
+        crate::manifest::parse_manifest,
+    )
+}
+
+pub fn collect_dep_graph_ex_with_provider(
+    entry_pkg_dir: &Path,
+    resolved_versions: &HashMap<String, String>,
+    manifests: ManifestProvider,
+) -> Result<Vec<LockedDep>> {
     let mut out: Vec<LockedDep> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     // Стек cycle-detection засеян entry-пакетом — цикл, замыкающийся
     // на сам entry (A→B→A), ловится сразу и с правильной цепочкой.
-    let entry_name =
-        crate::manifest::parse_manifest(&entry_pkg_dir.join("nova.toml"), entry_pkg_dir)
-            .map(|m| m.package_name)
-            .unwrap_or_else(|| "<entry>".to_string());
+    let entry_name = manifests(&entry_pkg_dir.join("nova.toml"), entry_pkg_dir)
+        .map(|m| m.package_name)
+        .unwrap_or_else(|| "<entry>".to_string());
     let mut stack: Vec<(String, PathBuf)> = vec![(entry_name, canon(entry_pkg_dir))];
     visit_pkg(
         entry_pkg_dir,
@@ -332,6 +355,7 @@ pub fn collect_dep_graph_ex(
         &mut seen,
         &mut stack,
         resolved_versions,
+        manifests,
     )?;
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
@@ -347,9 +371,10 @@ fn visit_pkg(
     seen: &mut HashSet<PathBuf>,
     stack: &mut Vec<(String, PathBuf)>,
     resolved_versions: &HashMap<String, String>,
+    manifests: ManifestProvider,
 ) -> Result<()> {
     let toml = pkg_dir.join("nova.toml");
-    let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
+    let Some(manifest) = manifests(&toml, pkg_dir) else {
         // Нет манифеста — нет объявленных зависимостей.
         return Ok(());
     };
@@ -381,7 +406,7 @@ fn visit_pkg(
                         source: LockedSource::Path { path: rel.clone() },
                     });
                     stack.push((dep.name.clone(), c));
-                    visit_pkg(&dep_dir, out, seen, stack, resolved_versions)?;
+                    visit_pkg(&dep_dir, out, seen, stack, resolved_versions, manifests)?;
                     stack.pop();
                 }
             }
@@ -403,7 +428,14 @@ fn visit_pkg(
                         },
                     });
                     stack.push((dep.name.clone(), c));
-                    visit_pkg(&res.checkout, out, seen, stack, resolved_versions)?;
+                    visit_pkg(
+                        &res.checkout,
+                        out,
+                        seen,
+                        stack,
+                        resolved_versions,
+                        manifests,
+                    )?;
                     stack.pop();
                 }
             }
@@ -440,10 +472,17 @@ fn check_cycle(name: &str, dep_canon: &Path, stack: &[(String, PathBuf)]) -> Res
 pub fn collect_replace_scope_warnings(
     entry_pkg_dir: &Path,
 ) -> Vec<crate::manifest::ManifestWarning> {
+    collect_replace_scope_warnings_with_provider(entry_pkg_dir, crate::manifest::parse_manifest)
+}
+
+pub fn collect_replace_scope_warnings_with_provider(
+    entry_pkg_dir: &Path,
+    manifests: ManifestProvider,
+) -> Vec<crate::manifest::ManifestWarning> {
     let mut out = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     seen.insert(canon(entry_pkg_dir));
-    walk_replace_scope(entry_pkg_dir, &mut out, &mut seen);
+    walk_replace_scope(entry_pkg_dir, &mut out, &mut seen, manifests);
     out
 }
 
@@ -451,9 +490,10 @@ fn walk_replace_scope(
     pkg_dir: &Path,
     out: &mut Vec<crate::manifest::ManifestWarning>,
     seen: &mut HashSet<PathBuf>,
+    manifests: ManifestProvider,
 ) {
     let toml = pkg_dir.join("nova.toml");
-    let Some(manifest) = crate::manifest::parse_manifest(&toml, pkg_dir) else {
+    let Some(manifest) = manifests(&toml, pkg_dir) else {
         return;
     };
     for dep in &manifest.dependencies {
@@ -477,7 +517,7 @@ fn walk_replace_scope(
             continue; // already visited (diamond dep / cycle) — no duplicate warnings.
         }
         let dep_toml = dep_dir.join("nova.toml");
-        if let Some(dep_manifest) = crate::manifest::parse_manifest(&dep_toml, &dep_dir) {
+        if let Some(dep_manifest) = manifests(&dep_toml, &dep_dir) {
             // Реестр 221.1 №135(б): непереносимый `path` в манифесте ЗАВИСИМОСТИ.
             // `manifest_warnings` вызывался только на КОРНЕВОМ манифесте, поэтому
             // потребитель пакета, чей манифест несёт `path = "../соседняя-репа"`,
@@ -516,7 +556,7 @@ fn walk_replace_scope(
                 });
             }
         }
-        walk_replace_scope(&dep_dir, out, seen);
+        walk_replace_scope(&dep_dir, out, seen, manifests);
     }
 }
 
@@ -535,9 +575,9 @@ fn walk_replace_scope(
 /// `nova check` и `nova test`. То есть защита от дефекта, месяцами красившего
 /// CI, не работала на двух самых частых командах. Здесь — общий вход: всё, что
 /// вообще резолвит зависимости, проходит через `sync`/`load_pins`.
-fn enforce_no_cross_repo_paths(entry_pkg_dir: &Path) -> Result<()> {
+fn enforce_no_cross_repo_paths(entry_pkg_dir: &Path, manifests: ManifestProvider) -> Result<()> {
     let toml_path = entry_pkg_dir.join("nova.toml");
-    if let Some(m) = crate::manifest::parse_manifest(&toml_path, entry_pkg_dir) {
+    if let Some(m) = manifests(&toml_path, entry_pkg_dir) {
         crate::manifest::check_no_cross_repo_path_deps(&m, &toml_path)
             .map_err(|e| anyhow::anyhow!("{:#}", e))?;
     }
@@ -545,13 +585,24 @@ fn enforce_no_cross_repo_paths(entry_pkg_dir: &Path) -> Result<()> {
 }
 
 pub fn sync(entry_pkg_dir: &Path) -> Result<Vec<LockedDep>> {
-    enforce_no_cross_repo_paths(entry_pkg_dir)?;
-    sync_ex(entry_pkg_dir, &[])
+    sync_with_provider(entry_pkg_dir, crate::manifest::parse_manifest)
+}
+
+pub fn sync_with_provider(
+    entry_pkg_dir: &Path,
+    manifests: ManifestProvider,
+) -> Result<Vec<LockedDep>> {
+    enforce_no_cross_repo_paths(entry_pkg_dir, manifests)?;
+    sync_ex(entry_pkg_dir, &[], manifests)
 }
 
 /// Ядро `sync` с дополнительными корневыми ограничениями `extra_root`
 /// (`nova update --precise` передаёт сюда точное `=X`).
-fn sync_ex(entry_pkg_dir: &Path, extra_root: &[(PkgId, VersionReq)]) -> Result<Vec<LockedDep>> {
+fn sync_ex(
+    entry_pkg_dir: &Path,
+    extra_root: &[(PkgId, VersionReq)],
+    manifests: ManifestProvider,
+) -> Result<Vec<LockedDep>> {
     let existing = load(entry_pkg_dir)?;
     // Plan 03.2 Ф.4: предпочтительные версии из существующего lock —
     // воспроизводимость (резолвер держит зафиксированную версию).
@@ -565,8 +616,8 @@ fn sync_ex(entry_pkg_dir: &Path, extra_root: &[(PkgId, VersionReq)]) -> Result<V
     // Plan 03.2 Ф.3: согласованный резолв версионных git-зависимостей
     // (`version = "^1.2"`) — до обхода графа, чтобы collect_dep_graph
     // взял зафиксированные резолвером commit'ы и версии.
-    let resolved = resolve_version_deps(entry_pkg_dir, &preferred, extra_root)?;
-    let graph = collect_dep_graph_ex(entry_pkg_dir, &resolved)?;
+    let resolved = resolve_version_deps(entry_pkg_dir, &preferred, extra_root, manifests)?;
+    let graph = collect_dep_graph_ex_with_provider(entry_pkg_dir, &resolved, manifests)?;
     // Не плодим `nova.lock.toml` на ровном месте: пустой граф и файла ещё нет
     // — фиксировать нечего. Если lock уже был (зависимости убрали) —
     // перезаписываем, чтобы он отражал актуальное состояние.
@@ -586,7 +637,11 @@ fn sync_ex(entry_pkg_dir: &Path, extra_root: &[(PkgId, VersionReq)]) -> Result<V
 /// перезаписи файла. Для read-only потребителей (например `nova run`
 /// уже собранного проекта).
 pub fn load_pins(entry_pkg_dir: &Path) -> Result<()> {
-    enforce_no_cross_repo_paths(entry_pkg_dir)?;
+    load_pins_with_provider(entry_pkg_dir, crate::manifest::parse_manifest)
+}
+
+pub fn load_pins_with_provider(entry_pkg_dir: &Path, manifests: ManifestProvider) -> Result<()> {
+    enforce_no_cross_repo_paths(entry_pkg_dir, manifests)?;
     if let Some(existing) = load(entry_pkg_dir)? {
         git_cache::install_lock_entries(existing.git_pins());
     }
@@ -629,11 +684,15 @@ fn pins_seeded() -> &'static Mutex<HashSet<PathBuf>> {
 /// пути `resolve_git_dep_in` (fetch → `rev_parse` → `bail!`) в момент,
 /// когда этот конкретный URL/коммит реально резолвится.
 pub fn ensure_pins_loaded(pkg_dir: &Path) -> Result<()> {
+    ensure_pins_loaded_with_provider(pkg_dir, crate::manifest::parse_manifest)
+}
+
+pub fn ensure_pins_loaded_with_provider(pkg_dir: &Path, manifests: ManifestProvider) -> Result<()> {
     let key = canon(pkg_dir);
     if pins_seeded().lock().unwrap().contains(&key) {
         return Ok(());
     }
-    let res = load_pins(pkg_dir);
+    let res = load_pins_with_provider(pkg_dir, manifests);
     // Отметить попытку выполненной ДАЖЕ при ошибке — иначе битый
     // `nova.lock.toml` заставит перечитывать и падать на КАЖДЫЙ
     // import-lookup вместо одного честного отказа на весь процесс.
@@ -649,8 +708,16 @@ pub fn ensure_pins_loaded(pkg_dir: &Path) -> Result<()> {
 /// затем `sync` — снятые с пина зависимости резолвятся «вживую» (берётся
 /// текущий commit ветки/тега), остальные остаются зафиксированными.
 pub fn update(entry_pkg_dir: &Path, only: Option<&str>) -> Result<Vec<LockedDep>> {
+    update_with_provider(entry_pkg_dir, only, crate::manifest::parse_manifest)
+}
+
+pub fn update_with_provider(
+    entry_pkg_dir: &Path,
+    only: Option<&str>,
+    manifests: ManifestProvider,
+) -> Result<Vec<LockedDep>> {
     drop_git_locks(entry_pkg_dir, only)?;
-    sync(entry_pkg_dir)
+    sync_with_provider(entry_pkg_dir, manifests)
 }
 
 /// Снять git-записи из `nova.lock.toml`: `only = Some(name)` — одну, `None`
@@ -690,12 +757,28 @@ pub fn update_precise(
     dep_url: &str,
     version: &Version,
 ) -> Result<Vec<LockedDep>> {
+    update_precise_with_provider(
+        entry_pkg_dir,
+        dep_name,
+        dep_url,
+        version,
+        crate::manifest::parse_manifest,
+    )
+}
+
+pub fn update_precise_with_provider(
+    entry_pkg_dir: &Path,
+    dep_name: &str,
+    dep_url: &str,
+    version: &Version,
+    manifests: ManifestProvider,
+) -> Result<Vec<LockedDep>> {
     // Снять текущий пин целевой зависимости — иначе старая версия
     // осталась бы preferred.
     drop_git_locks(entry_pkg_dir, Some(dep_name))?;
     let exact = VersionReq::parse(&format!("={}", version))
         .map_err(|e| anyhow!("некорректная версия `{}`: {:#}", version, e))?;
-    sync_ex(entry_pkg_dir, &[(dep_url.to_string(), exact)])
+    sync_ex(entry_pkg_dir, &[(dep_url.to_string(), exact)], manifests)
 }
 
 // ---------------------------------------------------------------------
@@ -709,6 +792,7 @@ pub fn update_precise(
 /// `resolve_git_dep_in` вызывается напрямую (в обход lock-таблицы) —
 /// провайдер обязан видеть РЕАЛЬНЫЕ теги, а не зафиксированный commit.
 struct GitProvider {
+    manifests: ManifestProvider,
     /// url → (version, tag-name), отсортировано — кэш `list_versions`.
     versions: RefCell<HashMap<String, Vec<(Version, String)>>>,
     /// (url, version) → зависимости — кэш разобранных `nova.toml`.
@@ -716,8 +800,9 @@ struct GitProvider {
 }
 
 impl GitProvider {
-    fn new() -> GitProvider {
+    fn new(manifests: ManifestProvider) -> GitProvider {
         GitProvider {
+            manifests,
             versions: RefCell::new(HashMap::new()),
             deps: RefCell::new(HashMap::new()),
         }
@@ -770,7 +855,7 @@ impl DependencyProvider for GitProvider {
         let res = git_cache::resolve_git_dep_in(&root, pkg, &GitPin::Tag(tag), None)
             .map_err(|e| format!("{:#}", e))?;
         let toml = res.checkout.join("nova.toml");
-        let manifest = crate::manifest::parse_manifest(&toml, &res.checkout)
+        let manifest = (self.manifests)(&toml, &res.checkout)
             .ok_or_else(|| format!("git-пакет `{}`@{}: нет `[package]` в nova.toml", pkg, ver))?;
         // В граф версий идут только версионные git-зависимости; path /
         // точечные git-deps резолвятся обычным обходом collect_dep_graph.
@@ -801,9 +886,10 @@ fn resolve_version_deps(
     entry_pkg_dir: &Path,
     preferred: &HashMap<PkgId, Version>,
     extra_root: &[(PkgId, VersionReq)],
+    manifests: ManifestProvider,
 ) -> Result<HashMap<String, String>> {
     let toml = entry_pkg_dir.join("nova.toml");
-    let Some(manifest) = crate::manifest::parse_manifest(&toml, entry_pkg_dir) else {
+    let Some(manifest) = manifests(&toml, entry_pkg_dir) else {
         return Ok(HashMap::new());
     };
     // Plan 204 lockfix (D420): version-резолв идёт по ДЕКЛАРИРОВАННЫМ
@@ -827,7 +913,7 @@ fn resolve_version_deps(
     if root_version_deps.is_empty() {
         return Ok(HashMap::new());
     }
-    let provider = GitProvider::new();
+    let provider = GitProvider::new(manifests);
     let resolution = resolver::resolve_with_preferences(&provider, &root_version_deps, preferred)
         .map_err(|e| anyhow!("резолв версий git-зависимостей:\n  {:#}", e))?;
     let mut entries: Vec<(String, String)> = Vec::new();
@@ -846,6 +932,112 @@ fn resolve_version_deps(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    std::thread_local! {
+        static SAVED_MANIFESTS: std::cell::RefCell<HashMap<PathBuf, crate::manifest::Manifest>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+
+    fn saved_manifest(path: &Path, _dir: &Path) -> Option<crate::manifest::Manifest> {
+        SAVED_MANIFESTS.with(|saved| saved.borrow().get(path).cloned())
+    }
+
+    #[test]
+    fn provider_view_is_explicit_and_default_sync_stays_fresh() {
+        let dir = tmp_pkg("provider_view");
+        let leaf = dir.join("leaf");
+        std::fs::create_dir_all(&leaf).unwrap();
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let root_toml = dir.join("nova.toml");
+        let leaf_toml = leaf.join("nova.toml");
+        std::fs::write(&root_toml, "[package]\nname = \"app\"\n").unwrap();
+        std::fs::write(&leaf_toml, "[package]\nname = \"leaf\"\n").unwrap();
+        SAVED_MANIFESTS.with(|saved| {
+            let mut saved = saved.borrow_mut();
+            saved.clear();
+            for (path, pkg) in [(&root_toml, &dir), (&leaf_toml, &leaf)] {
+                saved.insert(
+                    path.clone(),
+                    crate::manifest::parse_manifest(path, pkg).unwrap(),
+                );
+            }
+        });
+        std::fs::write(
+            &root_toml,
+            "[package]\nname = \"app\"\n[dependencies]\nleaf = { path = \"leaf\" }\n",
+        )
+        .unwrap();
+
+        // Parity only: the caller-selected old view cannot see the new dep.
+        // This does NOT certify stale success/no-lock as correct mutation semantics.
+        assert!(sync_with_provider(&dir, saved_manifest).unwrap().is_empty());
+        assert!(!lock_path(&dir).exists());
+        let graph = sync(&dir).unwrap();
+        assert_eq!(graph.len(), 1);
+        assert_eq!(graph[0].name, "leaf");
+        let bytes = std::fs::read(lock_path(&dir)).unwrap();
+        assert_eq!(
+            bytes,
+            LockFile {
+                version: LOCK_VERSION,
+                packages: graph
+            }
+            .render()
+            .as_bytes()
+        );
+        assert!(collect_dep_graph_with_provider(&dir, saved_manifest)
+            .unwrap()
+            .is_empty());
+        assert_eq!(collect_dep_graph(&dir).unwrap().len(), 1);
+        SAVED_MANIFESTS.with(|saved| saved.borrow_mut().clear());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn provider_and_default_reads_keep_external_path_restrictions() {
+        let dir = tmp_pkg("provider_d420");
+        let app = dir.join("app");
+        let external = dir.join("external");
+        for pkg in [&app, &external] {
+            std::fs::create_dir_all(pkg.join(".git")).unwrap();
+        }
+        let toml = app.join("nova.toml");
+        std::fs::write(
+            &toml,
+            "[package]\nname = \"app\"\n[dependencies]\nexternal = { path = \"../external\" }\n",
+        )
+        .unwrap();
+        SAVED_MANIFESTS.with(|saved| {
+            saved.borrow_mut().insert(
+                toml.clone(),
+                crate::manifest::parse_manifest(&toml, &app).unwrap(),
+            );
+        });
+        for reader in [
+            saved_manifest as ManifestProvider,
+            crate::manifest::parse_manifest,
+        ] {
+            assert!(sync_with_provider(&app, reader)
+                .unwrap_err()
+                .to_string()
+                .contains("E_DEP_PATH_OUTSIDE_REPO"));
+            assert!(load_pins_with_provider(&app, reader)
+                .unwrap_err()
+                .to_string()
+                .contains("E_DEP_PATH_OUTSIDE_REPO"));
+            assert!(!lock_path(&app).exists());
+        }
+        assert!(sync(&app)
+            .unwrap_err()
+            .to_string()
+            .contains("E_DEP_PATH_OUTSIDE_REPO"));
+        assert!(load_pins(&app)
+            .unwrap_err()
+            .to_string()
+            .contains("E_DEP_PATH_OUTSIDE_REPO"));
+        SAVED_MANIFESTS.with(|saved| saved.borrow_mut().clear());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn render_parse_roundtrip() {
