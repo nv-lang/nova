@@ -119,6 +119,9 @@ folder-модуля и `_test.nv` сохраняют white-box доступ к �
 
 ## D29. Модули и импорты
 
+> **Target-conditional function names:** D495 filters inactive function rows before
+> D29 name shadowing; all other import and namespace rules remain unchanged.
+
 > **2026-05-12 (rev-2):** modulу разрешено быть **multi-file**
 > (folder = module, Go-style peers). Все файлы в папке объявляют
 > один и тот же `module X` и share namespace. Single-file модули
@@ -2086,6 +2089,9 @@ nova_tests/
 
 ## D99. Conditional compilation: filename suffix + `#cfg`
 
+> **Function item applicability:** specified in [D495](#d495); D99's other
+> conditional-compilation rules remain unchanged.
+
 > **Function item applicability:** см. [D495](#d495); прочие формы и scope D99 остаются без изменений.
 
 ### Что
@@ -2161,7 +2167,7 @@ nova_tests/
 item (Fn/Type/Const). `module`-декларация — разделитель: атрибуты до неё =
 file-level, после (перед item) = item-level.
 
-> Function item applicability is specified in [D495](#d495-function-item-applicability).
+> Function item applicability is specified in [D495](#d495).
 > This function-only refinement does not change the existing Type/Const,
 > module, or peer rules below.
 
@@ -2178,6 +2184,27 @@ register peer_file, не recurse imports).
 - Cross-compile toolchain integration — `--target-os` выбирает только
   OS-ветви Nova и не является настройкой C toolchain. `--target` зарезервирован
   для отдельного плана интеграции C toolchain.
+
+### Почему
+
+Конкретные numbers vs альтернатив:
+
+- **Go-only filename suffix** — мощно для OS routing, слабо для
+  feature flags. Plan 18 P0 (TLS) требует и того, и другого.
+- **Rust full `#[cfg(...)]` system** — рабочее, но cfg-expr +
+  cfg-attr — лишняя complexity. Nova взяла `any/all/not` (Plan 42.14)
+  но БЕЗ cfg-в-expression-position и cfg-attr.
+- **Только runtime branching** — dead code в binary + security risk
+  (включён код для другой OS).
+
+Filename + `#cfg` (с `any/all/not`, но без cfg-expr) покрывает
+production кейсы при меньшей complexity чем полный Rust.
+
+### Связь
+
+- [Plan 42](../../docs/plans/42-folder-modules.md) — folder-modules.
+- [Plan 42.12](../../docs/plans/42.12-cfg-conditional-compilation.md) — реализация.
+- [Plan 18](../../docs/plans/18-stdlib-roadmap.md) P0 — unblock'aется D99.
 
 ## D495. Function item applicability for target OS (2026-10-22) {#d495}
 
@@ -2203,33 +2230,20 @@ target и предшествует регистрации кандидатов �
 * Синтаксис и валидность объявлений сохраняются. Правило не меняет семантику
   Type/Const, module или peer items D99 и не задаёт глобальную reachability/DCE.
 
+### Почему
+
+Функциональная применимость должна быть частью одного разрешения кандидатов:
+удаление Fn до collect теряет AST identity и source attributes, а отдельный
+выбор в emitter/mono способен разойтись с выбранной строкой вызова. Фильтр по
+target до name shadowing и duplicate judgment сохраняет D84 для одновременно
+активных определений и не вводит новую ось перегрузки.
+
 ### Что заменено
 
 * Function-only уточнение D99 item-level applicability и D84 declaration /
   resolution order; при расхождении этих старых формулировок действует D495.
-  Оба указателя на D495 стоят под соответствующими заголовками.
-
-### Почему
-
-Конкретные numbers vs альтернатив:
-
-- **Go-only filename suffix** — мощно для OS routing, слабо для
-  feature flags. Plan 18 P0 (TLS) требует и того, и другого.
-- **Rust full `#[cfg(...)]` system** — рабочее, но cfg-expr +
-  cfg-attr — лишняя complexity. Nova взяла `any/all/not` (Plan 42.14)
-  но БЕЗ cfg-в-expression-position и cfg-attr.
-- **Только runtime branching** — dead code в binary + security risk
-  (включён код для другой OS).
-
-Filename + `#cfg` (с `any/all/not`, но без cfg-expr) покрывает
-production кейсы при меньшей complexity чем полный Rust.
-
-### Связь
-
-- [Plan 42](../../docs/plans/42-folder-modules.md) — folder-modules.
-- [Plan 42.12](../../docs/plans/42.12-cfg-conditional-compilation.md) — реализация.
-- [Plan 18](../../docs/plans/18-stdlib-roadmap.md) P0 — unblock'aется D99.
-
+* Связанные D267/D29/D125/D371 носят указатели на этот function-only порядок;
+  их обычные правила, включая full-shadow типа в D371, не меняются.
 
 ---
 
@@ -2336,6 +2350,9 @@ syntax не вводится (bootstrap simplicity).
 ---
 
 ## D371. Prelude control attributes — `#no_prelude`, `#prelude(...)`, `#allow(shadow)`
+
+> **Conditional functions:** D495 filters function candidates by target only;
+> D371's type full-shadow and other prelude rules are unchanged.
 
 > **AMEND (2026-07-11, [panic-assert-intrinsic]) — `panic`/`assert`/
 > `debug_assert` opt out of this whole mechanism.** These three are

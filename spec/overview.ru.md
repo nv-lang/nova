@@ -59,8 +59,9 @@
     отбирает исходники, но сам по себе не выбирает C toolchain: `--target`
     зарезервирован для отдельной интеграции кросс-компилятора.
     Для функций applicability target предшествует duplicate checks и resolve
-    ([D495](decisions/07-modules.md#d495)): это не новая ось перегрузки и не
-    меняет правила для `Type`/`Const` или module/peer.
+    ([D495](decisions/07-modules.md#d495)): неактивные функции сохраняют AST
+    identity, но их тела не проходят semantic checking. Это не новая ось
+    перегрузки и не меняет правила для `Type`/`Const` или module/peer.
 2. **Память: managed по умолчанию (current: Boehm conservative GC; v1.0+:
    concurrent GC), regions opt-in для real-time.** Программист пишет код без
    префиксов памяти — циклы освобождаются автоматически. **Текущее состояние

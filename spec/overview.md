@@ -72,8 +72,9 @@ language explicitly optimized for the pair "LLM writes, human reviews".
     source inclusion only and does not select or invoke a C toolchain; `--target`
     is reserved for a separate C-toolchain integration.
     For function items, target applicability precedes duplicate checks and
-    resolution ([D495](decisions/07-modules.md#d495)); it is not a new overload
-    axis and does not change the `Type`/`Const` or module/peer rules.
+    resolution ([D495](decisions/07-modules.md#d495)): inactive functions retain
+    their AST identity but their bodies are not semantically checked. This is not
+    a new overload axis and does not change the `Type`/`Const` or module/peer rules.
 2. **Memory: managed by default (current: Boehm conservative GC; v1.0+:
    concurrent GC), regions opt-in for real-time.** The programmer writes code
    without memory prefixes — allocations are freed automatically. **Current
