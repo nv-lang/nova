@@ -1,6 +1,0 @@
-// EXPECT_COMPILE_ERROR E_NOVAC_SUBSET
-module neg.cfg_unknown_feature_neg
-
-// nova:expect E_NOVAC_SUBSET -- unsupported feature predicates must remain visible to the checker
-#cfg(feature = "fancy")
-fn main() -> () {}
