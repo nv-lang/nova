@@ -333,6 +333,17 @@ mod tests {
     }
 
     #[test]
+    fn cp1251_signature_bytes_keep_their_original_codepoints() {
+        for (byte, expected) in [(0x80, '\u{0402}'), (0x81, '\u{0403}'),
+            (0x83, '\u{0453}'), (0x90, '\u{0452}'), (0x9a, '\u{0459}'),
+            (0x9c, '\u{045a}'), (0x9d, '\u{045c}'), (0x9e, '\u{045b}'),
+            (0xbe, '\u{0455}'), (0xbf, '\u{0457}')]
+        {
+            assert_eq!(super::bytes_to_string(&[byte]), expected.to_string());
+        }
+    }
+
+    #[test]
     fn package_lookup_finds_crate_root() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         assert_eq!(
@@ -702,10 +713,10 @@ pub fn bytes_to_string(b: &[u8]) -> String {
 fn cp1251_to_char(c: u8) -> char {
     // Полный mapping CP1251 (0x80-0xFF).
     match c {
-        0x80 => 'Ђ',
-        0x81 => 'Ѓ',
+        0x80 => '\u{0402}',
+        0x81 => '\u{0403}',
         0x82 => '‚',
-        0x83 => 'ѓ',
+        0x83 => '\u{0453}',
         0x84 => '„',
         0x85 => '…',
         0x86 => '†',
@@ -718,7 +729,7 @@ fn cp1251_to_char(c: u8) -> char {
         0x8D => 'Ќ',
         0x8E => 'Ћ',
         0x8F => 'Џ',
-        0x90 => 'ђ',
+        0x90 => '\u{0452}',
         0x91 => '\u{2018}',
         0x92 => '\u{2019}',
         0x93 => '\u{201C}',
@@ -727,11 +738,11 @@ fn cp1251_to_char(c: u8) -> char {
         0x96 => '–',
         0x97 => '—',
         0x99 => '™',
-        0x9A => 'љ',
+        0x9A => '\u{0459}',
         0x9B => '›',
-        0x9C => 'њ',
-        0x9D => 'ќ',
-        0x9E => 'ћ',
+        0x9C => '\u{045a}',
+        0x9D => '\u{045c}',
+        0x9E => '\u{045b}',
         0x9F => 'џ',
         0xA0 => '\u{A0}',
         0xA1 => 'Ў',
@@ -763,8 +774,8 @@ fn cp1251_to_char(c: u8) -> char {
         0xBB => '»',
         0xBC => 'ј',
         0xBD => 'Ѕ',
-        0xBE => 'ѕ',
-        0xBF => 'ї',
+        0xBE => '\u{0455}',
+        0xBF => '\u{0457}',
         0xC0..=0xDF => {
             // А-Я (0xC0='А', 0xDF='Я')
             char::from_u32(0x0410 + (c - 0xC0) as u32).unwrap_or('?')

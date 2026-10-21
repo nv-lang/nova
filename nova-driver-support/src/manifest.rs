@@ -232,7 +232,7 @@ fn parse_dep_source(raw_val: &str) -> DepSource {
         if let Some(p) = get("path") {
             DepSource::Path(p)
         } else if let Some(url) = get("git") {
-            // Plan 03.2: пины rev/tag/branch/version взаимоисключающи.
+            // [INV-PROPERTY] GitPin is a single enum variant; pin_count rejects multiple inputs.
             let pin_count = ["rev", "tag", "branch", "version"]
                 .iter()
                 .filter(|k| get(k).is_some())
@@ -240,7 +240,7 @@ fn parse_dep_source(raw_val: &str) -> DepSource {
             if pin_count > 1 {
                 return DepSource::Invalid(format!(
                     "git-зависимость: пины rev/tag/branch/version \
-                     взаимоисключающи (указано {})",
+                     взаимоисключающи (указано {})", // [INV-PROPERTY] pin_count > 1 returns Invalid.
                     pin_count,
                 ));
             }
@@ -303,8 +303,10 @@ fn parse_dep_forbid(raw_val: &str) -> Vec<String> {
 /// Plan 204 дофикс №2 / Plan 233 §2а: разобрать override-файл
 /// (`nova.override.toml` — новое имя, либо legacy `nova.local.toml`) —
 /// необязательный, НЕ коммитящийся файл рядом с `nova.toml` для
-/// машино-локальных оверрайдов. В этой волне поддержана ТОЛЬКО секция
+/// машино-локальных оверрайдов. В этой волне поддержана ТОЛЬКО секция [INV-PROPERTY]
 /// `[replace]` (тот же формат записи, что и `[replace]` в `nova.toml`).
+/// The section == "replace" branch is the only insertion into replace_map;
+/// every other parsed assignment is returned as an unsupported label.
 /// Прочие секции/ключи не отклоняют парсинг (forward-compat — будущие
 /// волны могут добавить поддержанные ключи без breaking change) — но
 /// собираются как `unsupported`-метки для `W_OVERRIDE_TOML_UNSUPPORTED_KEY`.
@@ -871,4 +873,31 @@ pub fn manifest_warnings(m: &Manifest, toml_path: &Path) -> Vec<ManifestWarning>
         }
     }
     out
+}
+
+#[cfg(test)]
+mod extraction_property_tests {
+    use super::{parse_dep_source, parse_override_toml, DepSource};
+
+    #[test]
+    fn every_pair_of_git_pins_is_rejected() {
+        let pins = ["rev", "tag", "branch", "version"];
+        for (index, first) in pins.iter().enumerate() {
+            for second in &pins[index + 1..] {
+                let text = format!("{{ git = \"https://example.invalid/repo\", {first} = \"1\", {second} = \"1\" }}");
+                assert!(matches!(parse_dep_source(&text), DepSource::Invalid(_)), "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn only_replace_assignments_become_overrides() {
+        let path = std::env::temp_dir().join(format!("nova-driver-override-property-{}.toml", std::process::id()));
+        std::fs::write(&path, "top = \"value\"\n[replace]\nmath = { path = \"../math\" }\n[other]\nmath = { path = \"../wrong\" }\n").unwrap();
+        let (replacements, unsupported) = parse_override_toml(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(replacements.len(), 1);
+        assert!(matches!(replacements.get("math"), Some(DepSource::Path(path)) if path == "../math"));
+        assert_eq!(unsupported, ["<top-level>.top", "other.math"]);
+    }
 }

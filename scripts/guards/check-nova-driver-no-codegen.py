@@ -1,11 +1,23 @@
 #!/usr/bin/env python3
-"""Assert the exact production nova driver target has no compiler dependency."""
+"""Assert the exact production nova driver target has no compiler dependency.
+
+Scope: docs/plans/274.16-carina-all-examples-and-packages.md, task 111.
+The inspected target is nova-driver/Cargo.toml for Windows x86_64 MSVC.
+Cargo failure and every direct/transitive compiler edge fail closed.
+The support crate graph alone is not a production executable proof.
+Success emits an LF-terminated ok: receipt for the gate wrapper.
+--self-test exercises forbidden-edge recognition, not native compilation.
+Real dependency sabotage and installed Carina D89 tests remain separate.
+"""
 from __future__ import annotations
 
 import argparse
 import subprocess
 import sys
 from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 TARGET = "x86_64-pc-windows-msvc"
 
@@ -45,7 +57,7 @@ def main() -> int:
         print(output, file=sys.stderr)
         return status
     print(output, end="")
-    print("check-nova-driver-no-codegen: production graph clean")
+    print("check-nova-driver-no-codegen ok: production graph clean")
     if args.self_test:
         injected_edge = "nova-codegen v0.1.0 (/synthetic/compiler-codegen)"
         if not forbidden(output + "\n" + injected_edge):

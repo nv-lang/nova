@@ -1149,7 +1149,8 @@ fn rt_hashable_files(rt_dir: &Path) -> Vec<PathBuf> {
 /// Fingerprint (size + mtime-nanos) of the archive-builder compiler binary
 /// — mirrors `build_cache.rs`'s compiler-exe fingerprint pattern. A
 /// toolchain upgrade (new clang/cl.exe) must bust the archive.
-fn rt_archive_compiler_fingerprint(cc_path: &Path) -> Option<(u64, u128)> {
+/// Fingerprint the resolved native compiler for runtime archive cache identity.
+pub fn rt_archive_compiler_fingerprint(cc_path: &Path) -> Option<(u64, u128)> {
     let meta = std::fs::metadata(cc_path).ok()?;
     let nanos = meta
         .modified()
@@ -1248,7 +1249,7 @@ fn rt_archive_memo_key(
 /// the CWD and fails -- so `rt_archive_compiler_fingerprint` quietly yields `None`
 /// there and the archive key carries NO compiler dimension on Unix at all. That
 /// blind spot is its own finding; this helper is what a fix for it would also use.
-fn resolve_cc_absolute(name: &str) -> PathBuf {
+pub fn resolve_cc_absolute(name: &str) -> PathBuf {
     let p = PathBuf::from(name);
     if p.is_absolute() || name.contains('/') || name.contains('\\') {
         return p;
@@ -1302,7 +1303,8 @@ fn libuv_cache_key() -> String {
     format!("{:016x}", h.finish())
 }
 
-fn resolve_archive_cc_path(tc: &Toolchain) -> PathBuf {
+/// Resolve the compiler used to build runtime archive objects.
+pub fn resolve_archive_cc_path(tc: &Toolchain) -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         let env: &[(OsString, OsString)] = match tc {

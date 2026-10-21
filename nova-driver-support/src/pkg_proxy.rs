@@ -397,9 +397,9 @@ mod tests {
         std::fs::remove_dir_all(&home).ok();
     }
 
-    /// legacy `nova.local.toml` [net] proxy тоже читается (deprecation
-    /// warning идёт на stderr — не проверяется тут, см. §2 override-тесты
-    /// в manifest.rs для собственно warning-контракта).
+    /// [INV-PROPERTY] The fixture defines only a legacy proxy; the resolved URL
+    /// is asserted below. Deprecation diagnostics have a separate contract in
+    /// compiler-codegen's manifest override tests; this test covers proxy lookup.
     #[test]
     fn legacy_local_toml_still_read_for_proxy() {
         let _g = ENV_LOCK.lock().unwrap();

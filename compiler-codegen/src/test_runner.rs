@@ -5248,22 +5248,22 @@ mod tests {
         // Проба в обе стороны поймала это немедленно: тест, зелёный без фикса,
         // не доказывает ничего.
         let tc = super::Toolchain::Gcc { gcc: PathBuf::from("gcc") };
-        let p = super::resolve_archive_cc_path(&tc);
+        let p = nova_driver_support::native_runtime::resolve_archive_cc_path(&tc);
         assert!(
             p.is_absolute(),
             "compiler path not resolved: {:?} -- metadata() of a bare name fails",
             p
         );
         assert!(
-            super::rt_archive_compiler_fingerprint(&p).is_some(),
+            nova_driver_support::native_runtime::rt_archive_compiler_fingerprint(&p).is_some(),
             "no fingerprint for {:?} -- the archive key would carry no compiler",
             p
         );
 
         // Обратная сторона: несуществующее имя обязано остаться БЕЗ отпечатка,
         // иначе ключ принял бы выдумку за измерение.
-        let bogus = super::resolve_cc_absolute("nova-no-such-compiler-1135");
-        assert!(super::rt_archive_compiler_fingerprint(&bogus).is_none());
+        let bogus = nova_driver_support::native_runtime::resolve_cc_absolute("nova-no-such-compiler-1135");
+        assert!(nova_driver_support::native_runtime::rt_archive_compiler_fingerprint(&bogus).is_none());
     }
 
     #[cfg(unix)]

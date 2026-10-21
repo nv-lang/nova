@@ -1084,7 +1084,8 @@ mod tests {
         let dir = tmp_pkg("sync_legacy_to_new");
         let sub = dir.join("leaf");
         std::fs::create_dir_all(&sub).unwrap();
-        // Фикстура обязана быть git-репозиторием: с №460 проверка D420
+        // Фикстура обязана быть git-репозиторием: с №460 проверка D420 [INV-PROPERTY]
+        // The create_dir_all(.git).unwrap() below establishes repo identity before sync.
         // (`E_DEP_PATH_OUTSIDE_REPO`) переехала в `sync`/`load_pins`, то есть
         // на ЕДИНСТВЕННУЮ точку разрешения зависимостей, — и голый
         // `path = "leaf"` вне репозитория с тех пор отвергается. Тест про
