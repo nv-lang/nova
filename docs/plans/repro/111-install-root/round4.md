@@ -197,3 +197,51 @@ python docs/plans/repro/111-install-root/manifest-provider-parity.py --baseline 
 
 Exit 0, последняя строка дословно:
 `receipt_sha256: 6a999a46c6dc8f72bff80b12ab9db50f9de5b901950477dc6615f419a4c91e18`.
+
+## Механическое завершение EOL и честный локальный precheck
+
+По уточнению интегратора завершена только нормализация двух собственных файлов:
+
+- `compiler-codegen/src/test_runner.rs`: `text/eol unspecified`, локальный
+  `core.autocrlf=true`; после перевыкладки из индекса CRLF 6266, bare LF 0.
+- `nova-driver-support/Cargo.toml`: `text eol=lf`; после нормализации CRLF 0,
+  bare LF 10.
+- Для каждого файла bytes после замены CRLF → LF **совпали с HEAD побайтно**;
+  смысловых изменений нет. `git diff --check` без вывода.
+- `bash scripts/guards/check-mixed-eol.sh .` → exit 0, дословно:
+  `check-mixed-eol ok: смешанных окончаний строк в рабочем дереве нет`.
+  В Git нормализованные blobs уже были правильными: отдельного изменения
+  Rust/Cargo в коммите нет, DCO фиксирует этот отчёт о локальной перевыкладке.
+
+Следующий вывод **исторический, не final-SHA gate**: precheck начался до
+`ad107efba` на `53ffb2a2d` с шестью незакоммиченными путями. Он завершился
+exit 1, основной гейт остановился на рубеже; последующие отказы ему не видны.
+Полный stdout команды `bash scripts/tools/merge-precheck.sh --report .`:
+
+```text
+merge-precheck --report: дерево /d/Sources/nv-lang/worktrees/nova-opencode-111-otdelit-carina-build-drayver-ot-nova-cod, вершина 53ffb2a2d, незакоммиченных путей 6
+-- /d/Sources/nv-lang/worktrees/nova-opencode-111-otdelit-carina-build-drayver-ot-nova-cod: основной гейт, ярус loop
+   rc=1, шагов 104
+-- /d/Sources/nv-lang/worktrees/nova-opencode-111-otdelit-carina-build-drayver-ot-nova-cod: гейт Карины, ярус loop
+   rc=1
+
+== КРАСНОЕ НА ЭТОМ ДЕРЕВЕ (ярус loop обоих гейтов) — 4
+   GATE FAIL: смешанные окончания строк: построчные и побайтные счётчики расходятся, git этого не видит (core.autocrlf), лечится перевыкладкой файла, а не коммитом
+   GATE FAIL: рабочие деревья: нарушен КОРЕНЬ либо вырос их СЧЁТ — какое именно, сказано строкой стража выше
+   NOVAC-GATE FAIL: работа живёт ровно на одном диске: ветка с невлитым и без копии на origin (274 §9.1д К7)
+   NOVAC-GATE FAIL: бинарь оракула старше своих исходников: гейт судит вчерашним компилятором (274 §9.1д К4)
+   ВНИМАНИЕ: основной гейт встал на рубеже — отказы ПОСЛЕ него не видны
+merge-precheck --report: красное есть — приложи этот вывод к сдаче целиком.
+```
+
+Read-only targeted диагностика после `ad107efba`, до EOL-перевыкладки,
+подтвердила носителей этих четырёх отказов. Mixed EOL затем устранён выше.
+Worktree guard: `check-worktree-location: деревьев 42 > базы 9 — храповик только вниз`
+(exit 1): общий чужой парк не чистился, baseline не поднимался. Release Oracle:
+`check-novac-oracle-fresh: FAIL — исходников новее бинаря оракула: 2` (exit 1),
+названы `compiler-codegen/src/lockfile.rs` и `compiler-codegen/src/test_runner.rs`.
+Debug compat и driver пересобраны для targeted proofs; release ради локального
+отчёта по прямому указанию интегратора не пересобирался. Новый полный loop
+precheck после этих действий не запускался: исторический FAIL не объявляется
+GREEN и не приписывается финальному SHA. Свежий signed squash/exact-SHA CI —
+независимому приёмщику. `novac/**` в круге 4 не менялся, ledger не требуется.
