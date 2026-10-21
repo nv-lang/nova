@@ -1,0 +1,8 @@
+// EXPECT_COMPILE_ERROR E_NOVAC_SUBSET
+module cfg_malformed_predicate_neg
+
+// nova:expect E_NOVAC_SUBSET -- malformed cfg syntax must not silently select an item
+#cfg(target_os = )
+fn main() Io -> () {
+    println("unreachable")
+}
