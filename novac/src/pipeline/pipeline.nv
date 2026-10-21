@@ -94,10 +94,11 @@ export fn mark_program(mut link InteropTable, program_decls []Node) -> () {
 /// So the door that parses is separate from the door that compiles, and the
 /// batch calls it ONCE. P14 is the reason and it is not decoration: the cost of
 /// the "edit -> verdict" loop is what this compiler is measured by.
-export fn parse_decls(decl_texts []str) -> []Node {
+export fn parse_decls(decl_texts []str, target_os str = "") -> []Node {
     mut out = []Node.new()
     for d in decl_texts {
-        out.push(parse(tokens_of(d)))
+        ro tree = parse(tokens_of(d))
+        out.push(if target_os == "" { tree } else { filter_cfg(tree, target_os) })
     }
     out
 }
@@ -565,8 +566,9 @@ export fn compile_with(text str, decls []Node, interop InteropTable) -> []Diagno
     compile_with_embeds(text, decls, interop, EmbedTable.new())
 
 /// The same, with what the door read for the text's `embed` calls (D412).
-export fn compile_with_embeds(text str, decls []Node, interop InteropTable, embeds EmbedTable) -> []Diagnostic {
-    ro fr = front(text, decls, interop, embeds)
+export fn compile_with_embeds(text str, decls []Node, interop InteropTable, embeds EmbedTable,
+                              target_os str = "") -> []Diagnostic {
+    ro fr = front(text, decls, interop, embeds, target_os: target_os)
     ro { src, tree, ctx, .. } = fr
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 { return derived_named(diags, fr) }
@@ -599,8 +601,9 @@ type Front {
 
 /// Parse and collect the unit, derive, and -- when anything was derived --
 /// parse and collect the text that carries it.
-fn front(text str, decls []Node, interop InteropTable, embeds EmbedTable) -> Front {
-    ro tree = parse(tokens_of(text))
+fn front(text str, decls []Node, interop InteropTable, embeds EmbedTable, target_os str = "") -> Front {
+    ro parsed = parse(tokens_of(text))
+    ro tree = if target_os == "" { parsed } else { filter_cfg(parsed, target_os) }
     ro ctx = context_with_embeds(tree, decls, interop, embeds)
     ro derived = derive_serialize_text(ctx)
     if derived.text == "" {
@@ -609,7 +612,8 @@ fn front(text str, decls []Node, interop InteropTable, embeds EmbedTable) -> Fro
         // Something to inject: the unit is read once more, with the methods in.
     }
     ro full = "${text}${derived.text}"
-    ro tree2 = parse(tokens_of(full))
+    ro parsed2 = parse(tokens_of(full))
+    ro tree2 = if target_os == "" { parsed2 } else { filter_cfg(parsed2, target_os) }
     Front { src: SourceText { text: full }, tree: tree2, ctx: context_with_embeds(tree2, decls, interop, embeds),
             at: text.byte_len(), derived }
 }
@@ -789,8 +793,8 @@ export fn compile_to_c_with(text str, decls []Node, interop InteropTable,
 
 /// The same, with what the door read for the text's `embed` calls (D412).
 export fn compile_to_c_with_embeds(text str, decls []Node, interop InteropTable, src_name str,
-                                   embeds EmbedTable) -> ([]Diagnostic, str) {
-    ro fr = front(text, decls, interop, embeds)
+                                   embeds EmbedTable, target_os str = "") -> ([]Diagnostic, str) {
+    ro fr = front(text, decls, interop, embeds, target_os: target_os)
     ro { src, tree, ctx, .. } = fr
     ro (diags, chan) = check(tree, src, ctx)
     if diags.len() > 0 {

@@ -1,0 +1,224 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none — D99's three-valued target predicate evaluation over Carina's lossless tree.
+// Role: pipeline phase support — remove inactive module/item declarations before collection.
+// Used by: pipeline entry points and main's source-file/peer discovery.
+// Guarded by: check-novac-deps.py, check-novac-module-donor.py, target cfg conformance fixtures.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind, branch}
+import ../sem.{branch_children, leaf_kind, leaf_text}
+import ../lex.{TokenKind}
+import ../parse.{parse}
+
+const CFG_UNKNOWN = 0 - 1
+const CFG_FALSE = 0
+const CFG_TRUE = 1
+
+/// Parse and filter a file before it reaches semantic collection or checking.
+/// Active target_os attributes are consumed; unsupported feature predicates
+/// remain in the tree so the checker refuses them instead of guessing.
+export fn filter_cfg(tree Node, target str) -> Node {
+    match tree {
+        Branch { id, kind, children } => {
+            if kind != NodeKind.File { return branch(id, kind, children) }
+            mut has_module = false
+            for child in children {
+                if child.kind_of() == NodeKind.ModuleDecl { has_module = true }
+            }
+            mut before_module = has_module
+            mut file_state = CFG_TRUE
+            mut item_state = CFG_TRUE
+            mut pending = []Node.new()
+            mut out = []Node.new()
+            for child in children {
+                if child.kind_of() == NodeKind.AttrDecl {
+                    if is_cfg_attr(child) {
+                        ro state = cfg_attr_state(child, target)
+                        if before_module {
+                            file_state = cfg_and(file_state, state)
+                            if state == CFG_UNKNOWN { pending.push(child) }
+                        } else {
+                            item_state = cfg_and(item_state, state)
+                            if state == CFG_UNKNOWN { pending.push(child) }
+                        }
+                    } else {
+                        pending.push(child)
+                    }
+                    continue
+                }
+                if before_module && child.kind_of() == NodeKind.ModuleDecl {
+                    if file_state == CFG_FALSE {
+                        return branch(id, NodeKind.File, []Node.new())
+                    }
+                    for attr in pending {
+                        out.push(attr)
+                    }
+                    pending = []Node.new()
+                    out.push(child)
+                    before_module = false
+                    item_state = CFG_TRUE
+                    continue
+                }
+                if before_module {
+                    pending.push(child)
+                    continue
+                }
+                if item_state != CFG_FALSE {
+                    for attr in pending {
+                        out.push(attr)
+                    }
+                    out.push(child)
+                } else {
+                    // The inactive item and all of its leading attributes are
+                    // removed before declaration collection and diagnostics.
+                }
+                pending = []Node.new()
+                item_state = CFG_TRUE
+            }
+            if file_state == CFG_FALSE {
+                return branch(id, NodeKind.File, []Node.new())
+            }
+            if item_state != CFG_FALSE {
+                for attr in pending { out.push(attr) }
+            }
+            branch(id, NodeKind.File, out)
+        }
+        Leaf(token) => Node.Leaf(token)
+    }
+}
+
+/// Whether the file-level gate admits a source file for a program unit.
+/// Item-level gates are intentionally left to `filter_cfg` after unit assembly.
+export fn cfg_file_active(text str, target str) -> bool {
+    ro filtered = filter_cfg(parse(tokens_of(text)), target)
+    branch_children(filtered).len() > 0
+}
+
+/// Filename suffix filter for D99 folder-module peers and standalone inputs.
+export fn target_peer_active(filename str, target str) -> bool {
+    if filename.ends_with("_windows.nv") || filename.ends_with("_windows_test.nv") {
+        return target == "windows"
+    }
+    if filename.ends_with("_linux.nv") || filename.ends_with("_linux_test.nv") {
+        return target == "linux"
+    }
+    if filename.ends_with("_macos.nv") || filename.ends_with("_macos_test.nv") {
+        return target == "macos"
+    }
+    if filename.ends_with("_unix.nv") || filename.ends_with("_posix.nv") ||
+        filename.ends_with("_unix_test.nv") || filename.ends_with("_posix_test.nv") {
+        return target == "linux" || target == "macos"
+    }
+    true
+}
+
+fn is_cfg_attr(n Node) -> bool {
+    if n.kind_of() != NodeKind.AttrDecl { return false }
+    ro kids = branch_children(n)
+    kids.len() > 1 && leaf_text(kids[1]) == "cfg"
+}
+
+fn cfg_attr_state(n Node, target str) -> int {
+    ro kids = branch_children(n)
+    if kids.len() < 5 || leaf_kind(kids[2]) != TokenKind.LParen { return CFG_UNKNOWN }
+    ro (state, next) = cfg_or(kids, 3, target)
+    if next >= kids.len() || leaf_kind(kids[next]) != TokenKind.RParen { return CFG_UNKNOWN }
+    state
+}
+
+fn cfg_or(kids []Node, start int, target str) -> (int, int) {
+    ro (first, next) = cfg_and_expr(kids, start, target)
+    mut state = first
+    mut i = next
+    while i < kids.len() && leaf_kind(kids[i]) == TokenKind.PipePipe {
+        i += 1
+        ro (right, after_right) = cfg_and_expr(kids, i, target)
+        i = after_right
+        if state == CFG_TRUE || right == CFG_TRUE {
+            state = CFG_TRUE
+        } else if state == CFG_FALSE && right == CFG_FALSE {
+            state = CFG_FALSE
+        } else {
+            state = CFG_UNKNOWN
+        }
+    }
+    (state, i)
+}
+
+fn cfg_and_expr(kids []Node, start int, target str) -> (int, int) {
+    ro (first, next) = cfg_not_expr(kids, start, target)
+    mut state = first
+    mut i = next
+    while i < kids.len() && leaf_kind(kids[i]) == TokenKind.AmpAmp {
+        i += 1
+        ro (right, after_right) = cfg_not_expr(kids, i, target)
+        i = after_right
+        if state == CFG_FALSE || right == CFG_FALSE {
+            state = CFG_FALSE
+        } else if state == CFG_TRUE && right == CFG_TRUE {
+            state = CFG_TRUE
+        } else {
+            state = CFG_UNKNOWN
+        }
+    }
+    (state, i)
+}
+
+fn cfg_not_expr(kids []Node, start int, target str) -> (int, int) {
+    if start >= kids.len() { return (CFG_UNKNOWN, start) }
+    mut i = start
+    if leaf_kind(kids[i]) == TokenKind.Bang {
+        i += 1
+        ro (value, next) = cfg_not_expr(kids, i, target)
+        if value == CFG_TRUE { return (CFG_FALSE, next) }
+        if value == CFG_FALSE { return (CFG_TRUE, next) }
+        return (CFG_UNKNOWN, next)
+    }
+    cfg_atom(kids, i, target)
+}
+
+fn cfg_atom(kids []Node, start int, target str) -> (int, int) {
+    if start >= kids.len() { return (CFG_UNKNOWN, start) }
+    mut i = start
+    if leaf_kind(kids[i]) == TokenKind.LParen {
+        i += 1
+        ro (value, next) = cfg_or(kids, i, target)
+        if next >= kids.len() || leaf_kind(kids[next]) != TokenKind.RParen { return (CFG_UNKNOWN, next) }
+        i = next
+        i += 1
+        return (value, i)
+    }
+    if leaf_kind(kids[i]) != TokenKind.Ident { return (CFG_UNKNOWN, i) }
+    ro key = leaf_text(kids[i])
+    i += 1
+    if i >= kids.len() || leaf_kind(kids[i]) != TokenKind.Assign { return (CFG_UNKNOWN, i) }
+    i += 1
+    if i >= kids.len() || leaf_kind(kids[i]) != TokenKind.StrLit { return (CFG_UNKNOWN, i) }
+    ro value = leaf_text(kids[i])
+    i += 1
+    if key != "target_os" { return (CFG_UNKNOWN, i) }
+    if value == "\"windows\"" || value == "windows" { return (target_os_state(target, "windows"), i) }
+    if value == "\"linux\"" || value == "linux" { return (target_os_state(target, "linux"), i) }
+    if value == "\"macos\"" || value == "macos" { return (target_os_state(target, "macos"), i) }
+    if value == "\"unix\"" || value == "unix" || value == "\"posix\"" || value == "posix" {
+        return (target_posix_state(target), i)
+    }
+    (CFG_FALSE, i)
+}
+
+fn target_os_state(target str, expected str) -> int {
+    if target == expected { return CFG_TRUE }
+    CFG_FALSE
+}
+
+fn target_posix_state(target str) -> int {
+    if target == "linux" || target == "macos" { return CFG_TRUE }
+    CFG_FALSE
+}
+
+fn cfg_and(left int, right int) -> int {
+    if left == CFG_FALSE || right == CFG_FALSE { return CFG_FALSE }
+    if left == CFG_TRUE && right == CFG_TRUE { return CFG_TRUE }
+    CFG_UNKNOWN
+}
