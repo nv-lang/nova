@@ -60,11 +60,11 @@ GREEN относится к реальному native результату, а �
 
 ## Реестр package-release LSP target-dir mismatch
 
-В `docs/plans/221.1-bug-sweep.md` добавлена запись `№TBD`, К2/P2:
+В `docs/plans/221.1-bug-sweep.md` добавлена запись `№1892`, К2/P2:
 класс — дублирование предположения о Cargo artifact path в consumer.
 Оговорка явно оставляет overrides класса открытыми: исправление default
 носителя и успешный package/install smoke не доказывают `CARGO_TARGET_DIR`
-или `--target-dir`. Номер назначает интегратор, не исполнитель.
+или `--target-dir`. Номер №1892 назначен интегратором, не исполнителем.
 
 Проверка producer/consumer: из `nova-lsp/` выполнен
 `cargo metadata --no-deps --format-version 1 --manifest-path Cargo.toml`.
@@ -84,6 +84,42 @@ native EXE (`Hello, Nova!`, exit 0). Это измерение прошлого 
 Исходный полный RED-log скопирован без изменения bytes в session pad:
 `package-smoke-original-red.txt`, SHA256
 `7946e2ed409d8ea32a95d74091bd34e0e01f1338ae18048357a34add7bdff418`.
-Registry single-verdict/routes и doc-conventions GREEN; entry-shape пока
-RED исключительно на новой строке `№TBD`: до candidate-гейта интегратор
-должен назначить номер. Этот RED не скрыт и baseline не ослаблялся.
+В круге 2 registry single-verdict/routes и doc-conventions были GREEN;
+entry-shape был RED исключительно на новой строке `№TBD`. В круге 3
+назначенный интегратором номер №1892 внесён в запись; rows/max и законные
+временные дыры №1889–1891 сверены с актуальным деревом. Класс остаётся OPEN;
+production source и результаты install-проб не менялись.
+
+## Круг 3 — окончательная нумерация и сверка реестра
+
+По назначению интегратора строка получила №1892. Прямой счёт:
+`rows=1800`, `unique=1800`, `max=1892`, `duplicates=0`. Сопоставление с
+`2a6093666` подтвердило: все 1799 прежних пронумерованных строк сохранены
+дословно; добавлена только №1892. В `registry-rows.baseline` изменены
+`rows=1799 → 1800`, `max=1888 → 1892`, добавлен только резерв `1889-1891`
+в `gaps` (номера назначены другим задачам и в этом дереве ещё отсутствуют).
+Прежние gaps сохранены; `stale_gaps=0` не менялся. При приходе строк
+№1889–1891 соответствующие временные дыры нужно снять в том же merge.
+Другие registry baselines и guards не менялись, OPEN/class caveat №1892
+сохранён; это не закрытие долга обработки target-dir overrides.
+
+Ниже дословный вывод шести проверок; exit каждой — 0. Shell-стражи
+запущены через `C:\Program Files\Git\bin\bash.exe`, Python-стражи —
+`C:\Python314\python.exe`, аргумент корня — `.`. Полный протокол:
+session pad `registry-round3-gitbash-guards.txt`.
+
+```text
+check-registry-entry-shape: записей без полного оформления 343 (база 343)
+check-registry-entry-shape ok: роста неоформленных записей нет (343 <= 343, номера сверены поимённо), разобрано строк 1800 >= 1142
+check-registry-rows-intact ok: записей 1800 (база 1800), наибольший номер 1892 (база 1892), дублей 0, законных дыр 92, из них протухших (номер и в `gaps=`, и со строкой) 0 (база 0) — ни одна строка не потеряна
+check-registry-routes ok: открытых блокеров тега 109 (база 109), K1 без маршрута 0 (база 0), без оговорки 0 (база 0)
+check-registry-single-verdict ok: у каждой строки реестра ровно один действующий вердикт, статус и маршрут; вердиктов без статуса 19 при базе 19 (номера сверены поимённо), разобрано строк 1800 >= 1142
+check-registry-status-field ok: строк без поля 659 (база 659), новых нет
+check-registry-past-tense-status ok: закрытий прозой без поля 29 (== база); новых не прибавилось
+```
+
+Первый запуск через неквалифицированный `bash` выбрал WSL, где нет команды
+`python`: routes/single-verdict остановились на `python: command not found`.
+Этот неуспех окружения сохранён в `registry-round3-guards.txt`; он не
+исправлялся изменением guard или baseline. Повтор с явным Git Bash дал
+полностью зелёные результаты выше.
