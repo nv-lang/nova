@@ -2086,6 +2086,8 @@ nova_tests/
 
 ## D99. Conditional compilation: filename suffix + `#cfg`
 
+> **Function item applicability:** см. [D495](#d495); прочие формы и scope D99 остаются без изменений.
+
 ### Что
 
 Два механизма platform/feature-conditional кода:
@@ -2156,9 +2158,12 @@ nova_tests/
 | `#cfg(... || && !)` | то же — operator predicate | рекурсивный eval |
 
 **Item-level `#cfg`** (Plan 42.14 Ф.2): `#cfg(...)` перед top-level
-item (Fn/Type/Const). Inactive predicate → item полностью парсится но
-дропается (`parse_item → None`). `module`-декларация — разделитель:
-атрибуты до неё = file-level, после (перед item) = item-level.
+item (Fn/Type/Const). `module`-декларация — разделитель: атрибуты до неё =
+file-level, после (перед item) = item-level.
+
+> Function item applicability is specified in [D495](#d495-function-item-applicability).
+> This function-only refinement does not change the existing Type/Const,
+> module, or peer rules below.
 
 **AND semantic** для multiple `#cfg` атрибутов: peer/item active iff
 **все** cfg атрибуты match. Внутри одного атрибута — операторы
@@ -2173,6 +2178,36 @@ register peer_file, не recurse imports).
 - Cross-compile toolchain integration — `--target-os` выбирает только
   OS-ветви Nova и не является настройкой C toolchain. `--target` зарезервирован
   для отдельного плана интеграции C toolchain.
+
+## D495. Function item applicability for target OS (2026-10-22) {#d495}
+
+### Что
+
+Уточнить function-only поведение item-level `#cfg` из D99: платформенная
+применимость функции определяется predicates для выбранной compilation
+target и предшествует регистрации кандидатов и разрешению вызовов. Это не
+общее расширение `#cfg`, feature support или dead-code elimination.
+
+### Правило
+
+* Все function AST nodes и их identity сохраняются; неактивная функция не
+  удаляется до collect/check. Её тело не проходит semantic checking, а её
+  callable row не участвует в duplicate/coherence judgments, shadowing,
+  overload resolution или emission для выбранной target.
+* Applicability — фильтр кандидатов, не новая overload-specificity axis. Если
+  одинаковые сигнатуры одновременно активны для выбранной target, действует
+  существующая duplicate-definition ошибка D84.
+* Единый порядок действует для free, instance и static functions, включая
+  own и handed/imported rows. Неактивная own row не shadow'ит активную
+  imported row.
+* Синтаксис и валидность объявлений сохраняются. Правило не меняет семантику
+  Type/Const, module или peer items D99 и не задаёт глобальную reachability/DCE.
+
+### Что заменено
+
+* Function-only уточнение D99 item-level applicability и D84 declaration /
+  resolution order; при расхождении этих старых формулировок действует D495.
+  Оба указателя на D495 стоят под соответствующими заголовками.
 
 ### Почему
 

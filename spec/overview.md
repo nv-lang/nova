@@ -67,10 +67,13 @@ language explicitly optimized for the pair "LLM writes, human reviews".
    In Carina, `novac emit --target-os <windows|linux|macos>` selects the
    emission OS; when the flag is absent, `NOVA_TARGET_OS` is used, then the
    host OS. The explicit flag takes precedence over the environment variable.
-   Empty, unsupported, or repeated values are errors with a nonzero exit;
-   selection does not fall back to the next source. This selection controls
-   source inclusion only and does not select or invoke a C toolchain; `--target`
-   is reserved for a separate C-toolchain integration.
+    Empty, unsupported, or repeated values are errors with a nonzero exit;
+    selection does not fall back to the next source. This selection controls
+    source inclusion only and does not select or invoke a C toolchain; `--target`
+    is reserved for a separate C-toolchain integration.
+    For function items, target applicability precedes duplicate checks and
+    resolution ([D495](decisions/07-modules.md#d495)); it is not a new overload
+    axis and does not change the `Type`/`Const` or module/peer rules.
 2. **Memory: managed by default (current: Boehm conservative GC; v1.0+:
    concurrent GC), regions opt-in for real-time.** The programmer writes code
    without memory prefixes — allocations are freed automatically. **Current
