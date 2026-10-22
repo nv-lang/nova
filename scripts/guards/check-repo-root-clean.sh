@@ -72,6 +72,7 @@ ALLOWED_DIRS='
 bench
 compiler-codegen
 crew-projects
+doc
 docker
 docs
 editors
@@ -91,6 +92,8 @@ spec_tests
 std
 THIRD_PARTY
 '
+# doc — штатные папки задач crew-harness (doc/tasks/NNN-*/task/message.md),
+# включены для запуска отдельно разрешённой совместимости seed, задача 116.
 # .claude — обвязка хуков Claude Code. Весь каталог был игнорируем и стражу
 # не виден до 2026-08-22, когда `.claude/settings.json` был взят под
 # версию СОЗНАТЕЛЬНО: хуки, которые держат правила этого дерева,

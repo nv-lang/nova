@@ -62,6 +62,14 @@ setup
 out=$(bash "$G" "$TMP" 2>&1); rc=$?
 if [ "$rc" -eq 0 ]; then ok "неотслеживаемый черновик не считается"; else bad "ложный отказ на черновике: $out"; fi
 
+# The supported crew task-folder home is a legitimate root, not scratch.
+setup
+mkdir -p "$TMP/doc/tasks/116-example/task"
+: > "$TMP/doc/tasks/116-example/task/message.md"
+git -C "$TMP" add doc/tasks/116-example/task/message.md 2>/dev/null
+out=$(bash "$G" "$TMP" 2>&1); rc=$?
+if [ "$rc" -eq 0 ]; then ok "task documents under doc/tasks pass"; else bad "task documents rejected (rc=$rc): $out"; fi
+
 # 5. На настоящем дереве проекта страж зелёный — иначе он въезжает в гейт красным.
 REAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 out=$(bash "$G" "$REAL" 2>&1); rc=$?
