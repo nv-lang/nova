@@ -66,6 +66,6 @@
 ## Сохранённые входные свидетельства
 
 - 092 source HEAD: `0e2a3e742eb6f2294535521f629d53084a90d194`; dirty diff SHA256 `525989d317437436130010bba95e29f1255fa4f65ea006835deaaf2a1d6cd243`; fixture SHA256 `a95f448997f2c40aa933d505ca2565c4a1ead3be2337a59886b9973459958e26`.
-- Correct preflight: `C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mvaj1spd3ef13fyfyk/task92/preflight111-corrected/verdict.json`.
-- Correct source-stage watch: `1792639411998-6r6zhq`, exit 1 до C. Единственная direct probe: `D:/Temp/opencode/ses_mvaegvbn6jn817f0qh/task92/round11/direct-emit-diagnostic-06-28/receipt.json`, stdout.bin содержит четыре E_NOVAC_SUBSET, stderr пуст; receipt SHA256 `bcb1323774ab6c720fc558ccee6910d7e86ecb4f293eeef1854a1493ad1e60aa`.
+- Correct preflight: `%USERPROFILE%/AppData/Local/Temp/opencode/<reviewer-session>/task92/preflight111-corrected/verdict.json`; точное расположение передаётся исполнителю непубличным письмом интегратора.
+- Correct source-stage watch: `1792639411998-6r6zhq`, exit 1 до C. Единственная direct probe: `<session-scratch>/<worker-session>/task92/round11/direct-emit-diagnostic-06-28/receipt.json`, stdout.bin содержит четыре E_NOVAC_SUBSET, stderr пуст; receipt SHA256 `bcb1323774ab6c720fc558ccee6910d7e86ecb4f293eeef1854a1493ad1e60aa`; точное расположение передаётся непублично.
 - Предыдущие `1792636149377-ott1bu` и `1792636714161-qc6sv8` исполняли stale Oracle CLI и НЕ являются Carina stage proof; их C/exe не запускать и не переиспользовать.
