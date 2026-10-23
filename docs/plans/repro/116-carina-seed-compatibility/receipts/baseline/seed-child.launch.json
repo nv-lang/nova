@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "C:/Users/\u0415\u0432\u0433\u0435\u043d\u0438\u0439/AppData/Local/Nova/carina-seeds/windows-x86_64/unpacked/nova-carina-0.2.1-windows-x86_64/novac.exe",
+    "emit",
+    "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility/novac/src/main.nv"
+  ],
+  "cwd": "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility",
+  "environment_overrides": {
+    "NOVA_CARINA_SEED_ZIP": "C:\\Users\\\u0415\u0432\u0433\u0435\u043d\u0438\u0439\\AppData\\Local/Nova/carina-seeds/windows-x86_64/nova-carina-0.2.1-windows-x86_64.zip",
+    "NOVA_STD_PATH": "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility/std/src",
+    "NOVAC_SELF_PATH": "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility/novac/src"
+  },
+  "inherited_nova_novac": "cleared before launch",
+  "timeout_seconds": 540.0,
+  "timed_out": false,
+  "exit_status": 0,
+  "stdout_bytes": 13250302,
+  "stderr_bytes": 0
+}

@@ -1,0 +1,259 @@
+{
+  "kind": "post-build evidence audit; build succeeded; native EXE NOT EXECUTED; not task acceptance",
+  "plan_sha256": "0a07a0df3fef173a4864605ed22d7ed913e0e89afb604d4da668e483e365ea74",
+  "verifier_sha256": "cd1dd6f18ba514bb7b1419d9dfe5f302b7152e700d4ef63cf74bb66c60f3caf6",
+  "orchestrator_sha256": "7a6844727d3f085e91c8e53d30071df457ad1fe6ead1f00fc7eac72e606c88db",
+  "driver_binary_sha256": "da87bfcf1e8d85746a1106103e108710c66eba5b0bdc622d30deab15e79fb75b",
+  "queued_watch_id": "1792742408346-ud7d9p",
+  "queued_watch_exit": 0,
+  "verifier_status": 0,
+  "outer_launcher_status": 0,
+  "parent_driver_status": 0,
+  "seed_child_status": 0,
+  "seed_child": {
+    "launch": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\launch.json",
+      "size": 1537,
+      "sha256": "bdc4b1c3b101c149080e5bc0635816e7b35c643cae39b65e46dee172326b3d57"
+    },
+    "stdout": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\stdout.bin",
+      "size": 13250302,
+      "sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+    },
+    "stderr": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "status": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "argv": [
+      "C:\\Users\\Евгений\\AppData\\Local\\Nova/carina-seeds/windows-x86_64\\unpacked\\nova-carina-0.2.1-windows-x86_64/novac.exe",
+      "emit",
+      "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\novac\\src\\main.nv"
+    ],
+    "executable": "C:\\Users\\Евгений\\AppData\\Local\\Nova/carina-seeds/windows-x86_64\\unpacked\\nova-carina-0.2.1-windows-x86_64/novac.exe",
+    "control_removed": [
+      "NOVA_CARINA_CAPTURE_DIR"
+    ],
+    "direct_probe_reused": false
+  },
+  "generated_c": {
+    "sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+    "size": 13250302,
+    "matched_child_stdout": true,
+    "target_files_matching_hash": [
+      {
+        "path": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.32932.carina.c",
+        "size": 13250302,
+        "sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+      },
+      {
+        "path": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.carina.c",
+        "size": 13250302,
+        "sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+      }
+    ]
+  },
+  "native_executable": {
+    "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+    "size": 4389888,
+    "sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+    "PE_machine": "AMD64",
+    "executed": false
+  },
+  "parent": {
+    "launch": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.launch.json",
+      "size": 1981,
+      "sha256": "6500d711160509026665d799382a27378dd57cd4ec563cb147fca70b7dc1a3ab"
+    },
+    "stdout": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.stdout.bin",
+      "size": 1150,
+      "sha256": "74a5b71d31d7f0ec0ffab1f61245825168efbccd511f5bdd9c52f18c30c0d549"
+    },
+    "stderr": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.stderr.bin",
+      "size": 267,
+      "sha256": "48f9e8d5706967384d0bbe479beb8fe1e549adc61c177aca5b15135451f24744"
+    },
+    "status": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "outer_launch": {
+    "launch_metadata": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.launch.json",
+      "size": 2716,
+      "sha256": "d1534decb95f0081b1e9fa281cf808e5365c2690b085184bebbcb61cd26c4bf1"
+    },
+    "stdout": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stderr": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "status": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "argv_exact": true
+  },
+  "runtime_archive": {
+    "sha256": "6101c8772529020d975ef82afc5503a16c074155b4bc2cb3a05f21b58a2d4376",
+    "provenance": "reused prior audited cache output, not fresh bootstrap output"
+  },
+  "prior_backup": {
+    "manifest": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\prior-carina-build-evidence-backup\\backup-manifest.json",
+      "size": 3303,
+      "sha256": "d833563c22eab4031209fb11d740c764009ead8e5ccd6c2923e249e995c059df"
+    },
+    "count": 4,
+    "originals_preserved": true,
+    "copies_used_as_inputs": false
+  },
+  "cache_comparison": {
+    "baseline_manifest_sha256": "8f20669d3fab36cf2f5a2107071eb218bf2665e0acc97954ad2b6bd258382e12",
+    "old_file_count": 46,
+    "old_files_unchanged": true,
+    "post_file_count": 49,
+    "new_or_changed_file_records": [
+      {
+        "path": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.32932.carina.c",
+        "size": 13250302,
+        "sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+      },
+      {
+        "path": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.32932.tmp.lib",
+        "size": 59594,
+        "sha256": "7299ee9c51a70b3e90dd4990f18b3383b4f43ef9ea58bb0928c2b673b37673ca"
+      },
+      {
+        "path": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.32932.tmp.pdb",
+        "size": 11780096,
+        "sha256": "316786d848062a29cd95630eed04257a398df7a869286c5a29b8e5f88592c7e2"
+      }
+    ],
+    "all_roots": [
+      "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build",
+      "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache",
+      "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\rt-archive-cache"
+    ]
+  },
+  "post_input_comparison": {
+    "source_driver_files": 565,
+    "source_inventory_unchanged": true,
+    "runtime_files": 58,
+    "runtime_inventory_unchanged": true,
+    "libuv_files": 469,
+    "libuv_inventory_unchanged": true,
+    "gc_atomic_ops_toolchain_inputs_unchanged": true,
+    "project_external_inputs_unchanged": true,
+    "driver_unchanged": true,
+    "task_metadata_unchanged": true,
+    "scoped_092_receipt_sha256": "91909854e75f729b42d7004daec74266f5e9f8be9040a17f083b2b6bbaa1bf3e",
+    "scoped_092_pinned_count": 1551,
+    "scoped_092_claim": "independent prelaunch pin receipt reports no missing/changed; not every dirty-worktree byte; post-launch exact 1551-byte rehash not claimed here"
+  },
+  "locks_absent": true,
+  "smoke": {
+    "performed": false,
+    "reason": "separate independent post-build review/GO required"
+  },
+  "raw_receipts": {
+    "queued_verifier_stdout": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-verifier.stdout.bin",
+      "size": 220,
+      "sha256": "a91bccb5fd2e1fd7183d70099acdf9a9d9e75e9a2ef0a90fb0c1a2457e322d84"
+    },
+    "queued_verifier_stderr": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-verifier.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "queued_verifier_status": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-verifier.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "outer_launch_stdout": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "outer_launch_stderr": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "outer_launch_status": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "outer_launch_metadata": {
+      "path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-same-volume-launch.launch.json",
+      "size": 2716,
+      "sha256": "d1534decb95f0081b1e9fa281cf808e5365c2690b085184bebbcb61cd26c4bf1"
+    },
+    "parent_stdout": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.stdout.bin",
+      "size": 1150,
+      "sha256": "74a5b71d31d7f0ec0ffab1f61245825168efbccd511f5bdd9c52f18c30c0d549"
+    },
+    "parent_stderr": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.stderr.bin",
+      "size": 267,
+      "sha256": "48f9e8d5706967384d0bbe479beb8fe1e549adc61c177aca5b15135451f24744"
+    },
+    "parent_status": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "parent_launch": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.launch.json",
+      "size": 1981,
+      "sha256": "6500d711160509026665d799382a27378dd57cd4ec563cb147fca70b7dc1a3ab"
+    },
+    "seed_stdout": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\stdout.bin",
+      "size": 13250302,
+      "sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+    },
+    "seed_stderr": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "seed_status": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    "seed_launch": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\launch.json",
+      "size": 1537,
+      "sha256": "bdc4b1c3b101c149080e5bc0635816e7b35c643cae39b65e46dee172326b3d57"
+    },
+    "native_executable": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+      "size": 4389888,
+      "sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08"
+    }
+  },
+  "status": "Build and publication succeeded. Await independent post-build review and explicit GO before executing EXE."
+}

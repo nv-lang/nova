@@ -1,0 +1,24 @@
+{
+  "verdict": "GO_ONE_ADDITIONAL_SAME_VOLUME_BUILD",
+  "authority": "same-volume-owner-decision.json: confirmed choice by CrewHarness orchestrator under the owner's delegation, not a direct human reply",
+  "plan": "planned-same-volume-driver-launch-candidate.json",
+  "plan_sha256": "0a07a0df3fef173a4864605ed22d7ed913e0e89afb604d4da668e483e365ea74",
+  "verifier_sha256": "cd1dd6f18ba514bb7b1419d9dfe5f302b7152e700d4ef63cf74bb66c60f3caf6",
+  "helper_sha256": "65108c43821180733fdeed654fac35a668101cad2db207e1fd5f709089383ef9",
+  "driver_binary_sha256": "da87bfcf1e8d85746a1106103e108710c66eba5b0bdc622d30deab15e79fb75b",
+  "actual_source_and_destination_volume": "\\\\?\\Volume{2d2a485c-6cf8-4335-836b-d8c15411e8e7}\\",
+  "scope": "ONE additional queued production build of the unchanged current novac/src/main.nv, exact argv.outer_launcher, fresh candidate outputs on D:. Does not authorize executing the resulting compiler or the previous temporary EXE.",
+  "independent_receipts": ["same-volume-driver-audit.json", "same-volume-independent-probes.json", "post-driver-failure-audit.json"],
+  "conditions": [
+    "Only this actual inspected plan revision is authorized; b5f1a9f1 from the earlier preparation letter is not the launch pin",
+    "Before launch run the pinned verifier in the same machine-queue step; fail closed on any source/seed/binary/plan/helper/native input/environment/volume/fresh-output drift",
+    "Do not mutate frozen dossier or hash-pinned task metadata between verification and launch; journal the result afterward",
+    "Preserve all existing evidence and caches. Before launch make byte-identical backup copies of the four prior carina-build files into a separate session scratch evidence directory, verify against the failed receipt, retain originals in place, and never use those copies as build input",
+    "Use the declared 540-second bounded wrapper and sufficient watch termination grace; refusal/timeout/spawn/termination uncertainty means STOP without retry",
+    "Capture actual seed-child and parent raw streams/status/metadata separately, fresh generated C and final EXE hashes, and publication exit status",
+    "Record runtime/libuv cache reuse explicitly as reuse of audited prior outputs, not fresh bootstrap output; compare all 46 old files and immutable source/native/seed/driver inputs plus scoped 1551 pinned 092 inputs afterward",
+    "No driver/compiler behavior fix for cross-volume publication in this pass; that defect and the prior exit 1 remain open and visible",
+    "Do NOT execute any newly produced native compiler or start another source stage until independent post-build review and a separate explicit GO",
+    "This is not task acceptance, fixed-point proof or release permission; owner STOP 092 is unchanged"
+  ]
+}

@@ -1,0 +1,228 @@
+{
+  "kind": "task116 bounded native CLI smoke candidate; PREPARATION ONLY; NOT AUTHORIZED/NOT EXECUTED",
+  "authorization": "No native execution until separate pinned GO; no retry; stop at first unexpected result",
+  "exe": {
+    "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+    "size": 4389888,
+    "sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+    "pe_machine": "AMD64",
+    "source_build_plan_sha256": "0a07a0df3fef173a4864605ed22d7ed913e0e89afb604d4da668e483e365ea74",
+    "post_build_audit_sha256": "e70cad1c687434316723e07a8aacdde262489932b5fb79235e116f4ed3b490bc",
+    "must_not_execute_before_go": true
+  },
+  "repository": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+  "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+  "d95": "D95: nova check <path>; absent path is an error; this is only bounded CLI smoke, not conformance or B2",
+  "source_d95_usage_source": "novac/src/main.nv:529-531, 693-696",
+  "inputs": {
+    "fixture": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\spec_tests\\conformance\\standalone\\stdout_hello.nv",
+    "fixture_sha256": "f6f156f5203b06cd294fb2d3db652ede9fc35ee819334e6cd8346f677d167afe",
+    "missing_absolute_nv_path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv",
+    "missing_parent": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input",
+    "missing_exists": false
+  },
+  "environment": {
+    "explicit": {
+      "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+    },
+    "clear_prefixes": [
+      "NOVA_*",
+      "NOVAC_*"
+    ],
+    "also_unset": [
+      "VCPKG_ROOT"
+    ],
+    "must_be_absent": [
+      "NOVA_TARGET_OS",
+      "NOVA_CARINA_CAPTURE_DIR",
+      "NOVA_RT_DIR",
+      "NOVA_CG_INCLUDE",
+      "NOVA_CLANG",
+      "NOVA_GC_LIB_DIR",
+      "NOVA_GC_INCLUDE_DIR",
+      "NOVA_CARINA_SEED_ZIP",
+      "NOVAC_SELF_PATH",
+      "NOVAC_UNIT"
+    ],
+    "target_or_capture_overrides": 0
+  },
+  "timeout_seconds_per_child": 60,
+  "retry_policy": "none; stop at first unexpected status/stdout/stderr, spawn failure, or timeout",
+  "helper": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\run-captured-tree-safe.py",
+  "helper_sha256": "65108c43821180733fdeed654fac35a668101cad2db207e1fd5f709089383ef9",
+  "raw_root": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw",
+  "steps": [
+    {
+      "id": "01-no-args",
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+      ],
+      "prefix": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args",
+      "expected": {
+        "stderr": "",
+        "status": 2,
+        "stdout_variants": [
+          "usage: novac check <file.nv>... | novac emit <file.nv>\n",
+          "usage: novac check <file.nv>... | novac emit <file.nv>\r\n"
+        ]
+      }
+    },
+    {
+      "id": "02-check-hello",
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+        "check",
+        "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\spec_tests\\conformance\\standalone\\stdout_hello.nv"
+      ],
+      "prefix": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello",
+      "expected": {
+        "stderr": "",
+        "status": 0,
+        "stdout_variants": [
+          ""
+        ]
+      }
+    },
+    {
+      "id": "03-check-missing-absolute",
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+        "check",
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv"
+      ],
+      "prefix": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute",
+      "expected": {
+        "stderr": "",
+        "status": 2,
+        "stdout_variants": [
+          "novac: cannot read D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv\n",
+          "novac: cannot read D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv\r\n"
+        ]
+      }
+    }
+  ],
+  "source_inputs": [
+    {
+      "path": "novac/src/main.nv",
+      "size": 34408,
+      "sha256": "3104bbe6b6deea8995d49dc78a7f36fe9096bb6437eeb937b41426d247e19da8"
+    },
+    {
+      "path": "spec_tests/conformance/standalone/stdout_hello.nv",
+      "size": 423,
+      "sha256": "f6f156f5203b06cd294fb2d3db652ede9fc35ee819334e6cd8346f677d167afe"
+    },
+    {
+      "path": "spec/decisions/09-tooling.md",
+      "size": 251436,
+      "sha256": "e5a3a6eae931ca5a394b20131a6bf4ef1f5233c77bd30b9bf7d650eb83ce9822"
+    },
+    {
+      "path": "doc/tasks/116-carina-seed-compatibility/log.md",
+      "size": 5681,
+      "sha256": "3046f2248871ac6ad0efe4848620f654e42820b32f0ea963416db918f090053f"
+    }
+  ],
+  "scope": "three CLI smoke cases only: usage, check clean fixture, check absolute missing .nv; not D-conformance, not B2",
+  "prior_temp_exe_executed": false,
+  "verifier_path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\verify-native-cli-smoke-plan.py",
+  "executor_path": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\execute-bounded-native-cli-smoke.py",
+  "runner_receipts": {
+    "verifier_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.stdout.bin",
+    "verifier_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.stderr.bin",
+    "verifier_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.status",
+    "summary": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-summary.json",
+    "steps": [
+      {
+        "id": "01-no-args",
+        "wrapper_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.stdout.bin",
+        "wrapper_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.stderr.bin",
+        "wrapper_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.status",
+        "wrapper_metadata": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.launch.json",
+        "child_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stdout.bin",
+        "child_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stderr.bin",
+        "child_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.status",
+        "child_metadata": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.launch.json"
+      },
+      {
+        "id": "02-check-hello",
+        "wrapper_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.stdout.bin",
+        "wrapper_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.stderr.bin",
+        "wrapper_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.status",
+        "wrapper_metadata": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.launch.json",
+        "child_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stdout.bin",
+        "child_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stderr.bin",
+        "child_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.status",
+        "child_metadata": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.launch.json"
+      },
+      {
+        "id": "03-check-missing-absolute",
+        "wrapper_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.stdout.bin",
+        "wrapper_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.stderr.bin",
+        "wrapper_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.status",
+        "wrapper_metadata": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.launch.json",
+        "child_stdout": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stdout.bin",
+        "child_stderr": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stderr.bin",
+        "child_status": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.status",
+        "child_metadata": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.launch.json"
+      }
+    ]
+  },
+  "raw_paths_fresh": [
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-summary.json",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.runner.launch.json",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.launch.json",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.runner.launch.json",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.launch.json",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.runner.launch.json",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stdout.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stderr.bin",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.status",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.launch.json"
+  ],
+  "before": {
+    "smoke_raw_root_exists": false,
+    "missing_input_exists": false,
+    "exe_exists": true
+  },
+  "matcher_policy": {
+    "comparison": "exact raw bytes against explicit variants only",
+    "normalize": false,
+    "strip": false,
+    "remove_other_bytes": false,
+    "nonempty_stdout": "one exact canonical text followed by exactly one LF or CRLF",
+    "empty_stdout": "exactly zero bytes",
+    "stderr": "exactly zero bytes for all steps",
+    "statuses": [
+      2,
+      0,
+      2
+    ],
+    "read_only_probe_expectations": {
+      "canonical_lf": "GREEN",
+      "canonical_crlf": "GREEN",
+      "extra_text": "RED",
+      "missing_eol": "RED",
+      "wrong_status": "RED",
+      "hello_nonempty_stdout": "RED"
+    }
+  }
+}

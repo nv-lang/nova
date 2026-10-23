@@ -1,0 +1,73 @@
+﻿{
+    "kind":  "task 116 one authorized direct seed baseline diagnostic; not a driver/native proof",
+    "head":  "86af6bb82963148784868edb6e02e20aee6330de",
+    "input_manifest":  {
+                           "path":  "C:/Users/Евгений/AppData/Local/Temp/opencode/ses_efdd2dc2effePXj0L8WPrxkIJN/preflight116-observe/source-and-driver-files.json",
+                           "sha256":  "dbccefe32ac359ecbf6d2fee26d37aabf57df8ca0462af539abb0b5725b21a1f",
+                           "count":  565,
+                           "missing":  [
+
+                                       ],
+                           "extra":  [
+
+                                     ]
+                       },
+    "preflight":  {
+                      "path":  "C:/Users/Евгений/AppData/Local/Temp/opencode/ses_efdd2dc2effePXj0L8WPrxkIJN/preflight116-observe/direct-probe-verdict.json",
+                      "verdict":  "GO_DIRECT_DIAGNOSTIC_ONLY",
+                      "planned_manifest_sha256":  "51ff574a8a59ba457fe3fffc99749a684bc5b6e315ad2e68dd1f1275187d057e",
+                      "helper_sha256":  "9bf559c6215bca7e3b0c4b75aaf6a28edf1faead3871507fc7b1d0ba2e099e93"
+                  },
+    "machine_queue":  {
+                          "watch_id":  "1792723312962-9zgcsm",
+                          "watch_output":  "D:/Sources/.opencode-data/opencode/crew-harness/watches/1792723312962-9zgcsm.out",
+                          "reported_exit":  0,
+                          "duration_seconds":  16
+                      },
+    "launch":  {
+                   "argv":  [
+                                "C:/Users/Евгений/AppData/Local/Nova/carina-seeds/windows-x86_64/unpacked/nova-carina-0.2.1-windows-x86_64/novac.exe",
+                                "emit",
+                                "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility/novac/src/main.nv"
+                            ],
+                   "cwd":  "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility",
+                   "environment_overrides":  {
+                                                 "NOVA_CARINA_SEED_ZIP":  "C:\\Users\\Евгений\\AppData\\Local/Nova/carina-seeds/windows-x86_64/nova-carina-0.2.1-windows-x86_64.zip",
+                                                 "NOVA_STD_PATH":  "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility/std/src",
+                                                 "NOVAC_SELF_PATH":  "D:/Sources/nv-lang/worktrees/nova-opencode-116-carina-seed-compatibility/novac/src"
+                                             },
+                   "inherited_nova_novac":  "cleared before launch",
+                   "timeout_seconds":  540.0,
+                   "timed_out":  false,
+                   "exit_status":  0,
+                   "stdout_bytes":  13250302,
+                   "stderr_bytes":  0
+               },
+    "raw_stdout":  {
+                       "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-baseline\\seed-child.stdout.bin",
+                       "bytes":  13250302,
+                       "sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+                   },
+    "raw_stderr":  {
+                       "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-baseline\\seed-child.stderr.bin",
+                       "bytes":  0,
+                       "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                   },
+    "status":  {
+                   "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-baseline\\seed-child.status",
+                   "value":  0
+               },
+    "output":  {
+                   "type":  "Carina seed direct diagnostic emitted C bytes",
+                   "sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+                   "reuse_for_driver_or_native_build":  false,
+                   "manual_edit":  false
+               },
+    "post_comparison":  {
+                            "script":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\verify-postprobe.py",
+                            "script_sha256":  "d93536ee5cbe4c20c573e71070bdbfafb31666ef57ecfe6c1d0bcbd4d2014fb9",
+                            "result":  "PASS; 565/565 source+driver files, seed inputs unchanged; no lock or target/carina-build side effects"
+                        },
+    "execution":  "ONE authorized invocation; no production driver/native launch",
+    "STOP_092":  "unchanged"
+}

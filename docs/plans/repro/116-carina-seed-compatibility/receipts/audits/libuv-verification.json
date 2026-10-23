@@ -1,0 +1,32 @@
+{
+  "verdict": "PASS_LIBUV_MATERIALIZATION",
+  "checks": {
+    "inventory_digest": true,
+    "post_receipt_digest": true,
+    "HEAD_pin": true,
+    "clean": true,
+    "own_gitdir": true,
+    "uv_header_present": true,
+    "469_no_missing_extra": true,
+    "469_hashes_and_sizes": true,
+    "runtime_58_regular_hashes": true,
+    "init_stdout": true,
+    "init_stderr": true,
+    "init_status": true
+  },
+  "task092_historical_pinned_inputs": {
+    "count": 1551,
+    "missing": [],
+    "changed": [],
+    "scope": "all source/header/manifest/verifier extensions recorded by old preflight, not every byte of the worktree"
+  },
+  "actual_project_main": {
+    "head": "86af6bb82963148784868edb6e02e20aee6330de",
+    "status": "?? log.md"
+  },
+  "limitations": [
+    "Worker neighbor snapshots label the separate nova checkout as main; they do not describe project nova-opencode main",
+    "HEAD/status equality alone is not a byte-preservation proof",
+    "GC resolution/atomic_ops inventory still requires correction; no driver/native launch authorization"
+  ]
+}

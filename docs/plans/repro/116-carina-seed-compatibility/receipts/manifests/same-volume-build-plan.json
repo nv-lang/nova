@@ -1,0 +1,422 @@
+﻿{
+    "kind":  "task116 candidate same-volume production driver launch dossier; PREPARATION ONLY; NOT AUTHORIZED/NOT EXECUTED",
+    "head":  "86af6bb82963148784868edb6e02e20aee6330de",
+    "source_target":  "novac/src/main.nv",
+    "source_target_sha256":  "3104bbe6b6deea8995d49dc78a7f36fe9096bb6437eeb937b41426d247e19da8",
+    "source_inventory":  {
+                             "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\source-driver-inputs-after-capture.json",
+                             "sha256":  "a7f172fadf5d0c9d3a4ff49d95bd503d1b6efffb79b697230f117f100e2b5a21",
+                             "files":  565,
+                             "missing":  [
+
+                                         ],
+                             "extra":  [
+
+                                       ]
+                         },
+    "native_inventory":  {
+                             "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\native-input-inventory-after-materialization.json",
+                             "sha256":  "96f8743d02b980d403a94c28c1865494a7107cce7ebc86dcafd5bce1c34536b1",
+                             "libuv_task_checkout":  "compiler-codegen/nova_rt/libuv",
+                             "libuv_head":  "1cfa32ff59c076ffb6ed735bbc8c18361558661f",
+                             "libuv_status":  "clean",
+                             "uv_h_present":  true,
+                             "files":  469,
+                             "missing":  [
+
+                                         ],
+                             "extra":  [
+
+                                       ]
+                         },
+    "project_inputs":  [
+                           {
+                               "path":  "nova.toml",
+                               "size":  727,
+                               "sha256":  "d9abc09bc8cb5d60596a8a685d41639efef742173738d575f42897af5879b3a8"
+                           },
+                           {
+                               "path":  "novac/nova.toml",
+                               "size":  44579,
+                               "sha256":  "5254592ee2227f2658b903b320cf6fa11e51cd159658b08c45442587385d8a8b"
+                           },
+                           {
+                               "path":  "nova-driver/Cargo.toml",
+                               "size":  313,
+                               "sha256":  "6e860f3287c914e1106d8fd181be48b3a08510f406a4a50efbba6b30d0e1a85a"
+                           },
+                           {
+                               "path":  "nova-driver/Cargo.lock",
+                               "size":  5420,
+                               "sha256":  "1abc078bcd37273c8de4197693891dba22ba4d8372aa45f42862c9103d6cca89"
+                           },
+                           {
+                               "path":  "nova-driver-support/Cargo.toml",
+                               "size":  171,
+                               "sha256":  "5d736187d78aff4a95cbc4216af5ad564634bdb855939128df03d191f51e6523"
+                           },
+                           {
+                               "path":  "nova-driver-support/Cargo.lock",
+                               "size":  401,
+                               "sha256":  "210072f99a09004642e962a4516ca4c5d16db6028a3669d30521800f67b056fd"
+                           },
+                           {
+                               "path":  "docs/dev/carina-seeds/windows-x86_64.json",
+                               "size":  498,
+                               "sha256":  "6a9d2e3ca175711dcd709b31dc5b50dc41d2833a7efdf44a6e1860cca319674c"
+                           },
+                           {
+                               "path":  "scripts/tools/carina-gate.py",
+                               "size":  5950,
+                               "sha256":  "b2714b96fe3c4db4f1f015da331d81432c25251b8c1a2d2e567fadf5c5f16a72"
+                           },
+                           {
+                               "path":  "nova-driver/src/main.rs",
+                               "size":  7369,
+                               "sha256":  "0cef0aab9393da56eb62d9714fbd9faba8ea640f5561d93065a25a2e7324777a"
+                           },
+                           {
+                               "path":  "nova-driver/src/carina_build.rs",
+                               "size":  29054,
+                               "sha256":  "f697045464f74cdd4b507bf998777646cf287966b7ebb1119d26100763024695"
+                           },
+                           {
+                               "path":  "nova-driver-support/src/lib.rs",
+                               "size":  26076,
+                               "sha256":  "64eadf004ed0e76393d407112aa321e8fc1d6a286ca7ff3d2707e53657b1ffba"
+                           },
+                           {
+                               "path":  "nova-driver-support/src/native_runtime.rs",
+                               "size":  82851,
+                               "sha256":  "d37cdf85c07e411544fa5cb0a0f78f9e1fd1d79e80a024afae90061dfbd91a1d"
+                           }
+                       ],
+    "external_inputs":  [
+                            {
+                                "path":  "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\nova-carina-0.2.1-windows-x86_64.zip",
+                                "size":  2361400,
+                                "sha256":  "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb"
+                            },
+                            {
+                                "path":  "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\unpacked\\nova-carina-0.2.1-windows-x86_64\\novac.exe",
+                                "size":  3663360,
+                                "sha256":  "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4"
+                            },
+                            {
+                                "path":  "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\unpacked\\nova-carina-0.2.1-windows-x86_64\\SOURCE-SHA",
+                                "size":  42,
+                                "sha256":  "67078d15a8114f1ce5885e6543c470d8ce5694d0afaf835825c5ec78df86a0f5"
+                            },
+                            {
+                                "path":  "C:\\Program Files\\LLVM\\bin\\clang.exe",
+                                "size":  104741376,
+                                "sha256":  "6c2bc3df0bf58b5b5fc3c01f71140317469038168d5551f76d23f69f3a089646"
+                            },
+                            {
+                                "path":  "C:\\Program Files (x86)\\Microsoft Visual Studio\\18\\BuildTools\\VC\\Auxiliary\\Build\\vcvars64.bat",
+                                "size":  39,
+                                "sha256":  "6b516d8fcf543c14b2d861e1f45661e0029230fe0dc48e86ce78522801822209"
+                            }
+                        ],
+    "seed":  {
+                 "asset":  "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\nova-carina-0.2.1-windows-x86_64.zip",
+                 "zip_sha256":  "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb",
+                 "exe":  "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\unpacked\\nova-carina-0.2.1-windows-x86_64\\novac.exe",
+                 "exe_sha256":  "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4",
+                 "source_sha":  "3729abcce42ec2d94efc898ec6eafe91ff6210d5",
+                 "old_direct_output":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-baseline\\seed-child.stdout.bin",
+                 "old_direct_output_reuse":  false
+             },
+    "driver":  {
+                   "manifest":  "nova-driver/Cargo.toml",
+                   "binary":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\nova-driver\\target\\debug\\nova.exe",
+                   "sha256":  "da87bfcf1e8d85746a1106103e108710c66eba5b0bdc622d30deab15e79fb75b",
+                   "target":  "x86_64-pc-windows-msvc",
+                   "stamp":  "NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1",
+                   "stamp_present":  true,
+                   "compat_binary_present":  false,
+                   "graph":  "production nova-driver + nova-driver-support; no nova_codegen/compiler-codegen edge",
+                   "machine_build_watch":  "1792726331075-0zuycw",
+                   "tests_watch":  "1792726282078-ble63t",
+                   "tests":  "8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+               },
+    "host":  "Windows",
+    "target":  "windows-x86_64",
+    "NOVA_TARGET_OS":  "unset",
+    "argv":  {
+                 "cwd":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+                 "driver_arguments":  [
+                                          "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\nova-driver\\target\\debug\\nova.exe",
+                                          "build",
+                                          "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\novac\\src\\main.nv",
+                                          "--toolchain",
+                                          "clang",
+                                          "--clang",
+                                          "C:/Program Files/LLVM/bin/clang.exe",
+                                          "--vcvars",
+                                          "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvars64.bat",
+                                          "--timeout",
+                                          "120",
+                                          "--keep-artifacts",
+                                          "-o",
+                                          "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+                                      ],
+                 "outer_launcher":  [
+                                        "python",
+                                        "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\run-captured-tree-safe.py",
+                                        "--timeout",
+                                        "540",
+                                        "--prefix",
+                                        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent",
+                                        "--cwd",
+                                        "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+                                        "--set",
+                                        "NOVA_CARINA_SEED_ZIP=C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\nova-carina-0.2.1-windows-x86_64.zip",
+                                        "--set",
+                                        "NOVA_RT_DIR=D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\compiler-codegen\\nova_rt",
+                                        "--set",
+                                        "NOVA_CG_INCLUDE=D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\compiler-codegen",
+                                        "--set",
+                                        "NOVA_CLANG=C:/Program Files/LLVM/bin/clang.exe",
+                                        "--set",
+                                        "NOVA_CARINA_CAPTURE_DIR=D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture",
+                                        "--set",
+                                        "NOVA_GC_LIB_DIR=D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
+                                        "--set",
+                                        "NOVA_GC_INCLUDE_DIR=D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include",
+                                        "--",
+                                        "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\nova-driver\\target\\debug\\nova.exe",
+                                        "build",
+                                        "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\novac\\src\\main.nv",
+                                        "--toolchain",
+                                        "clang",
+                                        "--clang",
+                                        "C:/Program Files/LLVM/bin/clang.exe",
+                                        "--vcvars",
+                                        "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvars64.bat",
+                                        "--timeout",
+                                        "120",
+                                        "--keep-artifacts",
+                                        "-o",
+                                        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+                                    ]
+             },
+    "environment":  {
+                        "inherited_prefixes":  "NOVA_*/NOVAC_* cleared by runner",
+                        "explicit":  {
+                                         "NOVA_CG_INCLUDE":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\compiler-codegen",
+                                         "NOVA_CLANG":  "C:/Program Files/LLVM/bin/clang.exe",
+                                         "NOVA_RT_DIR":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\compiler-codegen\\nova_rt",
+                                         "NOVA_CARINA_CAPTURE_DIR":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture",
+                                         "NOVA_CARINA_SEED_ZIP":  "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\nova-carina-0.2.1-windows-x86_64.zip",
+                                         "NOVA_GC_LIB_DIR":  "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
+                                         "NOVA_GC_INCLUDE_DIR":  "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+                                     },
+                        "unset":  [
+                                      "NOVA_TARGET_OS",
+                                      "NOVA_VCVARS",
+                                      "NOVA_FEATURES",
+                                      "NOVAC_UNIT",
+                                      "VCPKG_ROOT"
+                                  ],
+                        "driver_seed_child_sets":  {
+                                                       "NOVA_STD_PATH":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src",
+                                                       "NOVAC_SELF_PATH":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\novac\\src"
+                                                   },
+                        "driver_removes_control_before_seed_and_toolchain_children":  "NOVA_CARINA_CAPTURE_DIR",
+                        "gc_resolution":  "documented NOVA_GC_LIB_DIR/NOVA_GC_INCLUDE_DIR override selected first; paths checked against explicit gc.lib, atomic_ops.lib, gc headers and vcpkg ABI metadata",
+                        "runner_clears":  [
+                                              "NOVA_*",
+                                              "NOVAC_*",
+                                              "VCPKG_ROOT"
+                                          ],
+                        "timeout_termination":  "taskkill /T /F returncode 0 plus complete pipe read =\u003e status 124 confirmed; otherwise status 125 unverified, no retry; p.kill alone is not proof"
+                    },
+    "external_timeout_seconds":  540,
+    "native_compiler_timeout_seconds":  120,
+    "timeout_failure":  "capture status 124; process-tree termination failure status 125; stop without retry",
+    "capture":  {
+                    "runner_stdout":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.stdout.bin",
+                    "runner_stderr":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.stderr.bin",
+                    "runner_status":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.status",
+                    "runner_launch":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\driver-parent.launch.json",
+                    "seed_directory":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture",
+                    "seed_stdout":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\stdout.bin",
+                    "seed_stderr":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\stderr.bin",
+                    "seed_status":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\status",
+                    "seed_launch":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\seed-child-capture\\launch.json",
+                    "helper":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\run-captured-tree-safe.py",
+                    "helper_sha256":  "65108c43821180733fdeed654fac35a668101cad2db207e1fd5f709089383ef9"
+                },
+    "output":  {
+                   "native_executable":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+                   "target_carinabuild":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build",
+                   "generated_c":  "main.\u003cPID\u003e.carina.c",
+                   "target_libuv_cache":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache",
+                   "target_rt_archive_cache":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\rt-archive-cache",
+                   "reused_seed_direct_c":  false,
+                   "reused_prior_native_binary":  false,
+                   "existing_cache_baseline":  {
+                                                   "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\existing-cache-baseline-after-failed-build.json",
+                                                   "sha256":  "8f20669d3fab36cf2f5a2107071eb218bf2665e0acc97954ad2b6bd258382e12",
+                                                   "count":  46,
+                                                   "provenance":  "all files existed after failed authorized attempt; no deletion or freshness claim",
+                                                   "matches_prior_receipt":  true
+                                               },
+                   "prior_failed_attempt":  {
+                                                "receipt":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\post-driver-build-receipt.json",
+                                                "receipt_sha256":  "c44fc40694b5e4221b3e87ee45f72d0f32c57cc97affc55419dbb94c6e630780",
+                                                "published_output_exists":  false,
+                                                "temp_native_exe":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.exe",
+                                                "temp_native_sha256":  "f4d15ec068c544eba6310be45eee3b1fa1dd5969334843aea5a023ec3dc807ed",
+                                                "must_not_move_or_execute":  true
+                                            },
+                   "volume_identity":  {
+                                           "source_temp_directory":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build",
+                                           "destination_parent":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized",
+                                           "source_drive":  "D",
+                                           "destination_drive":  "D",
+                                           "source_filesystem":  "NTFS",
+                                           "destination_filesystem":  "NTFS",
+                                           "source_volume_unique_id":  "\\\\?\\Volume{2d2a485c-6cf8-4335-836b-d8c15411e8e7}\\",
+                                           "destination_volume_unique_id":  "\\\\?\\Volume{2d2a485c-6cf8-4335-836b-d8c15411e8e7}\\",
+                                           "same_volume":  true,
+                                           "measurement":  "Get-Volume -FilePath on actual source temp directory and existing destination parent, not drive-letter comparison"
+                                       }
+               },
+    "before":  {
+                   "root_lock":  false,
+                   "novac_lock":  false,
+                   "stage_scratch":  false,
+                   "carina_build":  true,
+                   "libuv_cache":  true,
+                   "rt_archive_cache":  true,
+                   "seed_capture":  false,
+                   "candidate_output_dir":  true,
+                   "parent_capture":  false,
+                   "candidate_executable":  false
+               },
+    "authorization":  "PREPARATION ONLY: no driver/native launch authorized; await authority confirmation and new independent GO",
+    "repository":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+    "submodule_postcheck":  {
+                                "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\submodule-after.json",
+                                "sha256":  "c2699b4199775e41f03c49dc5550b8d9b9fcac4d5a751184cbfb09990b8f9a0c"
+                            },
+    "verification_artifacts":  {
+                                   "driver-test-final":  {
+                                                             "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-test-final.stdout.bin",
+                                                             "stdout_sha256":  "702e73222d6b839d6f5cc7082f52d627b1c5e44f39e0d4d9e2be6903eb9b9873",
+                                                             "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-test-final.stderr.bin",
+                                                             "stderr_sha256":  "1932ebc50dc3d8fe3f36a675b87ac13f9313ed289a959d32d73867133b02fb3a",
+                                                             "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-test-final.status",
+                                                             "status":  "0"
+                                                         },
+                                   "driver-build-final":  {
+                                                              "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-build-final.stdout.bin",
+                                                              "stdout_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                              "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-build-final.stderr.bin",
+                                                              "stderr_sha256":  "e515e4c78711908d3f065aabde974f176d731cc5c0869abe6c034158683eb7cd",
+                                                              "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-build-final.status",
+                                                              "status":  "0"
+                                                          },
+                                   "final-graph-guard":  {
+                                                             "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\final-graph-guard.stdout.bin",
+                                                             "stdout_sha256":  "7c880cdba9fa1727ba02bc045aac00319ae6b419c4ef9f2db882623761f351cb",
+                                                             "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\final-graph-guard.stderr.bin",
+                                                             "stderr_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                             "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\final-graph-guard.status",
+                                                             "status":  "0"
+                                                         },
+                                   "final-cargo-tree":  {
+                                                            "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\final-cargo-tree.stdout.bin",
+                                                            "stdout_sha256":  "897a93eb4fe45685fd22c60ace521a0a4eb620d60b6ba6d718d0732c061f218b",
+                                                            "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\final-cargo-tree.stderr.bin",
+                                                            "stderr_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                            "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\final-cargo-tree.status",
+                                                            "status":  "0"
+                                                        },
+                                   "capture-env-sabotage":  {
+                                                                "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\capture-env-sabotage.stdout.bin",
+                                                                "stdout_sha256":  "2fd7aa4d1281389482ff3f5e2a40a402d7d4978dcac53e6e2f2513045967d9d6",
+                                                                "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\capture-env-sabotage.stderr.bin",
+                                                                "stderr_sha256":  "a974672107e4bd1a510c6fc7910ad7fb405746956f20a1a53d3afd2bbd84233f",
+                                                                "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\capture-env-sabotage.status",
+                                                                "status":  "101"
+                                                            },
+                                   "launch_gc_sabotage":  {
+                                                              "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-prelaunch-gc-sabotage.stdout.bin",
+                                                              "stdout_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                              "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-prelaunch-gc-sabotage.stderr.bin",
+                                                              "stderr_sha256":  "c690a945fb705e1d7e78b3de2b09d3cceaf4261d5333e364be59149cc77b7fa5",
+                                                              "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-prelaunch-gc-sabotage.status",
+                                                              "status":  "1",
+                                                              "mutated_plan":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\planned-driver-launch-missing-gc.json",
+                                                              "mutated_plan_sha256":  "6c5bdaf4215f92483e69643509c7df0c70b4894b05c1b62b8b6b6575edaf2bf5",
+                                                              "red_reason":  "launcher --set map differs from manifest: missing NOVA_GC_LIB_DIR extra=[]"
+                                                          },
+                                   "launch_gc_restored":  {
+                                                              "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-prelaunch-restored.stdout.bin",
+                                                              "stdout_sha256":  "e3a2776e793ec1138389572a450df5089b7ca494076b767a5f2577d44902e806",
+                                                              "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-prelaunch-restored.stderr.bin",
+                                                              "stderr_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                              "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\driver-prelaunch-restored.status",
+                                                              "status":  "0",
+                                                              "result":  "driver prelaunch verification: PASS; launcher map matches manifest incl GC"
+                                                          },
+                                   "same_volume_negative":  {
+                                                                "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\same-volume-negative.stdout.bin",
+                                                                "stdout_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                                "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\same-volume-negative.stderr.bin",
+                                                                "stderr_sha256":  "88d6c51e265e3d89c4e1242784c3c79272fa10f5e8cc43d921b77f1074ee7618",
+                                                                "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\same-volume-negative.status",
+                                                                "status":  "1",
+                                                                "mutated_plan":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\candidate-plan-volume-mismatch-probe.json",
+                                                                "mutated_plan_sha256":  "45aa50a062dc7251e2c4c26c02b3f1830fbfc036c32a3dd6519345eae6874b3f",
+                                                                "temporary_verifier":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\verify-same-volume-volume-negative.py",
+                                                                "red_reason":  "actual Windows source-temp and destination volume GUIDs differ"
+                                                            },
+                                   "same_volume_restored":  {
+                                                                "stdout":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\same-volume-restored.stdout.bin",
+                                                                "stdout_sha256":  "a91bccb5fd2e1fd7183d70099acdf9a9d9e75e9a2ef0a90fb0c1a2457e322d84",
+                                                                "stderr":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\same-volume-restored.stderr.bin",
+                                                                "stderr_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                                                                "status_file":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\same-volume-restored.status",
+                                                                "status":  "0",
+                                                                "result":  "same-volume candidate prelaunch verification: PASS"
+                                                            }
+                               },
+    "neighbor_verification":  {
+                                  "current_states_path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\project-neighbor-states-current.json",
+                                  "current_states_sha256":  "64f298a0a06c719e9758c930252d57ab8b2d2ff0f6640dc7512e26b8e7f750a5",
+                                  "task092_pinned_receipt":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_efdd2dc2effePXj0L8WPrxkIJN\\preflight116-observe\\libuv-verification.json",
+                                  "task092_pinned_receipt_sha256":  "91909854e75f729b42d7004daec74266f5e9f8be9040a17f083b2b6bbaa1bf3e",
+                                  "task092_pinned_inputs":  1551,
+                                  "missing":  [
+
+                                              ],
+                                  "changed":  [
+
+                                              ],
+                                  "claim_scope":  "not every byte in dirty 092; HEAD/status equality not byte proof"
+                              },
+    "prior_failure_audit":  {
+                                "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_efdd2dc2effePXj0L8WPrxkIJN\\preflight116-observe\\post-driver-failure-audit.json",
+                                "sha256":  "66e2e08ef99a47116fac02cc350ffa71131d3c4d134bbf867bf564928742b473",
+                                "verdict":  "PASS_OBSERVED_FAILURE",
+                                "scope":  "all prior raw/status, 46 produced files, PE AMD64, actual seed argv/env, immutable inputs and scoped 1551 pins; previous driver attempt failed exit 1; no reuse freshness claim"
+                            },
+    "task_metadata_inputs":  [
+                                 {
+                                     "path":  "docs/plans/221.1-bug-sweep.md",
+                                     "size":  7260469,
+                                     "sha256":  "67b0a511b05d2f008df6911b5a959b8f1e9acf299f604f0dbad96a3774ce8d2b",
+                                     "role":  "№TBD open defect registry record"
+                                 },
+                                 {
+                                     "path":  "doc/tasks/116-carina-seed-compatibility/log.md",
+                                     "size":  4821,
+                                     "sha256":  "11ad35c27137ccb2fa82c868d63aad4a9418c6dba1018768a8a7d4e2d5faba98",
+                                     "role":  "task evidence log"
+                                 }
+                             ]
+}

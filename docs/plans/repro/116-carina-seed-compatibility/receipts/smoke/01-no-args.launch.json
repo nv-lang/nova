@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+  ],
+  "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+  "environment_overrides": {
+    "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+  },
+  "cleared_inherited_environment": [
+    "NOVA_*",
+    "NOVAC_*",
+    "VCPKG_ROOT"
+  ],
+  "timeout_seconds": 60.0,
+  "timed_out": false,
+  "process_tree_termination": "not-needed",
+  "process_tree_kill": null,
+  "spawn_error": null,
+  "exit_status": 2,
+  "stdout_bytes": 56,
+  "stderr_bytes": 0
+}

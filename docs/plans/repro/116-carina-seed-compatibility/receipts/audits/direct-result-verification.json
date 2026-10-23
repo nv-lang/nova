@@ -1,0 +1,27 @@
+{
+  "verdict": "PASS_DIRECT_EMIT_OBSERVATION_ONLY",
+  "receipt_sha256": "47d48f2eba4672da1e4ea1d73b936a80f863b0402b55bfbf5dd78e94f56f439a",
+  "head": "86af6bb82963148784868edb6e02e20aee6330de",
+  "stdout_sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+  "stdout_bytes": 13250302,
+  "stderr_bytes": 0,
+  "checks": {
+    "stdout_hash_size": true,
+    "stderr_hash_size": true,
+    "C_prefix": true,
+    "exit_zero": true,
+    "launch_metadata_matches_receipt": true,
+    "seed_argv": true,
+    "cwd": true,
+    "not_timed_out": true,
+    "seed_unchanged": true,
+    "driver_unchanged": true,
+    "helper_unchanged": true,
+    "no_missing_or_extra_source": true,
+    "565_source_hashes": true,
+    "locks_still_absent": true,
+    "driver_output_still_absent": true,
+    "machine_queue_completed_zero": true
+  },
+  "not_proven": "No driver child, native compiler, B1/B2 fixed point or task acceptance; no native/C execution authorized by this observation"
+}

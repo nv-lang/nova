@@ -1,0 +1,1 @@
+driver prelaunch verification: PASS; launcher map matches manifest incl GC; 565 source/driver, 469 libuv; native inputs exact; scoped 092 pins; outputs fresh

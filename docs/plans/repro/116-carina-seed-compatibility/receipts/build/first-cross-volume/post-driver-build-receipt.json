@@ -1,0 +1,333 @@
+﻿{
+    "kind":  "one authorized task116 production driver build; exit 1; NOT acceptance",
+    "plan":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\planned-driver-launch-after-capture.json",
+    "plan_sha256":  "aea5e0fcd87f387613783a99f58aff5d72583fb240621b5c4a3632569c0aaf5b",
+    "prelaunch_verifier":  {
+                               "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\queued-final-verifier.stdout.bin",
+                               "stdout_sha256":  "e3a2776e793ec1138389572a450df5089b7ca494076b767a5f2577d44902e806",
+                               "stderr_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                               "status":  "0"
+                           },
+    "machine_watch":  {
+                          "id":  "1792728172653-9dry2b",
+                          "watch_output":  "D:/Sources/.opencode-data/opencode/crew-harness/watches/1792728172653-9dry2b.out",
+                          "watch_exit":  1,
+                          "duration_seconds":  42
+                      },
+    "parent":  {
+                   "launch":  {
+                                  "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\driver-parent.launch.json",
+                                  "size":  1910,
+                                  "sha256":  "7b8199fe0f906b9ce2be18d4e8303e6063d32dc8a4c69acae35304fc92cb9539"
+                              },
+                   "stdout":  {
+                                  "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\driver-parent.stdout.bin",
+                                  "size":  912,
+                                  "sha256":  "42eabec1858a440e66d750abcd2b9be78b528f167bca9a9edac841d6fc610f4b"
+                              },
+                   "stderr":  {
+                                  "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\driver-parent.stderr.bin",
+                                  "size":  899,
+                                  "sha256":  "117b5d4596854e9e4cf4ef97af0488e80f49f2b3a3a47a4b1811693c8980aaf3"
+                              },
+                   "status":  {
+                                  "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\driver-parent.status",
+                                  "size":  2,
+                                  "sha256":  "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+                              },
+                   "status_value":  "1"
+               },
+    "seed_child":  {
+                       "launch":  {
+                                      "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\seed-child-capture\\launch.json",
+                                      "size":  1537,
+                                      "sha256":  "bdc4b1c3b101c149080e5bc0635816e7b35c643cae39b65e46dee172326b3d57"
+                                  },
+                       "stdout":  {
+                                      "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\seed-child-capture\\stdout.bin",
+                                      "size":  13250302,
+                                      "sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+                                  },
+                       "stderr":  {
+                                      "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\seed-child-capture\\stderr.bin",
+                                      "size":  0,
+                                      "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                                  },
+                       "status":  {
+                                      "path":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\seed-child-capture\\status",
+                                      "size":  2,
+                                      "sha256":  "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+                                  },
+                       "status_value":  "0",
+                       "source":  "actual instrumented child output; not direct-prior probe",
+                       "direct_probe_output_reused":  false
+                   },
+    "cache_outputs":  [
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.carina.c",
+                              "size":  13250302,
+                              "sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.exe",
+                              "size":  4389888,
+                              "sha256":  "f4d15ec068c544eba6310be45eee3b1fa1dd5969334843aea5a023ec3dc807ed"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.lib",
+                              "size":  59594,
+                              "sha256":  "8809a8d5eaf158f41867c18d00c3fb9cdf5fb2bfad03c8b89bffba84ffc1a13f"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.pdb",
+                              "size":  11780096,
+                              "sha256":  "87d1a46ceeb533bd30a5890c4d3c6addc16d51bc5b664c239fcfb196d70b67ac"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\.nova-build.lock",
+                              "size":  0,
+                              "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\compile.rsp",
+                              "size":  5099,
+                              "sha256":  "5d544f900b59cfe3ea2f3e53e4ed1faa4ab53fc396cb72ff19703f808055d0f3"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\lib.rsp",
+                              "size":  4835,
+                              "sha256":  "1e421d58ed3542ea0ad0dbd7c7885837b7cf672e1a2fd8a66d3413796cb4d3fb"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\libuv.lib",
+                              "size":  1044256,
+                              "sha256":  "17fe23dfffa20b1dc968b08ec5e0098b3809e7681731e9751926ff2287318420"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\async.obj",
+                              "size":  7433,
+                              "sha256":  "bac84cb4d0756c07afa64813e0a44587246f74897829b4228fb87fa7f2b15ec5"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\core.obj",
+                              "size":  28734,
+                              "sha256":  "8f979f34215fce7a777ee5cbe7d8ecbd142306b823a6d8ea7fbc07797b6b5658"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\detect-wakeup.obj",
+                              "size":  2288,
+                              "sha256":  "4b800a96c16eed1b5cc3a23508a7d72c1f3b93209ff9486f454f9535daacb9f5"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\dl.obj",
+                              "size":  6085,
+                              "sha256":  "665067680ec8245df3e1c4bd73558da31ee12ce231471bdd892ea4713d37f0b9"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\error.obj",
+                              "size":  6465,
+                              "sha256":  "fa10b3a6baac5c65cd001e2bfe33194c9fe1c945dc471c05f651d4e243d20ced"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\fs-event.obj",
+                              "size":  20480,
+                              "sha256":  "1a0ed94dbc8eef407c537d7004f3d28ae6fedf3b34a36320c519fef62a93d135"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\fs-poll.obj",
+                              "size":  11400,
+                              "sha256":  "2cc446b308d8844c876178748cbf62ae951530ff73bdba91b74756419fde6061"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\fs.obj",
+                              "size":  132256,
+                              "sha256":  "588a1e9d2c676afd3d2cadcc05accbf89c6fe356ce97cc8e248f500b038a2493"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\getaddrinfo.obj",
+                              "size":  14731,
+                              "sha256":  "12b928dc1fe368732d1616cc888869359b41dae0e7d7f2a6f2aae1d5a7d9215b"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\getnameinfo.obj",
+                              "size":  5065,
+                              "sha256":  "5f852751fef63e50a93dfeca6863c43b14f7f4103e4ec78cb8e6611c704f17b2"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\handle.obj",
+                              "size":  10422,
+                              "sha256":  "9e318c22c628a15a78241526580b7e10d8523cd421b0be9b243457a458e82e12"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\idna.obj",
+                              "size":  11766,
+                              "sha256":  "1eb5648472ad39526dc4029e21f5c5af45e77cf8a9bb06b8f38521cd6cd0cbfc"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\inet.obj",
+                              "size":  8518,
+                              "sha256":  "6443970b75633687c06303099134d3c67f30c28416c0b2f0d20715295743a3bc"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\loop-watcher.obj",
+                              "size":  9019,
+                              "sha256":  "9e277b14882c288ed917441e045dfa5cc1660bb972075642a8f1259c3abfc517"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\pipe.obj",
+                              "size":  101157,
+                              "sha256":  "e9c2f9f1e596b10cf3a1ded98156a8f6493b18c6df8a5fe8ad0d4a84c56deb3e"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\poll.obj",
+                              "size":  28298,
+                              "sha256":  "d6c6e71a84bfc133fe75f05268f72630db87a83455ce38751fba538548979799"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\process-stdio.obj",
+                              "size":  11549,
+                              "sha256":  "178953bebd0181dfdb9d739a2ba1f5717d07017c07feb1e32c3c31a9122b0bc4"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\process.obj",
+                              "size":  45686,
+                              "sha256":  "713ba35d34d0f4c80c0cb26e38c9de13428922db671c21782a2d5f3129ebe769"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\random.obj",
+                              "size":  3619,
+                              "sha256":  "9c042d61d9b1c3626d335b34684e9dcc590a3e012eeb06f7e8d94ea3fe2203d3"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\signal.obj",
+                              "size":  15310,
+                              "sha256":  "d5c1af7650746942d89e22360e2db94c4b0c12676cddf1d45bae3878b230d5eb"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\snprintf.obj",
+                              "size":  585,
+                              "sha256":  "72c57f70a0deee398b97a8832e8c17e13afb528967c4046378549bcb571eb17c"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\stream.obj",
+                              "size":  12958,
+                              "sha256":  "142f24196153b8959c08ae5835a280a6bb7b9f4f969d69e478390ffdd8eb9825"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\strscpy.obj",
+                              "size":  783,
+                              "sha256":  "cfc17978aaba4c1fefe3c2a2b875efb53e4b38f6492f3cc9b821d45443b641b9"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\strtok.obj",
+                              "size":  1126,
+                              "sha256":  "ee8fcb86d40cf11a3d5064a1cc2f7df72ee33ff31edd2c471ae3f2d1789c2777"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\tcp.obj",
+                              "size":  56835,
+                              "sha256":  "3b1d9c43d2a3184012b376924bf0dcc197e7468f17bab7291929049a21e63ccd"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\thread-common.obj",
+                              "size":  6045,
+                              "sha256":  "d090ca0c7c929dbdd5e77d9c1231b46bb9293db9ffae0f7a7441fa6abbcad482"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\thread.obj",
+                              "size":  26422,
+                              "sha256":  "81b355b71f490a80fd8359fa4040828b1d743af3915e5ba56aa3e60f00d55440"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\threadpool.obj",
+                              "size":  17617,
+                              "sha256":  "67446ba87a429055a67e04f0ca4dacff717ec8be31ab3888b80537f48bb60e8a"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\timer.obj",
+                              "size":  8175,
+                              "sha256":  "46a2fcc750a43ca4cbc0d4335da81a81ae5edca1facd8606965bb5e8e1b67377"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\tty.obj",
+                              "size":  92534,
+                              "sha256":  "5ce37db6bd99dc65a510a442675fe276ad2a43866d3e959f1e43d4d2aa3c4738"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\udp.obj",
+                              "size":  37491,
+                              "sha256":  "6630cf92cd301c6d690703016452d884777989f806aca1bffc7173e64a4df477"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\util.obj",
+                              "size":  68199,
+                              "sha256":  "675e53cc8aae16c70e4f48f350f9cff2224dec66e3df6bd64647dcabac9f9eec"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\uv-common.obj",
+                              "size":  100561,
+                              "sha256":  "bb217ccb7679a4640046e7ea6d055ea28365093cbab8a2241fd7a774ab388079"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\uv-data-getter-setters.obj",
+                              "size":  8817,
+                              "sha256":  "2d20eb4dde144c57c0552264ca179e97005abe25a42eb1d0bc35d2919a3879d0"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\version.obj",
+                              "size":  1023,
+                              "sha256":  "780974b04c98dd5b1e47fc9d67310bb06b27cd2fc52a89bade8d7cc02e8cde31"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\winapi.obj",
+                              "size":  7111,
+                              "sha256":  "3ffae0671eedc7a4d29c0cf7a4e9dc46841dd2baf4f339d6063e3972401ca28e"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\winsock.obj",
+                              "size":  14425,
+                              "sha256":  "35c064bc85f4e2682972714570e8522ffa74ec2b9c2d096ecaa6aee6d5474561"
+                          },
+                          {
+                              "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\rt-archive-cache\\47038da5de52ddc6\\libnova_rt.lib",
+                              "size":  1995772,
+                              "sha256":  "6101c8772529020d975ef82afc5503a16c074155b4bc2cb3a05f21b58a2d4376"
+                          }
+                      ],
+    "cache_counts":  {
+                         "carina":  4,
+                         "libuv":  41,
+                         "runtime":  1
+                     },
+    "final_output":  {
+                         "requested":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\novac.exe",
+                         "exists":  false,
+                         "failure":  "std::fs::rename from repo D: target/carina-build to session scratch C: failed with Windows OS error 17 (cross-volume move); driver exited 1",
+                         "temp_native_exe":  {
+                                                 "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.exe",
+                                                 "size":  4389888,
+                                                 "sha256":  "f4d15ec068c544eba6310be45eee3b1fa1dd5969334843aea5a023ec3dc807ed"
+                                             }
+                     },
+    "locks":  {
+                  "root":  false,
+                  "novac":  false
+              },
+    "inputs":  {
+                   "source_manifest_sha256":  "a7f172fadf5d0c9d3a4ff49d95bd503d1b6efffb79b697230f117f100e2b5a21",
+                   "native_manifest_sha256":  "96f8743d02b980d403a94c28c1865494a7107cce7ebc86dcafd5bce1c34536b1",
+                   "libuv_head":  "1cfa32ff59c076ffb6ed735bbc8c18361558661f",
+                   "libuv_status":  [
+
+                                    ],
+                   "root_git_status":  [
+                                           " M doc/tasks/116-carina-seed-compatibility/log.md",
+                                           " M nova-driver/src/carina_build.rs"
+                                       ]
+               },
+    "postbuild_smoke":  {
+                            "performed":  false,
+                            "reason":  "independent post-build review/GO required; no output binary published; do not execute temp native EXE"
+                        },
+    "stop":  "No retry; no B1/B2 acceptance; STOP 092 unchanged"
+}

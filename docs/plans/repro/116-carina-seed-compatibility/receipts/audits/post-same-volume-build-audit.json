@@ -1,0 +1,41 @@
+{
+  "verdict": "PASS_PRODUCTION_BUILD_AND_PUBLICATION",
+  "checks": {
+    "receipt_digest": true,
+    "plan_digest": true,
+    "all_raw_records": true,
+    "all_statuses_zero": true,
+    "outer_exact_argv_and_pins": true,
+    "parent_exact_launch": true,
+    "actual_seed_path_args_env": true,
+    "new_published_native_PE_AMD64": true,
+    "published_digest_in_parent_receipt": true,
+    "cache_baseline_digest": true,
+    "all_46_old_outputs_preserved": true,
+    "three_new_outputs": true,
+    "cache_total_49_exact": true,
+    "fresh_C_from_actual_seed_stdout": true,
+    "runtime_cache_digest": true,
+    "backup_manifest_digest": true,
+    "four_prior_artifacts_and_backups": true,
+    "565_source_driver_post_hashes": true,
+    "all_native_and_project_post_hashes": true,
+    "driver_seed_unchanged": true,
+    "locks_absent_libuv_clean": true,
+    "1551_pinned_092_post_launch_rehash": true,
+    "queued_build_success": true,
+    "orchestrator_digest": true
+  },
+  "native_path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+  "native_sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+  "source_C_sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+  "post_092": {
+    "count": 1551,
+    "missing": [],
+    "changed": [],
+    "scope": "pinned source/header/manifest/verifier inputs only; not all dirty-worktree bytes"
+  },
+  "task_log_note": "Task journal legitimately appended after launch; not an immutable compiler input",
+  "cache_note": "46 prior outputs preserved/reused; 3 fresh outputs plus a newly published EXE; cache reuse is not freshness",
+  "not_established": "New compiler native execution/smoke, B2/fixed point, task acceptance or release; no EXE run performed by this audit"
+}

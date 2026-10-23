@@ -1,0 +1,1 @@
+native CLI smoke preflight: PASS; raw matcher LF/CRLF GREEN and extra/no-EOL/wrong-status RED; exact empty stdout/stderr/status; EXE hash/AMD64 and fresh raw paths verified; EXE NOT RUN

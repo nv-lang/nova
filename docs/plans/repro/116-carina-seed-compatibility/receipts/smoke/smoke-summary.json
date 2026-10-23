@@ -1,0 +1,303 @@
+{
+  "plan_sha256": "544d7f61cd388f29e97cc8e79b4611e7f90e740d8055695dd90e6c1001367eaf",
+  "verifier_sha256": "323752795527693598340d774d71ace67399a7b8e055481a90b18df8ad2493bf",
+  "helper_sha256": "65108c43821180733fdeed654fac35a668101cad2db207e1fd5f709089383ef9",
+  "verifier_status": 0,
+  "step_invocations": 3,
+  "native_launch_attempts": 3,
+  "child_launch_metadata_observations": [
+    {
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+      ],
+      "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+      "environment_overrides": {
+        "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+      },
+      "cleared_inherited_environment": [
+        "NOVA_*",
+        "NOVAC_*",
+        "VCPKG_ROOT"
+      ],
+      "timeout_seconds": 60.0,
+      "timed_out": false,
+      "process_tree_termination": "not-needed",
+      "process_tree_kill": null,
+      "spawn_error": null,
+      "exit_status": 2,
+      "stdout_bytes": 56,
+      "stderr_bytes": 0
+    },
+    {
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+        "check",
+        "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\spec_tests\\conformance\\standalone\\stdout_hello.nv"
+      ],
+      "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+      "environment_overrides": {
+        "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+      },
+      "cleared_inherited_environment": [
+        "NOVA_*",
+        "NOVAC_*",
+        "VCPKG_ROOT"
+      ],
+      "timeout_seconds": 60.0,
+      "timed_out": false,
+      "process_tree_termination": "not-needed",
+      "process_tree_kill": null,
+      "spawn_error": null,
+      "exit_status": 0,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0
+    },
+    {
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+        "check",
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv"
+      ],
+      "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+      "environment_overrides": {
+        "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+      },
+      "cleared_inherited_environment": [
+        "NOVA_*",
+        "NOVAC_*",
+        "VCPKG_ROOT"
+      ],
+      "timeout_seconds": 60.0,
+      "timed_out": false,
+      "process_tree_termination": "not-needed",
+      "process_tree_kill": null,
+      "spawn_error": null,
+      "exit_status": 2,
+      "stdout_bytes": 245,
+      "stderr_bytes": 0
+    }
+  ],
+  "retry_count": 0,
+  "matcher": "exact raw bytes; explicit LF/CRLF variants; no normalization, stripping, or other-byte removal",
+  "matcher_selftests": {
+    "LF": "GREEN",
+    "CRLF": "GREEN",
+    "extra_text": "RED",
+    "missing_eol": "RED",
+    "wrong_status": "RED",
+    "hello_nonempty_stdout": "RED"
+  },
+  "stop_on_first_unexpected": true,
+  "smoke_scope": "CLI smoke only; not D-conformance or B2",
+  "native_exe_executed": true,
+  "confirmed_process_starts": 3,
+  "confirmed_not_started": 0,
+  "unconfirmed_attempts": 0,
+  "state": "confirmed-start",
+  "steps": [
+    {
+      "id": "01-no-args",
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+      ],
+      "wrapper_status": 2,
+      "expected": {
+        "stderr": "",
+        "status": 2,
+        "stdout_variants": [
+          "usage: novac check <file.nv>... | novac emit <file.nv>\n",
+          "usage: novac check <file.nv>... | novac emit <file.nv>\r\n"
+        ]
+      },
+      "raw_paths": {
+        "stdout": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stdout.bin",
+          "size": 56,
+          "sha256": "84b0c0b9c01cef17152dcd4feb7e5205980ef891303f38bec70c5e62f89ece4d"
+        },
+        "stderr": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stderr.bin",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "status": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.status",
+          "size": 2,
+          "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+        },
+        "launch": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.launch.json",
+          "size": 710,
+          "sha256": "5eb1d1c1f8230e68ea93110bfdc3ed0139768ad0e20e2bc59ad652e3f5a63d66"
+        }
+      },
+      "actual": {
+        "stdout_raw_hex": "75736167653a206e6f76616320636865636b203c66696c652e6e763e2e2e2e207c206e6f76616320656d6974203c66696c652e6e763e0d0a",
+        "stderr_raw_hex": "",
+        "status": 2
+      },
+      "launch_metadata": {
+        "argv": [
+          "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe"
+        ],
+        "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+        "environment_overrides": {
+          "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+        },
+        "cleared_inherited_environment": [
+          "NOVA_*",
+          "NOVAC_*",
+          "VCPKG_ROOT"
+        ],
+        "timeout_seconds": 60.0,
+        "timed_out": false,
+        "process_tree_termination": "not-needed",
+        "process_tree_kill": null,
+        "spawn_error": null,
+        "exit_status": 2,
+        "stdout_bytes": 56,
+        "stderr_bytes": 0
+      },
+      "expected_match": true
+    },
+    {
+      "id": "02-check-hello",
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+        "check",
+        "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\spec_tests\\conformance\\standalone\\stdout_hello.nv"
+      ],
+      "wrapper_status": 0,
+      "expected": {
+        "stderr": "",
+        "status": 0,
+        "stdout_variants": [
+          ""
+        ]
+      },
+      "raw_paths": {
+        "stdout": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stdout.bin",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stderr": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stderr.bin",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "status": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.status",
+          "size": 2,
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+        },
+        "launch": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.launch.json",
+          "size": 860,
+          "sha256": "d5f4831ed95920ee04fd29274c40b9972b1dd6c621eff0f0bdd5801e43bf8027"
+        }
+      },
+      "actual": {
+        "stdout_raw_hex": "",
+        "stderr_raw_hex": "",
+        "status": 0
+      },
+      "launch_metadata": {
+        "argv": [
+          "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+          "check",
+          "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\spec_tests\\conformance\\standalone\\stdout_hello.nv"
+        ],
+        "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+        "environment_overrides": {
+          "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+        },
+        "cleared_inherited_environment": [
+          "NOVA_*",
+          "NOVAC_*",
+          "VCPKG_ROOT"
+        ],
+        "timeout_seconds": 60.0,
+        "timed_out": false,
+        "process_tree_termination": "not-needed",
+        "process_tree_kill": null,
+        "spawn_error": null,
+        "exit_status": 0,
+        "stdout_bytes": 0,
+        "stderr_bytes": 0
+      },
+      "expected_match": true
+    },
+    {
+      "id": "03-check-missing-absolute",
+      "argv": [
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+        "check",
+        "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv"
+      ],
+      "wrapper_status": 2,
+      "expected": {
+        "stderr": "",
+        "status": 2,
+        "stdout_variants": [
+          "novac: cannot read D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv\n",
+          "novac: cannot read D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv\r\n"
+        ]
+      },
+      "raw_paths": {
+        "stdout": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stdout.bin",
+          "size": 245,
+          "sha256": "1eb1b637f6c81008f8e1daaed843659433bf9ae6e153ccb2962b10abc5cb38dd"
+        },
+        "stderr": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stderr.bin",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "status": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.status",
+          "size": 2,
+          "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+        },
+        "launch": {
+          "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.launch.json",
+          "size": 966,
+          "sha256": "aad0185304f397cc8414e350f636e91f024ea790b8a454830fbbf435dc33ce23"
+        }
+      },
+      "actual": {
+        "stdout_raw_hex": "6e6f7661633a2063616e6e6f74207265616420443a5c536f75726365735c2e6f70656e636f64652d646174615c6f70656e636f64655c736372617463687061645c7365735f6d766b6330736a61716f6d677464626666765c7461736b3131362d7365636f6e642d617474656d70742d7072657061726174696f6e5c63616e6469646174652d6f7574707574732d6e6f742d617574686f72697a65645c6e61746976652d736d6f6b652d63616e6469646174652d6e6f742d617574686f72697a65645c6d697373696e672d696e7075745c696e74656e74696f6e616c6c792d616273656e742d736d6f6b652d696e7075742e6e760d0a",
+        "stderr_raw_hex": "",
+        "status": 2
+      },
+      "launch_metadata": {
+        "argv": [
+          "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+          "check",
+          "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\missing-input\\intentionally-absent-smoke-input.nv"
+        ],
+        "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+        "environment_overrides": {
+          "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+        },
+        "cleared_inherited_environment": [
+          "NOVA_*",
+          "NOVAC_*",
+          "VCPKG_ROOT"
+        ],
+        "timeout_seconds": 60.0,
+        "timed_out": false,
+        "process_tree_termination": "not-needed",
+        "process_tree_kill": null,
+        "spawn_error": null,
+        "exit_status": 2,
+        "stdout_bytes": 245,
+        "stderr_bytes": 0
+      },
+      "expected_match": true
+    }
+  ],
+  "all_three_passed": true,
+  "result": "all bounded CLI smoke expectations matched; this is not conformance/B2 and does not authorize any later source execution"
+}

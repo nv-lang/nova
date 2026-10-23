@@ -1,0 +1,44 @@
+﻿{
+    "kind":  "byte-identical evidence backup of prior failed-attempt carina-build outputs; originals retained; copies not build inputs",
+    "source_receipt":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\post-driver-build-receipt.json",
+    "source_receipt_sha256":  "c44fc40694b5e4221b3e87ee45f72d0f32c57cc97affc55419dbb94c6e630780",
+    "count":  4,
+    "files":  [
+                  {
+                      "original":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.carina.c",
+                      "backup":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\prior-carina-build-evidence-backup\\main.50108.carina.c",
+                      "size":  13250302,
+                      "sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+                      "matches_failed_receipt":  true,
+                      "original_preserved":  true,
+                      "reuse_as_build_input":  false
+                  },
+                  {
+                      "original":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.exe",
+                      "backup":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\prior-carina-build-evidence-backup\\main.50108.tmp.exe",
+                      "size":  4389888,
+                      "sha256":  "f4d15ec068c544eba6310be45eee3b1fa1dd5969334843aea5a023ec3dc807ed",
+                      "matches_failed_receipt":  true,
+                      "original_preserved":  true,
+                      "reuse_as_build_input":  false
+                  },
+                  {
+                      "original":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.lib",
+                      "backup":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\prior-carina-build-evidence-backup\\main.50108.tmp.lib",
+                      "size":  59594,
+                      "sha256":  "8809a8d5eaf158f41867c18d00c3fb9cdf5fb2bfad03c8b89bffba84ffc1a13f",
+                      "matches_failed_receipt":  true,
+                      "original_preserved":  true,
+                      "reuse_as_build_input":  false
+                  },
+                  {
+                      "original":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.pdb",
+                      "backup":  "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\prior-carina-build-evidence-backup\\main.50108.tmp.pdb",
+                      "size":  11780096,
+                      "sha256":  "87d1a46ceeb533bd30a5890c4d3c6addc16d51bc5b664c239fcfb196d70b67ac",
+                      "matches_failed_receipt":  true,
+                      "original_preserved":  true,
+                      "reuse_as_build_input":  false
+                  }
+              ]
+}

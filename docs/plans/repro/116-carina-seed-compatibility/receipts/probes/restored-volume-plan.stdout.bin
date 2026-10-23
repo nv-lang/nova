@@ -1,0 +1,1 @@
+same-volume candidate prelaunch verification: PASS; actual Windows volume GUIDs match; 46 prior cache files hash-verified as pre-existing; candidate outputs/captures fresh; 565 source/driver, 469 libuv; scoped 092 pins

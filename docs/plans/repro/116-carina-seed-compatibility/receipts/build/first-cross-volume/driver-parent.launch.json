@@ -1,0 +1,41 @@
+{
+  "argv": [
+    "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\nova-driver\\target\\debug\\nova.exe",
+    "build",
+    "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\novac\\src\\main.nv",
+    "--toolchain",
+    "clang",
+    "--clang",
+    "C:/Program Files/LLVM/bin/clang.exe",
+    "--vcvars",
+    "C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Auxiliary/Build/vcvars64.bat",
+    "--timeout",
+    "120",
+    "--keep-artifacts",
+    "-o",
+    "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\novac.exe"
+  ],
+  "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+  "environment_overrides": {
+    "NOVA_CARINA_SEED_ZIP": "C:\\Users\\Евгений\\AppData\\Local\\Nova\\carina-seeds\\windows-x86_64\\nova-carina-0.2.1-windows-x86_64.zip",
+    "NOVA_RT_DIR": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\compiler-codegen\\nova_rt",
+    "NOVA_CG_INCLUDE": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\compiler-codegen",
+    "NOVA_CLANG": "C:/Program Files/LLVM/bin/clang.exe",
+    "NOVA_CARINA_CAPTURE_DIR": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\seed-child-capture",
+    "NOVA_GC_LIB_DIR": "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/lib",
+    "NOVA_GC_INCLUDE_DIR": "D:/Sources/nv-lang/nova/compiler-codegen/vcpkg_installed/x64-windows-static/include"
+  },
+  "cleared_inherited_environment": [
+    "NOVA_*",
+    "NOVAC_*",
+    "VCPKG_ROOT"
+  ],
+  "timeout_seconds": 540.0,
+  "timed_out": false,
+  "process_tree_termination": "not-needed",
+  "process_tree_kill": null,
+  "spawn_error": null,
+  "exit_status": 1,
+  "stdout_bytes": 912,
+  "stderr_bytes": 899
+}

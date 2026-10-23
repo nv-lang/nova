@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mvkc0sjaqomgtdbffv\task116\preflight\verify-same-volume-volume-negative.py", line 128, in <module>
+    assert source_guid==dest_guid and source_guid==vol['source_volume_unique_id']==vol['destination_volume_unique_id'] and vol['same_volume']
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

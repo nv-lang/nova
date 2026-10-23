@@ -1,0 +1,26 @@
+{
+  "verdict": "GO_ONE_BOUNDED_NATIVE_CLI_SMOKE",
+  "plan_sha256": "544d7f61cd388f29e97cc8e79b4611e7f90e740d8055695dd90e6c1001367eaf",
+  "verifier_sha256": "323752795527693598340d774d71ace67399a7b8e055481a90b18df8ad2493bf",
+  "executor_sha256": "5d98df7492f7a5c80cfd64a9be982e5ac5c5e985d405dad36428c4df3f2c0bad",
+  "capture_helper_sha256": "65108c43821180733fdeed654fac35a668101cad2db207e1fd5f709089383ef9",
+  "native_exe_sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+  "basis": ["post-same-volume-build-audit.json", "native-smoke-preflight-audit.json"],
+  "scope": "One machine-queued invocation of the pinned execute-bounded-native-cli-smoke.py. At most three planned calls to the newly published compiler: usage without args, check stdout_hello.nv, check one absent absolute .nv path. Stop at first unexpected result. No retries.",
+  "expected": [
+    {"case":"usage","stdout":"exact declared usage line with one LF or CRLF","stderr":"empty","exit":2},
+    {"case":"check hello fixture","stdout":"exactly zero bytes","stderr":"empty","exit":0},
+    {"case":"check absent path","stdout":"exact declared cannot-read line with one LF or CRLF","stderr":"empty","exit":2}
+  ],
+  "conditions": [
+    "Pin-check plan/verifier/executor/helper/native binary immediately before the queued call; the executor runs its pinned read-only verifier before any native child",
+    "Use only the planned cwd and NOVA_STD_PATH; helper clears all other NOVA_*/NOVAC_* overrides and VCPKG_ROOT; do not set self/unit/target/capture controls",
+    "Keep frozen task metadata and all compiler/std inputs unchanged until verifier/launch; 60 seconds per child, exclusive fresh raw outputs, sufficient watch timeout",
+    "Preserve child and helper raw streams/status/actual metadata without normalization; only the predeclared whole LF/CRLF variants are accepted for the two text lines",
+    "Any unexpected status/content/metadata, spawn error, timeout or unconfirmed termination means STOP without retries or remaining probes",
+    "Afterward return all raw results, truthful launch-attempt/confirmed-execution state and before/after hashes of native binary, fixture and immutable compiler/std inputs; do not alter prior evidence or caches",
+    "This authorizes no emit/build/B2/fixed-point or subsequent source execution, no fixture EXE run, no release and no task acceptance",
+    "Cross-volume publication defect remains open; owner STOP 092 remains unchanged"
+  ],
+  "qualification": "Bounded CLI behavior measurement using the existing Carina CLI implementation and D95 exit table; not a complete D-conformance verdict or resolution of the stale MVP exit-code wording"
+}

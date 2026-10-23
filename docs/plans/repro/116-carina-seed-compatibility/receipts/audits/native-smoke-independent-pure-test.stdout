@@ -1,0 +1,1 @@
+pure smoke executor tests: PASS; LF/CRLF green, extra/no-EOL/wrong-status red; empty hello strict; summary false only no attempt/confirmed no-start, true on spawn_error=None, unknown on unconfirmed attempt

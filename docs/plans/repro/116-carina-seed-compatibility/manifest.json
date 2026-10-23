@@ -1,0 +1,600 @@
+{
+  "schema": 1,
+  "kind": "receipt-only permanent evidence bundle; offline validation only",
+  "owner_retention_policy": {
+    "generated_C_included": false,
+    "generated_C_size": 13250302,
+    "generated_C_sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+    "native_EXE_included": false,
+    "native_EXE_size": 4389888,
+    "native_EXE_sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+    "seed_archive_or_exe_included": false,
+    "scratch_receipts_unchanged": true,
+    "byte_revalidation_after_scratch_loss": "unavailable for excluded C/PE/seed bytes; only captured hashes/audit links remain"
+  },
+  "pins": {
+    "main_head": "86af6bb82963148784868edb6e02e20aee6330de",
+    "source_target": "novac/src/main.nv",
+    "source_target_sha256": "3104bbe6b6deea8995d49dc78a7f36fe9096bb6437eeb937b41426d247e19da8",
+    "seed_zip_sha256": "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb",
+    "seed_exe_sha256": "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4",
+    "seed_source_sha": "3729abcce42ec2d94efc898ec6eafe91ff6210d5",
+    "generated_c_sha256": "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+    "native_exe_sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+    "compiler_source_kind": "carina_seed",
+    "source_compiler_executable_sha256": "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4",
+    "direct_seed_reuse_for_build": false,
+    "oracle_executed_for_source_stage": false
+  },
+  "audited_file_count": 94,
+  "files": [
+    {
+      "path": "receipts/baseline/direct-probe-receipt.json",
+      "size": 4820,
+      "sha256": "47d48f2eba4672da1e4ea1d73b936a80f863b0402b55bfbf5dd78e94f56f439a",
+      "role": "direct seed diagnostic receipt; C stream is represented by hash only"
+    },
+    {
+      "path": "receipts/baseline/seed-child.launch.json",
+      "size": 979,
+      "sha256": "1bc9502ed15a2d6f952a2a2db9592445094479f9ab5f3321087531f5b623aa37",
+      "role": "direct seed diagnostic receipt; C stream is represented by hash only"
+    },
+    {
+      "path": "receipts/baseline/seed-child.status",
+      "size": 3,
+      "sha256": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+      "role": "direct seed diagnostic receipt; C stream is represented by hash only"
+    },
+    {
+      "path": "receipts/baseline/seed-child.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "direct seed diagnostic receipt; C stream is represented by hash only"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/driver-parent.launch.json",
+      "size": 1910,
+      "sha256": "7b8199fe0f906b9ce2be18d4e8303e6063d32dc8a4c69acae35304fc92cb9539",
+      "role": "failed cross-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/driver-parent.stdout.bin",
+      "size": 912,
+      "sha256": "42eabec1858a440e66d750abcd2b9be78b528f167bca9a9edac841d6fc610f4b",
+      "role": "failed cross-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/driver-parent.stderr.bin",
+      "size": 899,
+      "sha256": "117b5d4596854e9e4cf4ef97af0488e80f49f2b3a3a47a4b1811693c8980aaf3",
+      "role": "failed cross-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/driver-parent.status",
+      "size": 2,
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+      "role": "failed cross-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/seed-child-launch.json",
+      "size": 1537,
+      "sha256": "bdc4b1c3b101c149080e5bc0635816e7b35c643cae39b65e46dee172326b3d57",
+      "role": "actual seed child launch/result metadata; C stdout bytes excluded by owner decision"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/seed-child-stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "actual seed child launch/result metadata; C stdout bytes excluded by owner decision"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/seed-child-status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "actual seed child launch/result metadata; C stdout bytes excluded by owner decision"
+    },
+    {
+      "path": "receipts/build/first-cross-volume/post-driver-build-receipt.json",
+      "size": 25100,
+      "sha256": "c44fc40694b5e4221b3e87ee45f72d0f32c57cc97affc55419dbb94c6e630780",
+      "role": "hash inventory and failure receipt"
+    },
+    {
+      "path": "receipts/build/same-volume/driver-parent.launch.json",
+      "size": 1981,
+      "sha256": "6500d711160509026665d799382a27378dd57cd4ec563cb147fca70b7dc1a3ab",
+      "role": "same-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/same-volume/driver-parent.stdout.bin",
+      "size": 1150,
+      "sha256": "74a5b71d31d7f0ec0ffab1f61245825168efbccd511f5bdd9c52f18c30c0d549",
+      "role": "same-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/same-volume/driver-parent.stderr.bin",
+      "size": 267,
+      "sha256": "48f9e8d5706967384d0bbe479beb8fe1e549adc61c177aca5b15135451f24744",
+      "role": "same-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/same-volume/driver-parent.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "same-volume parent raw receipt"
+    },
+    {
+      "path": "receipts/build/same-volume/seed-child-launch.json",
+      "size": 1537,
+      "sha256": "bdc4b1c3b101c149080e5bc0635816e7b35c643cae39b65e46dee172326b3d57",
+      "role": "actual seed child launch/result metadata; C stdout bytes excluded by owner decision"
+    },
+    {
+      "path": "receipts/build/same-volume/seed-child-stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "actual seed child launch/result metadata; C stdout bytes excluded by owner decision"
+    },
+    {
+      "path": "receipts/build/same-volume/seed-child-status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "actual seed child launch/result metadata; C stdout bytes excluded by owner decision"
+    },
+    {
+      "path": "receipts/build/same-volume/post-build-evidence-audit.json",
+      "size": 14208,
+      "sha256": "e70cad1c687434316723e07a8aacdde262489932b5fb79235e116f4ed3b490bc",
+      "role": "worker post-build read-only receipt"
+    },
+    {
+      "path": "receipts/build/same-volume/prior-cache-backup-manifest.json",
+      "size": 3303,
+      "sha256": "d833563c22eab4031209fb11d740c764009ead8e5ccd6c2923e249e995c059df",
+      "role": "four unchanged prior artifacts; bytes excluded"
+    },
+    {
+      "path": "receipts/smoke/smoke-summary.json",
+      "size": 15132,
+      "sha256": "4a6fab61f2639e9a998bd9342677c2095fa455e3812432254eb9d6ffbd26a1f1",
+      "role": "smoke result or read-only audit receipt"
+    },
+    {
+      "path": "receipts/smoke/smoke-verifier.stdout.bin",
+      "size": 187,
+      "sha256": "a6d534fa3163bc0590ed9cbe25cff8af5b1b436b841dc0e78b863657727b5963",
+      "role": "smoke result or read-only audit receipt"
+    },
+    {
+      "path": "receipts/smoke/smoke-verifier.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "smoke result or read-only audit receipt"
+    },
+    {
+      "path": "receipts/smoke/smoke-verifier.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "smoke result or read-only audit receipt"
+    },
+    {
+      "path": "receipts/smoke/post-smoke-evidence-audit.json",
+      "size": 10308,
+      "sha256": "2062f44908fc3029a6f0338b3455c725fec0f75250ca3c2d6187e06ef06280de",
+      "role": "smoke result or read-only audit receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.stdout.bin",
+      "size": 56,
+      "sha256": "84b0c0b9c01cef17152dcd4feb7e5205980ef891303f38bec70c5e62f89ece4d",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.status",
+      "size": 2,
+      "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.launch.json",
+      "size": 710,
+      "sha256": "5eb1d1c1f8230e68ea93110bfdc3ed0139768ad0e20e2bc59ad652e3f5a63d66",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.runner.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.runner.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.runner.status",
+      "size": 2,
+      "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/01-no-args.runner.launch.json",
+      "size": 1251,
+      "sha256": "75b9be85f5fe39114b6e2cb2fac69e9b384a1f954ad6e45d4b8944729a50b897",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.launch.json",
+      "size": 860,
+      "sha256": "d5f4831ed95920ee04fd29274c40b9972b1dd6c621eff0f0bdd5801e43bf8027",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.runner.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.runner.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.runner.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/02-check-hello.runner.launch.json",
+      "size": 1408,
+      "sha256": "3fe71f30dddc32e4061da4ea8163dcd51adcb85dbad5b33816db18e56c87fe33",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.stdout.bin",
+      "size": 245,
+      "sha256": "1eb1b637f6c81008f8e1daaed843659433bf9ae6e153ccb2962b10abc5cb38dd",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.status",
+      "size": 2,
+      "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.launch.json",
+      "size": 966,
+      "sha256": "aad0185304f397cc8414e350f636e91f024ea790b8a454830fbbf435dc33ce23",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.runner.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.runner.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.runner.status",
+      "size": 2,
+      "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/03-check-missing-absolute.runner.launch.json",
+      "size": 1523,
+      "sha256": "c4270f60214feb5c73751d95b520833c554c854ee909636b0f14c11d94244ab4",
+      "role": "exact raw smoke child or executor-wrapper receipt"
+    },
+    {
+      "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.py",
+      "size": 2376,
+      "sha256": "c1d488a579e1501803d78404d1d22ff8009fe3a8d939e09fdb51451c620db8ee",
+      "role": "offline matcher/execution-state pure probe; no EXE launch"
+    },
+    {
+      "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.stdout.bin",
+      "size": 207,
+      "sha256": "fb8859440b361ac8e0f26194fa0abd574bd7964e5aff2b05a1446af49e9b86f6",
+      "role": "offline matcher/execution-state pure probe; no EXE launch"
+    },
+    {
+      "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "offline matcher/execution-state pure probe; no EXE launch"
+    },
+    {
+      "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.status",
+      "size": 4,
+      "sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "role": "offline matcher/execution-state pure probe; no EXE launch"
+    },
+    {
+      "path": "receipts/manifests/source-driver-inputs.json",
+      "size": 90716,
+      "sha256": "a7f172fadf5d0c9d3a4ff49d95bd503d1b6efffb79b697230f117f100e2b5a21",
+      "role": "565-file source/driver hash manifest"
+    },
+    {
+      "path": "receipts/manifests/native-input-inventory.json",
+      "size": 207463,
+      "sha256": "96f8743d02b980d403a94c28c1865494a7107cce7ebc86dcafd5bce1c34536b1",
+      "role": "runtime/libuv/GC/toolchain native input inventory"
+    },
+    {
+      "path": "receipts/manifests/cache-before.json",
+      "size": 29792,
+      "sha256": "8f20669d3fab36cf2f5a2107071eb218bf2665e0acc97954ad2b6bd258382e12",
+      "role": "46 prior cache outputs; provenance not fresh"
+    },
+    {
+      "path": "receipts/manifests/same-volume-build-plan.json",
+      "size": 38810,
+      "sha256": "0a07a0df3fef173a4864605ed22d7ed913e0e89afb604d4da668e483e365ea74",
+      "role": "exact same-volume build plan"
+    },
+    {
+      "path": "receipts/manifests/native-cli-smoke-plan.json",
+      "size": 21536,
+      "sha256": "544d7f61cd388f29e97cc8e79b4611e7f90e740d8055695dd90e6c1001367eaf",
+      "role": "exact bounded smoke plan"
+    },
+    {
+      "path": "receipts/manifests/direct-precheck.stdout.bin",
+      "size": 97,
+      "sha256": "64a1f4bdcfae4311ab67c6d056176e887685bbec848f5d1fb6ed63542893a048",
+      "role": "direct seed preflight stdout"
+    },
+    {
+      "path": "receipts/manifests/direct-precheck.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "direct seed preflight stderr"
+    },
+    {
+      "path": "receipts/manifests/direct-precheck.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "role": "direct seed preflight status"
+    },
+    {
+      "path": "receipts/audits/direct-probe-verdict.json",
+      "size": 2183,
+      "sha256": "61c062b906ce27847d44e2e35d89a9c11e61fe0008af2f264b56de319f64647c",
+      "role": "independent direct seed diagnostic authorization"
+    },
+    {
+      "path": "receipts/audits/direct-result-verification.json",
+      "size": 1008,
+      "sha256": "030199245af2f0411a52965ddbe8021587ebdd42034aa8aa10d04e8e9cbada51",
+      "role": "independent direct diagnostic receipt verification"
+    },
+    {
+      "path": "receipts/audits/source-and-driver-files.json",
+      "size": 90714,
+      "sha256": "dbccefe32ac359ecbf6d2fee26d37aabf57df8ca0462af539abb0b5725b21a1f",
+      "role": "independent 565 source/driver manifest"
+    },
+    {
+      "path": "receipts/audits/post-driver-failure-audit.json",
+      "size": 1530,
+      "sha256": "66e2e08ef99a47116fac02cc350ffa71131d3c4d134bbf867bf564928742b473",
+      "role": "independent failed cross-volume attempt audit"
+    },
+    {
+      "path": "receipts/audits/same-volume-driver-verdict.json",
+      "size": 2781,
+      "sha256": "bbc57953d019cc7a35dbe3ded8d3fbf64c0362e280d1aca389526213fcb6f0b6",
+      "role": "owner-authorized same-volume build verdict"
+    },
+    {
+      "path": "receipts/audits/same-volume-driver-audit.json",
+      "size": 2721,
+      "sha256": "86d5b2a61b71b68564da94740c0958d661e1979027c6ffe4ac9e9b3f941d12d6",
+      "role": "independent build preflight audit"
+    },
+    {
+      "path": "receipts/audits/same-volume-independent-probes.json",
+      "size": 1335,
+      "sha256": "d7af31ba1e5f50f912710ab6964bfb2a7948ca944c95ba38bbd72e7d9efe3f6d",
+      "role": "independent RED/GREEN plan probes"
+    },
+    {
+      "path": "receipts/audits/post-same-volume-build-audit.json",
+      "size": 1906,
+      "sha256": "b20ddc9266f631d246a3fd4c83d797ffd63b1d7bb930ca702d240dbc739b7b4f",
+      "role": "independent build/cache/1551-input post-audit"
+    },
+    {
+      "path": "receipts/audits/native-cli-smoke-verdict.json",
+      "size": 2686,
+      "sha256": "70446d9784961a0413109e1303dfef7074b0188992d54635441ac59af4f96bc1",
+      "role": "owner-authorized native smoke verdict"
+    },
+    {
+      "path": "receipts/audits/native-smoke-preflight-audit.json",
+      "size": 2270,
+      "sha256": "aa860eea67e66a359984e50a3cbc437a2e70c18449f396f9be3cdff1498b6bcc",
+      "role": "independent smoke preflight audit"
+    },
+    {
+      "path": "receipts/audits/native-smoke-independent-pure-test.stdout",
+      "size": 207,
+      "sha256": "fb8859440b361ac8e0f26194fa0abd574bd7964e5aff2b05a1446af49e9b86f6",
+      "role": "independent pure smoke matcher tests stdout"
+    },
+    {
+      "path": "receipts/audits/native-smoke-independent-pure-test.stderr",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "independent pure smoke matcher tests stderr"
+    },
+    {
+      "path": "receipts/audits/post-native-smoke-audit.json",
+      "size": 2485,
+      "sha256": "8360bee5b5da27f095990fe7ad7b6c8093a4daecfadac83be22a9ef14fb494fa",
+      "role": "independent smoke/post-input/1551 post-audit"
+    },
+    {
+      "path": "receipts/audits/libuv-verification.json",
+      "size": 1091,
+      "sha256": "91909854e75f729b42d7004daec74266f5e9f8be9040a17f083b2b6bbaa1bf3e",
+      "role": "scoped 092 pin and libuv materialization audit"
+    },
+    {
+      "path": "receipts/probes/capture-env-sabotage.stdout.bin",
+      "size": 318,
+      "sha256": "2fd7aa4d1281389482ff3f5e2a40a402d7d4978dcac53e6e2f2513045967d9d6",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/capture-env-sabotage.stderr.bin",
+      "size": 608,
+      "sha256": "a974672107e4bd1a510c6fc7910ad7fb405746956f20a1a53d3afd2bbd84233f",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/capture-env-sabotage.status",
+      "size": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/missing-gc-launch.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/missing-gc-launch.stderr.bin",
+      "size": 582,
+      "sha256": "c690a945fb705e1d7e78b3de2b09d3cceaf4261d5333e364be59149cc77b7fa5",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/missing-gc-launch.status",
+      "size": 4,
+      "sha256": "2f1c37754e38b4ac70a9559fbfbdbd28feda47f36be9cd9e3ad5bc844ee3feb6",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/restored-gc-launch.stdout.bin",
+      "size": 159,
+      "sha256": "e3a2776e793ec1138389572a450df5089b7ca494076b767a5f2577d44902e806",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/restored-gc-launch.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/restored-gc-launch.status",
+      "size": 4,
+      "sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/wrong-volume-plan.stdout.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/wrong-volume-plan.stderr.bin",
+      "size": 502,
+      "sha256": "88d6c51e265e3d89c4e1242784c3c79272fa10f5e8cc43d921b77f1074ee7618",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/wrong-volume-plan.status",
+      "size": 4,
+      "sha256": "2f1c37754e38b4ac70a9559fbfbdbd28feda47f36be9cd9e3ad5bc844ee3feb6",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/restored-volume-plan.stdout.bin",
+      "size": 220,
+      "sha256": "a91bccb5fd2e1fd7183d70099acdf9a9d9e75e9a2ef0a90fb0c1a2457e322d84",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/restored-volume-plan.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "receipts/probes/restored-volume-plan.status",
+      "size": 4,
+      "sha256": "9aca8dfce962538fb8131d73f84cada05e4dc79f5a0d3612c511b1150f3e33e2",
+      "role": "read-only/synthetic named RED or restored GREEN probe"
+    },
+    {
+      "path": "README.md",
+      "size": 3512,
+      "sha256": "7184397fef90bcd605e7c4ee7045928b99225d0b671b8ca67499f67e6d3d76b8",
+      "role": "bundle usage and limits"
+    },
+    {
+      "path": "report.md",
+      "size": 11877,
+      "sha256": "b23005aa2bb958e9e80719eaa50117da892aa52ab187527fdcaacdfe463af4e2",
+      "role": "criteria 1-7 disposition"
+    },
+    {
+      "path": "harness.py",
+      "size": 14386,
+      "sha256": "8a2e3621feefd252c66c2f36f312819d18b9d3fa190799d4a52dca7cbde3b4b9",
+      "role": "offline receipt verifier and in-memory refusal self-tests"
+    }
+  ],
+  "scope_source": {
+    "path": "doc/tasks/116-carina-seed-compatibility/task/message.md",
+    "sha256": "e417fb189748208506ee2d6d12b9569bf9643788ac32a1e22df5b9c1d3788164"
+  }
+}
