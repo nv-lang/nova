@@ -70,6 +70,20 @@ def verify_record(record):
         raise Refusal("REFUSE_RECEIPT_HASH_MISMATCH", record["path"])
 
 
+def source_bytes_match(data, record):
+    """Accept exact pinned bytes or a pure CRLF checkout translation only."""
+    if len(data) == record["size"] and hashlib.sha256(data).hexdigest() == record["sha256"]:
+        return "exact"
+    crlf = data.count(b"\r\n")
+    bare_lf = data.count(b"\n") - crlf
+    if crlf and bare_lf == 0:
+        canonical = data.replace(b"\r\n", b"\n")
+        if (len(canonical) == record["size"] and
+                hashlib.sha256(canonical).hexdigest() == record["sha256"]):
+            return "crlf-checkout-translation"
+    return None
+
+
 def verify_pins(pins):
     for name in ("seed_zip_sha256", "seed_exe_sha256", "seed_source_sha"):
         if pins.get(name) != PINNED[name]:
@@ -165,13 +179,17 @@ def verify_bundle():
     if len(source_rows) != 565:
         raise Refusal("REFUSE_SOURCE_MANIFEST_COUNT", str(len(source_rows)))
     repository = ROOT.parents[3]
+    source_eol_translations = []
     for row in source_rows:
         path = pathlib.Path(row["path"])
         target = (repository / path).resolve()
         if not target.is_file():
             raise Refusal("REFUSE_SOURCE_MISSING", row["path"])
-        if target.stat().st_size != row["size"] or digest(target) != row["sha256"]:
+        match = source_bytes_match(target.read_bytes(), row)
+        if match is None:
             raise Refusal("REFUSE_SOURCE_HASH", row["path"])
+        if match == "crlf-checkout-translation":
+            source_eol_translations.append(row["path"])
     expected_source_paths = {row["path"] for row in source_rows}
     source_roots = ["novac/src", "std/src", "nova-driver/src", "nova-driver-support/src"]
     actual_source_paths = {
@@ -241,6 +259,7 @@ def verify_bundle():
     return {
         "receipts": len(files),
         "source_inputs": len(source_rows),
+        "source_eol_checkout_translations": source_eol_translations,
         "smoke_cases": 3,
         "seed_assets_republished": False,
         "generated_C_bytes_included": False,
@@ -269,6 +288,15 @@ def self_test():
     wrong_source = json.loads(json.dumps(bundle))
     wrong_source["pins"]["source_target_sha256"] = "0" * 64
     expect_refusal("REFUSE_WRONG_SOURCE_PIN", lambda: verify_pins(wrong_source["pins"]))
+
+    canonical_source = b"alpha\nbeta\n"
+    source_record = {"size": len(canonical_source), "sha256": hashlib.sha256(canonical_source).hexdigest()}
+    if source_bytes_match(canonical_source, source_record) != "exact":
+        raise AssertionError("exact source bytes must match")
+    if source_bytes_match(canonical_source.replace(b"\n", b"\r\n"), source_record) != "crlf-checkout-translation":
+        raise AssertionError("pure CRLF checkout translation must match canonical source")
+    if source_bytes_match(b"alpha\r\nbeta\n", source_record) is not None:
+        raise AssertionError("mixed EOL source bytes must be refused")
 
     wrong_hash = dict(bundle["files"][0])
     wrong_hash["sha256"] = "0" * 64

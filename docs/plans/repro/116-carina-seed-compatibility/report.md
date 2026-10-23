@@ -33,8 +33,8 @@ Offline harness проверяет только включённые receipts и
 | 3. C/native compiler и native smoke | **Доказано в пределах названного source snapshot** | Same-volume build сформировал C с SHA-256 `25c5404f…` и опубликовал AMD64 PE с SHA-256 `8287b9dd…`; независимый post-build audit подтвердил publication. Один разрешённый CLI smoke прошёл все три случая: usage (exit 2), `check stdout_hello.nv` (exit 0, оба потока пусты), absent absolute `.nv` (exit 2, точная cannot-read line); `native_exe_executed=true`, 3 подтверждённых старта, retry 0. Результат ограничен этим snapshot и smoke; C/PE bytes исключены и не перепроверяемы из Git. См. `receipts/smoke/` и build receipts. |
 | 4. Controls измеренного класса | **Частично — gap** | Сохранены runner RED/GREEN probes для capture-control removal, launch GC override, same-volume predicate и raw EOL matcher; harness проверяет named refusals на in-memory synthetic evidence. Эти probes не доказывают class controls для измеренного language/compiler compatibility gap и не запускают compiler/Oracle. Критерий не требует именно language-level fixture, но положительные/отрицательные class controls остаются недоказанными. См. `receipts/probes/`, `receipts/smoke/pure-test-*`. |
 | 5. Host/target и FFI contracts | **Частично — gap** | Проверенный target — `windows-x86_64` / `x86_64-pc-windows-msvc`; `NOVA_TARGET_OS` unset. GC/`atomic_ops` overrides выбирают только явные native inputs, не подменяют host/target. В этой задаче не добавлено `E_*`/`W_*`; отдельный targeted extern-call probe не выполнялся, поэтому поддержка действующего extern call не доказана. См. build/native manifests и launch receipts. |
-| 6. Независимая pre/post stage provenance и caches | **Частично** | Независимый audit подтвердил actual argv/cwd/env/status, published AMD64 hash, 565 source/driver inputs, 58 runtime files, 469 libuv files, 49 cache outputs, backup 4 prior `carina-build` files и post-smoke rehash всех 1551 pinned task-092 inputs (`missing=[]`, `changed=[]`). Оговорки: сравнение task-092 ограничено pinned inputs, не всем dirty worktree; seed launch metadata — opt-in allowlist, не полный inherited environment (#1897); failure-before-`Command::output`-return не создаёт child-specific receipt (#1896); исключённые C/PE bytes после утраты scratch повторно не валидируются. См. independent audit receipts. |
-| 7. DCO, независимая приёмка, exact-candidate CI/check-push-proven | **Не выполнено** | Этот отчёт не landing. Нет commit/DCO, fresh-main candidate, exact-candidate GitHub CI/check-push-proven и независимого финального acceptance verdict. По проверке интегратора, main `86af6bb82` имеет success у `nova-gate` run `39887889269` и обязательных workflows; старый watch был dropped/code null — исторический incident, не текущий блокер main. Это не заменяет CI для exact candidate. Номера 1895–1897 назначены интегратором; baseline `rows=1805`, `max=1897` обновлён только как учёт строк. Никакие violation/R2 baselines не повышались. CI не запускался исполнителем по указанию интегратора. |
+| 6. Независимая pre/post stage provenance и caches | **Частично** | Независимый audit подтвердил actual argv/cwd/env/status, published AMD64 hash, 565 source/driver inputs, 58 runtime files, 469 libuv files, 49 cache outputs, backup 4 prior `carina-build` files и post-smoke rehash всех 1551 pinned task-092 inputs (`missing=[]`, `changed=[]`). Offline verify принимает для одного Rust-файла `nova-driver/src/carina_build.rs` чистую CRLF checkout translation: после DCO checkout его рабочие bytes изменились из-за `core.autocrlf`, но LF-canonical SHA/size совпадают с pinned source record; перевода языка/содержимого нет. Оговорки: сравнение task-092 ограничено pinned inputs, не всем dirty worktree; seed launch metadata — opt-in allowlist, не полный inherited environment (#1897); failure-before-`Command::output`-return не создаёт child-specific receipt (#1896); исключённые C/PE bytes после утраты scratch повторно не валидируются. См. independent audit receipts. |
+| 7. DCO, независимая приёмка, exact-candidate CI/check-push-proven | **Не выполнено** | DCO handoff commit `0e7b8e8678509d4fe22b0fb20657d606b3f5506f` был сдан; rework change этого отчёта и raw-receipt rename передаются отдельным DCO commit на той же ветке. Независимая приёмка и exact-candidate GitHub CI/check-push-proven остаются впереди; CI не запускался исполнителем. По проверке интегратора, main `86af6bb82` имеет success у `nova-gate` run `39887889269` и обязательных workflows; старый watch был dropped/code null — исторический incident, не текущий блокер main. Это не заменяет CI для exact candidate. Номера 1895–1897 назначены интегратором; baseline `rows=1805`, `max=1897` обновлён только как учёт строк. Никакие violation/R2 baselines не повышались. |
 
 ## Открытые строки и релизная классификация
 
@@ -44,7 +44,7 @@ Offline harness проверяет только включённые receipts и
 
 ## STOP и дальнейшие границы
 
-Новых product fixes в `novac/`, `std/` или driver behavior не делалось. Не запускать Oracle, C/PE из bundle, новые source stages, `emit`, build, B2/fixed-point или CI без отдельного решения. Published seed не менялся; prior temporary EXE не исполнялся. Отдельное owner GO 13:40 разрешило интегратору один bounded круг 092 после нового pinned preflight; worker 116 его не запускал. Main CI RED относится к историческому incident: по сообщению интегратора, `nova-gate` run `39887889269` и обязательные workflows для main `86af6bb82` завершились success. Release impact строк №1895–1897 не оценён в задаче 116; отдельного решения о допустимости этих находок для Carina 0.3 нет.
+Новых product class-fixes в `novac/` и `std/` не делалось; изменения driver ограничены opt-in evidence capture и не закрывают №1896/1897. Не запускать Oracle, C/PE из bundle, новые source stages, `emit`, build, B2/fixed-point или CI без отдельного решения. Published seed не менялся; prior temporary EXE не исполнялся. Отдельное owner GO 13:40 разрешило интегратору один bounded круг 092 после нового pinned preflight; worker 116 его не запускал. Main CI RED относится к историческому incident: по сообщению интегратора, `nova-gate` run `39887889269` и обязательные workflows для main `86af6bb82` завершились success. Release impact строк №1895–1897 не оценён в задаче 116; отдельного решения о допустимости этих находок для Carina 0.3 нет.
 
 ## Portable harness checks
 
@@ -58,3 +58,50 @@ Oracle impostor; Oracle execution count равен нулю. `python harness.py 
 Эти проверки подтверждают только переносимость receipts и отказных контролей
 самого verifier; они не повышают gaps исходного 092 refusal, extern probe или
 class controls до PASS.
+
+## Формат отчёта по `window-brief-template.md` §6
+
+**РЕПРО:** подтверждён для класса guard/EOL: до переобозначения raw receipt
+локальный `bash scripts/guards/check-mixed-eol.sh .` завершился `FAIL`, указав
+единственный смешанный файл и счётчики ниже; независимый GitHub run
+`39946416356` на SHA `0e7b8e8678509d4fe22b0fb20657d606b3f5506f` сообщил тот же
+guard в tier `push [rest]` и `loop`. После переобозначения targeted guard GREEN.
+Это repro packaging/carrier-class, не compiler compatibility fixture.
+
+**ТОЧКА:** `scripts/guards/mixed-eol-scan.py:24–25` включает `.py` в `EXTS`;
+из-за этого raw receipt `receipts/smoke/pure-test-native-cli-smoke-executor-pure.py`
+проверялся как source. Его сохранённые bytes содержали `CRLF=1`, `bare-LF=29`.
+
+**ФИКС:** только переименование в
+`receipts/smoke/pure-test-native-cli-smoke-executor-pure.py.raw`, с обновлением
+manifest path/role и этого отчёта; `harness.py` также научен прозрачно принимать
+для source inputs только точную копию или проверенную LF-canonical pure-CRLF
+checkout translation. Содержимое raw receipt не переписано и SHA-256 остался
+`c1d488a579e1501803d78404d1d22ff8009fe3a8d939e09fdb51451c620db8ee`.
+
+**ФИКСТУРЫ:** переименованный `.py.raw` — byte-identical raw receipt, не
+исполняемая fixture; `harness.py self-test` — только in-memory refusal и EOL
+boundary checks verifier. Новые product/class fixtures не создавались; class
+controls остаются NOT PASS.
+
+**САБОТАЖ:** RED до переименования:
+`check-mixed-eol: FAIL — файлов со смешанными окончаниями строк: 1`;
+`pure-test-native-cli-smoke-executor-pure.py CRLF=1 bare-LF=29
+first-anomaly-line=1`. В CI RED — `nova-gate` run `39946416356`, exact SHA
+`0e7b8e8678509d4fe22b0fb20657d606b3f5506f`, tier `push [rest]` и `loop`;
+приёмщик указал именно receipt `.py` с CRLF/LF mixture. GREEN после rename:
+`check-mixed-eol ok: смешанных окончаний строк в рабочем дереве нет`.
+Raw bytes/hash не изменены; guard и baseline не ослаблялись.
+
+**std/src ДО/ПОСЛЕ:** не применимо / не применимо: в этом rework меняется
+только путь raw evidence и документация, `std/src` не затронут.
+
+**ВЕТКА/КОММИТ:** `task/116-carina-seed-compatibility`; предыдущий DCO handoff
+`0e7b8e8678509d4fe22b0fb20657d606b3f5506f`; этот rework сдаётся новым DCO
+коммитом на той же ветке (его полный SHA — в task submission).
+
+**ЧТО НЕ СДЕЛАНО:** не менялись байты raw receipt; не запускались source/native
+stages, emit/build, Oracle, 092, seed или CI; не создавались class fixtures,
+extern-call probe и полный C/PE evidence. Gaps исходной постановки и OPEN
+№1895–1897 сохранены; exact-candidate CI/check-push-proven принадлежит
+приёмщику.

@@ -21,9 +21,12 @@ python docs/plans/repro/116-carina-seed-compatibility/harness.py self-test
 
 The harness uses only the Python standard library. It reads and hashes the
 bundled receipts and, where present, the matching source/native input files in
-this checkout. It does **not** spawn a process, invoke Oracle, run Carina, run
-the native compiler, or start a build. `self-test` exercises named refusals
-against in-memory mutated evidence only.
+this checkout. For source inputs it accepts either the exact pinned bytes or a
+pure CRLF checkout translation whose LF-canonical bytes match the saved pin;
+mixed EOL or content changes are refused, and accepted translations are listed
+in the verifier output. It does **not** spawn a process, invoke Oracle, run
+Carina, run the native compiler, or start a build. `self-test` exercises named
+refusals and the EOL boundary against in-memory evidence only.
 
 Historical `launch.json` files intentionally retain the exact Windows paths
 and arguments observed during the runs. The harness treats those fields as
@@ -46,7 +49,11 @@ receipt data; it never dereferences them or uses them to launch anything.
   same-volume publication and its audits. The generated C and published PE
   bytes are not included; their hashes are recorded.
 - `receipts/smoke/` preserves the three CLI cases’ raw stdout/stderr/status,
-  launch metadata, matcher probes, and post-smoke audit.
+  launch metadata, matcher probes, and post-smoke audit. The captured Python
+  pure-probe source is stored as `pure-test-native-cli-smoke-executor-pure.py.raw`:
+  the `.py.raw` name keeps the mixed-EOL source bytes unchanged as evidence
+  while preventing the repository's source-file EOL guard from treating a raw
+  receipt as executable project source.
 - `receipts/audits/` preserves independent preflight, build, smoke, cache, and
   scoped task-092 receipts, including the post-smoke rehash of 1551 pinned
   task-092 inputs (`missing=[]`, `changed=[]`). That comparison does not claim
