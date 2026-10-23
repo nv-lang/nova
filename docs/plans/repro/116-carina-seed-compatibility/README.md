@@ -46,12 +46,27 @@ receipt data; it never dereferences them or uses them to launch anything.
   same-volume publication and its audits. The generated C and published PE
   bytes are not included; their hashes are recorded.
 - `receipts/smoke/` preserves the three CLI cases’ raw stdout/stderr/status,
-  launch metadata, matcher probes, and post-smoke audit.
+  launch metadata, matcher probes, and post-smoke audit. The captured Python
+  pure-probe source is stored as
+  `pure-test-native-cli-smoke-executor-pure.py.bin`: the `.py.bin` name keeps
+  the mixed-EOL bytes unchanged as evidence while preventing source-extension
+  hygiene guards from treating a raw receipt as active Python source.
 - `receipts/audits/` preserves independent preflight, build, smoke, cache, and
   scoped task-092 receipts, including the post-smoke rehash of 1551 pinned
   task-092 inputs (`missing=[]`, `changed=[]`). That comparison does not claim
   every byte of the dirty task-092 worktree.
 - `report.md` gives the criterion-by-criterion result and the remaining gaps.
+
+On Windows with `core.autocrlf`, the offline source-manifest check compares
+working-tree bytes with the captured source hashes and can refuse a file whose
+checkout line endings differ from those bytes. This is an explicit
+checkout-sensitive limitation, not a claim that the Git blob or compiler
+source changed. For example, the committed `nova-driver/src/carina_build.rs`
+blob was independently checked at 29,054 bytes / SHA-256
+`f6970454f74cdd4b507bf998777646cf287966b7ebb1119d26100763024695` while a
+Windows checkout measured 29,859 bytes / SHA-256
+`7f8c4e05cbb03378c4bcc34cc12916fa84207971600a4e400bfc1a035987c083` after
+CRLF materialization. The verifier does not silently normalize this mismatch.
 
 ## Boundaries
 

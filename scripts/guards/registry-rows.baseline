@@ -1,7 +1,7 @@
 # Task 116: integrator assigned 1895 to cross-volume native publication,
-# 1896 to missing seed-child failure receipt, and 1897 to incomplete inherited
-# environment provenance. Direct recount: rows=1802 -> 1805, max=1894 -> 1897,
-# dupes=0; prior gaps unchanged.
+# 1896 to missing seed-child failure receipt, 1897 to inherited environment
+# provenance, and 1898 to raw receipt/source-hygiene suffix collision. Direct
+# recount: rows=1802 -> 1806, max=1894 -> 1898, dupes=0; prior gaps unchanged.
 # Bootstrap preparation 116: integrator assigned 1894 to the guard perimeter
 # lost when production driver/support were extracted. Direct recount:
 # rows=1802, max=1894, dupes=0; all prior rows and gaps retained at that time.
@@ -1770,8 +1770,8 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1805
-max=1897
+rows=1806
+max=1898
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

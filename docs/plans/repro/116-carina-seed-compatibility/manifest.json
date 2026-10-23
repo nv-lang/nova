@@ -329,10 +329,10 @@
       "role": "exact raw smoke child or executor-wrapper receipt"
     },
     {
-      "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.py",
+      "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.py.bin",
       "size": 2376,
       "sha256": "c1d488a579e1501803d78404d1d22ff8009fe3a8d939e09fdb51451c620db8ee",
-      "role": "offline matcher/execution-state pure probe; no EXE launch"
+      "role": "byte-pinned raw mixed-EOL Python probe receipt; .py.bin avoids source-hygiene classification; no EXE launch"
     },
     {
       "path": "receipts/smoke/pure-test-native-cli-smoke-executor-pure.stdout.bin",
@@ -576,14 +576,14 @@
     },
     {
       "path": "README.md",
-      "size": 3512,
-      "sha256": "7184397fef90bcd605e7c4ee7045928b99225d0b671b8ca67499f67e6d3d76b8",
+      "size": 4494,
+      "sha256": "61aa68e06fa5671e0d29d055c65e18d4b1afc33f1d45fefdff38db2866760014",
       "role": "bundle usage and limits"
     },
     {
       "path": "report.md",
-      "size": 11877,
-      "sha256": "b23005aa2bb958e9e80719eaa50117da892aa52ab187527fdcaacdfe463af4e2",
+      "size": 17346,
+      "sha256": "d4dce547782c4e94c33d662d7c133977db61747153e89da915cbb61e2562f763",
       "role": "criteria 1-7 disposition"
     },
     {
