@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fail closed on new Oracle use in Carina build/bootstrap/release paths.
 
+Plan: docs/plans/274-novac-self-hosted-compiler.md (Carina bootstrap policy).
+
 The current REQUIRED novac gate still has recorded Oracle debt. Each legacy
 match set is pinned by exact path, pattern, count and SHA256 of its normalized
 lines in carina-oracle-debt.json, with a reason and replacement milestone. New

@@ -37,7 +37,7 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
-DIRS = ["nova-cli/src", "compiler-codegen/src"]
+DIRS = ["nova-cli/src", "compiler-codegen/src", "nova-driver/src", "nova-driver-support/src"]
 MACROS = re.compile(r"\b(anyhow!|bail!|eprintln!|format!)\s*\(")
 ERRNAME = re.compile(r"^(e|err|error|[a-z0-9_]*_err|[a-z0-9_]*_error)(\.to_string\(\))?$")
 PH = re.compile(r"\{\{|\}\}|\{([^{}]*)\}")

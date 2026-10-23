@@ -14,15 +14,16 @@ bad() { echo "  PROVAL $1" >&2; FAILED=1; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 run() { python "$G" "$1" > "$TMP/.out" 2> "$TMP/.err"; }
 
-mk() {   # $1 каталог, $2 текст файла nova-cli/src/x.rs
-    rm -rf "$1"; mkdir -p "$1/nova-cli/src" "$1/compiler-codegen/src"
-    printf '%s\n' "$2" > "$1/nova-cli/src/x.rs"
+mk() {   # $1 directory, $2 Rust text, $3 crate (default nova-cli)
+    local crate="${3:-nova-cli}"
+    rm -rf "$1"; mkdir -p "$1/nova-cli/src" "$1/compiler-codegen/src" "$1/$crate/src"
+    printf '%s\n' "$2" > "$1/$crate/src/x.rs"
 }
-pair() {  # $1 имя клетки, $2 красный текст, $3 зелёный текст
-    mk "$TMP/r" "$2"
+pair() {  # $1 name, $2 red text, $3 green text, $4 optional crate
+    mk "$TMP/r" "$2" "${4:-nova-cli}"
     run "$TMP/r"; rc=$?
     [ $rc -ne 0 ] && grep -q "x.rs:1:" "$TMP/.err" && ok "$1: red" || bad "$1: expected FAIL at x.rs:1"
-    mk "$TMP/g" "$3"
+    mk "$TMP/g" "$3" "${4:-nova-cli}"
     run "$TMP/g" && grep -q "ok:" "$TMP/.out" && ok "$1: green" || bad "$1: expected ok"
 }
 
@@ -40,6 +41,11 @@ pair "suffix name"        'anyhow!("open: {}", io_err)' \
                           'anyhow!("open: {:?}", io_err)'
 pair "to_string form"     'let vs = list_versions(url).map_err(|e| e.to_string())?;' \
                           'let vs = list_versions(url).map_err(|e| format!("{:#}", e))?;'
+
+for crate in nova-driver nova-driver-support; do
+    pair "$crate extracted error wrapper" 'bail!("build: {}", err);' \
+         'bail!("build: {:#}", err);' "$crate"
+done
 
 # A test reading the top message is not judged.
 mk "$TMP/a" 'assert!(err.to_string().contains("clone"), "err: {}", err);'
@@ -63,14 +69,14 @@ run "$TMP/n" && grep -q "ok:" "$TMP/.out" && ok "not judged: comment, other name
 
 # The real tree: ok as is, FAIL after one `{:#}` turns back into `{}`.
 run "$ROOT" && grep -q "ok:" "$TMP/.out" && ok "real tree: ok" || bad "real tree: expected ok ($(tail -1 "$TMP/.err"))"
-F="$ROOT/compiler-codegen/src/lockfile.rs"
+F="$ROOT/nova-driver-support/src/lockfile.rs"
 if grep -q 'git-зависимостей:\\n  {:#}' "$F" 2>/dev/null; then
-    mkdir -p "$TMP/t/compiler-codegen/src" "$TMP/t/nova-cli/src"
-    sed 's/git-зависимостей:\\n  {:#}/git-зависимостей:\\n  {}/' "$F" > "$TMP/t/compiler-codegen/src/lockfile.rs"
+    mkdir -p "$TMP/t/nova-driver-support/src" "$TMP/t/nova-cli/src"
+    sed 's/git-зависимостей:\\n  {:#}/git-зависимостей:\\n  {}/' "$F" > "$TMP/t/nova-driver-support/src/lockfile.rs"
     run "$TMP/t"; rc=$?
     [ $rc -ne 0 ] && grep -q "lockfile.rs" "$TMP/.err" && ok "real carrier reverted: red" || bad "real carrier reverted: expected FAIL"
 else
-    bad "real carrier lockfile.rs: the rewrapped line was not found"
+    bad "real carrier nova-driver-support/src/lockfile.rs: the rewrapped line was not found"
 fi
 
 [ $FAILED -eq 0 ] && echo "test-check-error-rewrap-chain: ok" || { echo "test-check-error-rewrap-chain: FAIL" >&2; exit 1; }

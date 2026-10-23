@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Plan 279 Э0: keep the main-fiber invariant connected to D493/D446 and both
-# runtime doors. This is deliberately narrower than invariant-discipline.
+# Plan: docs/plans/279-mn-safety-via-effects.md, stage zero.
+# Keep the main-fiber invariant connected to D493/D446 and both runtime doors.
+# The specification links and runtime comments are the explicit invariant home;
+# a missing link must not silently turn into a reviewer-only convention.
+# This guard reads text only and is narrower than invariant-discipline.
+# Usage: bash scripts/guards/check-main-fiber-invariant.sh [repository-root]
+# Exit 0 means every required link exists; missing input/link is exit 1.
+# The peer selftest removes required links and checks both verdicts.
 set -u
 export LC_ALL=C
 
