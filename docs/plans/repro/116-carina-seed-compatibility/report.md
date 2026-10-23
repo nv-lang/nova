@@ -102,16 +102,16 @@ first-anomaly-line=1`. Независимый CI RED — `nova-gate` run `399464
 `0e7b8e8678509d4fe22b0fb20657d606b3f5506f`, tiers `push [rest]` и `loop`.
 GREEN после `.py.bin` rename:
 `check-mixed-eol ok: смешанных окончаний строк в рабочем дереве нет`.
-Raw bytes/hash не переписаны; точные результаты сохранены здесь; scratch
-RED/GREEN outputs будут добавлены в rework receipts.
+Raw bytes/hash не переписаны; точные RED/GREEN outputs уже приведены здесь и
+независимо наблюдались приёмщиком; дополнительных receipt-файлов нет.
 
 **std/src ДО/ПОСЛЕ:** не применимо / не применимо: rework касается raw receipt
 filename, packaging metadata, отчёта и registry bookkeeping; `std/src` не
 затронут.
 
-**ВЕТКА/КОММИТ:** `task/116-carina-seed-compatibility`; предыдущий DCO handoff
-`0e7b8e8678509d4fe22b0fb20657d606b3f5506f`; этот rework входит в отдельный
-DCO commit, SHA которого будет вписан report-only DCO follow-up commit.
+**ВЕТКА/КОММИТ:** `task/116-carina-seed-compatibility`; evidence commit
+`318f59885d5c6732f06960f678b1609d655b76b3`. SHA текущего cleanup commit
+указан во внешних task submission metadata, без self-reference в файле.
 
 **ЧТО НЕ СДЕЛАНО:** raw receipt не нормализован; новые source/native stages,
 emit/build, Oracle, 092, seed, CI/push и full gate не запускались. Checkout-
