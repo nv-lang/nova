@@ -93,8 +93,8 @@ export fn shell_surface() -> InteropTable {
         "emit: shell.tpl.c is not UTF-8 for the stub scan")) {
         t.add_stub(stub)
     }
-    // Header-only host hook: C identifiers in included headers are not in the
-    // embedded template text, so name its ABI here for the next Carina stage.
+    // The approved bootstrap hook is header-backed rather than spelled in the
+    // embedded shell template, so add its existing ABI identifier to the surface.
     t.add(HOST_OS_C_FN)
     t
 }

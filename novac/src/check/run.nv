@@ -29,8 +29,9 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeId, NodeKind, no_node, raw_node}
 import ../diag.{Diagnostic}
 import ../builtins.{IMPL_ATTR}
-import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row, raw_row, module_dotted}
+import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row, raw_row, module_dotted, cfg_attr_state}
 import ../sem.{leaf_text}
+import ../sem.{decl_fn_row}
 import ../names.{NameTable, NamespaceId}
 import ../resolve.{FnIndex, FieldIndex, PRELUDE_ASKER}
 import ../types.{TyId, no_ty}
@@ -68,16 +69,20 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     for _ in 0..ctx.consts.rows.len() {
         mv_state.push(0)
     }
+    mut selected_fns = []FnRow.new()
+    ro res = FnIndex.build_for(ctx.fns, import_parts(file, false), import_parts(file, true),
+                               module_dotted(file), module_dotted(file), selected_fns,
+                               target_os: ctx.target_os)
     mut c = Checker {
         src, ctx,
         // #1493: the file's imports; #1521: the file asks from its own module.
-        res: FnIndex.build_for(ctx.fns, import_parts(file, false), import_parts(file, true),
-                               module_dotted(file), module_dotted(file)),
+        res,
         fres: FieldIndex.build(ctx.fields),
         gap_at: -1,
         gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
         chan: CheckOut.new(raw_node(file.id_of()) + 1),
+        inactive_fn_nodes: []NodeId.new(),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
         seen_decls: NameTable.new(NamespaceId.NsDefs),
         tail_value_body: no_node(),
@@ -102,6 +107,8 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
         home_sums: NameTable.new(NamespaceId.NsDefs),
         ret_self: false,
     }
+    c.chan.selected_fns = selected_fns
+    c.mark_inactive_function_attrs(file_decls(file))
     // THROUGH THE DOOR (P18): a raw walk over a file's children does not see
     // what sits inside an `export` wrapper, so `export #impl` would have been
     // invisible to this judge -- and invisible, not refused. `file_decls`
@@ -110,6 +117,15 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     // D341: a Serialize opt-in the synthesis did not spell is refused by its cause.
     c.judge_serde_fields(file_decls(file))
     c.walk(file)
+    if c.out.len() == 0 {
+        // D84 duplicate judging follows the structural walk so an already
+        // malformed file (for example, a repeated module header) keeps its
+        // primary diagnostic instead of collecting a second error from the
+        // functions it happens to contain.
+        c.reject_duplicate_fns(file_decls(file))
+    } else {
+        // The file already has a structural refusal; avoid a duplicate cascade.
+    }
     c.tell_gap_if_silent()
     if c.out.len() == 0 {
         // THE ENTRY IS A RESOLUTION (274.4 step 2): a name chain is walked to
@@ -148,6 +164,104 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     (c.out, c.chan)
 }
 
+fn Checker mut @reject_duplicate_fns(decls []Node) -> () {
+    for i in 0..decls.len() {
+        ro current = decls[i]
+        if current.kind_of() != NodeKind.FnDecl { continue }
+        ro row = match decl_fn_row(current, @ctx) {
+            None => continue
+            Some(r) => r
+        }
+        if !@has_selected_fn(row) { continue }
+        if !@definitely_active_for_target(row) { continue }
+        for j in 0..i {
+            ro earlier = decls[j]
+            if earlier.kind_of() != NodeKind.FnDecl { continue }
+            ro other = match decl_fn_row(earlier, @ctx) {
+                None => continue
+                Some(r) => r
+            }
+            if !@has_selected_fn(other) || !@definitely_active_for_target(other) ||
+                !same_fn_signature(@ctx, row, other) { continue }
+            @reject_first_leaf_of(branch_children(current), duplicate_fn_message(fn_row_name(@ctx, row)))
+            break
+        }
+    }
+}
+
+fn Checker @definitely_active_for_target(row FnRow) -> bool {
+    @ctx.fns.rows[raw_row(row)].target_state(@ctx.target_os) == 1
+}
+
+fn Checker mut @mark_inactive_function_attrs(decls []Node) -> () {
+    mut pending = []Node.new()
+    for d in decls {
+        if d.kind_of() == NodeKind.AttrDecl {
+            pending.push(d)
+            continue
+        }
+        if d.kind_of() == NodeKind.FnDecl {
+            mut inactive = false
+            if Some(row) = decl_fn_row(d, @ctx) {
+                inactive = @ctx.fns.rows[raw_row(row)].target_state(@ctx.target_os) == 0
+            } else if @ctx.target_os != "" {
+                // A method whose signature the subset cannot collect has no
+                // FnRow. Its known-false target predicates still suppress
+                // semantic checking; unknown predicates are not guessed.
+                mut state = 1
+                for attr in pending {
+                    if !attr_kids_name(branch_children(attr), "cfg") { continue }
+                    ro next = cfg_attr_state(attr, @ctx.target_os)
+                    state = if state == 0 || next == 0 { 0 }
+                            else if state == 1 && next == 1 { 1 }
+                            else { 0 - 1 }
+                }
+                inactive = state == 0
+            } else {
+                // No selected target in a target-agnostic unit test.
+            }
+            if inactive {
+                @inactive_fn_nodes.push(d.id_of())
+                for attr in pending { @inactive_fn_nodes.push(attr.id_of()) }
+            }
+        }
+        pending = []Node.new()
+    }
+}
+
+fn Checker @is_inactive_fn_node(id NodeId) -> bool {
+    for skipped in @inactive_fn_nodes {
+        if skipped == id { return true }
+    }
+    false
+}
+
+fn Checker @has_selected_fn(row FnRow) -> bool {
+    for selected in @chan.selected_fns {
+        if selected == row { return true }
+    }
+    false
+}
+
+fn same_fn_signature(ctx Ctx, left FnRow, right FnRow) -> bool {
+    ro a = ctx.fns.rows[raw_row(left)]
+    ro b = ctx.fns.rows[raw_row(right)]
+    if a.name != b.name || a.owner != b.owner || a.has_recv != b.has_recv ||
+        a.param_cnt != b.param_cnt || a.ret_id != b.ret_id || a.tparam_cnt != b.tparam_cnt ||
+        a.ret_ro != b.ret_ro || a.ret_self != b.ret_self { return false }
+    for i in 0..a.param_cnt {
+        ro ap = ctx.fns.params[a.param_off + i]
+        ro bp = ctx.fns.params[b.param_off + i]
+        if ap.type_id != bp.type_id || ap.mode != bp.mode { return false }
+    }
+    true
+}
+
+fn fn_row_name(ctx Ctx, row FnRow) -> str => ctx.fns.rows[raw_row(row)].name
+
+fn duplicate_fn_message(name str) -> str =>
+    "duplicate function definition `${name}` with the same signature for this target (E_DUP_DEFINITION, D84)"
+
 /// Type ONE declaration under a substitution -- one instance of a generic
 /// callable (E2-b2; donor: Go stenciling, one copy of the body per instance,
 /// each typed on its own).
@@ -179,10 +293,11 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
     } else {
         fd.handed_from
     }
+    mut selected_fns = []FnRow.new()
     mut c = Checker {
         src, ctx,
         res: FnIndex.build_for(ctx.fns, import_parts(body_file, false), import_parts(body_file, true),
-                               asker, file_mod),
+                               asker, file_mod, selected_fns, target_os: ctx.target_os),
         fres: FieldIndex.build(ctx.fields),
         // An instance of the FILE's own body never tells its gap: syntax was
         // judged when the file was checked, and telling it again would report
@@ -196,6 +311,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         gap_kind: TokenKind.ErrorTok,
         out: []Diagnostic.new(),
         chan: CheckOut.new(cap),
+        inactive_fn_nodes: []NodeId.new(),
         scope: Scope.new(), self_probe: NameTable.new(NamespaceId.NsLocals),
         seen_decls: NameTable.new(NamespaceId.NsDefs),
         tail_value_body: no_node(),
@@ -224,6 +340,7 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
         },
         ret_self: false,
     }
+    c.chan.selected_fns = selected_fns
     // THE SAME TWO PASSES AS THE FILE, over the BODY (registry 221.1 #1539): the
     // shape walk, then typing on a clean verdict. An instance used to be TYPED
     // only, so a form the subset walk refuses in a file of its own -- `ro s str
@@ -271,6 +388,10 @@ export fn check_instance(decl Node, src SourceText, ctx Ctx, row FnRow, substs [
 fn Checker mut @reject_repeated_impl(kids []Node) -> () {
     mut prev_impl = false
     for c in kids {
+        if @is_inactive_fn_node(c.id_of()) {
+            prev_impl = false
+            continue
+        }
         if c.kind_of() != NodeKind.AttrDecl {
             prev_impl = false
             continue

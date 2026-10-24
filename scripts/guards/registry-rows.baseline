@@ -1,3 +1,35 @@
+# Task 092, owner fixture-adaptation decision 2026-10-25 00:27:
+#   reg 1909 records the temporary FnDef receiver-address native CC failure.
+#   Only a fixture-local adaptation is authorized; compiler debt stays OPEN.
+#   rows=1808 -> 1809, max=1908 -> 1909; gaps/stale_gaps unchanged.
+# Task 092, owner helper-repair decision 2026-10-24 21:21:
+#   actual repair v2 received before accounting; reg 1908 records the
+#   executable-provenance, actual-SOURCE-authority and exclusive-output
+#   helper defects. Repair submitted, independent acceptance pending.
+#   direct recount rows=1808, max=1908, duplicates=0;
+#   rows=1807 -> 1808, max=1907 -> 1908; gaps/stale_gaps unchanged.
+# Task 092, owner bootstrap-generation decision 2026-10-24 20:47:
+#   direct recount rows=1807, max=1907, duplicates=0. Reg 1907 records
+#   the generation-dependent discovery/literal-order proof debt, not a
+#   demonstrated repeated random nondeterminism or a compiler class fix.
+#   rows=1806 -> 1807, max=1906 -> 1907; gaps/stale_gaps unchanged.
+# Task 092, owner registry-accounting instruction 2026-10-24: direct recount
+#   rows=1806, max=1906, duplicates=0. Added reg 1903 (vswhere environment
+#   exception), 1904 (Windows TC0 launch recipe), 1905 (STOP-disposition
+#   process gap), 1906 (integrator mutation of pinned authority).
+#   Reg 1900 now explicitly links absent SB_HOST_RED; no duplicate debt.
+#   rows=1802 -> 1806, max=1902 -> 1906. Gaps/stale_gaps unchanged;
+#   no compiler, plan, dispatcher or evidence pin change is authorized here.
+# Task 092, owner A+ 2026-10-24: direct recount rows=1802, max=1902,
+#   duplicates=0. Reconcile the previously added reg 1900 (bounded bridge
+#   refusal debt), reg 1901 (standalone block/if-context support debt), and
+#   reg 1902 (real-newline contract-display C escaping debt).
+#   rows=1799 -> 1802, max=1899 -> 1902. Gaps and stale_gaps unchanged;
+#   compiler debts stay OPEN. This count update is not a compiler class fix.
+# Task 092: row 1899 added (number assigned by the integrator). Direct recount
+#   rows=1798 -> 1799, max=1887 -> 1899. №1899 records the same-name cursor
+#   non-progress class; static traversal audit only, runtime reproduction not run.
+#   Newly exposed interval 1888-1898 is recorded in gaps=.
 # Task #101: rows 1884 and 1885 added (numbers assigned by the integrator
 #   at acceptance). Direct recount rows=1794 -> 1796, max=1883 -> 1885,
 #   dupes=0. №1884 is the spec-drift on retired operator-dispatch names
@@ -1752,8 +1784,8 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1798
-max=1887
+rows=1809
+max=1909
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
@@ -2309,7 +2341,7 @@ stale_gaps=0
 # repro dir renamed to match #1281.
 # rows 1231->1233, max 1279->1281.
 # rows 1228->1229, max 1276->1277.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839,1841-1849,1851-1855,1873
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839,1841-1849,1851-1855,1873,1888-1898
 # 2026-10-09, task #50: row 1870 added (number from the integrator); 1869 is task #43's row, not in this branch -> gaps=; rows 1775->1776, max 1868->1870.
 # 2026-10-08, task #50: row 1868 added (number from the integrator); 1867 is another task's number, not in this branch -> gaps=. rows 1774->1775, max 1866->1868.
 # 2026-10-08, task #46 merging main d69bb9250 (task #47 in: 1831 closed, row 1864): main 1770 + rows 1857, 1860, 1867 = 1773, max 1864 -> 1867; 1857 and 1860 leave gaps= (their rows land here), 1864 has its row, 1858-1859, 1862-1863 and 1865-1866 stay.

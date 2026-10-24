@@ -100,6 +100,7 @@ fn Checker mut @type_static_call(e Node, kids []Node) -> bool {
     mut cnt = 0
     mut named = 0
     for i in 0..@ctx.fns.rows.len() {
+        if !@has_selected_fn(FnRow(i)) { continue }
         ro fd = @ctx.fns.rows[i]
         if fd.name != mname || !is_ty(fd.owner) { continue }
         // A nominal head matches by its declaration (`Vec[T]` and `Vec[int]`

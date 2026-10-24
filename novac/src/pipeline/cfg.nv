@@ -7,8 +7,7 @@
 module novac.pipeline
 
 import ../tree.{Node, NodeKind, branch}
-import ../sem.{branch_children, file_decls, leaf_kind, leaf_text}
-import ../lex.{TokenKind}
+import ../sem.{branch_children, file_decls, leaf_text, cfg_attr_state}
 import ../parse.{parse}
 
 const CFG_UNKNOWN = 0 - 1
@@ -31,27 +30,22 @@ export fn filter_cfg(tree Node, target str) -> Node {
             mut item_state = CFG_TRUE
             mut pending = []Node.new()
             mut out = []Node.new()
+            // PRODUCER reconstruction, not a second declaration reader: only
+            // the original child sequence can preserve AttrDecl adjacency,
+            // ExportDecl wrappers, order and NodeIds in the rebuilt File.
+            // `file_decls` intentionally opens ExportDecl and cannot rebuild
+            // this tree. Item judgement remains limited to the existing cfg
+            // state below; D495 retains Fn nodes and applies their row metadata later.
             for child in children {
                 if child.kind_of() == NodeKind.AttrDecl {
+                    pending.push(child)
                     if is_cfg_attr(child) {
                         ro state = cfg_attr_state(child, target)
                         if before_module {
                             file_state = cfg_and(file_state, state)
-                            if state == CFG_UNKNOWN {
-                                pending.push(child)
-                            } else {
-                                // Known predicates have already contributed to file_state.
-                            }
                         } else {
                             item_state = cfg_and(item_state, state)
-                            if state == CFG_UNKNOWN {
-                                pending.push(child)
-                            } else {
-                                // Known predicates have already contributed to item_state.
-                            }
                         }
-                    } else {
-                        pending.push(child)
                     }
                     continue
                 }
@@ -59,7 +53,10 @@ export fn filter_cfg(tree Node, target str) -> Node {
                     if file_state == CFG_FALSE {
                         return branch(id, NodeKind.File, []Node.new())
                     }
-                    out.append(pending)
+                    for attr in pending {
+                        if is_cfg_attr(attr) && cfg_attr_state(attr, target) != CFG_UNKNOWN { continue }
+                        out.push(attr)
+                    }
                     pending = []Node.new()
                     out.push(child)
                     before_module = false
@@ -70,8 +67,17 @@ export fn filter_cfg(tree Node, target str) -> Node {
                     pending.push(child)
                     continue
                 }
-                if item_state != CFG_FALSE {
+                if is_function_item(child) {
+                    // Function AST identity and its leading attributes are
+                    // retained; semantic collection and resolution carry the
+                    // target applicability on the callable row.
                     out.append(pending)
+                    out.push(child)
+                } else if item_state != CFG_FALSE {
+                    for attr in pending {
+                        if is_cfg_attr(attr) && cfg_attr_state(attr, target) != CFG_UNKNOWN { continue }
+                        out.push(attr)
+                    }
                     out.push(child)
                 } else {
                     // The inactive item and all of its leading attributes are
@@ -84,13 +90,30 @@ export fn filter_cfg(tree Node, target str) -> Node {
                 return branch(id, NodeKind.File, []Node.new())
             }
             if item_state != CFG_FALSE {
-                out.append(pending)
+                for attr in pending {
+                    if is_cfg_attr(attr) && cfg_attr_state(attr, target) != CFG_UNKNOWN { continue }
+                    out.push(attr)
+                }
             } else {
                 // An inactive trailing item has no declaration to preserve.
             }
             branch(id, NodeKind.File, out)
         }
         Leaf(token) => Node.Leaf(token)
+    }
+}
+
+fn is_function_item(n Node) -> bool {
+    match n {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.FnDecl { return true }
+            if kind != NodeKind.ExportDecl { return false }
+            for c in children {
+                if c.kind_of() == NodeKind.FnDecl { return true }
+            }
+            false
+        }
     }
 }
 
@@ -123,108 +146,6 @@ fn is_cfg_attr(n Node) -> bool {
     if n.kind_of() != NodeKind.AttrDecl { return false }
     ro kids = branch_children(n)
     kids.len() > 1 && leaf_text(kids[1]) == "cfg"
-}
-
-fn cfg_attr_state(n Node, target str) -> int {
-    ro kids = branch_children(n)
-    if kids.len() < 5 || leaf_kind(kids[2]) != TokenKind.LParen { return CFG_UNKNOWN }
-    ro (state, next) = cfg_or(kids, 3, target)
-    if next >= kids.len() || leaf_kind(kids[next]) != TokenKind.RParen { return CFG_UNKNOWN }
-    state
-}
-
-fn cfg_or(kids []Node, start int, target str) -> (int, int) {
-    ro (first, next) = cfg_and_expr(kids, start, target)
-    if next < kids.len() && leaf_kind(kids[next]) == TokenKind.PipePipe {
-        ro (right, after_right) = cfg_or(kids, next + 1, target)
-        ro state = cfg_or_state(first, right)
-        return (state, after_right)
-    } else {
-        (first, next)
-    }
-}
-
-fn cfg_and_expr(kids []Node, start int, target str) -> (int, int) {
-    ro (first, next) = cfg_not_expr(kids, start, target)
-    if next < kids.len() && leaf_kind(kids[next]) == TokenKind.AmpAmp {
-        ro (right, after_right) = cfg_and_expr(kids, next + 1, target)
-        ro state = cfg_and_state(first, right)
-        return (state, after_right)
-    } else {
-        (first, next)
-    }
-}
-
-fn cfg_or_state(left int, right int) -> int {
-    if left == CFG_TRUE || right == CFG_TRUE {
-        CFG_TRUE
-    } else if left == CFG_FALSE && right == CFG_FALSE {
-        CFG_FALSE
-    } else {
-        CFG_UNKNOWN
-    }
-}
-
-fn cfg_and_state(left int, right int) -> int {
-    if left == CFG_FALSE || right == CFG_FALSE {
-        CFG_FALSE
-    } else if left == CFG_TRUE && right == CFG_TRUE {
-        CFG_TRUE
-    } else {
-        CFG_UNKNOWN
-    }
-}
-
-fn cfg_not_expr(kids []Node, start int, target str) -> (int, int) {
-    if start >= kids.len() { return (CFG_UNKNOWN, start) }
-    mut i = start
-    if leaf_kind(kids[i]) == TokenKind.Bang {
-        i += 1
-        ro (value, next) = cfg_not_expr(kids, i, target)
-        if value == CFG_TRUE { return (CFG_FALSE, next) }
-        if value == CFG_FALSE { return (CFG_TRUE, next) }
-        return (CFG_UNKNOWN, next)
-    }
-    cfg_atom(kids, i, target)
-}
-
-fn cfg_atom(kids []Node, start int, target str) -> (int, int) {
-    if start >= kids.len() { return (CFG_UNKNOWN, start) }
-    mut i = start
-    if leaf_kind(kids[i]) == TokenKind.LParen {
-        i += 1
-        ro (value, next) = cfg_or(kids, i, target)
-        if next >= kids.len() || leaf_kind(kids[next]) != TokenKind.RParen { return (CFG_UNKNOWN, next) }
-        i = next
-        i += 1
-        return (value, i)
-    }
-    if leaf_kind(kids[i]) != TokenKind.Ident { return (CFG_UNKNOWN, i) }
-    ro key = leaf_text(kids[i])
-    i += 1
-    if i >= kids.len() || leaf_kind(kids[i]) != TokenKind.Assign { return (CFG_UNKNOWN, i) }
-    i += 1
-    if i >= kids.len() || leaf_kind(kids[i]) != TokenKind.StrLit { return (CFG_UNKNOWN, i) }
-    ro value = leaf_text(kids[i])
-    i += 1
-    if key != "target_os" { return (CFG_UNKNOWN, i) }
-    if value == "\"windows\"" || value == "windows" { return (target_os_state(target, "windows"), i) }
-    if value == "\"linux\"" || value == "linux" { return (target_os_state(target, "linux"), i) }
-    if value == "\"macos\"" || value == "macos" { return (target_os_state(target, "macos"), i) }
-    if value == "\"unix\"" || value == "unix" || value == "\"posix\"" || value == "posix" {
-        return (target_posix_state(target), i)
-    }
-    (CFG_FALSE, i)
-}
-
-fn target_os_state(target str, expected str) -> int {
-    if target == expected { return CFG_TRUE }
-    CFG_FALSE
-}
-
-fn target_posix_state(target str) -> int {
-    if target == "linux" || target == "macos" { return CFG_TRUE }
-    CFG_FALSE
 }
 
 fn cfg_and(left int, right int) -> int {

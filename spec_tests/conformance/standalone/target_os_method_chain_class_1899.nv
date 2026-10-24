@@ -1,0 +1,76 @@
+// EXPECT_STDOUT method-chain-class-ok
+// Class lane: copy this file unchanged with pinned novac peers into a scratch
+// package; compile with the accepted Carina B2, never a replacement traversal.
+module standalone.target_os_method_chain_class_1899
+
+import ../../../novac/src/sem.{FnTable, ParamDef, ParamMode}
+import ../../../novac/src/types.{TyId, no_ty}
+
+// These stable IDs are compared by FnTable; this door never dereferences types.
+fn pair_case(label str, mask int, unknown int, tail int, expected bool) Io -> () {
+    println("CHAIN_ENTER ${label}")
+    ro p = ParamDef { name: "self", type_id: TyId(0), mode: ParamMode.ModeRo, default_expr: None }
+    ro other = ParamDef { name: "self", type_id: TyId(1), mode: ParamMode.ModeRo, default_expr: None }
+    mut t = FnTable.new()
+    t.add("route", TyId(0), true, []ParamDef.of(p), []str.new(), []str.new(), target_mask: mask, target_unknown_mask: unknown)
+    if tail == 0 {
+        t.add("route", TyId(0), true, []ParamDef.of(p), []str.new(), []str.new(), target_mask: 1)
+    } else if tail == 1 {
+        t.add("route", TyId(0), true, []ParamDef.of(other), []str.new(), []str.new(), target_mask: 1)
+    }
+    t.seal_own()
+    assert(t.own_methods.find("route") == 0)
+    ro head = t.rows[0]
+    assert(head.target_state("windows") != 1)
+    ro next = if tail < 0 { -1 } else { 1 }
+    assert(t.own_next[0] == next)
+    if tail >= 0 {
+        ro active_tail = t.rows[1]
+        assert(t.own_next[1] == -1 && active_tail.target_state("windows") == 1)
+    }
+    ro found = t.file_declares_method("route", []ParamDef.of(p), no_ty(), target_os: "windows")
+    assert(found == expected)
+    assert(!t.file_declares_method("absent", []ParamDef.of(p), no_ty(), target_os: "windows"))
+    println("CHAIN_OK ${label}")
+}
+
+fn mixed_case(label str, matching_tail bool) Io -> () {
+    println("CHAIN_ENTER ${label}")
+    ro p = ParamDef { name: "self", type_id: TyId(0), mode: ParamMode.ModeRo, default_expr: None }
+    ro other = ParamDef { name: "self", type_id: TyId(1), mode: ParamMode.ModeRo, default_expr: None }
+    ro mutable = ParamDef { name: "self", type_id: TyId(0), mode: ParamMode.ModeMut, default_expr: None }
+    mut t = FnTable.new()
+    t.add("route", TyId(0), true, []ParamDef.of(p), []str.new(), []str.new(), target_mask: 4)
+    t.add("route", TyId(0), true, []ParamDef.of(p), []str.new(), []str.new(), target_mask: 0, target_unknown_mask: 1)
+    t.add_static(TyId(1), "route", TyId(0), []ParamDef.of(p), []str.new(), []str.new(), "", false, target_mask: 1)
+    t.add("route", TyId(0), true, []ParamDef.of(p, p), []str.new(), []str.new(), target_mask: 1)
+    t.add("route", TyId(0), true, []ParamDef.of(other), []str.new(), []str.new(), target_mask: 1)
+    t.add("route", TyId(0), true, []ParamDef.of(mutable), []str.new(), []str.new(), target_mask: 1)
+    if matching_tail { t.add("route", TyId(0), true, []ParamDef.of(p), []str.new(), []str.new(), target_mask: 1) }
+    t.seal_own()
+    ro count = if matching_tail { 7 } else { 6 }
+    assert(t.own_cnt == count && t.own_methods.find("route") == 0)
+    for i in 0..count {
+        ro next = if i + 1 == count { -1 } else { i + 1 }
+        assert(t.own_next[i] == next)
+    }
+    ro inactive_head = t.rows[0]
+    ro unknown_head = t.rows[1]
+    assert(inactive_head.target_state("windows") == 0 && unknown_head.target_state("windows") == -1)
+    assert(t.rows[2].owner != no_ty() && t.rows[3].param_cnt == 2)
+    ro found = t.file_declares_method("route", []ParamDef.of(p), no_ty(), target_os: "windows")
+    assert(found == matching_tail)
+    println("CHAIN_OK ${label}")
+}
+
+fn main() Io -> () {
+    pair_case("inactive-match", 4, 0, 0, true)
+    pair_case("unknown-match", 0, 1, 0, true)
+    pair_case("inactive-nomatch", 4, 0, 1, false)
+    pair_case("unknown-nomatch", 0, 1, 1, false)
+    pair_case("inactive-empty", 4, 0, -1, false)
+    pair_case("unknown-empty", 0, 1, -1, false)
+    mixed_case("mixed-match", true)
+    mixed_case("mixed-nomatch", false)
+    println("method-chain-class-ok")
+}

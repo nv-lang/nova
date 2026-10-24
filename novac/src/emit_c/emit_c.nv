@@ -338,6 +338,7 @@ fn Emitter @reached_fns(file Node) -> []Node {
             // so there is nothing for the emitter to write.
             None => continue
             Some(row) => {
+                if !@has_selected_fn(row) { continue }
                 if !@reach.has(row) {
                     continue
                 } else {
@@ -348,6 +349,13 @@ fn Emitter @reached_fns(file Node) -> []Node {
         reached.push(c)
     }
     reached
+}
+
+fn Emitter @has_selected_fn(row FnRow) -> bool {
+    for selected in @out.selected_fns {
+        if selected == row { return true }
+    }
+    false
 }
 
 /// A prototype per callable of the file, written before any definition.

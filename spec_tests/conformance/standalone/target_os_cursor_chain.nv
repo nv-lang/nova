@@ -1,0 +1,25 @@
+// EXPECT_STDOUT target-cursor-ok
+module standalone.target_os_cursor_chain
+
+type TargetCursor { n int }
+
+// The macOS row is first. On Windows/Linux it is inactive, and the same-name
+// traversal must advance to the active alternative rather than stall.
+#cfg(target_os = "macos")
+fn TargetCursor @route() -> int => 3
+
+#cfg(target_os = "windows" || target_os = "linux")
+fn TargetCursor @route() -> int => 2
+
+#cfg(target_os = "windows" || target_os = "linux")
+fn expected_route() -> int => 2
+
+#cfg(target_os = "macos")
+fn expected_route() -> int => 3
+
+fn main() Io -> () {
+    ro cursor = TargetCursor { n: 0 }
+    ro actual = cursor.route()
+    assert(actual == expected_route())
+    println("target-cursor-ok value=${actual}")
+}

@@ -49,6 +49,7 @@ type Checker {
     gap_kind TokenKind
     out []Diagnostic /// diagnostics collected by this run
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
+    inactive_fn_nodes []NodeId /// inactive function/attribute nodes: syntax is read, semantic and subset checks are skipped
     scope Scope /// locals of the function body being typed; reset per function
     /// One-entry table reused by the self-initializer check (274.3/F28). It is
     /// a FIELD and not a local because the lookup door must not build anything

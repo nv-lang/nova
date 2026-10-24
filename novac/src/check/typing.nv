@@ -116,6 +116,10 @@ fn Checker mut @type_file(file Node) -> () {
             }
             for c in file_decls(file) {
                 if c.kind_of() != NodeKind.FnDecl { continue }
+                if @is_inactive_fn_node(c.id_of()) { continue }
+                if Some(row) = decl_fn_row(c, @ctx) {
+                    if !@has_selected_fn(row) { continue }
+                }
                 @type_fn(c)
             }
         }

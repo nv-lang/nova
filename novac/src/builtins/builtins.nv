@@ -55,12 +55,14 @@ export const TYPE_KIND_COUNT = 10
 /// Name of the program entry function.
 export const ENTRY_FN = "main"
 
-/// The one std callable whose body Carina delegates to a native host hook:
-/// D99 requires the compiler process's actual OS as the final target default.
-/// This is a Carina runtime bridge, not general FFI or a new language intrinsic.
+/// The existing std host-OS callable used by Carina's narrow bootstrap bridge.
+/// D99 host identity remains distinct from target selection; this does not add
+/// a general platform-FFI rule or a new language intrinsic.
 export const HOST_OS_MODULE = "std.os"
 export const HOST_OS_FN = "host_os"
 export const HOST_OS_C_FN = "os_host_os"
+/// The one marked bootstrap compiler unit permitted to use the host OS bridge.
+export const HOST_BOOTSTRAP_MODULE = "novac"
 
 /// Name of the print statement the subset understands (a statement form
 /// today, not a std function — the one println the runtime prints through).

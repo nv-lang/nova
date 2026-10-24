@@ -60,8 +60,9 @@ import ../types.{TyId}
 fn context(tree Node, decls []Node, interop InteropTable) -> Ctx => collect(tree, decls, interop)
 
 /// The same, with what the door read for the text's `embed` calls (D412).
-fn context_with_embeds(tree Node, decls []Node, interop InteropTable, embeds EmbedTable) -> Ctx {
-    mut ctx = collect(tree, decls, interop)
+fn context_with_embeds(tree Node, decls []Node, interop InteropTable, embeds EmbedTable,
+                       target_os str = "") -> Ctx {
+    mut ctx = collect(tree, decls, interop, target_os: target_os)
     // The door's `embed` findings (D412) are HANDED, like the interop surface:
     // the collector reads no file (sem/embeds.nv).
     ctx.embeds = embeds
@@ -604,7 +605,7 @@ type Front {
 fn front(text str, decls []Node, interop InteropTable, embeds EmbedTable, target_os str = "") -> Front {
     ro parsed = parse(tokens_of(text))
     ro tree = if target_os == "" { parsed } else { filter_cfg(parsed, target_os) }
-    ro ctx = context_with_embeds(tree, decls, interop, embeds)
+    ro ctx = context_with_embeds(tree, decls, interop, embeds, target_os: target_os)
     ro derived = derive_serialize_text(ctx)
     if derived.text == "" {
         return Front { src: SourceText { text }, tree, ctx, at: text.byte_len(), derived }
@@ -614,7 +615,8 @@ fn front(text str, decls []Node, interop InteropTable, embeds EmbedTable, target
     ro full = "${text}${derived.text}"
     ro parsed2 = parse(tokens_of(full))
     ro tree2 = if target_os == "" { parsed2 } else { filter_cfg(parsed2, target_os) }
-    Front { src: SourceText { text: full }, tree: tree2, ctx: context_with_embeds(tree2, decls, interop, embeds),
+    Front { src: SourceText { text: full }, tree: tree2, ctx: context_with_embeds(tree2, decls, interop, embeds,
+                                                                                  target_os: target_os),
             at: text.byte_len(), derived }
 }
 

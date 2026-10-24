@@ -38,6 +38,7 @@ fn Emitter mut @collect_spawns(file Node) -> () {
         match decl_fn_row(c, @ctx) {
             None => continue
             Some(row) => {
+                if !@has_selected_fn(row) { continue }
                 if !@reach.has(row) { continue }
                 collect_spawn_nodes(c, @spawns)
             }

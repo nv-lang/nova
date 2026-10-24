@@ -18,7 +18,7 @@ module novac.check
 import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO, SERIALIZE_PROTO}
-import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args, leaf_text}
+import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args, leaf_text, cfg_attr_state, decl_fn_row}
 
 /// An `import` declaration, judged by the subset walk.
 fn Checker mut @walk_import(children []Node) -> () {
@@ -64,7 +64,7 @@ fn Checker mut @walk_import(children []Node) -> () {
 }
 
 /// An attribute `#...`, judged by the subset walk.
-fn Checker mut @judge_attr(children []Node) -> () {
+fn Checker mut @judge_attr(attr Node, children []Node) -> () {
     // TWO attributes are read (274.5 wave B6). `#coerce` is
     // JUDGED: it declares a PAIR (D429) the collector reads.
     // `#realtime` (with or without `nogc`) is READ AND NOT
@@ -111,12 +111,60 @@ fn Checker mut @judge_attr(children []Node) -> () {
         // every file, so the day the oracle starts policing the
         // guarantee, this decision reddens there. See the doc of
         // REALTIME_ATTR for the measurement behind it.
+    } else if attr_kids_name(children, "cfg") && cfg_attr_state(attr, @ctx.target_os) != (0 - 1) {
+        // D99 target_os predicates are evaluated by the pipeline and their
+        // function applicability is retained on FnDef (D495).
     } else {
         // ONE DOOR, two texts: `#impl(P)` of a protocol the subset does not
         // derive yet -- `#impl(Deserialize)` first of all -- is named by its
         // cause and its stage (the integrator's choice (c), sweep 10); any
         // other attribute keeps the generic text.
         @report_first_leaf_of(children, if attr_kids_name(children, IMPL_ATTR) { IMPL_DEFERRED_MSG } else { ATTR_MSG })
+    }
+}
+
+/// Function declaration checks. An inactive target function keeps its syntax
+/// diagnostics and AST, but receives no semantic/subset judgments (D495).
+fn Checker mut @judge_fn_decl(n Node, children []Node) -> bool {
+    if @is_inactive_fn_node(n.id_of()) {
+        @walk_syntax(n)
+        return true
+    }
+    if Some(row) = decl_fn_row(n, @ctx) {
+        if !@has_selected_fn(row) {
+            @walk_syntax(n)
+            return true
+        }
+    }
+    if @report_if_extern_decl(children) {
+        // The whole FORM is refused, so the rules below have nothing left to
+        // judge: they ask about a declaration novac will not compile.
+        return true
+    }
+    // A METHOD ON A VALUE RECORD is compiled since D488: its receiver crosses
+    // by copy or by pointer (sem/value_recv.nv).
+    @tail_value_body = value_body_of(children)
+    @report_if_default_order(children)
+    @report_if_generic_decl(children)
+    @report_if_tail_has_no_value(children)
+    @report_if_explicit_self_return(children)
+    @report_if_return_type_undeclared(children)
+    @report_if_decl_types_undeclared(children)
+    false
+}
+
+/// Preserve parser diagnostics inside an inactive platform function without
+/// running semantic or subset judgments on its body.
+fn Checker mut @walk_syntax(n Node) -> () {
+    match n {
+        Leaf(t) => @report_if_error_token(t)
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.Err {
+                @report_err_branch(children)
+                return
+            }
+            for c in children { @walk_syntax(c) }
+        }
     }
 }
 

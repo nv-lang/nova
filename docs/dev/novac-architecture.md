@@ -2542,3 +2542,26 @@ unsafe в сигнатуре) — снять: балансировать неч�
 - [274.1](../plans/274.1-novac-architecture.md) — план этого документа, приёмка
 - [novac-bootstrap.md](novac-bootstrap.md) — ступени, дифф-гейт, реестр расхождений
 - [compiler-conventions.md](compiler-conventions.md) — источник уроков для конвенции novac
+
+## Временный host-OS мост bootstrap
+
+Владелец разрешил узкое исключение только для Carina bootstrap: compiler unit `novac` в
+отмеченной program-сборке может вызвать существующий `std.os.host_os()` через уже имеющийся
+header-backed `os_host_os` hook. Это не новое правило платформенного FFI, не общий extern
+механизм и не подмена target ОС. Общее ограничение остаётся в
+[`module-conventions.md`](module-conventions.md#L39): platform constants принадлежат чистому
+`.nv`/`#cfg`, а не новым FFI hooks. Здесь используется только существующий native hook, уже
+необходимый `std.os`.
+
+Мост ограничен конкретной checker-selected handed free row: исходное объявление `std.os.host_os`
+с телом, без receiver/static owner/generics/parameters, с обычным `str`-возвратом, и только когда
+requester `ctx.module_c == "novac"` и существующий `InteropTable` пометил `novac` как module
+программы. Resolver, visibility, применимость, типы и arity продолжают выбирать и проверять ту же
+`FnRow`; emitter не ищет имя повторно. `sem.mangle.c_free_symbol(ctx,row)` — единственная дверь,
+которая выдаёт для этой строки `os_host_os`.
+
+Это временное расхождение с общей нормой, а не прецедент для других platform APIs. Удаление
+исключения: когда Carina сможет компилировать declaration-driven `extern "C" fn os_host_os() ->
+str` обычным путём от допустимого predecessor, убрать bootstrap predicate, специальные constants
+и ручное включение hook в interop surface. Сам общий extern путь этим изменением не реализуется.
+Ни source/runtime acceptance, ни native proof не следуют из наличия этого bridge.

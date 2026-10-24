@@ -94,19 +94,22 @@ export const PRELUDE_ASKER = "#prelude"
 /// pass. Visibility is NOT judged by an index built this way (`@sees` answers
 /// true): an instance body is typed under its own module's imports, which the
 /// caller of `check_instance` does not have.
-export fn FnIndex.build(fns FnTable) -> FnIndex => index_of(fns)
+export fn FnIndex.build(fns FnTable, target_os str = "") -> FnIndex {
+    mut unused_selected = []FnRow.new()
+    index_of(fns, target_os, unused_selected)
+}
 
 /// The one construction both builders share -- a free function, so `build_for`
 /// reaches it without a call on a type (registry #1493 follow-up: every form here
 /// is one Carina's subset already compiles, the 0.2 measure did not grow).
-fn index_of(fns FnTable) -> FnIndex {
+fn index_of(fns FnTable, target_os str, mut selected_rows []FnRow) -> FnIndex {
     mut nx = []FnRow.new()
     mut im = []str.new()
     mut ix = FnIndex {
         heads: NameTable.new(NamespaceId.NsCallables), imp: NameTable.new(NamespaceId.NsCallables),
         next: nx, imp_segs: im, vis_on: false, asker: "", file_mod: "",
     }
-    ix.fill(fns)
+    ix.fill(fns, target_os, selected_rows)
     ix
 }
 
@@ -124,8 +127,9 @@ fn index_of(fns FnTable) -> FnIndex {
 /// its own module, and an instance of a handed body asks from the module the
 /// body was WRITTEN in, with that body's file's imports -- so `helper()` in
 /// `hp.geo`'s `Vec[T] @tag` names `hp.geo`'s helper, not the caller's.
-export fn FnIndex.build_for(fns FnTable, names []str, segs []str, asker str, file_mod str) -> FnIndex {
-    mut ix = index_of(fns)
+export fn FnIndex.build_for(fns FnTable, names []str, segs []str, asker str, file_mod str,
+                            mut selected_rows []FnRow, target_os str = "") -> FnIndex {
+    mut ix = index_of(fns, target_os, selected_rows)
     ix.vis_on = true
     ix.asker = asker
     ix.file_mod = file_mod
@@ -258,13 +262,23 @@ fn seg_start(dotted str) -> int {
 /// the split, per row: remember the previous head, become the head. The
 /// MUTATING form on purpose (П18): registration may allocate, a lookup door
 /// may not, and the guard tells them apart by exactly this shape.
-fn FnIndex mut @fill(fns FnTable) -> () {
+fn FnIndex mut @fill(fns FnTable, target_os str, mut selected_rows []FnRow) -> () {
     for i in 0..fns.rows.len() {
+        if target_os != "" && !row_applies(fns.rows[i], target_os) {
+            @next.push(no_row())
+            continue
+        }
         ro name = fns.rows[i].name
         @next.push(FnRow(@heads.find(name)))
         @heads.put(name, i)
+        selected_rows.push(FnRow(i))
     }
 }
+
+fn row_applies(fd FnDef, target_os str) -> bool {
+    fd.target_state(target_os) == 1
+}
+
 
 /// WHERE the chain of this name starts, and WHAT follows a row in it -- the two
 /// halves of "walk the candidates", each allocation-free.
