@@ -22,7 +22,8 @@
 # Not here on purpose: nova-lint and `nova-gate / gate.sh tier push` -- their red (#1355) is
 # silenced point-wise in the tree, not accepted.
 #
-# 2026-10-25, integrator post-092: the #1442 entry was removed -- pre-push
-# noticed its signatures no longer match any current red, so the exemption
-# was inert; row #1442 stays open in the registry and a NEW red of that
-# cause will need fresh signatures from a real log (the form above).
+# 2026-10-25, integrator: the #1442 entry was removed as inert in 6e4a87440
+# and restored the same day -- branch run 40198241703 proved the cause live
+# (three "no verdict" deadline cuts + duplicate C name in novac-gate).
+# The exemption stays while the row is open.
+nova-gate / novac-gate #1442 sig:"check-novac-differential.sh: ОБРЫВ, вердикта нет" sig:"NOVAC-GATE FAIL: shell.tpl.c протух" differential cut by its limit without a verdict (stage 3 does not grow with the corpus) and shell.tpl.c stale after oracle emission changes (signatures from the real logs of runs 36947831053 on 2488a47be and 36812856352 on 9712b306f)
