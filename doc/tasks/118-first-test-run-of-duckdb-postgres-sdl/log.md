@@ -1,1 +1,6 @@
 2026-10-25 17:05 документ: задание заведено плагином: «first test run of duckdb postgres sdl»; task/message.md — шаблон из полей задачи; основа — main 992b9c240
+2026-10-25 17:05 пуск: запуск №1 исп [2026-10-25 17:05] — 118 исп «Первичный прогон условия 0.3 по трём пакетам плана 274.16, которых НЕТ в списке гейта: nova-duckdb, nova-postgres, nova-»
+2026-10-25 17:10 пуск: старт: состояние 3 реп зафиксировано (duckdb 674b12aac main, только untracked .vscode/; postgres 8a4652026 main clean; sdl e636ac928 master clean); поставлена сборка оракула nova-cli release из дерева 3445f8bb3 (= main 992b9c240 + доки задачи), crew_watch machine:true
+2026-10-25 17:16 пуск: оракул собран за 6 мин (rc=0), nova-cli/target/release/nova.exe 20344832 байт; поставлены три прогона `nova test src` (duckdb, postgres, sdl) в очередь машины, логи в scratch сессии 118/
+2026-10-25 17:20 находка: первый заход упал за 4с: FATAL libuv submodule not initialized в worktree-оракуле (NOVA_RT_DIR смотрел в моё дерево, сабмодуль пуст); инициализировал `git submodule update --init compiler-codegen/nova_rt/libuv` (1cfa32ff), прогоны перезапущены
+2026-10-25 17:21 ворота: nova-postgres: PASS (1 PASS / 0 FAIL / 1 SKIP, 26с), оракул 992b9c240, лог scratch 118/test-nova-postgres.log
