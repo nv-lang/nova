@@ -1,0 +1,11 @@
+// EXPECT_STDOUT Hello, Nova!
+// Реестр №1889: штатный `nova build` через pinned Carina B1 обязан отдавать
+// сиду дерево модулей САМОЙ программы (стейджит драйвер), а не novac/src.
+// Минимальный носитель: вход + один folder-module.
+module crossmod_build_min.main
+
+import ./helper.{greet}
+
+fn main() Io -> () {
+    println(greet("Nova"))
+}
