@@ -74,12 +74,28 @@ pub(crate) fn build(
 
     let package_dir = driver::find_package_dir(&entry)
         .ok_or_else(|| anyhow!("missing nova.toml for build entry {}", entry.display()))?;
+    // find_package_dir canonicalizes internally, so the path is verbatim
+    // (\\?\) while the entry was normalized: strip the prefix here or every
+    // later relative-to-package computation (the program stage layout,
+    // registry №1889) silently falls back to bare file names.
+    let package_dir = normalize_verbatim_path(&package_dir);
     let manifest_path = package_dir.join("nova.toml");
     let manifest = driver::manifest::parse_manifest(&manifest_path, &package_dir)
         .ok_or_else(|| anyhow!("invalid package manifest: {}", manifest_path.display()))?;
     // This is driver-owned package/lock resolution, not compiler work.
     driver::lockfile::sync(&package_dir)
         .map_err(|e| anyhow!("dependency resolution (nova.lock.toml): {:#}", e))?;
+
+    // The program's own module graph is the driver's (274.16 Ш.4, registry
+    // №1889): the pinned B1 seed reads ONE program root recursively and
+    // groups every directory into one unit, so the compiler's own
+    // `novac/src` — right for building Carina itself — hides a user
+    // program's modules, and a whole package root would merge a crowded
+    // corpus directory into a single unit. Stage exactly the reachable
+    // files into a fresh per-build tree with the package-relative layout
+    // preserved, and hand THAT root to the seed. A program with no program
+    // modules keeps the historical single-file invocation byte-for-byte.
+    let program_files = crate::program::discover_program_files(&entry, &manifest)?;
 
     let seed_capture_dir = env_path_override("NOVA_CARINA_CAPTURE_DIR");
     if seed_capture_dir.is_some() {
@@ -100,6 +116,7 @@ pub(crate) fn build(
     let c_file = target_dir.join(format!("{stem}.{build_id}.carina.c"));
     let temp_exe = target_dir.join(format!("{stem}.{build_id}.tmp.exe"));
     let obj_dir = target_dir.join(format!("{stem}.{build_id}.obj"));
+    let stage_dir = target_dir.join(format!("{stem}.{build_id}.src"));
     let final_exe = output
         .map(PathBuf::from)
         .unwrap_or_else(|| entry.with_extension("exe"));
@@ -113,21 +130,58 @@ pub(crate) fn build(
         &target_dir.join(format!("{stem}.obj")),
     )?;
 
-    let carina_args = vec!["emit".to_owned(), entry.to_string_lossy().into_owned()];
+    // Stage the program tree only when the program has modules of its own;
+    // the single-file invocation keeps the historical root (the compiler's
+    // own tree) and the real entry path, so the D89 golden path is untouched.
+    let (emit_entry, self_root) = if program_files.is_empty() {
+        (entry.clone(), repo.join("novac/src"))
+    } else {
+        let staged = crate::program::stage_program(
+            &stage_dir,
+            &manifest.source_root,
+            &entry,
+            &program_files,
+        )?;
+        println!(
+            "nova build program: {} source file(s) staged under {}",
+            program_files.len() + 1,
+            stage_dir.display()
+        );
+        (staged, stage_dir.clone())
+    };
+
+    let carina_args = vec![
+        "emit".to_owned(),
+        emit_entry.to_string_lossy().into_owned(),
+    ];
     let mut carina = Command::new(&seed.exe);
-    configure_seed_command(&mut carina, &carina_args, &repo);
+    configure_seed_command(&mut carina, &carina_args, &repo, &self_root);
     let emitted = carina
         .output()
         .context("could not start pinned Carina B1 emit")?;
+    // The staged tree exists for the emit child only; the generated C and
+    // the captured diagnostics outlive it. --keep-artifacts keeps it.
+    if !keep_artifacts && !program_files.is_empty() {
+        std::fs::remove_dir_all(&stage_dir)
+            .with_context(|| format!("cannot remove program stage {}", stage_dir.display()))?;
+    }
     capture_seed_child_if_requested(
         seed_capture_dir.as_deref(),
         &seed.exe,
         &carina_args,
         &repo,
+        &self_root,
         &emitted,
     )?;
     if !emitted.status.success() {
-        let detail = String::from_utf8_lossy(&emitted.stderr);
+        let stderr = String::from_utf8_lossy(&emitted.stderr);
+        // B1 prints its §7 diagnostics as JSON on STDOUT; with stderr empty
+        // the refusal would otherwise surface as a blank message.
+        let detail = if stderr.trim().is_empty() {
+            String::from_utf8_lossy(&emitted.stdout)
+        } else {
+            stderr
+        };
         bail!(
             "Carina B1 emit failed (exit {}): {}",
             emitted.status.code().unwrap_or(1),
@@ -262,12 +316,25 @@ pub(crate) fn build(
         remove_file_if_present(&final_exe)?;
     }
     if let Err(error) = std::fs::rename(&temp_exe, &final_exe) {
-        if !keep_artifacts {
-            cleanup_native_intermediates(&temp_exe, &obj_dir)?;
-            remove_file_if_present(&c_file)?;
+        // rename(2) cannot cross volumes (os error 17 on Windows): an output
+        // path on another drive than the build dir must still publish.
+        // Fall back to copy + remove; any failure of THAT is the real error.
+        let published = std::fs::copy(&temp_exe, &final_exe)
+            .and_then(|_| std::fs::remove_file(&temp_exe));
+        if let Err(copy_error) = published {
+            if !keep_artifacts {
+                cleanup_native_intermediates(&temp_exe, &obj_dir)?;
+                remove_file_if_present(&c_file)?;
+            }
+            return Err(copy_error)
+                .with_context(|| {
+                    format!(
+                        "cannot publish native executable {} (rename failed too: {})",
+                        final_exe.display(),
+                        error
+                    )
+                });
         }
-        return Err(error)
-            .with_context(|| format!("cannot publish native executable {}", final_exe.display()));
     }
 
     let binary_sha = sha256_file(&final_exe)?;
@@ -291,6 +358,7 @@ fn capture_seed_child_if_requested(
     executable: &Path,
     argv: &[String],
     cwd: &Path,
+    self_root: &Path,
     output: &Output,
 ) -> Result<()> {
     let Some(capture_dir) = capture_dir else {
@@ -311,7 +379,7 @@ fn capture_seed_child_if_requested(
         &capture_dir.join("status"),
         format!("{status}\n").as_bytes(),
     )?;
-    let metadata = seed_child_metadata(executable, argv, cwd, status)?;
+    let metadata = seed_child_metadata(executable, argv, cwd, self_root, status)?;
     write_new_capture_file(&capture_dir.join("launch.json"), metadata.as_bytes())?;
     Ok(())
 }
@@ -333,6 +401,7 @@ fn seed_child_metadata(
     executable: &Path,
     argv: &[String],
     cwd: &Path,
+    self_root: &Path,
     status: i32,
 ) -> Result<String> {
     let executable = executable
@@ -370,7 +439,10 @@ fn seed_child_metadata(
         Some("<removed from child>".to_owned()),
     ));
     env.push(("NOVA_STD_PATH", Some(cwd_path(cwd, "std/src")?)));
-    env.push(("NOVAC_SELF_PATH", Some(cwd_path(cwd, "novac/src")?)));
+    let self_root_text = self_root
+        .to_str()
+        .ok_or_else(|| anyhow!("Carina child program root is not valid UTF-8"))?;
+    env.push(("NOVAC_SELF_PATH", Some(self_root_text.to_owned())));
 
     let mut json_env = Vec::with_capacity(env.len());
     for (name, value) in env {
@@ -424,7 +496,12 @@ fn json_string(value: &str) -> String {
     out
 }
 
-fn configure_seed_command<'a>(command: &'a mut Command, argv: &[String], repo: &Path) {
+fn configure_seed_command<'a>(
+    command: &'a mut Command,
+    argv: &[String],
+    repo: &Path,
+    self_root: &Path,
+) {
     command
         .args(argv)
         .current_dir(repo)
@@ -432,7 +509,10 @@ fn configure_seed_command<'a>(command: &'a mut Command, argv: &[String], repo: &
         // optional capture is evidence-only and must not alter the child env.
         .env_remove("NOVA_CARINA_CAPTURE_DIR")
         .env("NOVA_STD_PATH", repo.join("std/src"))
-        .env("NOVAC_SELF_PATH", repo.join("novac/src"));
+        // The program's own root: the staged tree of the program's reachable
+        // files for a multi-module build (registry №1889), or the compiler's
+        // own tree for the historical single-file invocation.
+        .env("NOVAC_SELF_PATH", self_root);
 }
 
 struct Seed {
@@ -698,9 +778,10 @@ mod tests {
         let executable = PathBuf::from(r#"C:\seed\carina"雪.exe"#);
         let args = vec!["emit".to_owned(), "arg\nwith-line-break.nv".to_owned()];
         let cwd = PathBuf::from(r#"D:\source\repo"#);
+        let self_root = PathBuf::from(r#"D:\source\repo\target\program.src"#);
         let child_output = output(7, b"\0C\r\n", b"seed warning\n");
 
-        capture_seed_child_if_requested(Some(&dir), &executable, &args, &cwd, &child_output)
+        capture_seed_child_if_requested(Some(&dir), &executable, &args, &cwd, &self_root, &child_output)
             .unwrap();
 
         assert_eq!(
@@ -726,12 +807,14 @@ mod tests {
         let executable = PathBuf::from("seed.exe");
         let args = vec!["emit".to_owned(), "main.nv".to_owned()];
         let cwd = PathBuf::from("repo");
+        let self_root = PathBuf::from("repo/novac/src");
         let first = output(0, b"first stdout", b"first stderr");
-        capture_seed_child_if_requested(Some(&dir), &executable, &args, &cwd, &first).unwrap();
+        capture_seed_child_if_requested(Some(&dir), &executable, &args, &cwd, &self_root, &first)
+            .unwrap();
 
         let second = output(9, b"second stdout", b"second stderr");
         assert!(
-            capture_seed_child_if_requested(Some(&dir), &executable, &args, &cwd, &second,)
+            capture_seed_child_if_requested(Some(&dir), &executable, &args, &cwd, &self_root, &second,)
                 .is_err()
         );
         assert_eq!(
@@ -754,6 +837,7 @@ mod tests {
             std::path::Path::new("seed.exe"),
             &["emit".to_owned(), "main.nv".to_owned()],
             std::path::Path::new("repo"),
+            std::path::Path::new("repo/novac/src"),
             &output(0, b"C", b""),
         );
         assert!(result.is_ok());
@@ -774,7 +858,7 @@ mod tests {
             "/c".to_owned(),
             "if defined NOVA_CARINA_CAPTURE_DIR (exit /b 9) else (exit /b 0)".to_owned(),
         ];
-        configure_seed_command(&mut command, &args, &repo);
+        configure_seed_command(&mut command, &args, &repo, &repo.join("novac/src"));
         let output = command.output().unwrap();
         assert!(
             output.status.success(),
@@ -790,6 +874,7 @@ mod tests {
             std::path::Path::new(r#"C:\seed\carina"雪.exe"#),
             &["emit".to_owned(), "line\nnext.nv".to_owned()],
             std::path::Path::new(r#"D:\source\repo"#),
+            std::path::Path::new(r#"D:\source\repo\target\program.src"#),
             1,
         )
         .unwrap();
