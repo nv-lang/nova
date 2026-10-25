@@ -4,3 +4,4 @@
 2026-10-25 17:16 пуск: оракул собран за 6 мин (rc=0), nova-cli/target/release/nova.exe 20344832 байт; поставлены три прогона `nova test src` (duckdb, postgres, sdl) в очередь машины, логи в scratch сессии 118/
 2026-10-25 17:20 находка: первый заход упал за 4с: FATAL libuv submodule not initialized в worktree-оракуле (NOVA_RT_DIR смотрел в моё дерево, сабмодуль пуст); инициализировал `git submodule update --init compiler-codegen/nova_rt/libuv` (1cfa32ff), прогоны перезапущены
 2026-10-25 17:21 ворота: nova-postgres: PASS (1 PASS / 0 FAIL / 1 SKIP, 26с), оракул 992b9c240, лог scratch 118/test-nova-postgres.log
+2026-10-25 17:33 документ: итог: duckdb FAIL (E_MATCH_NON_EXHAUSTIVE, sqltag.nv:40, пакет не мигрирован на SqlValue №1637), postgres PASS, sdl PASS; запись №TBD в 221.1-bug-sweep.md, отчёт report.md, коммит 701385eb2, письмо интегратору отправлено
