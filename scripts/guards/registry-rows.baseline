@@ -1,3 +1,8 @@
+# Task 092 acceptance, number from the integrator 2026-10-25:
+#   reg 1911 records Carina's duplicate-fn diagnostic text naming
+#   E_DUP_DEFINITION where the oracle emits E_DUPLICATE_DECL (run.nv:263,
+#   P3). Direct recount: rows 1818 -> 1819, max 1910 -> 1911, duplicates 0;
+#   gaps unchanged.
 # Task 092, owner class-fix decision 2026-10-25:
 #   reg 1910 records inactive #coerce candidates bypassing D495 applicability.
 #   Direct recount: rows 1817 -> 1818, max 1909 -> 1910, duplicates 0;
@@ -1808,8 +1813,8 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1818
-max=1910
+rows=1819
+max=1911
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
