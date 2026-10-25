@@ -71,21 +71,29 @@ NOVAC_SELF_PATH»): сломано — RED: `Carina B1 emit failed (exit 1)` с
 обе crossmod-фикстуры, строгая сверка ПОЛНОГО stdout и exit; на драйвере с
 возвращённым старым контрактом `(staged, repo.join("novac/src"))` даёт RED
 (`E_NOVAC_SUBSET greet`, exit 1 — лог
-`evidence/crossmod-red.log`), на штатном — GREEN (exit 0, логи
-`evidence/crossmod-green.log`, `crossmod-green-final.log`). Oracle-прогон
+`docs/plans/repro/1889-multi-module-carina-build/crossmod-red.txt`), на
+штатном — GREEN (exit 0, логи `crossmod-green.txt`, `crossmod-green-final.txt`
+там же). Oracle-прогон
 (`nova test`) и юнит-тесты `program.rs` этот wiring НЕ покрывают — скрипт и
 есть страж класса; ни один CI-джоб сида не скачивает, поэтому скрипт —
 локальный/по-требованию, как `carina-build-golden.py`. ДОСЛОВНЫЙ RED/GREEN
 через драйвер одним файлом (заказ интегратора 22:04):
-`evidence/evidence-driver-red-green.log` — GREEN (exit 0, `Hello, Nova!`) →
+`docs/plans/repro/1889-multi-module-carina-build/evidence-driver-red-green.txt`
+— GREEN (exit 0, `Hello, Nova!`) →
 RED (exit 1, `E_NOVAC_SUBSET`) → GREEN. Различие «литеральный before vs
 саботажный эквивалент»: литеральный прогон довоенным бинарником в файл не
 писался (терминал, цитаты в §РЕПРО); фаза RED восстанавливает тот же контракт
 вызова сида при прочих равных, диагностика дословно совпадает с прямым
-прогоном «до» (`evidence/repro-before-seed-direct.json`). SHA-256 бинаря
+прогоном «до» (`docs/plans/repro/1889-multi-module-carina-build/repro-before-seed-direct.json`).
+SHA-256 бинаря
 драйвера между пересборками одного исходника различается (недетерминизм
 линковки) — вердикт опирается на поведение и пустой `git diff` после
-восстановления.
+восстановления. Улики живут в `docs/plans/repro/1889-multi-module-carina-build/`,
+а не в папке задачи: машинные пути в уликах законны только под
+`docs/plans/repro/**` (страж №698), а `*.log` покрыт `.gitignore` — круг 1
+сначала положил их в `doc/tasks/.../evidence/*.log`, и восемь логов молча не
+уехали в коммит (поймано красным CI кандидата c1dee2608: единственный
+отслеженный файл с путём, `.json`, и покраснил страж).
 
 std/src: не применимо: правка только nova-driver (Rust), компилятор
 (`compiler-codegen/`) и `std/` не тронуты — `nova check std/src` не судит этот
@@ -109,7 +117,7 @@ spec: не применимо — язык не меняется, D-блок н�
   пакета (`import pkgq2.helper.{greet}`) — ребро между единицами не
   создаётся; НЕ чинился (сид запинен), заведён строкой **№1924** (номер
   интегратора, К2, БЛОКИРУЕТ ТЕГ: НЕТ — обход `./helper`; минимальное репро и
-  лог в `evidence/pkgq2-ice-program-nv-157.log`).
+  лог в `docs/plans/repro/1889-multi-module-carina-build/pkgq2-ice-program-nv-157.txt`).
 - №1895 (cross-drive publish): починен только носитель (fallback copy+remove);
   закрытие класса — за интегратором.
 - MSVC (№1890) — вне объёма 0.3 по слову владельца 18:05.
