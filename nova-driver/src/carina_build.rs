@@ -329,7 +329,7 @@ pub(crate) fn build(
             return Err(copy_error)
                 .with_context(|| {
                     format!(
-                        "cannot publish native executable {} (rename failed too: {})",
+                        "cannot publish native executable {} (rename failed too: {:#})",
                         final_exe.display(),
                         error
                     )
