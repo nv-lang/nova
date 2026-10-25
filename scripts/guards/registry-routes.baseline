@@ -1580,7 +1580,10 @@ no_caveat=0
 # 2026-10-25, integrator (task 119 rows into the 221.1 package): 112 -> 113, row 1922
 # filed OPEN, BLOKIRUET TEG: DA (the driver hides the seed diagnostics that S5 needs
 # for classifying every corpus refusal). Row 1923 is retracted, not a blocker.
-blockers=113
+# 2026-10-26, integrator: 113 -> 114, row 1926 filed OPEN, BLOKIRUET TEG: DA (the marginal
+# novac-check-cache wall makes the push tier fail on the slowed runner; the tag needs green CI
+# on the exact SHA).
+blockers=114
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
