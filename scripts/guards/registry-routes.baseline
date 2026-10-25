@@ -1577,7 +1577,10 @@ no_caveat=0
 # closed bounded in the final acceptance of task 092 (acceptor acts verdict.md + owner-disposition.md,
 # owner exception 2026-10-25 16:50): within the verdict matrices; payload/ABI/Linux native stay outside
 # the closure and would be new rows if seen there. Measured on this branch's registry.
-blockers=112
+# 2026-10-25, integrator (task 119 rows into the 221.1 package): 112 -> 113, row 1922
+# filed OPEN, BLOKIRUET TEG: DA (the driver hides the seed diagnostics that S5 needs
+# for classifying every corpus refusal). Row 1923 is retracted, not a blocker.
+blockers=113
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
