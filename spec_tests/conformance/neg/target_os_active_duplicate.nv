@@ -2,8 +2,8 @@
 module neg.target_os_active_duplicate
 
 #cfg(target_os = "windows" || target_os = "linux" || target_os = "macos")
+// nova:expect E_DUPLICATE_DECL -- the first of two definitions active for the same target
 fn duplicate_target() -> int => 1
 
 #cfg(target_os = "windows" || target_os = "linux" || target_os = "macos")
-// nova:expect E_DUPLICATE_DECL -- two definitions are active for the same target
 fn duplicate_target() -> int => 2
