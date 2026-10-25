@@ -1,0 +1,19 @@
+{
+  "spec/decisions/07-modules.md": "120670c4010cffc7684c58289293d66cc2e4fa872486a039667f9e0f25b6fb1a",
+  "docs/dev/novac-architecture.md": "5c33dcdd3166b16dfcb633b0b2c984fef36e2673e8ee6a3617eea75cb0850afc",
+  "novac/src/sem/coerce.nv": "1c1ccb0e5e4872507e93fe2b39ccc82430ce83ee4ad37ef5ebbcbcd49c99975e",
+  "novac/src/sem/callables.nv": "b3e83ab0884362c98d648cbf078daa7b5a22fe70dd27c7fab4697e14b54fda19",
+  "novac/src/sem/collect.nv": "f174e79b23022c290f97181efaa0a2076dade0a8e87153811e0887487ee83550",
+  "novac/src/sem/harvest.nv": "b60f2362fa8460e7f6c14544c738bae0244c98503cbef029f33f70a3e06552a2",
+  "novac/src/sem/sem.nv": "118ee42f6144775dc581e81c1420459b9b45cddde63ce33105967af03a1bc953",
+  "novac/src/sem/handed_bodies.nv": "bc6c5b9a1fcf99431d0ffd96fd700d9662c7ff54ce4a46eecab63d6e9c5ac445",
+  "novac/src/sem/mangle_instance.nv": "9df925ba5e9dd8e8452aa05850c918a3c51868195aebca60ad6b75d4f89bfbad",
+  "novac/src/resolve/resolve.nv": "3ad470ac478e0a4fb15f7525b5c98a519933ceae7081574a030348060cbb2989",
+  "novac/src/pipeline/cfg.nv": "c0c6680a5e886a08d8d71a02474152e1199afebbb5e8303c61fa5844ccf18520",
+  "novac/src/pipeline/cfg_fn_test.nv": "11e25b02791fb1813aa270e4bdf27be2d7ed7b2e7c3088b802af34eda1fb5721",
+  "novac/src/check/return_rules.nv": "cf4ce7e6b501de9ec41cf5c658d3358c43d9de5686952573b674ba8a538750bb",
+  "novac/src/check/calls.nv": "34d2dfd7f69c718c5ed8e4020ca60c5f4dd10bd19c854f6b8a17f3fcf74d6baf",
+  "novac/src/check/numeric_positions.nv": "4449bb891957aa5f8dbaa0cde1e388eed65bd01f4c3d455b28dac64917b83dee",
+  "novac/src/check/decl_forms.nv": "930d1ddb38449782461ecd7d6bfaaed498f1537b120f98912676948582d007c0",
+  "novac/src/check/typing.nv": "c7cd1deca0f07d926b72c45d265e97d411ad1d9024b39fa060fc3a3f65d1bef9"
+}

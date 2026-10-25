@@ -1,3 +1,16 @@
+# 2026-10-25, task 092, integrator letter 04:57:
+# blockers 110 -> 111: reg 1910 (inactive-target #coerce pair returned by
+# coerce_row from the unfiltered registry, bypassing the D495
+# applicability filter) is registered OPEN/pending and explicitly
+# tag-blocking until the final independent acceptance of task 092.
+# Same guard-sanctioned chronicle mechanism as reg 1899 (109 -> 110
+# below); not a waiver, closure or threshold weakening.
+# no_route/no_caveat unchanged.
+# 2026-10-25, task 092, owner bookkeeping scope 00:47:
+# blockers 109 -> 110: reg 1899 now explicitly says tag-blocking while the
+# final independent review is pending. This records the already-known K1,
+# not a waiver or closure. Reg 1909 is OPEN/P2 fixture-adaptation debt.
+# no_route/no_caveat unchanged; guard logic and all former rows preserved.
 # 2026-09-18 (integrator, okno nova-ff): blockers 73 -> 72 -- zakryt No1157
 #   (tihaya polovina No762): imya modulnoy konstanty v pozitsii obraztsa
 #   otvergaetsya diagnostikoy E_MATCH_CONST_PATTERN. Baza opuskaetsya TOY ZHE
@@ -1554,7 +1567,7 @@ no_caveat=0
 # 2026-10-11, task #63: blockers 110 -> 109. Row 1878 closed after the #62
 #   fix was merged and its exact Windows artifact workflow passed, meeting
 #   the owner-approved lifecycle condition; no registry count or gap rewritten.
-blockers=109
+blockers=111
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

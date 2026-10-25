@@ -1,3 +1,9 @@
+# Task 092, owner class-fix decision 2026-10-25:
+#   reg 1910 records inactive #coerce candidates bypassing D495 applicability.
+#   Direct recount: rows 1817 -> 1818, max 1909 -> 1910, duplicates 0;
+#   gaps unchanged. Source fix and targeted proof remain pending acceptance.
+# Task 092 isolated integration, owner doc-union decision 2026-10-25:
+# Preserve both branches' registry entries and historical accounting below.
 # Task 116: integrator assigned 1895 to cross-volume native publication,
 # 1896 to missing seed-child failure receipt, 1897 to inherited environment
 # provenance, and 1898 to raw receipt/source-hygiene suffix collision. Direct
@@ -16,6 +22,38 @@
 # Task #106: row 1888 added; direct recount rows 1798 -> 1799, max 1887 -> 1888,
 #   dupes=0. №1888 is the pinned Carina B1 D104 `E_DOC_BOTH_FORMS` negative
 #   diagnostic gap (open; asset/source SHA and carrier caveat are in 221.1).
+# Task 092, owner fixture-adaptation decision 2026-10-25 00:27:
+#   reg 1909 records the temporary FnDef receiver-address native CC failure.
+#   Only a fixture-local adaptation is authorized; compiler debt stays OPEN.
+#   rows=1808 -> 1809, max=1908 -> 1909; gaps/stale_gaps unchanged.
+# Task 092, owner helper-repair decision 2026-10-24 21:21:
+#   actual repair v2 received before accounting; reg 1908 records the
+#   executable-provenance, actual-SOURCE-authority and exclusive-output
+#   helper defects. Repair submitted, independent acceptance pending.
+#   direct recount rows=1808, max=1908, duplicates=0;
+#   rows=1807 -> 1808, max=1907 -> 1908; gaps/stale_gaps unchanged.
+# Task 092, owner bootstrap-generation decision 2026-10-24 20:47:
+#   direct recount rows=1807, max=1907, duplicates=0. Reg 1907 records
+#   the generation-dependent discovery/literal-order proof debt, not a
+#   demonstrated repeated random nondeterminism or a compiler class fix.
+#   rows=1806 -> 1807, max=1906 -> 1907; gaps/stale_gaps unchanged.
+# Task 092, owner registry-accounting instruction 2026-10-24: direct recount
+#   rows=1806, max=1906, duplicates=0. Added reg 1903 (vswhere environment
+#   exception), 1904 (Windows TC0 launch recipe), 1905 (STOP-disposition
+#   process gap), 1906 (integrator mutation of pinned authority).
+#   Reg 1900 now explicitly links absent SB_HOST_RED; no duplicate debt.
+#   rows=1802 -> 1806, max=1902 -> 1906. Gaps/stale_gaps unchanged;
+#   no compiler, plan, dispatcher or evidence pin change is authorized here.
+# Task 092, owner A+ 2026-10-24: direct recount rows=1802, max=1902,
+#   duplicates=0. Reconcile the previously added reg 1900 (bounded bridge
+#   refusal debt), reg 1901 (standalone block/if-context support debt), and
+#   reg 1902 (real-newline contract-display C escaping debt).
+#   rows=1799 -> 1802, max=1899 -> 1902. Gaps and stale_gaps unchanged;
+#   compiler debts stay OPEN. This count update is not a compiler class fix.
+# Task 092: row 1899 added (number assigned by the integrator). Direct recount
+#   rows=1798 -> 1799, max=1887 -> 1899. №1899 records the same-name cursor
+#   non-progress class; static traversal audit only, runtime reproduction not run.
+#   Newly exposed interval 1888-1898 is recorded in gaps=.
 # Task #101: rows 1884 and 1885 added (numbers assigned by the integrator
 #   at acceptance). Direct recount rows=1794 -> 1796, max=1883 -> 1885,
 #   dupes=0. №1884 is the spec-drift on retired operator-dispatch names
@@ -1770,8 +1808,8 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1806
-max=1898
+rows=1818
+max=1910
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
