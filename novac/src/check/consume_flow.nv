@@ -140,6 +140,9 @@ fn Checker mut @check_consume_flow(file Node) -> () {
         if @is_inactive_fn_node(d.id_of()) { continue }
         if Some(row) = decl_fn_row(d, @ctx) {
             if !@has_selected_fn(row) { continue }
+        } else {
+            // No FnRow (the subset did not collect this signature): selection
+            // cannot be judged, the body is walked as selected.
         }
         @flow_fn(d, kinds, autos, node_among(exported, d))
     }

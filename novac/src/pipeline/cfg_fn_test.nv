@@ -7,7 +7,6 @@ module novac.pipeline
 
 import ../tree.{Node, NodeKind}
 import ../parse.{parse}
-import ../lex.{tokens_of}
 import ../sem.{InteropTable, EmbedTable, CheckOut, FnRow, file_decls, decl_fn_row, no_row, raw_row, c_callable}
 import ../check.{check}
 import ../mono.{reachable}
@@ -79,7 +78,10 @@ fn emitted_definition(c str, symbol str) -> str {
 }
 
 test "cfg function D495 keeps both Fn identities and selects one target row" {
-    ro text = "#cfg(target_os = \"windows\")\nfn route() -> int => 1\n#cfg(target_os = \"linux\" || target_os = \"macos\" && !target_os = \"windows\")\n#cfg(!target_os = \"windows\")\nfn route() -> int => 2\nfn main() { route() }"
+    ro cfg_head = "#cfg(target_os = \"windows\")\nfn route() -> int => 1\n"
+    ro cfg_any = "#cfg(target_os = \"linux\" || target_os = \"macos\" && !target_os = \"windows\")\n"
+    ro cfg_not_win = "#cfg(!target_os = \"windows\")\n"
+    ro text = "${cfg_head}${cfg_any}${cfg_not_win}fn route() -> int => 2\nfn main() { route() }"
     ro parsed = parse(tokens_of(text))
     ro win_tree = filter_cfg(parsed, "windows")
     ro linux_tree = filter_cfg(parsed, "linux")
@@ -134,7 +136,8 @@ test "cfg function target controls must-consume body flow" {
 }
 
 test "cfg function same-signature duplicates require simultaneous activity" {
-    ro text = "#cfg(target_os = \"windows\")\nfn duplicate() -> int => 1\n#cfg(target_os = \"windows\")\nfn duplicate() -> int => 2\nfn main() {}"
+    ro cfg_win = "#cfg(target_os = \"windows\")\n"
+    ro text = "${cfg_win}fn duplicate() -> int => 1\n${cfg_win}fn duplicate() -> int => 2\nfn main() {}"
     ro win = cfg_test_front(text, "windows")
     ro (win_diags, _) = check(win.tree, win.src, win.ctx)
     assert(messages(win_diags).contains("duplicate function definition `duplicate`"), messages(win_diags))

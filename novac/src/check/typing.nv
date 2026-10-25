@@ -119,6 +119,9 @@ fn Checker mut @type_file(file Node) -> () {
                 if @is_inactive_fn_node(c.id_of()) { continue }
                 if Some(row) = decl_fn_row(c, @ctx) {
                     if !@has_selected_fn(row) { continue }
+                } else {
+                    // No FnRow (the subset did not collect this signature):
+                    // selection cannot be judged, the fn is typed below.
                 }
                 @type_fn(c)
             }

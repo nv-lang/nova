@@ -29,7 +29,8 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeId, NodeKind, no_node, raw_node}
 import ../diag.{Diagnostic}
 import ../builtins.{IMPL_ATTR}
-import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row, raw_row, module_dotted, cfg_attr_state}
+import ../sem.{Ctx, CheckOut, branch_children, file_decls, attr_kids_name, FnRow, no_row}
+import ../sem.{raw_row, module_dotted, cfg_attr_state}
 import ../sem.{leaf_text}
 import ../sem.{decl_fn_row}
 import ../names.{NameTable, NamespaceId}
@@ -170,6 +171,7 @@ fn Checker mut @reject_duplicate_fns(decls []Node) -> () {
     for i in 0..decls.len() {
         ro current = decls[i]
         if current.kind_of() != NodeKind.FnDecl { continue }
+        // nova:allow W_MANUAL_COALESCE -- `?? continue` does not parse, Stmt-only RHS
         ro row = match decl_fn_row(current, @ctx) {
             None => continue
             Some(r) => r
@@ -179,6 +181,7 @@ fn Checker mut @reject_duplicate_fns(decls []Node) -> () {
         for j in 0..i {
             ro earlier = decls[j]
             if earlier.kind_of() != NodeKind.FnDecl { continue }
+            // nova:allow W_MANUAL_COALESCE -- `?? continue` does not parse, Stmt-only RHS
             ro other = match decl_fn_row(earlier, @ctx) {
                 None => continue
                 Some(r) => r
@@ -229,7 +232,12 @@ fn Checker mut @mark_inactive_function_attrs(decls []Node) -> () {
             if inactive {
                 @inactive_fn_nodes.push(d.id_of())
                 for attr in pending { @inactive_fn_nodes.push(attr.id_of()) }
+            } else {
+                // An active fn is checked normally; nothing is recorded.
             }
+        } else {
+            // Only fn declarations carry target state; other declarations
+            // need no inactivity tracking.
         }
         pending = []Node.new()
     }

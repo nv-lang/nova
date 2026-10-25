@@ -46,6 +46,9 @@ export fn filter_cfg(tree Node, target str) -> Node {
                         } else {
                             item_state = cfg_and(item_state, state)
                         }
+                    } else {
+                        // A non-cfg attribute carries no target predicate:
+                        // the running cfg state is unchanged.
                     }
                     continue
                 }

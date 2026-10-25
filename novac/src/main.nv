@@ -586,6 +586,7 @@ fn run(a []str) -> int {
                 saw_target = true
                 argi += 2
             } else {
+                // nova:allow W_MANUAL_SLICE_COPY -- conditional push, no slice expresses it
                 files.push(a[argi])
                 argi += 1
             }
