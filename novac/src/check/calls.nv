@@ -900,7 +900,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
     // past silently.
     ro def = found ?? ice_at(
-        "novac/src/check/calls.nv:899",
+        "novac/src/check/calls.nv:902",
         "check: the callee row vanished between two reads of one Option")
     match def.target {
         DefFn(_) => {

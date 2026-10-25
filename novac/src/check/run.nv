@@ -164,6 +164,8 @@ export fn check(file Node, src SourceText, ctx Ctx) -> ([]Diagnostic, CheckOut) 
     (c.out, c.chan)
 }
 
+/// Pairwise pass over the file's fn declarations: a selected, definitely
+/// active row whose signature duplicates an earlier such row is rejected (D84).
 fn Checker mut @reject_duplicate_fns(decls []Node) -> () {
     for i in 0..decls.len() {
         ro current = decls[i]
@@ -189,10 +191,14 @@ fn Checker mut @reject_duplicate_fns(decls []Node) -> () {
     }
 }
 
+/// True when the row's three-valued applicability for the selected target OS
+/// is known-true (D495); unknown is not guessed.
 fn Checker @definitely_active_for_target(row FnRow) -> bool {
     @ctx.fns.rows[raw_row(row)].target_state(@ctx.target_os) == 1
 }
 
+/// Mark functions (and their pending attributes) whose #cfg predicates are
+/// known-false for the selected target, so semantic checking skips them.
 fn Checker mut @mark_inactive_function_attrs(decls []Node) -> () {
     mut pending = []Node.new()
     for d in decls {
@@ -229,6 +235,8 @@ fn Checker mut @mark_inactive_function_attrs(decls []Node) -> () {
     }
 }
 
+/// True when the node was marked inactive for the selected target by
+/// @mark_inactive_function_attrs.
 fn Checker @is_inactive_fn_node(id NodeId) -> bool {
     for skipped in @inactive_fn_nodes {
         if skipped == id { return true }
@@ -236,6 +244,8 @@ fn Checker @is_inactive_fn_node(id NodeId) -> bool {
     false
 }
 
+/// True when the callable row was selected for this unit (channel
+/// selected_fns).
 fn Checker @has_selected_fn(row FnRow) -> bool {
     for selected in @chan.selected_fns {
         if selected == row { return true }
@@ -243,6 +253,8 @@ fn Checker @has_selected_fn(row FnRow) -> bool {
     false
 }
 
+/// Structural signature equality of two callable rows: name, owner, receiver,
+/// parameter types and modes, return type, type-parameter count.
 fn same_fn_signature(ctx Ctx, left FnRow, right FnRow) -> bool {
     ro a = ctx.fns.rows[raw_row(left)]
     ro b = ctx.fns.rows[raw_row(right)]
@@ -257,8 +269,11 @@ fn same_fn_signature(ctx Ctx, left FnRow, right FnRow) -> bool {
     true
 }
 
+/// The declared name of a callable row.
 fn fn_row_name(ctx Ctx, row FnRow) -> str => ctx.fns.rows[raw_row(row)].name
 
+/// Diagnostic text for a duplicate active definition with the same signature
+/// for the selected target (D84).
 fn duplicate_fn_message(name str) -> str =>
     "duplicate function definition `${name}` with the same signature for this target (E_DUP_DEFINITION, D84)"
 

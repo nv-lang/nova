@@ -343,7 +343,7 @@ fn Checker mut @static_args_fit(kids []Node, row FnRow, key []ArgSpec) -> bool {
         match @binding_refusal(row, key) {
             Some(m) => @reject_first_leaf_of(kids, m)
             None => ice_at(
-                "novac/src/check/static_call.nv:344",
+                "novac/src/check/static_call.nv:345",
                 "check: a static call's arguments do not bind, and the binding names no fault")
         }
         return false

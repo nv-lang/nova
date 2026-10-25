@@ -103,6 +103,8 @@ export fn filter_cfg(tree Node, target str) -> Node {
     }
 }
 
+/// True when the item is a function declaration (or an export wrapping one) —
+/// the granularity the file-level #cfg filter keeps.
 fn is_function_item(n Node) -> bool {
     match n {
         Leaf(_) => false
@@ -142,12 +144,14 @@ export fn target_peer_active(filename str, target str) -> bool {
     true
 }
 
+/// True when the node is a `#cfg(...)` attribute.
 fn is_cfg_attr(n Node) -> bool {
     if n.kind_of() != NodeKind.AttrDecl { return false }
     ro kids = branch_children(n)
     kids.len() > 1 && leaf_text(kids[1]) == "cfg"
 }
 
+/// Three-valued AND of two #cfg states (CFG_TRUE / CFG_FALSE / CFG_UNKNOWN).
 fn cfg_and(left int, right int) -> int {
     if left == CFG_FALSE || right == CFG_FALSE { return CFG_FALSE }
     if left == CFG_TRUE && right == CFG_TRUE { return CFG_TRUE }

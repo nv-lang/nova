@@ -472,7 +472,7 @@ export fn Ctx @ty_of_name(name str) -> Option[TyId] {
 /// refusal names what it found instead -- no silent int default (#652 class).
 export fn Ctx @ty_of_name_or_ice(name str) -> TyId =>
     @ty_of_name(name) ?? ice_at(
-        "novac/src/sem/sem.nv:473",
+        "novac/src/sem/sem.nv:474",
         "sem: a name in TYPE position that the registry does not hold (#652 class)")
 
 /// A NAME in type position -> its type, or `no_ty()` when the registry does not

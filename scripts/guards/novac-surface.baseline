@@ -364,7 +364,10 @@
 # `HOST_OS_C_FN` name the one registered std host-OS bridge. `sem/handed_bodies.nv`
 # validates its identity and ABI; `emit_c/emit_expr.nv` emits the approved C call and
 # `emit_c/shell.nv` registers the runtime symbol. Kept together in builtins by P5.
-builtins 102
+# builtins 102 -> 103 (2026-10-25, task 092 acceptance repair): `HOST_BOOTSTRAP_MODULE`
+# names the bootstrap module ("novac") so `sem/handed_bodies.nv` recognizes it when
+# validating the host-OS bridge identity instead of retyping the literal (P5).
+builtins 103
 # 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
 #   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
 #   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.

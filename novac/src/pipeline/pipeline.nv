@@ -454,7 +454,7 @@ export fn unit_of(paths []str, texts []str) -> Unit {
         // construction and a failure here would mean the copy lost a
         // boundary -- an invariant of this function, not an input error.
         Err(_) => ice_at(
-            "novac/src/pipeline/pipeline.nv:454",
+            "novac/src/pipeline/pipeline.nv:456",
             "pipeline: a unit built from strings did not read back as UTF-8")
     }
 }
@@ -733,12 +733,12 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                     // broken invariant -- a call to a body novac does not compile
                     // is refused BY NAME in check.
                     ro decl = ctx.handed.decl_of(it.row) ?? ice_at(
-                        "novac/src/pipeline/pipeline.nv:729",
+                        "novac/src/pipeline/pipeline.nv:735",
                         "pipeline: an instance of a row with no body novac was handed")
                     ro t = ctx.handed.tree_of(it.row)
                     if t < 0 || t >= decls.len() {
                         ice_at(
-                            "novac/src/pipeline/pipeline.nv:734",
+                            "novac/src/pipeline/pipeline.nv:740",
                             "pipeline: a handed body names a declaration tree outside the decls")
                     } else {
                         // The tree the body was read from.
@@ -747,7 +747,7 @@ fn instances_of(tree Node, src SourceText, ctx Ctx, mut reach Reach, decls []Nod
                     // The ORIGINAL text, not a reserialized copy: a position is a
                     // slice's distance from the buffer it was cut from.
                     ro htext = ctx.interop.decl_text(t) ?? ice_at(
-                        "novac/src/pipeline/pipeline.nv:743",
+                        "novac/src/pipeline/pipeline.nv:749",
                         "pipeline: a handed body to instantiate, but the declarations were handed undescribed")
                     ro hname = ctx.interop.decl_name(t)
                     ro hsrc = SourceText { text: htext }

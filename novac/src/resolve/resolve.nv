@@ -275,6 +275,8 @@ fn FnIndex mut @fill(fns FnTable, target_os str, mut selected_rows []FnRow) -> (
     }
 }
 
+/// True when the callable row applies to the selected target OS (known-true
+/// D495 state).
 fn row_applies(fd FnDef, target_os str) -> bool {
     fd.target_state(target_os) == 1
 }
@@ -438,7 +440,7 @@ export fn FieldIndex @field_type(fields FieldTable, owner_id TyId, fname str) ->
     // An INVARIANT (#700 triage 2026-09-30): a typo in a field name is refused
     // by check (`unknown field`, check/exprs.nv), and every caller of this
     // door asks `@has_field` first. Pinned by pipeline/handed_fields_test.nv.
-    ice_at("novac/src/resolve/resolve.nv:427", "resolve: unknown field past check -- every caller asks has_field first")
+    ice_at("novac/src/resolve/resolve.nv:443", "resolve: unknown field past check -- every caller asks has_field first")
 }
 
 /// Does this row take a call with these argument types?

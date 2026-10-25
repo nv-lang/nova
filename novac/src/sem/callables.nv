@@ -46,6 +46,8 @@ export fn cfg_attr_state(attr Node, target str) -> int {
     state
 }
 
+/// One `||` level of a #cfg predicate: left fold of `&&` operands,
+/// three-valued.
 fn cfg_or_expr(kids []Node, start int, target str) -> (int, int) {
     ro (first, next) = cfg_and_expr(kids, start, target)
     if next < kids.len() && leaf_kind(kids[next]) == TokenKind.PipePipe {
@@ -55,6 +57,8 @@ fn cfg_or_expr(kids []Node, start int, target str) -> (int, int) {
     (first, next)
 }
 
+/// One `&&` level of a #cfg predicate: left fold of `!` operands,
+/// three-valued.
 fn cfg_and_expr(kids []Node, start int, target str) -> (int, int) {
     ro (first, next) = cfg_not_expr(kids, start, target)
     if next < kids.len() && leaf_kind(kids[next]) == TokenKind.AmpAmp {
@@ -64,18 +68,22 @@ fn cfg_and_expr(kids []Node, start int, target str) -> (int, int) {
     (first, next)
 }
 
+/// Three-valued OR of two predicate states (1 true, 0 false, -1 unknown).
 fn cfg_or_state(left int, right int) -> int {
     if left == 1 || right == 1 { return 1 }
     if left == 0 && right == 0 { return 0 }
     0 - 1
 }
 
+/// Three-valued AND of two predicate states (1 true, 0 false, -1 unknown).
 fn cfg_and_state(left int, right int) -> int {
     if left == 0 || right == 0 { return 0 }
     if left == 1 && right == 1 { return 1 }
     0 - 1
 }
 
+/// One `!` level of a #cfg predicate: negation swaps true/false and keeps
+/// unknown unknown.
 fn cfg_not_expr(kids []Node, start int, target str) -> (int, int) {
     if start >= kids.len() { return (0 - 1, start) }
     if leaf_kind(kids[start]) == TokenKind.Bang {
@@ -87,6 +95,8 @@ fn cfg_not_expr(kids []Node, start int, target str) -> (int, int) {
     cfg_atom(kids, start, target)
 }
 
+/// One #cfg atom: a parenthesised expression or `key = "value"`; only the
+/// target_os key is known, `unix`/`posix` alias linux+macos.
 fn cfg_atom(kids []Node, start int, target str) -> (int, int) {
     if start >= kids.len() { return (0 - 1, start) }
     mut i = start
@@ -116,9 +126,14 @@ fn cfg_atom(kids []Node, start int, target str) -> (int, int) {
     (0, i)
 }
 
+/// Known-true/known-false of `target_os = expected` against the selected
+/// target.
 fn cfg_os_state(target str, expected str) -> int =>
     if target == expected { 1 } else { 0 }
 
+/// Per-target outcome of a pending #cfg attribute list as two bitmasks
+/// (active, unknown) over windows/linux/macos; unknown predicates are never
+/// guessed.
 fn cfg_attr_outcomes(attrs []Node) -> (int, int) {
     mut active = 0
     mut unknown = 0
@@ -135,12 +150,15 @@ fn cfg_attr_outcomes(attrs []Node) -> (int, int) {
     (active, unknown)
 }
 
+/// True when the node is a `#cfg(...)` attribute.
 fn is_cfg_attribute(n Node) -> bool {
     if n.kind_of() != NodeKind.AttrDecl { return false }
     ro kids = branch_children(n)
     kids.len() > 1 && leaf_text(kids[1]) == "cfg"
 }
 
+/// Merge two (active, unknown) target bitmasks: known-false anywhere wins,
+/// then unknown, else active.
 fn cfg_combine_outcomes(left_mask int, left_unknown int,
                         right_mask int, right_unknown int) -> (int, int) {
     mut mask = 0

@@ -89,7 +89,7 @@ export fn shell_surface() -> InteropTable {
         prev = if prev == "struct" || word == "struct" { word } else { "" }
     }
     for stub in stub_names(bytes.to_str() ?? ice_at(
-        "novac/src/emit_c/shell.nv:90",
+        "novac/src/emit_c/shell.nv:91",
         "emit: shell.tpl.c is not UTF-8 for the stub scan")) {
         t.add_stub(stub)
     }
@@ -234,7 +234,7 @@ fn strlit_defs(lits []str, tag str) -> str {
 /// hands in every unit's pool, each under its own mark (274.11 E.10 step 2b).
 fn render_spelled(lit_defs str, body str, init str) -> str {
     ro tpl_bytes = shell_template()
-    ro tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:233", "emit: shell.tpl.c is not UTF-8")
+    ro tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:237", "emit: shell.tpl.c is not UTF-8")
     consume out = StringBuilder.new()
     mut emitted_lits = false
     mut emitted_body = false

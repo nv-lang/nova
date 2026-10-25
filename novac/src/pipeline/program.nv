@@ -222,7 +222,7 @@ fn visit_unit(k int, efrom []int, eto []int, mut state []int, mut topo []int) ->
         if state[t] == 0 {
             visit_unit(t, efrom, eto, state, topo)
         } else if state[t] == 1 {
-            ice_at("novac/src/pipeline/program.nv:222", "pipeline: an import cycle between the program's modules")
+            ice_at("novac/src/pipeline/program.nv:225", "pipeline: an import cycle between the program's modules")
         } else {
             // Already placed: an import of a module reached before.
         }
