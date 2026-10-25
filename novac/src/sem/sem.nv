@@ -311,6 +311,7 @@ export type CallForm enum
 /// VALUE row records (rustc IndexVec camp; the architecture's "storage
 /// reference"); every name -> id step goes through a table door.
 export type Ctx {
+    target_os str /// Selected compilation target OS; empty for target-agnostic semantic unit tests.
     module_c str /// THIS file's module path in the shape a C name carries it (`novac.sem` -> `novac_sem`); `""` when the file declares none. Part of a declaration's IDENTITY (plan 274 section 9.1d point 1), which is why it is not derived at each use
     builtin_names NameTable /// SOURCE names of the language's built-in types (the universe), for the declaration judge: D35 closes them forever, and the defs map cannot answer -- the file's own row overwrites the seeded one (last put wins). Filled by the seed loop, the one place that reads BuiltinType.ALL
     coerces []CoercePair /// Implicit conversions declared with `#coerce` (D429), read from declarations.
@@ -524,17 +525,19 @@ export fn ty_of_row(types []TypeDef, d DeclId) -> TyId
 /// The two halves live in two files for a reason, and the doc said so twice
 /// because the paragraph had been orphaned from its function by an insertion --
 /// noticed while cutting `harvest.nv` out on 2026-08-21.
-export fn collect(file Node, decls []Node, interop InteropTable) -> Ctx {
+export fn collect(file Node, decls []Node, interop InteropTable, target_os str = "") -> Ctx {
     // THE HANDED-OVER TYPES GO IN FIRST, inside the collector, and the order is
     // the measurement rather than a preference: the file's own signatures are
     // read by that same collector, and a signature naming `CharsIter` resolves
     // the name THEN -- so registering foreign types afterwards left every such
     // parameter typed `no_ty()` and the refusal said "novac does not know this
     // type yet" about a type it had just been handed (measured 2026-08-23).
-    mut ctx = collect_types_with(file, decls)
+    mut ctx = collect_types_with(file, decls, target_os: target_os)
+    ctx.target_os = target_os
     // Methods after types, for the neighbouring reason: `harvest_methods` drops a
     // signature whose parameter or return type the registry does not know.
-    harvest_methods(decls, module_dotted(file), ctx.types, ctx.defs, ctx.tys, ctx.fns, ctx.coerces, ctx.handed)
+    harvest_methods(decls, module_dotted(file), ctx.types, ctx.defs, ctx.tys, ctx.fns,
+                    ctx.coerces, ctx.handed, target_os)
     // CONSTRUCTORS of the parenthesised record form, and AFTER the collector
     // on purpose: `own_cnt` is fixed inside `collect_types_with` (the last
     // line of it), so a row added there would answer `compiles_body == true`

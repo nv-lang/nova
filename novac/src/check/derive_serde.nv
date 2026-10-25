@@ -23,7 +23,7 @@ import ../builtins.{is_serde_seq_head, is_serde_map_head, serde_scalar_wire, ser
 import ../types.{TyId, is_ty, no_ty}
 import ../diag.{ice_at}
 import ../sem.{Ctx, TypeDef, VariantDef, decl_of_ty, field_range_of, variant_range_of, gate_names}
-import ../sem.{raw_frow, raw_vrow, no_vrow, prim_row_of, shape_of, RecordShape}
+import ../sem.{raw_frow, raw_vrow, no_vrow, prim_row_of, shape_of, RecordShape, raw_row}
 import ../resolve.{FnIndex, missing_sig_of}
 import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, ty_source_name}
@@ -46,7 +46,7 @@ export type DerivedText {
 /// (`E_AUTO_DERIVE_FIELD_LACKS_PROTOCOL`) or by name and stage -- and gets no
 /// text, so a refusal is never doubled by the body it would have produced.
 export fn derive_serialize_text(ctx Ctx) -> DerivedText {
-    ro index = FnIndex.build(ctx.fns)
+    ro index = FnIndex.build(ctx.fns, target_os: ctx.target_os)
     consume sb = StringBuilder.new()
     mut starts = []int.new()
     mut owners = []str.new()
@@ -81,7 +81,7 @@ fn Checker mut @judge_serde_fields(kids []Node) -> () {
         if kind == TypeKind.TkNewtype {
             // D341 derives for a record and a sum: a newtype is a LANGUAGE
             // error, as the oracle refuses it (`type Pt(int, int)` included).
-            if !author_wrote_serialize(@ctx, td) {
+            if !author_wrote_serialize(@ctx, @res, td) {
                 @reject_first_leaf_of([]Node.of(dk[1]),
                     "type `${td.name}` (newtype) does not support auto-derive for `Serialize` (E_AUTO_DERIVE_UNSUPPORTED_KIND, D341) -- write `fn ${td.name} @serialize[S Serializer](mut s S) -> Result[(), SerError]` yourself")
             } else {
@@ -91,7 +91,7 @@ fn Checker mut @judge_serde_fields(kids []Node) -> () {
         } else {
             // A record or a sum: the shape and the fields decide.
         }
-        if author_wrote_serialize(@ctx, td) { continue }
+        if author_wrote_serialize(@ctx, @res, td) { continue }
         if td.tparam_cnt > 0 || !serde_shape_ok(td) {
             @report_first_leaf_of([]Node.of(dk[1]), SERDE_SHAPE_MSG)
             continue
@@ -161,7 +161,7 @@ fn Checker @field_node_or(dk []Node, j int, record bool) -> []Node {
 fn serde_derivable(ctx Ctx, index FnIndex, td TypeDef) -> bool {
     if !gate_names(ctx.gates, td.gate_off, td.gate_cnt, SERIALIZE_PROTO) { return false }
     if td.tparam_cnt > 0 || !serde_shape_ok(td) { return false }
-    if author_wrote_serialize(ctx, td) { return false }
+    if author_wrote_serialize(ctx, index, td) { return false }
     serde_lacking_field(ctx, index, td) < 0
 }
 
@@ -188,12 +188,13 @@ fn has_field_names(shape RecordShape) -> bool {
 /// D77: the author's own `fn T @serialize` wins over the synthesis. Asked of
 /// the unit's OWN methods only -- the author's method is written in the unit.
 #realtime nogc
-fn author_wrote_serialize(ctx Ctx, td TypeDef) -> bool {
-    mut r = ctx.fns.own_methods.find(SERIALIZE_METHOD)
-    while r >= 0 {
-        ro fd = ctx.fns.rows[r]
-        if fd.has_recv && fd.param_cnt > 0 && ctx.fns.params[fd.param_off].type_id == td.ty_id { return true }
-        r = ctx.fns.own_next[r]
+fn author_wrote_serialize(ctx Ctx, index FnIndex, td TypeDef) -> bool {
+    mut r = index.first_row_of(SERIALIZE_METHOD)
+    while raw_row(r) >= 0 {
+        ro fd = ctx.fns.rows[raw_row(r)]
+        if ctx.fns.compiles_body(r) && fd.has_recv && fd.param_cnt > 0 &&
+            ctx.fns.params[fd.param_off].type_id == td.ty_id { return true }
+        r = index.next_row_of(r)
     }
     false
 }

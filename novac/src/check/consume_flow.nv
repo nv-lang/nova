@@ -137,6 +137,10 @@ fn Checker mut @check_consume_flow(file Node) -> () {
     ro exported = file_exported_fns(file)
     for d in file_decls(file) {
         if d.kind_of() != NodeKind.FnDecl { continue }
+        if @is_inactive_fn_node(d.id_of()) { continue }
+        if Some(row) = decl_fn_row(d, @ctx) {
+            if !@has_selected_fn(row) { continue }
+        }
         @flow_fn(d, kinds, autos, node_among(exported, d))
     }
 }
@@ -185,6 +189,7 @@ fn decl_marked_consume(d Node) -> bool {
 fn Checker @consume_methods_of(t TyId) -> str {
     mut out = ""
     for i in 0..@ctx.fns.rows.len() {
+        if !@has_selected_fn(FnRow(i)) { continue }
         ro fd = @ctx.fns.rows[i]
         // A METHOD's type is its receiver's, parameter zero (plan 273); `owner`
         // names the type of a STATIC method only.

@@ -30,6 +30,7 @@ module novac.sem
 import ../diag.{ice_at}
 import ../builtins.{prim_c_name, is_runtime_abi_sum, prim_name}
 import ../builtins.{PAREN_RECORD_C_PREFIX, HANDLER_CTOR, TypeKind, EMPTY_CTOR}
+import ../builtins.{HOST_OS_C_FN}
 import ../types.{TyId, is_ty}
 
 /// The REPRESENTATION of a newtype: the type it is laid out as.
@@ -552,6 +553,7 @@ export fn module_value_init_c_name(name str) -> str => "novac_mvinit_${name.repl
 /// Asked only of a row whose `handed_from` is set -- a row of the file's own has no
 /// shell symbol, and the caller's `compiles_body` question comes first.
 export fn c_free_symbol(ctx Ctx, row FnRow) -> str {
+    if ctx.is_host_os_bridge(row) { return HOST_OS_C_FN }
     ro fd = ctx.fns.rows[raw_row(row)]
     consume s = StringBuilder.new(cap: 48)
     s.append("nova_fn_")

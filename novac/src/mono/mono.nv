@@ -144,6 +144,7 @@ fn reach_from(file Node, ctx Ctx, out CheckOut, in_program bool, wanted CNames) 
         // instantiated by its caller), asked by the C name the caller printed.
         for r in 0..ctx.fns.rows.len() {
             ro row = FnRow(r)
+            if !has_selected_fn(out, row) { continue }
             if !ctx.fns.compiles_body(row) || is_generic(ctx, row) { continue }
             if wanted.has(c_callable(ctx, row, []TyId.new())) { seen[r] = true } else { continue }
         }
@@ -222,6 +223,7 @@ fn reach_from(file Node, ctx Ctx, out CheckOut, in_program bool, wanted CNames) 
                 // file: there is nothing to walk from.
                 None => continue
                 Some(row) => {
+                    if !has_selected_fn(out, row) { continue }
                     if raw_row(row) >= seen.len() {
                         continue
                     } else {
@@ -250,6 +252,13 @@ fn reach_from(file Node, ctx Ctx, out CheckOut, in_program bool, wanted CNames) 
     }
 
     Reach { seen, inst, subst, ptypes }
+}
+
+fn has_selected_fn(out CheckOut, row FnRow) -> bool {
+    for selected in out.selected_fns {
+        if selected == row { return true }
+    }
+    false
 }
 
 /// Mark the callees of one more TYPED BODY -- an instance whose body is not a

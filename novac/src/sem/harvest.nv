@@ -44,9 +44,10 @@ import ../names.{raw_decl, DeclId, NameTable, NamespaceId}
 /// Lives here and not in the collector because this IS reading a method
 /// declaration, which is what this file does; the collector calls it.
 export fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
-                             mut tys Interner, mut fns FnTable) -> Option[FnRow] {
+                             mut tys Interner, mut fns FnTable, target_mask int = 7,
+                             target_unknown_mask int = 0, target_os str = "") -> Option[FnRow] {
     ro before = fns.rows.len()
-    harvest_fn(kids, "", "", types, defs, tys, fns)
+    harvest_fn(kids, "", "", types, defs, tys, fns, target_mask, target_unknown_mask, target_os)
     if fns.rows.len() > before {
         Some(FnRow(fns.rows.len() - 1))
     } else {
@@ -61,7 +62,8 @@ export fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
 /// point of use. Overloads (two signatures for one (receiver, name))
 /// are marked and also rejected — silent choosing is not allowed.
 fn harvest_methods(decls []Node, own_module str, types []TypeDef, mut defs DefTable, mut tys Interner,
-                   mut fns FnTable, mut coerces []CoercePair, mut bodies HandedBodies) -> () {
+                   mut fns FnTable, mut coerces []CoercePair, mut bodies HandedBodies,
+                   target_os str) -> () {
     mut tree = 0
     for d in decls {
         // The MODULE of the handed file travels with every row read out of it
@@ -73,7 +75,8 @@ fn harvest_methods(decls []Node, own_module str, types []TypeDef, mut defs DefTa
         // them, not as the compiled file does (registry #1764): the
         // file's own `ErrorKind` must not become std.io's return type.
         defs.read_as(if module_dotted(d) == own_module { "" } else { module_dotted(d) })
-        harvest_in(d, module_dotted(d), own_module, types, defs, tys, fns, coerces, tree, bodies)
+        harvest_in(d, module_dotted(d), own_module, types, defs, tys, fns, coerces, tree, bodies,
+                   7, 0, target_os)
         resolve_const_defaults(d, fns, first)
         tree += 1
     }
@@ -167,13 +170,15 @@ fn apply_const_defaults(index NameTable, lits []Node, mut fns FnTable, first int
 /// collection must not depend on it: a declaration is found wherever
 /// it ended up.
 fn harvest_in(n Node, handed_from str, own_module str, types []TypeDef, mut defs DefTable, mut tys Interner,
-              mut fns FnTable, mut coerces []CoercePair, tree int, mut bodies HandedBodies) -> () {
+              mut fns FnTable, mut coerces []CoercePair, tree int, mut bodies HandedBodies,
+              inherited_mask int, inherited_unknown int, target_os str) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
             if kind == NodeKind.FnDecl {
                 ro before = fns.rows.len()
-                ro key = harvest_fn(children, handed_from, own_module, types, defs, tys, fns)
+                ro key = harvest_fn(children, handed_from, own_module, types, defs, tys, fns,
+                                    inherited_mask, inherited_unknown, target_os)
                 if fns.rows.len() > before {
                     // The row this declaration became, and where its body lives.
                     bodies.note(FnRow(before), key.name, head_index(tys, key.on), tree, n, handed_from)
@@ -198,10 +203,19 @@ fn harvest_in(n Node, handed_from str, own_module str, types []TypeDef, mut defs
             // because the compiled FILE now asks the same question and two
             // readings of one positional rule is how they part company.
             ro marked = coerce_marked(children)
+            mut pending_cfg_attrs = []Node.new()
             for c in children {
-                if c.kind_of() == NodeKind.AttrDecl { continue }
+                if c.kind_of() == NodeKind.AttrDecl {
+                    pending_cfg_attrs.push(c)
+                    continue
+                }
+                ro (local_mask, local_unknown) = cfg_attr_outcomes(pending_cfg_attrs)
+                pending_cfg_attrs = []Node.new()
+                ro (target_mask, target_unknown) = cfg_combine_outcomes(
+                    inherited_mask, inherited_unknown, local_mask, local_unknown)
                 ro before = fns.rows.len()
-                harvest_in(c, handed_from, own_module, types, defs, tys, fns, coerces, tree, bodies)
+                harvest_in(c, handed_from, own_module, types, defs, tys, fns, coerces, tree, bodies,
+                           target_mask, target_unknown, target_os)
                 if is_attr_marked(marked, c.id_of()) && fns.rows.len() > before {
                     harvest_coerce_pair(fns, coerces, FnRow(fns.rows.len() - 1))
                 } else {
@@ -397,7 +411,8 @@ type HarvestKey value {
 /// otherwise the method does not enter the subset and gets an
 /// honest rejection at the point of use. Answers the declaration's key either way.
 fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut defs DefTable, mut tys Interner,
-              mut fns FnTable) -> HarvestKey {
+              mut fns FnTable, target_mask int, target_unknown_mask int,
+              target_os str) -> HarvestKey {
     mut recv_name = ""
     mut recv_kids = []Node.new()
     mut recv_at = -1
@@ -625,12 +640,16 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
     // every call of its own methods was an ambiguity (237 over novac's source).
     // A static method is the file's when its OWNER matches too (registry 1354's static twin).
     ro own_owner = if is_static { recv_t } else { no_ty() }
-    if !is_free && fns.file_declares_method(mname, param_ids, own_owner) { return key }
+    if !is_free && handed_from != "" && fns.file_declares_method(mname, param_ids, own_owner,
+                                                                  target_os: target_os) { return key }
     if is_static {
-        fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from, ret_is_ro(ret_kids))
+        fns.add_static(recv_t, mname, ret_t, param_ids, tps, bounds, handed_from,
+                       ret_is_ro(ret_kids), target_mask: target_mask,
+                       target_unknown_mask: target_unknown_mask)
     } else {
         fns.add(mname, ret_t, !is_free, param_ids, tps, bounds, handed_from: handed_from,
-                ret_ro: ret_is_ro(ret_kids), ret_self: returns_receiver(kids))
+                ret_ro: ret_is_ro(ret_kids), ret_self: returns_receiver(kids),
+                target_mask: target_mask, target_unknown_mask: target_unknown_mask)
     }
     fns.mark_linear(linear)
     if is_free && !row_only {

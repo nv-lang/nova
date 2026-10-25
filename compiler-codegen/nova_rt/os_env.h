@@ -74,6 +74,20 @@ static inline nova_str _os_str(const char* s) {
     return _os_bytes((const uint8_t*)s, (nova_int)strlen(s));
 }
 
+/* The build host, not the requested target. Used by Carina's default cfg
+ * selection; unknown compile targets stay explicit instead of guessing. */
+static inline nova_str os_host_os(void) {
+#if defined(_WIN32)
+    return _os_str("windows");
+#elif defined(__APPLE__)
+    return _os_str("macos");
+#elif defined(__linux__)
+    return _os_str("linux");
+#else
+    return _os_str("unknown");
+#endif
+}
+
 /* map a failed errno to the negated code convention (-errno; -EINVAL fallback) */
 static inline nova_int _os_fail(void) {
     int e = errno;

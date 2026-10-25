@@ -331,9 +331,11 @@ fn Checker @auto_cleanups_of(file Node, kinds []TyId) -> AutoCleanups {
         // No row: the subset walk refused the declaration already.
         ro row = decl_fn_row(d, @ctx) ?? no_row()
         if raw_row(row) < 0 { continue }
+        if !@has_selected_fn(row) { continue }
         @note_auto_cleanup(a, row, d, kinds)
     }
     for i in @ctx.fns.own_cnt..@ctx.fns.rows.len() {
+        if !@has_selected_fn(FnRow(i)) { continue }
         match @ctx.handed.decl_of(FnRow(i)) {
             Some(d) => @note_auto_cleanup(a, FnRow(i), d, kinds)
             // SILENT-OK: a row read from nowhere (a constructor, a builtin) declares no `@cleanup`.
@@ -404,6 +406,7 @@ fn auto_index_of(a AutoCleanups, t TyId) -> int {
 /// Does `t` declare a `@cleanup` method (D432)?
 fn Checker @has_cleanup(t TyId) -> bool {
     for i in 0..@ctx.fns.rows.len() {
+        if !@has_selected_fn(FnRow(i)) { continue }
         ro fd = @ctx.fns.rows[i]
         if !fd.has_recv || fd.param_cnt == 0 || fd.name != CLEANUP_METHOD { continue }
         if @ctx.fns.params[fd.param_off].type_id == t { return true }

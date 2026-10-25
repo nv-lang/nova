@@ -25,6 +25,9 @@ extern "C" fn os_arg_count() -> int
 // arg_at: the i-th argument as a str (empty out of range).
 extern "C" fn os_arg_at(i int) -> str
 
+// Build host platform, distinct from any Nova compilation target.
+extern "C" fn os_host_os() -> str
+
 // ─── Environment ──
 // Keys/values are NUL-terminated `*u8`. Getter returns raw value bytes as a
 // `str` (empty when absent — disambiguate with os_env_has; конвертируется в Option на границе, обработчик в os.nv). Mutators return 0

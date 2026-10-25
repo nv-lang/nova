@@ -244,6 +244,7 @@ export type ContractNote value {
 /// and re-derived by no one.
 export type CheckOut {
     entry FnRow /// THE entry row of this file; `no_row()` = the file declares none. One writer: check.
+    selected_fns []FnRow /// callable rows admitted by the checker's one target-filtered FnIndex
     types []TyId /// resolved_types: NodeId -> interned type id; `no_ty()` = not recorded.
     res []Resolution /// NodeId -> what it resolves to: a call target, an instantiation, a contract note, or nothing.
     implicit []Resolution /// NodeId -> the call the LANGUAGE makes at this node's value with none written (an interpolation slot's `display`, D422); `Unresolved`/`Callee` only. A second table, not a `res` arm: `${f()}` is an explicit call AND the operand of an implicit one, and `res` holds one answer per node by design. Donor: rustc `TypeckResults::adjustments`, keyed by the same expression id as `type_dependent_defs` and kept apart from it.
@@ -306,13 +307,15 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         gone_at.push(0 - 1)
         embed_at.push(0 - 1)
     }
-    CheckOut { entry: no_row(), types, res, implicit, subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
+    CheckOut { entry: no_row(), selected_fns: []FnRow.new(), types, res, implicit,
+               subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
                captures: []CaptureRow.new(), cap_at, coerce_at, cleanups: []CleanupRow.new(), cleanup_at, gone_at,
                embed_at,
                wanted: []CalleeRef.new(),
                vec_ops: NameTable.new(NamespaceId.NsCallables) }
 }
+
 
 /// An instance the language calls IMPLICITLY -- `Vec[Pt] @push` behind a
 /// literal, `@index` behind `xs[i]` -- recorded so mono makes it (274.11 E.10

@@ -266,7 +266,7 @@ fn register_sum_variants(c Node, mut types []TypeDef, mut defs DefTable,
 /// wrapper above is the whole difference. The seam exists because the boundary
 /// between foreign and own rows is fixed INSIDE this function -- between the
 /// handed-over types and the file's own passes -- and a caller cannot place it.
-export fn collect_types_with(file Node, decls []Node) -> Ctx {
+export fn collect_types_with(file Node, decls []Node, target_os str = "") -> Ctx {
     mut types = []TypeDef.new()
     mut consts = ConstTable.new()
     mut defs = DefTable.new()
@@ -534,7 +534,14 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // so an alias can name its target and a newtype intern its term whatever
     // the order of the file -- and the walk below reads them as decided.
     fill_own_reprs(decls_of_file, types, defs, tys)
+    mut pending_cfg_attrs = []Node.new()
     for c in decls_of_file {
+        if c.kind_of() == NodeKind.AttrDecl {
+            pending_cfg_attrs.push(c)
+            continue
+        }
+        ro (target_mask, target_unknown_mask) = cfg_attr_outcomes(pending_cfg_attrs)
+        pending_cfg_attrs = []Node.new()
         ro k = c.kind_of()
         if k == NodeKind.TypeDecl {
             ro tkids = branch_children(c)
@@ -622,7 +629,10 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 // with type parameters before the name, which `check` refuses
                 // by position. The TERMINATOR is the branch (P21).
                 if fk[1].kind_of() != NodeKind.Recv { continue }
-                if Some(mrow) = harvest_own_method(fk, types, defs, tys, fns) {
+                if Some(mrow) = harvest_own_method(fk, types, defs, tys, fns,
+                                                    target_mask: target_mask,
+                                                    target_unknown_mask: target_unknown_mask,
+                                                    target_os: target_os) {
                     ro mdid = raw_node(c.id_of())
                     while fn_decl_rows.len() <= mdid { fn_decl_rows.push(no_row()) }
                     fn_decl_rows[mdid] = mrow
@@ -705,7 +715,9 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
                 param_ids.push(ParamDef { name: param_name_of(pk), type_id: pt,
                                           mode: param_mode_at(pk), default_expr: param_default_slot(pk) })
             }
-            fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk), ret_ro: decl_ret_is_ro(fk))
+            fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk),
+                    ret_ro: decl_ret_is_ro(fk), target_mask: target_mask,
+                    target_unknown_mask: target_unknown_mask)
             fns.mark_linear(generic_linear(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))
@@ -753,7 +765,7 @@ export fn collect_types_with(file Node, decls []Node) -> Ctx {
     // Setting it anywhere else would make the invariant depend on call order.
     mut own = fns
     own.seal_own()
-    Ctx { types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types,
+    Ctx { target_os, types, foreign_types_cnt, tys, prims, defs, fields, variant_rows, variant_names, payload_types,
           payload_names, gates,
           fn_decl_rows, fns: own,
           module_c: module_path_c(file), builtin_names, coerces, protos, effects: fx, consts,

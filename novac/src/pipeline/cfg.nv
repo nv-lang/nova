@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none — D99's three-valued target predicate evaluation over Carina's lossless tree.
+// Role: pipeline phase support — remove inactive module/item declarations before collection.
+// Used by: pipeline entry points and main's source-file/peer discovery.
+// Guarded by: check-novac-deps.py, check-novac-module-donor.py, target cfg conformance fixtures.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind, branch}
+import ../sem.{branch_children, file_decls, leaf_text, cfg_attr_state}
+import ../parse.{parse}
+
+const CFG_UNKNOWN = 0 - 1
+const CFG_FALSE = 0
+const CFG_TRUE = 1
+
+/// Parse and filter a file before it reaches semantic collection or checking.
+/// Active target_os attributes are consumed; unsupported feature predicates
+/// remain in the tree so the checker refuses them instead of guessing.
+export fn filter_cfg(tree Node, target str) -> Node {
+    match tree {
+        Branch { id, kind, children } => {
+            if kind != NodeKind.File { return branch(id, kind, children) }
+            mut has_module = false
+            for child in file_decls(tree) {
+                has_module = has_module || child.kind_of() == NodeKind.ModuleDecl
+            }
+            mut before_module = has_module
+            mut file_state = CFG_TRUE
+            mut item_state = CFG_TRUE
+            mut pending = []Node.new()
+            mut out = []Node.new()
+            // PRODUCER reconstruction, not a second declaration reader: only
+            // the original child sequence can preserve AttrDecl adjacency,
+            // ExportDecl wrappers, order and NodeIds in the rebuilt File.
+            // `file_decls` intentionally opens ExportDecl and cannot rebuild
+            // this tree. Item judgement remains limited to the existing cfg
+            // state below; D495 retains Fn nodes and applies their row metadata later.
+            for child in children {
+                if child.kind_of() == NodeKind.AttrDecl {
+                    pending.push(child)
+                    if is_cfg_attr(child) {
+                        ro state = cfg_attr_state(child, target)
+                        if before_module {
+                            file_state = cfg_and(file_state, state)
+                        } else {
+                            item_state = cfg_and(item_state, state)
+                        }
+                    }
+                    continue
+                }
+                if before_module && child.kind_of() == NodeKind.ModuleDecl {
+                    if file_state == CFG_FALSE {
+                        return branch(id, NodeKind.File, []Node.new())
+                    }
+                    for attr in pending {
+                        if is_cfg_attr(attr) && cfg_attr_state(attr, target) != CFG_UNKNOWN { continue }
+                        out.push(attr)
+                    }
+                    pending = []Node.new()
+                    out.push(child)
+                    before_module = false
+                    item_state = CFG_TRUE
+                    continue
+                }
+                if before_module {
+                    pending.push(child)
+                    continue
+                }
+                if is_function_item(child) {
+                    // Function AST identity and its leading attributes are
+                    // retained; semantic collection and resolution carry the
+                    // target applicability on the callable row.
+                    out.append(pending)
+                    out.push(child)
+                } else if item_state != CFG_FALSE {
+                    for attr in pending {
+                        if is_cfg_attr(attr) && cfg_attr_state(attr, target) != CFG_UNKNOWN { continue }
+                        out.push(attr)
+                    }
+                    out.push(child)
+                } else {
+                    // The inactive item and all of its leading attributes are
+                    // removed before declaration collection and diagnostics.
+                }
+                pending = []Node.new()
+                item_state = CFG_TRUE
+            }
+            if file_state == CFG_FALSE {
+                return branch(id, NodeKind.File, []Node.new())
+            }
+            if item_state != CFG_FALSE {
+                for attr in pending {
+                    if is_cfg_attr(attr) && cfg_attr_state(attr, target) != CFG_UNKNOWN { continue }
+                    out.push(attr)
+                }
+            } else {
+                // An inactive trailing item has no declaration to preserve.
+            }
+            branch(id, NodeKind.File, out)
+        }
+        Leaf(token) => Node.Leaf(token)
+    }
+}
+
+fn is_function_item(n Node) -> bool {
+    match n {
+        Leaf(_) => false
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.FnDecl { return true }
+            if kind != NodeKind.ExportDecl { return false }
+            for c in children {
+                if c.kind_of() == NodeKind.FnDecl { return true }
+            }
+            false
+        }
+    }
+}
+
+/// Whether the file-level gate admits a source file for a program unit.
+/// Item-level gates are intentionally left to `filter_cfg` after unit assembly.
+export fn cfg_file_active(text str, target str) -> bool {
+    ro filtered = filter_cfg(parse(tokens_of(text)), target)
+    branch_children(filtered).len() > 0
+}
+
+/// Filename suffix filter for D99 folder-module peers and standalone inputs.
+export fn target_peer_active(filename str, target str) -> bool {
+    if filename.ends_with("_windows.nv") || filename.ends_with("_windows_test.nv") {
+        return target == "windows"
+    }
+    if filename.ends_with("_linux.nv") || filename.ends_with("_linux_test.nv") {
+        return target == "linux"
+    }
+    if filename.ends_with("_macos.nv") || filename.ends_with("_macos_test.nv") {
+        return target == "macos"
+    }
+    if filename.ends_with("_unix.nv") || filename.ends_with("_posix.nv") ||
+        filename.ends_with("_unix_test.nv") || filename.ends_with("_posix_test.nv") {
+        return target == "linux" || target == "macos"
+    }
+    true
+}
+
+fn is_cfg_attr(n Node) -> bool {
+    if n.kind_of() != NodeKind.AttrDecl { return false }
+    ro kids = branch_children(n)
+    kids.len() > 1 && leaf_text(kids[1]) == "cfg"
+}
+
+fn cfg_and(left int, right int) -> int {
+    if left == CFG_FALSE || right == CFG_FALSE { return CFG_FALSE }
+    if left == CFG_TRUE && right == CFG_TRUE { return CFG_TRUE }
+    CFG_UNKNOWN
+}

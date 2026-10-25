@@ -33,6 +33,131 @@ import ../names.{NameTable, NamespaceId}
 import ../names.{DeclId, is_decl, no_decl, raw_decl}
 import ../builtins.{ENTRY_FN, TypeKind}
 import ../types.{TyId, no_ty, is_ty, Interner}
+import ../lex.{TokenKind}
+
+/// Evaluate one `#cfg` attribute for a selected target OS. Unknown syntax and
+/// predicates remain unknown so callers can retain and diagnose them rather
+/// than guessing.
+export fn cfg_attr_state(attr Node, target str) -> int {
+    ro kids = branch_children(attr)
+    if kids.len() < 5 || leaf_kind(kids[2]) != TokenKind.LParen { return 0 - 1 }
+    ro (state, next) = cfg_or_expr(kids, 3, target)
+    if next >= kids.len() || leaf_kind(kids[next]) != TokenKind.RParen { return 0 - 1 }
+    state
+}
+
+fn cfg_or_expr(kids []Node, start int, target str) -> (int, int) {
+    ro (first, next) = cfg_and_expr(kids, start, target)
+    if next < kids.len() && leaf_kind(kids[next]) == TokenKind.PipePipe {
+        ro (right, after_right) = cfg_or_expr(kids, next + 1, target)
+        return (cfg_or_state(first, right), after_right)
+    }
+    (first, next)
+}
+
+fn cfg_and_expr(kids []Node, start int, target str) -> (int, int) {
+    ro (first, next) = cfg_not_expr(kids, start, target)
+    if next < kids.len() && leaf_kind(kids[next]) == TokenKind.AmpAmp {
+        ro (right, after_right) = cfg_and_expr(kids, next + 1, target)
+        return (cfg_and_state(first, right), after_right)
+    }
+    (first, next)
+}
+
+fn cfg_or_state(left int, right int) -> int {
+    if left == 1 || right == 1 { return 1 }
+    if left == 0 && right == 0 { return 0 }
+    0 - 1
+}
+
+fn cfg_and_state(left int, right int) -> int {
+    if left == 0 || right == 0 { return 0 }
+    if left == 1 && right == 1 { return 1 }
+    0 - 1
+}
+
+fn cfg_not_expr(kids []Node, start int, target str) -> (int, int) {
+    if start >= kids.len() { return (0 - 1, start) }
+    if leaf_kind(kids[start]) == TokenKind.Bang {
+        ro (value, next) = cfg_not_expr(kids, start + 1, target)
+        if value == 1 { return (0, next) }
+        if value == 0 { return (1, next) }
+        return (0 - 1, next)
+    }
+    cfg_atom(kids, start, target)
+}
+
+fn cfg_atom(kids []Node, start int, target str) -> (int, int) {
+    if start >= kids.len() { return (0 - 1, start) }
+    mut i = start
+    if leaf_kind(kids[i]) == TokenKind.LParen {
+        ro (value, next) = cfg_or_expr(kids, i + 1, target)
+        if next >= kids.len() || leaf_kind(kids[next]) != TokenKind.RParen {
+            return (0 - 1, next)
+        }
+        return (value, next + 1)
+    }
+    if leaf_kind(kids[i]) != TokenKind.Ident { return (0 - 1, i) }
+    ro key = leaf_text(kids[i])
+    i += 1
+    if i >= kids.len() || leaf_kind(kids[i]) != TokenKind.Assign { return (0 - 1, i) }
+    i += 1
+    if i >= kids.len() || leaf_kind(kids[i]) != TokenKind.StrLit { return (0 - 1, i) }
+    ro value = leaf_text(kids[i])
+    i += 1
+    if key != "target_os" { return (0 - 1, i) }
+    if value == "\"windows\"" || value == "windows" { return (cfg_os_state(target, "windows"), i) }
+    if value == "\"linux\"" || value == "linux" { return (cfg_os_state(target, "linux"), i) }
+    if value == "\"macos\"" || value == "macos" { return (cfg_os_state(target, "macos"), i) }
+    if value == "\"unix\"" || value == "unix" || value == "\"posix\"" || value == "posix" {
+        if target == "linux" || target == "macos" { return (1, i) }
+        return (0, i)
+    }
+    (0, i)
+}
+
+fn cfg_os_state(target str, expected str) -> int =>
+    if target == expected { 1 } else { 0 }
+
+fn cfg_attr_outcomes(attrs []Node) -> (int, int) {
+    mut active = 0
+    mut unknown = 0
+    for target_idx in 0..3 {
+        ro target = if target_idx == 0 { "windows" } else if target_idx == 1 { "linux" } else { "macos" }
+        mut state = 1
+        for attr in attrs {
+            if !is_cfg_attribute(attr) { continue }
+            state = cfg_and_state(state, cfg_attr_state(attr, target))
+        }
+        if state == 1 { active += 1 << target_idx }
+        else if state == (0 - 1) { unknown += 1 << target_idx }
+    }
+    (active, unknown)
+}
+
+fn is_cfg_attribute(n Node) -> bool {
+    if n.kind_of() != NodeKind.AttrDecl { return false }
+    ro kids = branch_children(n)
+    kids.len() > 1 && leaf_text(kids[1]) == "cfg"
+}
+
+fn cfg_combine_outcomes(left_mask int, left_unknown int,
+                        right_mask int, right_unknown int) -> (int, int) {
+    mut mask = 0
+    mut unknown = 0
+    for idx in 0..3 {
+        ro bit = 1 << idx
+        ro left_false = (left_mask / bit) % 2 == 0 && (left_unknown / bit) % 2 == 0
+        ro right_false = (right_mask / bit) % 2 == 0 && (right_unknown / bit) % 2 == 0
+        if left_false || right_false { continue }
+        if (left_unknown / bit) % 2 == 1 || (right_unknown / bit) % 2 == 1 {
+            unknown += bit
+        } else {
+            mask += bit
+        }
+    }
+    (mask, unknown)
+}
 
 /// THE VARIANT range of a declaration: first row and count, or None when this
 /// declaration owns no variants. A door and not a bare match, because three
@@ -114,6 +239,21 @@ export type FnDef value {
     ret_self bool /// the return is the RECEIVER itself (`-> @`, D409/D181): the call's value is the place its receiver was -- a `mut` fluent chain continues on it (registry 1540)
     handed_from str /// "" for the file's own rows and for constructor rows; the module path of the handed file (`encoding.utf16`) for a signature read from a handed declaration -- the datum its shell symbol is spelled from (W6)
     owner TyId /// the TYPE a STATIC method is declared on (`fn Vec[T].new(cap int)` -> `Vec[T]`): it takes no receiver and is reached through that type only, never by a free or a method call; `no_ty()` for every other row (274.11 E.10 step 4c-2)
+    target_mask int /// supported target OSes where this row is applicable; bit order is windows, linux, macos
+    target_unknown_mask int /// target OSes whose applicability contains an unsupported predicate; retained for a fail-closed diagnostic
+}
+
+/// The row's three-valued applicability for one target OS: 1 true, 0 false,
+/// -1 unknown. Unknown predicates are never guessed by resolution.
+export fn FnDef @target_state(target_os str) -> int {
+    if target_os == "" {
+        return if @target_unknown_mask == 0 { 1 } else { 0 - 1 }
+    }
+    ro bit = if target_os == "windows" { 1 } else if target_os == "linux" { 2 } else if target_os == "macos" { 4 } else { 0 }
+    if bit == 0 { return 0 - 1 }
+    if (@target_mask / bit) % 2 == 1 { return 1 }
+    if (@target_unknown_mask / bit) % 2 == 1 { return 0 - 1 }
+    0
 }
 
 /// IS THIS ROW THE PROGRAM'S ENTRY POINT? Asked of the ROW, never of the
@@ -239,15 +379,17 @@ export fn FnTable @compiles_body(row FnRow) -> bool => raw_row(row) < @own_cnt
 /// free functions in `harvest_fn`. Asked of the file's rows only (`own_cnt` is
 /// fixed before any harvest), so a real overload handed from elsewhere stays.
 #realtime nogc
-export fn FnTable @file_declares_method(name str, params []ParamDef, owner TyId) -> bool {
+export fn FnTable @file_declares_method(name str, params []ParamDef, owner TyId,
+                                        target_os str = "") -> bool {
     // ONE name lookup, then the same-name chain BY ROW (the variant table's
     // shape): no name is compared twice. `owner` tells a STATIC method
     // (`fn T.new()`, its type) from a method (`no_ty()`): the two never meet.
     mut r = @own_methods.find(name)
     while r >= 0 {
         ro d = @rows[r]
-        if d.owner == owner && d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
         r = @own_next[r]
+        if d.target_state(target_os) != 1 { continue }
+        if d.owner == owner && d.param_cnt == params.len() && @same_params(d.param_off, params) { return true }
     }
     false
 }
@@ -304,8 +446,9 @@ fn FnTable @same_params(off int, params []ParamDef) -> bool {
 /// order (§4.4 fixes the position, so the caller has no other place to put
 /// it, and no way to name a second one).
 export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []ParamDef,
-                          tparam_names []str, tparam_bounds []str, handed_from str = "",
-                          ret_ro bool = false, ret_self bool = false) -> () {
+                           tparam_names []str, tparam_bounds []str, handed_from str = "",
+                           ret_ro bool = false, ret_self bool = false,
+                           target_mask int = 7, target_unknown_mask int = 0) -> () {
     ro off = @params.len()
     // Whole slice at once: std does the copy (nv-coding-style section 18a --
     // a counted push loop is the red flag it names).
@@ -320,8 +463,8 @@ export fn FnTable mut @add(name str, ret_id TyId, has_recv bool, param_ids []Par
         @tlinear.push(false)
     }
     @rows.push(FnDef { name, ret_id, param_off: off, param_cnt: param_ids.len(), has_recv,
-                       tparam_off: toff, tparam_cnt: tparam_names.len(), ret_ro, ret_self, handed_from,
-                       owner: no_ty() })
+                        tparam_off: toff, tparam_cnt: tparam_names.len(), ret_ro, ret_self, handed_from,
+                        owner: no_ty(), target_mask, target_unknown_mask })
 }
 
 /// Mark which type parameters of the LAST registered row are `T consume`
@@ -345,14 +488,18 @@ fn FnTable mut @mark_linear(linear []bool) -> () {
 /// receiver, reached through its type only (274.11 E.10 step 4c-2). The row is
 /// `@add`'s, with its owner set -- one registration door, one shape of row.
 export fn FnTable mut @add_static(owner TyId, name str, ret_id TyId, param_ids []ParamDef,
-                                 tparam_names []str, tparam_bounds []str, handed_from str,
-                                 ret_ro bool) -> () {
-    @add(name, ret_id, false, param_ids, tparam_names, tparam_bounds, handed_from: handed_from, ret_ro: ret_ro)
+                                  tparam_names []str, tparam_bounds []str, handed_from str,
+                                  ret_ro bool, target_mask int = 7,
+                                  target_unknown_mask int = 0) -> () {
+    @add(name, ret_id, false, param_ids, tparam_names, tparam_bounds,
+         handed_from: handed_from, ret_ro: ret_ro,
+         target_mask: target_mask, target_unknown_mask: target_unknown_mask)
     ro last = @rows.len() - 1
     ro fd = @rows[last]
     @rows[last] = FnDef { name: fd.name, ret_id: fd.ret_id, param_off: fd.param_off, param_cnt: fd.param_cnt,
-                          has_recv: false, tparam_off: fd.tparam_off, tparam_cnt: fd.tparam_cnt,
-                          ret_ro: fd.ret_ro, ret_self: fd.ret_self, handed_from: fd.handed_from, owner }
+                           has_recv: false, tparam_off: fd.tparam_off, tparam_cnt: fd.tparam_cnt,
+                           ret_ro: fd.ret_ro, ret_self: fd.ret_self, handed_from: fd.handed_from, owner,
+                           target_mask: fd.target_mask, target_unknown_mask: fd.target_unknown_mask }
 }
 
 /// THE VARIANT a name denotes INSIDE ONE SUM (274.7 B6, registry #964), or None

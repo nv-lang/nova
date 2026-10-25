@@ -1,0 +1,250 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: bounded D99/D495 checks for preserved function identities, target-index
+// selection, inactive-body checking and active duplicate refusal.
+// Used by: check-novac-module-tests.
+
+module novac.pipeline
+
+import ../tree.{Node, NodeKind}
+import ../parse.{parse}
+import ../lex.{tokens_of}
+import ../sem.{InteropTable, EmbedTable, CheckOut, FnRow, file_decls, decl_fn_row, no_row, raw_row, c_callable}
+import ../check.{check}
+import ../mono.{reachable}
+
+fn cfg_test_front(text str, target str) -> Front =>
+    front(text, []Node.new(), InteropTable.new(), EmbedTable.new(), target_os: target)
+
+fn functions_in(file Node) -> []Node {
+    mut found = []Node.new()
+    for d in file_decls(file) {
+        if d.kind_of() != NodeKind.FnDecl { continue }
+        found.push(d)
+    }
+    found
+}
+
+fn selected_contains(out CheckOut, row FnRow) -> bool {
+    for selected in out.selected_fns {
+        if selected == row { return true }
+    }
+    false
+}
+
+fn first_call(n Node) -> []Node {
+    match n {
+        Leaf(_) => []Node.new()
+        Branch { kind, children, .. } => {
+            if kind == NodeKind.Call { return []Node.of(n) }
+            for c in children {
+                ro found = first_call(c)
+                if found.len() > 0 { return found }
+            }
+            []Node.new()
+        }
+    }
+}
+
+fn calls_in(n Node) -> []Node {
+    match n {
+        Leaf(_) => []Node.new()
+        Branch { kind, children, .. } => {
+            mut calls = []Node.new()
+            if kind == NodeKind.Call || kind == NodeKind.MethodCall { calls.push(n) }
+            for child in children {
+                for found in calls_in(child) { calls.push(found) }
+            }
+            calls
+        }
+    }
+}
+
+fn emitted_definition(c str, symbol str) -> str {
+    mut in_definition = false
+    mut out = ""
+    for line in c.lines() {
+        if !in_definition {
+            // Match the exact C definition header, not a prototype (ends in `;`) or call site.
+            if line.starts_with("static ") && line.contains("${symbol}(") && line.ends_with("{") {
+                in_definition = true
+                out = "${line}\n"
+            }
+        } else if line == "}" {
+            return "${out}${line}"
+        } else {
+            out = "${out}${line}\n"
+        }
+    }
+    ""
+}
+
+test "cfg function D495 keeps both Fn identities and selects one target row" {
+    ro text = "#cfg(target_os = \"windows\")\nfn route() -> int => 1\n#cfg(target_os = \"linux\" || target_os = \"macos\" && !target_os = \"windows\")\n#cfg(!target_os = \"windows\")\nfn route() -> int => 2\nfn main() { route() }"
+    ro parsed = parse(tokens_of(text))
+    ro win_tree = filter_cfg(parsed, "windows")
+    ro linux_tree = filter_cfg(parsed, "linux")
+    ro win_nodes = functions_in(win_tree)
+    ro linux_nodes = functions_in(linux_tree)
+    assert(win_nodes.len() == 3 && linux_nodes.len() == 3)
+    assert(win_nodes[0].id_of() == linux_nodes[0].id_of())
+    assert(win_nodes[1].id_of() == linux_nodes[1].id_of())
+
+    ro win = cfg_test_front(text, "windows")
+    ro (win_diags, win_out) = check(win.tree, win.src, win.ctx)
+    assert(win_diags.len() == 0, messages(win_diags))
+    ro selected_win = functions_in(win.tree)
+    ro win_row_0 = decl_fn_row(selected_win[0], win.ctx) ?? no_row()
+    ro win_row_1 = decl_fn_row(selected_win[1], win.ctx) ?? no_row()
+    assert(raw_row(win_row_0) >= 0 && raw_row(win_row_1) >= 0)
+    assert(selected_contains(win_out, win_row_0))
+    assert(!selected_contains(win_out, win_row_1))
+
+    ro linux = cfg_test_front(text, "linux")
+    ro (linux_diags, linux_out) = check(linux.tree, linux.src, linux.ctx)
+    assert(linux_diags.len() == 0, messages(linux_diags))
+    ro selected_linux = functions_in(linux.tree)
+    ro linux_row_0 = decl_fn_row(selected_linux[0], linux.ctx) ?? no_row()
+    ro linux_row_1 = decl_fn_row(selected_linux[1], linux.ctx) ?? no_row()
+    assert(!selected_contains(linux_out, linux_row_0))
+    assert(selected_contains(linux_out, linux_row_1))
+}
+
+test "cfg function inactive bodies skip semantic refusals but retain syntax errors" {
+    ro semantic = "#cfg(target_os = \"windows\")\nfn hidden() -> int => missing_name\nfn main() {}"
+    ro linux = cfg_test_front(semantic, "linux")
+    ro (clean, _) = check(linux.tree, linux.src, linux.ctx)
+    assert(clean.len() == 0, messages(clean))
+
+    ro malformed = "#cfg(target_os = \"windows\")\nfn hidden() -> int => (1 +)\nfn main() {}"
+    ro malformed_front = cfg_test_front(malformed, "linux")
+    ro (bad, _) = check(malformed_front.tree, malformed_front.src, malformed_front.ctx)
+    assert(bad.len() > 0, messages(bad))
+    assert(messages(bad).contains("novac did not parse this"), messages(bad))
+}
+
+test "cfg function target controls must-consume body flow" {
+    ro text = "type Tx consume { n int }\nfn Tx consume @drop() -> () {}\n#cfg(target_os = \"windows\")\nfn hidden(consume tx Tx) -> () {}\nfn main() {}"
+    ro linux = cfg_test_front(text, "linux")
+    ro (linux_diags, _) = check(linux.tree, linux.src, linux.ctx)
+    assert(linux_diags.len() == 0, messages(linux_diags))
+
+    ro windows = cfg_test_front(text, "windows")
+    ro (windows_diags, _) = check(windows.tree, windows.src, windows.ctx)
+    assert(messages(windows_diags).contains("is not consumed before the end of its scope"), messages(windows_diags))
+}
+
+test "cfg function same-signature duplicates require simultaneous activity" {
+    ro text = "#cfg(target_os = \"windows\")\nfn duplicate() -> int => 1\n#cfg(target_os = \"windows\")\nfn duplicate() -> int => 2\nfn main() {}"
+    ro win = cfg_test_front(text, "windows")
+    ro (win_diags, _) = check(win.tree, win.src, win.ctx)
+    assert(messages(win_diags).contains("duplicate function definition `duplicate`"), messages(win_diags))
+
+    ro linux = cfg_test_front(text, "linux")
+    ro (linux_diags, _) = check(linux.tree, linux.src, linux.ctx)
+    assert(linux_diags.len() == 0, messages(linux_diags))
+}
+
+test "cfg function target candidates cover methods static calls and export wrappers" {
+    ro text = "type Box { n int }\n#cfg(target_os = \"windows\")\nfn Box @route() -> int => 1\n#cfg(target_os = \"linux\")\nfn Box @route() -> int => 2\n#cfg(target_os = \"windows\")\nfn Box.value() -> int => 3\n#cfg(target_os = \"linux\")\nfn Box.value() -> int => 4\n#cfg(target_os = \"windows\")\nexport fn public_route() -> int => 5\n#cfg(target_os = \"linux\")\nexport fn public_route() -> int => 6\nfn main() {\n ro b = Box { n: 0 }\n ro a = b.route()\n ro c = Box.value()\n ro d = public_route()\n}"
+    ro windows = cfg_test_front(text, "windows")
+    ro (wdiag, wout) = check(windows.tree, windows.src, windows.ctx)
+    assert(wdiag.len() == 0, messages(wdiag))
+    ro wrows = functions_in(windows.tree)
+    ro wm0 = decl_fn_row(wrows[0], windows.ctx) ?? no_row()
+    ro wm1 = decl_fn_row(wrows[1], windows.ctx) ?? no_row()
+    ro ws0 = decl_fn_row(wrows[2], windows.ctx) ?? no_row()
+    ro ws1 = decl_fn_row(wrows[3], windows.ctx) ?? no_row()
+    ro we0 = decl_fn_row(wrows[4], windows.ctx) ?? no_row()
+    ro we1 = decl_fn_row(wrows[5], windows.ctx) ?? no_row()
+    assert(selected_contains(wout, wm0) && !selected_contains(wout, wm1))
+    assert(selected_contains(wout, ws0) && !selected_contains(wout, ws1))
+    assert(selected_contains(wout, we0) && !selected_contains(wout, we1))
+    mut w_route = false
+    mut w_static = false
+    mut w_export = false
+    for call in calls_in(windows.tree) {
+        ro row = wout.callee_of(call.id_of()).callable_row()
+        if row == wm0 || row == wm1 { assert(row == wm0); w_route = true }
+        if row == ws0 || row == ws1 { assert(row == ws0); w_static = true }
+        if row == we0 || row == we1 { assert(row == we0); w_export = true }
+    }
+    assert(w_route && w_static && w_export)
+    ro linux = cfg_test_front(text, "linux")
+    ro (ldiag, lout) = check(linux.tree, linux.src, linux.ctx)
+    assert(ldiag.len() == 0, messages(ldiag))
+    ro lrows = functions_in(linux.tree)
+    ro lm0 = decl_fn_row(lrows[0], linux.ctx) ?? no_row()
+    ro lm1 = decl_fn_row(lrows[1], linux.ctx) ?? no_row()
+    ro ls0 = decl_fn_row(lrows[2], linux.ctx) ?? no_row()
+    ro ls1 = decl_fn_row(lrows[3], linux.ctx) ?? no_row()
+    ro le0 = decl_fn_row(lrows[4], linux.ctx) ?? no_row()
+    ro le1 = decl_fn_row(lrows[5], linux.ctx) ?? no_row()
+    assert(!selected_contains(lout, lm0) && selected_contains(lout, lm1))
+    assert(!selected_contains(lout, ls0) && selected_contains(lout, ls1))
+    assert(!selected_contains(lout, le0) && selected_contains(lout, le1))
+    mut l_route = false
+    mut l_static = false
+    mut l_export = false
+    for call in calls_in(linux.tree) {
+        ro row = lout.callee_of(call.id_of()).callable_row()
+        if row == lm0 || row == lm1 { assert(row == lm1); l_route = true }
+        if row == ls0 || row == ls1 { assert(row == ls1); l_static = true }
+        if row == le0 || row == le1 { assert(row == le1); l_export = true }
+    }
+    assert(l_route && l_static && l_export)
+}
+
+test "cfg target reaches selected generic instantiation and emitted body" {
+    ro text = "#cfg(target_os = \"windows\")\nfn route[T](x T) -> int => 101\n#cfg(target_os = \"linux\")\nfn route[T](x T) -> int => 202\nfn main() -> int => route(1)"
+    ro negative_control = "static int route(int x);\nstatic int unrelated(void) { return 101; }\nint main(void) { return route(1); }\n"
+    assert(emitted_definition(negative_control, "route") == "")
+
+    ro windows = cfg_test_front(text, "windows")
+    ro (wdiag, wout) = check(windows.tree, windows.src, windows.ctx)
+    assert(wdiag.len() == 0, messages(wdiag))
+    ro wrows = functions_in(windows.tree)
+    ro wroute = decl_fn_row(wrows[0], windows.ctx) ?? no_row()
+    mut wreach = reachable(windows.tree, windows.ctx, wout)
+    ro (wiags, winst) = instances_of(windows.tree, windows.src, windows.ctx, wreach, []Node.new())
+    assert(wiags.len() == 0, messages(wiags))
+    assert(winst.len() == 1 && winst[0].row == wroute)
+    ro (wemit_diags, wc) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
+                                                    "cfg_fn_test.nv", EmbedTable.new(), target_os: "windows")
+    assert(wemit_diags.len() == 0, messages(wemit_diags))
+    ro wsymbol = c_callable(windows.ctx, winst[0].row, winst[0].subst)
+    ro wdefinition = emitted_definition(wc, wsymbol)
+    assert(wdefinition.starts_with("static ") && wdefinition.contains("${wsymbol}(") &&
+           wdefinition.contains("101") && !wdefinition.contains("202"), wdefinition)
+
+    ro linux = cfg_test_front(text, "linux")
+    ro (ldiag, lout) = check(linux.tree, linux.src, linux.ctx)
+    assert(ldiag.len() == 0, messages(ldiag))
+    ro lrows = functions_in(linux.tree)
+    ro lroute = decl_fn_row(lrows[1], linux.ctx) ?? no_row()
+    mut lreach = reachable(linux.tree, linux.ctx, lout)
+    ro (liags, linst) = instances_of(linux.tree, linux.src, linux.ctx, lreach, []Node.new())
+    assert(liags.len() == 0, messages(liags))
+    assert(linst.len() == 1 && linst[0].row == lroute)
+    ro (lemit_diags, lc) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
+                                                    "cfg_fn_test.nv", EmbedTable.new(), target_os: "linux")
+    assert(lemit_diags.len() == 0, messages(lemit_diags))
+    ro lsymbol = c_callable(linux.ctx, linst[0].row, linst[0].subst)
+    ro ldefinition = emitted_definition(lc, lsymbol)
+    assert(ldefinition.starts_with("static ") && ldefinition.contains("${lsymbol}(") &&
+           ldefinition.contains("202") && !ldefinition.contains("101"), ldefinition)
+}
+
+test "cfg function inactive own row does not shadow active imported row" {
+    ro decl_text = "module std.cfg_handed\nexport fn route() -> int => 9"
+    ro decls = parse_decls([]str.of(decl_text), target_os: "linux")
+    ro text = "module app.main\nimport std.cfg_handed.{route}\n#cfg(target_os = \"windows\")\nfn route() -> int => 1\nfn main() { route() }"
+    ro fr = front(text, decls, InteropTable.new(), EmbedTable.new(), target_os: "linux")
+    ro (diags, out) = check(fr.tree, fr.src, fr.ctx)
+    assert(diags.len() == 0, messages(diags))
+    ro calls = first_call(fr.tree)
+    assert(calls.len() == 1)
+    ro selected = out.callee_of(calls[0].id_of()).callable_row()
+    assert(selected_contains(out, selected))
+    ro fd = fr.ctx.fns.rows[raw_row(selected)]
+    assert(fd.handed_from == "std.cfg_handed", fd.handed_from)
+}
