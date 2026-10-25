@@ -22,7 +22,7 @@
 
 ## Связи
 
-scripts/gate.sh (A-E2 ~1561-1568); scripts/guards/gate-budget.baseline; C:/Users/Евгений/AppData/Local/Temp/opencode/ses_efdd2dc2effePXj0L8WPrxkIJN/092-gate-v9.log (строки 4899-4902, 5017-5020); docs/plans/221.1-bug-sweep.md №475
+scripts/gate.sh (A-E2 ~1561-1568); scripts/guards/gate-budget.baseline; %USERPROFILE%/AppData/Local/Temp/opencode/<сессия-интегратора>/092-gate-v9.log (строки 4899-4902, 5017-5020); docs/plans/221.1-bug-sweep.md №475
 
 ## Границы
 
