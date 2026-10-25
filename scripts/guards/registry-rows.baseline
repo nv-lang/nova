@@ -1,3 +1,15 @@
+# Integrator post-092 batch 2026-10-25 (numbers assigned by the integrator):
+#   reg 1912-1918 record seven Oracle 0.1.0 defects from the orchestrator's
+#   probes (_probe-bind, 11:49): fn-value in HashMap option C type, call via
+#   alias/newtype fn field, light-lambda inference into fn slot, loose
+#   protocol-param compare in fn types (silent null), forbid bypassed via
+#   fn-value call without the D63 runtime barrier, --strict-effects blind
+#   spots (method on value, fn with extra effects into slot), Time.now ICE
+#   without the duration import. reg 1919 records target_os_class fixtures
+#   missing from novac-conformance.list (CI never runs them). reg 1920
+#   records the owner-ordered task (13:55) to find the expensive full-tier
+#   step and lower the gate budget back. Direct recount: rows 1819 -> 1828,
+#   max 1911 -> 1920, duplicates 0; gaps unchanged.
 # Task 092 acceptance, number from the integrator 2026-10-25:
 #   reg 1911 records Carina's duplicate-fn diagnostic text naming
 #   E_DUP_DEFINITION where the oracle emits E_DUPLICATE_DECL (run.nv:263,
@@ -1813,8 +1825,8 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1819
-max=1911
+rows=1828
+max=1920
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
