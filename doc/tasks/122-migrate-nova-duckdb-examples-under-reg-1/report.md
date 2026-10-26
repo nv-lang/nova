@@ -76,8 +76,9 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 команды, cwd, переменные окружения, хеши бинарей/исходников — `evidence/README.md`.
 
 - Oracle: `nova check src` PASS 12 FAIL 0 WARN 0 (`evidence/oracle-check-src.txt`);
-  `nova test src` PASS 5 FAIL 0 SKIP 7 (`evidence/oracle-test-src.txt`; skip —
-  интеграционные с живой БД, как и было); `nova check` каждого из 3 примеров
+  `nova test src` PASS 5 FAIL 0 SKIP 7 (`evidence/oracle-test-src.txt`; все 7
+  SKIP — модули без test-блоков и `fn main()`, скомпилированы OK; интеграционные
+  `encryption_test`/`db_real_test`/`duckdb_test` реально PASS); `nova check` каждого из 3 примеров
   зелёный (`evidence/oracle-check-example-01-hello.txt`,
   `-02-appender-history.txt`, `-03-with-tls.txt`). Примеры резолвят duckdb в
   ЛОКАЛЬНЫЕ мигрированные исходники, не git 0.1.1: сломанный `src/types.nv`
