@@ -15,7 +15,8 @@ Satellite-пакет `nova-duckdb` (D:\Sources\nv-lang\nova-duckdb) мигрир
 (ветка `_ => 0 - 1` типа `int` против рукава `i64` — E_MATCH_ARM_WIDTH_MISMATCH,
 D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-with-tls/with_tls.nv`
 и `src/encryption_test.nv` (unused-import: использование только в паттерн-позиции).
-Проверено «до»: `nova check src` FAIL на sqltag; логи `check-before.txt` в скрэтче.
+Проверено «до»: `nova check src` FAIL на sqltag — дословно в
+`evidence/oracle-check-src-before.txt`.
 
 ## ТОЧКА
 
@@ -23,7 +24,8 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
   catch-all там не было — диагностика требовала поимённо покрыть новые 14.
 - `examples/01-hello`/`02-appender-history`: `(0 - 1)` типа `int` в fallback-ветке
   `int_at`, где соседний рукав — `i64`; конструктор `Value.Int` ждёт `i64`
-  (D491-граница подтверждена пробником: `int`→`i64` = E_IMPLICIT_NARROWING).
+  (D491-граница подтверждена пробником: `int`→`i64` = E_IMPLICIT_NARROWING,
+  дословно в `evidence/oracle-check-src-d491-narrowing.txt`).
 
 ## ФИКС
 
@@ -51,28 +53,50 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
   (bytesprobe, дословный вывод). Фикстурой spec_tests НЕ оформлен: фикс — чужая
   задача (OPEN reg 1015).
 
-## САБОТАЖ (в обе стороны)
+## САБОТАЖ (в обе стороны, оба вида)
 
-- Убрана ветка `SqlValue.U32` из match → `nova check` красный:
-  `E_MATCH_NON_EXHAUSTIVE … не покрывает вариант: U32` (файл `sabotage-red.txt`).
-- Ветка возвращена → `nova check src` PASS 12 FAIL 0 WARN 0 (зелёный).
-  Саботаж доведён до финальных байтов (CRLF/BOM вычищены, diff пуст).
+Саботаж ВЕТКИ (исчерпаемость компилятора):
+- Убрана ветка `SqlValue.U32` из match → `nova check src` красный:
+  `E_MATCH_NON_EXHAUSTIVE … не покрывает вариант: U32` — дословно в
+  `evidence/sabotage-arm-red.txt`.
+- Ветка возвращена → зелёный (`evidence/oracle-check-src.txt`, те же финальные
+  байты, `git diff` пуст).
+
+Саботаж ЗНАЧЕНИЯ (фикстура ловит неверный маппинг, не только компилятор):
+- `SqlValue.U32(n) => Value.UInt((n as u64) + 1)` → `nova test src --filter sqltag`
+  красный: `RUN-FAIL src/sqltag_test … FAIL: unsigned integers land in Value.UInt
+  … — sqltag_test.nv:32: assert failed: n == want`, PASS 0 FAIL 1 SKIP 1, rc=1 —
+  дословно в `evidence/sabotage-value-red.txt`.
+- Восстановлено `Value.UInt(n as u64)` → зелёный, rc=0 — дословно в
+  `evidence/sabotage-value-green.txt`; `git diff` satellite пуст.
 
 ## Гейты
 
-- Oracle: `nova check src` PASS 12 FAIL 0 WARN 0; `nova test src` PASS 5 FAIL 0
-  SKIP 7 (skip — интеграционные с живой БД, как и было); `nova check` каждого из
-  3 примеров зелёный; примеры резолвят duckdb по override в локальные мигрированные
-  исходники (доказано: сломанный `types.nv` красит пример с путём
-  `.\../../src/types.nv`, возвращено).
-- Карина (штатный путь: package-release.ps1 → распакованный install,
-  `examples/carina.toml`): все 3 примера FAIL на emit pinned B1 — **внешний блокер**:
-  сид не получает модули зависимостей (`undeclared type name QueryResult /
-  Connection / DbOptions`, первый `QueryResult` в `duckdb.nv:298`); program.rs сам
-  пишет «external packages … the pinned B1 program walk does not link», плюс duckdb
-  вне подмножества B1 (Ш.4/Ш.7 плана 274.16). Логи: `carina-01/02/03.log` в скрэтче.
-- Реестр: 8/8 стражей зелёные (rows/routes замерены на ветке: rows=1822, max=1928,
-  blockers=112, летопись «re-measured at merge»).
+Все дословные логи — `doc/tasks/122-migrate-nova-duckdb-examples-under-reg-1/evidence/`;
+команды, cwd, переменные окружения, хеши бинарей/исходников — `evidence/README.md`.
+
+- Oracle: `nova check src` PASS 12 FAIL 0 WARN 0 (`evidence/oracle-check-src.txt`);
+  `nova test src` PASS 5 FAIL 0 SKIP 7 (`evidence/oracle-test-src.txt`; skip —
+  интеграционные с живой БД, как и было); `nova check` каждого из 3 примеров
+  зелёный (`evidence/oracle-check-example-01-hello.txt`,
+  `-02-appender-history.txt`, `-03-with-tls.txt`). Примеры резолвят duckdb в
+  ЛОКАЛЬНЫЕ мигрированные исходники, не git 0.1.1: сломанный `src/types.nv`
+  красит пример 01 с путём `.\../..\src\types.nv:257:1`
+  (`evidence/resolution-proof-oracle.txt`), восстановлен — зелёный
+  (`evidence/resolution-proof-restored.txt`).
+- Карина (штатный путь: package-release.ps1 → распакованный install в скрэтче):
+  все 3 примера rc=1 на emit pinned B1 — **внешний блокер**: сид не получает
+  модули зависимостей вовсе (`undeclared type name QueryResult / Connection /
+  DbOptions … in the declarations handed to novac`); program.rs сам пишет
+  «external packages … the pinned B1 program walk does not link», плюс исходники
+  duckdb вне подмножества B1 (Ш.4/Ш.7 плана 274.16). Логи:
+  `evidence/carina-build-01-hello.txt`, `-02-appender-history.txt`,
+  `-03-with-tls.txt`. Сломанный `types.nv` НЕ меняет вывод Карины
+  (`evidence/resolution-proof-carina.txt`) — сид не читает источники зависимости
+  ни локальные, ни git; это и есть блокер, расхождение Oracle(зелёный)/
+  Carina(красный) зафиксировано, не подогнано.
+- Реестр: 9/9 стражей зелёные, переснято в круге доработки 1 (rows=1822,
+  max=1928, blockers=112, летопись «re-measured at merge»).
 
 ## std/src
 
@@ -87,11 +111,11 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 - Satellite `nova-duckdb`: `task/122-migrate-under-reg-1637` (0f82981, a59a073) —
   НЕ запушена; push и тег 0.3.x — интегратору.
 - Основной репозиторий: `nova-opencode-122-migrate-nova-duckdb-examples-under-reg-1`
-  (этот доклад, строки 1921/1928, baselines).
+  (этот доклад, evidence/, строки 1921/1928, baselines).
 
 ## КОММИТ
 
-См. выше; в основном репо — коммит с этим докладом.
+См. выше; в основном репо — коммиты задачи (последний — с этим докладом и evidence).
 
 ## ЧТО НЕ СДЕЛАНО
 
@@ -99,13 +123,17 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 - Карина-сборка примеров не зелёная — внешний блокер (pinned B1), не мой фикс.
 - Строка реестра на мёртвый импорт в паттерн-позиции НЕ заведена — наблюдение
   передано интегратору письмом, решение его.
+- Критерий V3 нарушен в первом круге: 01:48→02:57 = 69 минут без контрольной
+  точки (норма 30). Зафиксировано в log.md честно, задним числом отметки не
+  восстанавливались; со второго круга точки каждые ≤30 мин.
 
 ## Наблюдения интегратору (не дефекты моей задачи)
 
-1. Драйверский `lockfile::sync` проигнорировал `[replace]` в `carina.toml`: локи
-   прибил к git 0.1.1 (`QueryResult` undeclared в обоих пробах); файлы удалены как
-   untracked, ручной override прогнал путь дальше (01 дошла до первой ошибки в
-   duckdb.nv).
+1. `lockfile::sync` игнорирует `[replace]` из `nova.override.toml`:
+   `examples/*/nova.lock.toml` пересоздаются каждым прогоном, прибитые к
+   `git … version = "0.1.1" commit = "ba7b8a1…"`. На прогоны не влияет (Oracle
+   резолвит по override — `evidence/resolution-proof-oracle.txt`; Карина источники
+   зависимости не читает вовсе), файлы оставлены untracked.
 2. Линт unused-import не считает использование типа в паттерн-позиции
    (`Value.Text(s) => …`): резолв идёт по типу скрутини, импорт «мёртвый».
 3. При сдаче — вопрос: кандидат `integrate/t122` пушить ночью (медленный раннер,
@@ -116,9 +144,11 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 1. В `nova-duckdb` на ветке `task/122-migrate-under-reg-1637`:
    `nova check src` → PASS 12 WARN 0; `nova test src` → PASS 5 FAIL 0;
    `nova check` в каждом из трёх пакетов примеров (`examples/01-hello`,
-   `examples/02-appender-history`, `examples/03-with-tls`) → зелёный.
+   `examples/02-appender-history`, `examples/03-with-tls`) → зелёный. Эталонные
+   выводы и точные команды/окружение — `evidence/README.md`.
 2. Саботаж: удалить ветку `U32` в `sqltag.nv` → E_MATCH_NON_EXHAUSTIVE; вернуть →
-   зелёный.
+   зелёный. Саботаж значения: `U32 → Value.UInt((n as u64) + 1)` → `nova test src
+   --filter sqltag` красный (assert n == want); вернуть → зелёный.
 3. Push ветки в обе mirrors-точки satellite, тег 0.3.x по усмотрению.
 4. В основном репо: принять merge с докладом, строками 1921/1928 и baselines;
-   проверить 8 реестровых стражей.
+   проверить реестровых стражей.
