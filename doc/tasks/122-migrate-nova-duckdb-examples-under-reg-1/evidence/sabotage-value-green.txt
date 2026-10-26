@@ -1,7 +1,0 @@
-Toolchain: clang, mode=Dev, jobs=16, paths=[D:\Sources\nv-lang\nova-duckdb\src]
-SKIP           src/sqltag  # no test blocks and no fn main() — nothing to link/run (compiled OK)
-PASS           src/sqltag_test
-
-===== SUMMARY =====
-PASS: 1  FAIL: 0  SKIP: 1 (skipped)
-rc=0
