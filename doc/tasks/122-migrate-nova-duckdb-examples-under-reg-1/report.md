@@ -1,6 +1,7 @@
 # Доклад: задача 122 «migrate nova-duckdb examples under reg 1637»
 
-Satellite-пакет `nova-duckdb` (D:\Sources\nv-lang\nova-duckdb) мигрирован под №1637
+Satellite-пакет `nova-duckdb` (рабочая копия `SAT` — checkout satellite-репозитория
+на машине, см. `evidence/README.md`) мигрирован под №1637
 (исчерпывающие match по существу), Oracle чистый; `nova build` примеров через Карину
 упирается во внешний блокер (pinned B1 без модулей зависимостей) — задокументирован.
 
@@ -16,7 +17,7 @@ Satellite-пакет `nova-duckdb` (D:\Sources\nv-lang\nova-duckdb) мигрир
 D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-with-tls/with_tls.nv`
 и `src/encryption_test.nv` (unused-import: использование только в паттерн-позиции).
 Проверено «до»: `nova check src` FAIL на sqltag — дословно в
-`evidence/oracle-check-src-before.txt`.
+`docs/plans/repro/122/oracle-check-src-before.txt`.
 
 ## ТОЧКА
 
@@ -25,7 +26,7 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 - `examples/01-hello`/`02-appender-history`: `(0 - 1)` типа `int` в fallback-ветке
   `int_at`, где соседний рукав — `i64`; конструктор `Value.Int` ждёт `i64`
   (D491-граница подтверждена пробником: `int`→`i64` = E_IMPLICIT_NARROWING,
-  дословно в `evidence/oracle-check-src-d491-narrowing.txt`).
+  дословно в `docs/plans/repro/122/oracle-check-src-d491-narrowing.txt`).
 
 ## ФИКС
 
@@ -49,7 +50,7 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
   `I32`/`U32`), порядок списка в `values_of`; входит в `nova test src`
   (PASS 5 FAIL 0 SKIP 7). Маркеров EXPECT_* нет — это пир-тест пакета, не
   spec_tests.
-- №1928 — пробник-evidence `evidence/1928-enum-payload-array-literal.txt`
+- №1928 — пробник-evidence `docs/plans/repro/122/1928-enum-payload-array-literal.txt`
   (bytesprobe, дословный вывод). Фикстурой spec_tests НЕ оформлен: фикс — чужая
   задача (OPEN reg 1015).
 
@@ -58,42 +59,44 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 Саботаж ВЕТКИ (исчерпаемость компилятора):
 - Убрана ветка `SqlValue.U32` из match → `nova check src` красный:
   `E_MATCH_NON_EXHAUSTIVE … не покрывает вариант: U32` — дословно в
-  `evidence/sabotage-arm-red.txt`.
-- Ветка возвращена → зелёный (`evidence/oracle-check-src.txt`, те же финальные
+  `docs/plans/repro/122/sabotage-arm-red.txt`.
+- Ветка возвращена → зелёный (`docs/plans/repro/122/oracle-check-src.txt`, те же финальные
   байты, `git diff` пуст).
 
 Саботаж ЗНАЧЕНИЯ (фикстура ловит неверный маппинг, не только компилятор):
 - `SqlValue.U32(n) => Value.UInt((n as u64) + 1)` → `nova test src --filter sqltag`
   красный: `RUN-FAIL src/sqltag_test … FAIL: unsigned integers land in Value.UInt
   … — sqltag_test.nv:32: assert failed: n == want`, PASS 0 FAIL 1 SKIP 1, rc=1 —
-  дословно в `evidence/sabotage-value-red.txt`.
+  дословно в `docs/plans/repro/122/sabotage-value-red.txt`.
 - Восстановлено `Value.UInt(n as u64)` → зелёный, rc=0 — дословно в
-  `evidence/sabotage-value-green.txt`; `git diff` satellite пуст.
+  `docs/plans/repro/122/sabotage-value-green.txt`; `git diff` satellite пуст.
 
 ## Гейты
 
-Все дословные логи — `doc/tasks/122-migrate-nova-duckdb-examples-under-reg-1/evidence/`;
-команды, cwd, переменные окружения, хеши бинарей/исходников — `evidence/README.md`.
+Все дословные логи — `docs/plans/repro/122/` (исключение стража №698 для улик;
+перенос из task/evidence байт-в-байт доказан хешами sha256 —
+`evidence/hashes-before.txt` == `evidence/hashes-after.txt`); команды, cwd,
+переменные окружения, хеши бинарей/исходников — `evidence/README.md`.
 
-- Oracle: `nova check src` PASS 12 FAIL 0 WARN 0 (`evidence/oracle-check-src.txt`);
-  `nova test src` PASS 5 FAIL 0 SKIP 7 (`evidence/oracle-test-src.txt`; все 7
+- Oracle: `nova check src` PASS 12 FAIL 0 WARN 0 (`docs/plans/repro/122/oracle-check-src.txt`);
+  `nova test src` PASS 5 FAIL 0 SKIP 7 (`docs/plans/repro/122/oracle-test-src.txt`; все 7
   SKIP — модули без test-блоков и `fn main()`, скомпилированы OK; интеграционные
   `encryption_test`/`db_real_test`/`duckdb_test` реально PASS); `nova check` каждого из 3 примеров
-  зелёный (`evidence/oracle-check-example-01-hello.txt`,
+  зелёный (`docs/plans/repro/122/oracle-check-example-01-hello.txt`,
   `-02-appender-history.txt`, `-03-with-tls.txt`). Примеры резолвят duckdb в
   ЛОКАЛЬНЫЕ мигрированные исходники, не git 0.1.1: сломанный `src/types.nv`
   красит пример 01 с путём `.\../..\src\types.nv:257:1`
-  (`evidence/resolution-proof-oracle.txt`), восстановлен — зелёный
-  (`evidence/resolution-proof-restored.txt`).
+  (`docs/plans/repro/122/resolution-proof-oracle.txt`), восстановлен — зелёный
+  (`docs/plans/repro/122/resolution-proof-restored.txt`).
 - Карина (штатный путь: package-release.ps1 → распакованный install в скрэтче):
   все 3 примера rc=1 на emit pinned B1 — **внешний блокер**: сид не получает
   модули зависимостей вовсе (`undeclared type name QueryResult / Connection /
   DbOptions … in the declarations handed to novac`); program.rs сам пишет
   «external packages … the pinned B1 program walk does not link», плюс исходники
   duckdb вне подмножества B1 (Ш.4/Ш.7 плана 274.16). Логи:
-  `evidence/carina-build-01-hello.txt`, `-02-appender-history.txt`,
+  `docs/plans/repro/122/carina-build-01-hello.txt`, `-02-appender-history.txt`,
   `-03-with-tls.txt`. Сломанный `types.nv` НЕ меняет вывод Карины
-  (`evidence/resolution-proof-carina.txt`) — сид не читает источники зависимости
+  (`docs/plans/repro/122/resolution-proof-carina.txt`) — сид не читает источники зависимости
   ни локальные, ни git; это и есть блокер, расхождение Oracle(зелёный)/
   Carina(красный) зафиксировано, не подогнано.
 - Реестр: 9/9 стражей зелёные, переснято в круге доработки 1 (rows=1822,
@@ -133,7 +136,7 @@ D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-wi
 1. `lockfile::sync` игнорирует `[replace]` из `nova.override.toml`:
    `examples/*/nova.lock.toml` пересоздаются каждым прогоном, прибитые к
    `git … version = "0.1.1" commit = "ba7b8a1…"`. На прогоны не влияет (Oracle
-   резолвит по override — `evidence/resolution-proof-oracle.txt`; Карина источники
+   резолвит по override — `docs/plans/repro/122/resolution-proof-oracle.txt`; Карина источники
    зависимости не читает вовсе), файлы оставлены untracked.
 2. Линт unused-import не считает использование типа в паттерн-позиции
    (`Value.Text(s) => …`): резолв идёт по типу скрутини, импорт «мёртвый».

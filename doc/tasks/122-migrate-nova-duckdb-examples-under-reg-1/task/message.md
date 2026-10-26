@@ -22,7 +22,7 @@
 
 ## Связи
 
-docs/plans/221.1-bug-sweep.md (reg 1637; резерв 1921); docs/plans/274.16-carina-all-examples-and-packages.md Ш.7; D:/Sources/nv-lang/nova-duckdb (satellite); D:/Sources/.opencode-data/opencode/scratchpad/ses_mvnwgvq5vj9fx42v96/118/ (логи 118: duckdb FAIL)
+docs/plans/221.1-bug-sweep.md (reg 1637; резерв 1921); docs/plans/274.16-carina-all-examples-and-packages.md Ш.7; <рабочая копия satellite nova-duckdb> (satellite); <скрэтчпад сессии задачи 118> (логи 118: duckdb FAIL)
 
 ## Границы
 
