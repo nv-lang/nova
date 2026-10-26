@@ -115,19 +115,19 @@
     },
     "codex": {
       "heavy": {
-        "model": "openai/gpt-6-astra",
+        "model": "openai/gpt-6-astra#medium",
         "context": 525000,
         "input": 461000,
         "output": 128000
       },
       "medium": {
-        "model": "openai/gpt-6.1-sol",
+        "model": "openai/gpt-6.1-sol#medium",
         "context": 525000,
         "input": 461000,
         "output": 128000
       },
       "light": {
-        "model": "openai/gpt-6-luna",
+        "model": "openai/gpt-6-luna#medium",
         "context": 525000,
         "input": 461000,
         "output": 128000
@@ -223,10 +223,28 @@
         "family": "kimi",
         "tier": "task"
       }
+    },
+    "kimi-codex": {
+      "develop": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "develop_accept": {
+        "family": "codex",
+        "tier": "medium"
+      },
+      "plan": {
+        "family": "kimi",
+        "tier": "task"
+      },
+      "plan_accept": {
+        "family": "codex",
+        "tier": "medium"
+      }
     }
   },
-  "profile_set": "codex",
-  "tier_max": "light",
+  "profile_set": "kimi",
+  "tier_max": "medium",
   "accepted_slot": "free",
   "merge_precheck": "required"
 }

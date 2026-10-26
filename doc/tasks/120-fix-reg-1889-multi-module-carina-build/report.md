@@ -44,11 +44,16 @@ D89 не тронут. Где ещё искался тот же корень: в
 ФИКСТУРЫ (зовут проверяемое, маркер EXPECT_STDOUT утверждает наблюдаемый вывод):
 `spec_tests/conformance/crossmod_build_min/` (минимум: main + helper, ожидание
 `Hello, Nova!`), `spec_tests/conformance/crossmod_build_program/` (порт реальной
-трёхмодульной программы `novac/fixtures/multi_module/pos_1`, 14 строк вывода,
-хвост `prog ok`). Реальные мультимодульные прогоны «после» (всё exit 0):
+трёхмодульной программы `novac/fixtures/multi_module/pos_1`). Полный ожидаемый
+stdout каждой фикстуры зафиксирован построчно в sidecar `expected_stdout.txt`
+(маркер EXPECT_STDOUT — substring и усечённого прогона не ловит; доработка
+круга 1 это и показала: протухший exe в скрэтче давал 14 строк БЕЗ `prog ok`,
+свежая сборка драйвером и сборка Oracle на том же входе дают 15 строк,
+дословно совпадающих). Реальные мультимодульные прогоны «после» (всё exit 0):
 двухфайловый twopkg — печатает `Hello, Nova!`;
 `spec_tests/conformance/const_peer_group/cpg_driver` — stdout `14`;
-`crossmod_build_program` — 14 строк, `prog ok`. Oracle-прогон новых фикстур
+`crossmod_build_program` — 15 строк с `prog ok`, сверены ВСЕ построчно.
+Oracle-прогон новых фикстур
 (главная копия, `nova-cli/target/release/nova.exe`): PASS 3 FAIL 0 — расхождений
 с Oracle не зафиксировано. Свежее дословное «после» (повторено при сдаче):
 `nova build program: 2 source file(s) staged under ...\target/carina-build\main.11168.src`,
@@ -60,6 +65,35 @@ NOVAC_SELF_PATH»): сломано — RED: `Carina B1 emit failed (exit 1)` с
 `E_NOVAC_SUBSET ... doubled_limit` (имя из второго модуля снова неизвестно);
 восстановлено — GREEN (build rc=0, ожидаемый stdout). Юнит-тесты драйвера:
 `cargo test --release` в `nova-driver/` — 13/13 ok на финальном дереве.
+
+ВОСПРОИЗВОДИМЫЙ РЕГРЕСС (доработка, круг 1 — ответ на вопрос приёмки):
+`scripts/tools/carina-build-crossmod.py` — Windows nova-driver + pinned B1,
+обе crossmod-фикстуры, строгая сверка ПОЛНОГО stdout и exit; на драйвере с
+возвращённым старым контрактом `(staged, repo.join("novac/src"))` даёт RED
+(`E_NOVAC_SUBSET greet`, exit 1 — лог
+`docs/plans/repro/1889-multi-module-carina-build/crossmod-red.txt`), на
+штатном — GREEN (exit 0, логи `crossmod-green.txt`, `crossmod-green-final.txt`
+там же). Oracle-прогон
+(`nova test`) и юнит-тесты `program.rs` этот wiring НЕ покрывают — скрипт и
+есть страж класса; ни один CI-джоб сида не скачивает, поэтому скрипт —
+локальный/по-требованию, как `carina-build-golden.py`. ДОСЛОВНЫЙ RED/GREEN
+через драйвер одним файлом (заказ интегратора 22:04):
+`docs/plans/repro/1889-multi-module-carina-build/evidence-driver-red-green.txt`
+— GREEN (exit 0, `Hello, Nova!`) →
+RED (exit 1, `E_NOVAC_SUBSET`) → GREEN. Различие «литеральный before vs
+саботажный эквивалент»: литеральный прогон довоенным бинарником в файл не
+писался (терминал, цитаты в §РЕПРО); фаза RED восстанавливает тот же контракт
+вызова сида при прочих равных, диагностика дословно совпадает с прямым
+прогоном «до» (`docs/plans/repro/1889-multi-module-carina-build/repro-before-seed-direct.json`).
+SHA-256 бинаря
+драйвера между пересборками одного исходника различается (недетерминизм
+линковки) — вердикт опирается на поведение и пустой `git diff` после
+восстановления. Улики живут в `docs/plans/repro/1889-multi-module-carina-build/`,
+а не в папке задачи: машинные пути в уликах законны только под
+`docs/plans/repro/**` (страж №698), а `*.log` покрыт `.gitignore` — круг 1
+сначала положил их в `doc/tasks/.../evidence/*.log`, и восемь логов молча не
+уехали в коммит (поймано красным CI кандидата c1dee2608: единственный
+отслеженный файл с путём, `.json`, и покраснил страж).
 
 std/src: не применимо: правка только nova-driver (Rust), компилятор
 (`compiler-codegen/`) и `std/` не тронуты — `nova check std/src` не судит этот
@@ -80,8 +114,10 @@ spec: не применимо — язык не меняется, D-блок н�
   несколько строк, не отслеживается; embed-ассеты не стейджатся. Оговорка
   записана в №1889.
 - B1 ICE `pipeline/program.nv:157` на package-qualified импортах собственного
-  пакета (`import twopkg.helper.{greet}`) — ребро между единицами не
-  создаётся; НЕ чинился (сид запинен), кандидат на отдельную запись №TBD.
+  пакета (`import pkgq2.helper.{greet}`) — ребро между единицами не
+  создаётся; НЕ чинился (сид запинен), заведён строкой **№1924** (номер
+  интегратора, К2, БЛОКИРУЕТ ТЕГ: НЕТ — обход `./helper`; минимальное репро и
+  лог в `docs/plans/repro/1889-multi-module-carina-build/pkgq2-ice-program-nv-157.txt`).
 - №1895 (cross-drive publish): починен только носитель (fallback copy+remove);
   закрытие класса — за интегратором.
 - MSVC (№1890) — вне объёма 0.3 по слову владельца 18:05.
@@ -103,19 +139,25 @@ spec: не применимо — язык не меняется, D-блок н�
   ПРОГРАММЫ, а не исходники Карины); альтернативный корень «пакет целиком»
   отвергнут замером; границы фикса названы (№TBD на package-qualified imports).
 - registry: №1889 заведён тем же слиянием; тесты не ослаблены и не удалены;
-  новых E_*/W_* нет. Стражи (Git Bash/python, все rc=0):
-  check-registry-rows-intact (1820/1820, max 1911, дублей 0, протухших дыр 0),
-  check-registry-entry-shape (343/343, разобрано 1820),
+  новых E_*/W_* нет. Доработкой круга 1 заведена строка **№1924** (B1 ICE
+  package-qualified own-imports; номер интегратора), оговорки №1889 про
+  import/embed и ICE обновлены, claim про «14 строк» исправлен на полную
+  построчную сверку 15 строк. Стражи (Git Bash/python, все rc=0, прогон
+  2026-10-25 после правок круга 1): check-registry-rows-intact (1821/1821,
+  max 1924, дублей 0, протухших дыр 0; gaps += 1912-1923 — эти строки живут
+  в пакете 221.1 на main и резерве задачи 122, ветка их не несёт, пересчёт
+  при переносе — интегратору), check-registry-entry-shape (343/343),
   check-registry-routes (блокеров 111/111, без маршрута 0, без оговорки 0),
   check-registry-single-verdict ok, check-registry-status-field ok,
   check-registry-past-tense-status ok, check-registry-closure-kept ok,
   check-registry-row-closed ok. База scripts/guards/registry-rows.baseline:
-  rows 1819→1820, max без изменений, 1889 убран из gaps (1890-1891 — резерв
-  интегратора), летопись дописана сверху.
+  rows 1820→1821, max 1911→1924, летопись дописана сверху.
 - spec: не применимо (язык не меняется).
 - std-check: не применимо (правка без компилятора и std — только nova-driver).
-- invariant: новых инвариантов и стражей не введено; регресс держат две
-  conformance-фикстуры с EXPECT_STDOUT.
+- invariant: новых CI-стражей не введено; добавлен локальный воспроизводимый
+  регресс `scripts/tools/carina-build-crossmod.py` (driver + pinned B1, полный
+  stdout/exit по sidecar `expected_stdout.txt`; RED на старом контракте) — он
+  закрывает шов, который ни Oracle (`nova test`), ни юнит-тесты не покрывают.
 - gate / ci: локальные гейты не гонялись (слово владельца 2026-10-07: гейты
   отданы GitHub CI). Первый кандидат 0936cdac1 показал ОДИН настоящий отказ
   по этой работе — check-error-rewrap-chain на carina_build.rs:331 (`{}`
