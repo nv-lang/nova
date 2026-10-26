@@ -6,38 +6,50 @@ Satellite-пакет `nova-duckdb` (D:\Sources\nv-lang\nova-duckdb) мигрир
 
 ## РЕПРО
 
-В `nova-duckdb` — `W_MATCH_EXHAUSTIVENESS + catch-all` в `src/sqltag.nv`
-(`sqlValueToValue`) и в `examples/01-connect-query.nv`, `examples/02-ddl-insert.nv`
-(`(0-1) as int` без приведения — сужение до `Value.Int(i64)` ожидалось на старой
-семантике). Проверено «до»: `nova check src` = PASS 11 WARN 1,
-`nova check examples` = WARN в 01/02. (`check-before.txt` в скрэтче.)
+В `nova-duckdb` — `E_MATCH_NON_EXHAUSTIVE` в `src/sqltag.nv:40` (`value_of`):
+№1637 вырастил сумму `SqlValue` std с 6 вариантов до 14 (по одному на числовой
+тип), а match знал домиграционные 6 поимённых веток (`I`/`F`/`S`/`B`/`Bytes`/`Null`)
+— задача 118 замерила это как единственное падение `nova test src` пакета.
+Дополнительно компилятор текущей эпохи отвергал примеры: `int_at` в
+`examples/01-hello/hello_duckdb.nv` и `examples/02-appender-history/appender_history.nv`
+(ветка `_ => 0 - 1` типа `int` против рукава `i64` — E_MATCH_ARM_WIDTH_MISMATCH,
+D491) и мёртвые импорты `duckdb.types.{Value}` в `examples/03-with-tls/with_tls.nv`
+и `src/encryption_test.nv` (unused-import: использование только в паттерн-позиции).
+Проверено «до»: `nova check src` FAIL на sqltag; логи `check-before.txt` в скрэтче.
 
 ## ТОЧКА
 
-- `src/sqltag.nv` `sqlValueToValue`: catch-all `_` поглощал варианты `SqlValue` —
-  маппинг не был виден по существу; `U8` падал в `_ => Value.Int(v as i64)`.
-- `examples/01`/`02`: `Value.Int` строился из `int` (`(0-1) as int`), а конструктор
-  ждёт `i64` (D491-граница подтверждена пробником: `int`→`i64` = E_IMPLICIT_NARROWING).
+- `src/sqltag.nv` `value_of`: match по 6 старым вариантам `SqlValue`; никакого
+  catch-all там не было — диагностика требовала поимённо покрыть новые 14.
+- `examples/01-hello`/`02-appender-history`: `(0 - 1)` типа `int` в fallback-ветке
+  `int_at`, где соседний рукав — `i64`; конструктор `Value.Int` ждёт `i64`
+  (D491-граница подтверждена пробником: `int`→`i64` = E_IMPLICIT_NARROWING).
 
 ## ФИКС
 
 Ветка `task/122-migrate-under-reg-1637` в satellite (не запушена — пуш интегратору):
 
-- `0f82981` — `sqltag.nv`: catch-all заменён на 14 поимённых веток по D-блокам
-  маппинга: `Int/I8..I64 → Value.Int(v as i64)`, `U8..U32 → Value.UInt(v as u64)`
-  (симметрия с read-путём `duckdb.nv`), `F32 → Value.Real(v as f64)`; `SqlValue`
-  импортирован для резолва паттернов. Новая фикстура-пир `src/sqltag_test.nv`.
-- `a59a073` — `examples/01`/`02`: `(0-1) as i64`; `03-encrypted-persistence.nv` и
-  `examples/encryption_test.nv`: удалены мёртвые импорты `Value` (использовался
-  только в паттерн-позиции — резолв идёт по типу скрутини, замерено пробником).
+- `0f82981` — `sqltag.nv`: match в `value_of` переписан на 14 поимённых веток по
+  D-блокам маппинга (без `_`): `Int/I8..I64 → Value.Int(n as i64)`,
+  `U8..U32 → Value.UInt(n as u64)` (симметрия с read-путём `duckdb.nv`),
+  `F32 → Value.Real(x as f64)`; каждая конверсия lossless. Новая фикстура-пир
+  `src/sqltag_test.nv`.
+- `a59a073` — `examples/01-hello`/`02-appender-history`: `(0 - 1) as i64`;
+  `examples/03-with-tls/with_tls.nv` и `src/encryption_test.nv`: удалены мёртвые
+  импорты `Value` (использовался только в паттерн-позиции — резолв идёт по типу
+  скрутини, замерено пробником `patprobe` в обе стороны).
 
 ## ФИКСТУРЫ
 
-- `src/sqltag_test.nv` (satellite, пир по конвенции std): покрывает `sqlValueToValue`
-  по всем 14 вариантам + `sqlTagName`; EXPECT_STDOUT-маркер; входит в `nova test src`.
+- `src/sqltag_test.nv` (satellite, пир по конвенции std): блоки `test "…"` с
+  `assert` через обёртки `expect_int/expect_uint/expect_real` — каждый из 14
+  вариантов поимённо, значения переносятся без потерь (включая верх диапазона
+  `I32`/`U32`), порядок списка в `values_of`; входит в `nova test src`
+  (PASS 5 FAIL 0 SKIP 7). Маркеров EXPECT_* нет — это пир-тест пакета, не
+  spec_tests.
 - №1928 — пробник-evidence `evidence/1928-enum-payload-array-literal.txt`
   (bytesprobe, дословный вывод). Фикстурой spec_tests НЕ оформлен: фикс — чужая
-  задача (OPEN №1015, scoped-down).
+  задача (OPEN reg 1015).
 
 ## САБОТАЖ (в обе стороны)
 
@@ -103,7 +115,8 @@ Satellite-пакет `nova-duckdb` (D:\Sources\nv-lang\nova-duckdb) мигрир
 
 1. В `nova-duckdb` на ветке `task/122-migrate-under-reg-1637`:
    `nova check src` → PASS 12 WARN 0; `nova test src` → PASS 5 FAIL 0;
-   `nova check examples/01-connect-query.nv` (02, 03) → зелёный.
+   `nova check` в каждом из трёх пакетов примеров (`examples/01-hello`,
+   `examples/02-appender-history`, `examples/03-with-tls`) → зелёный.
 2. Саботаж: удалить ветку `U32` в `sqltag.nv` → E_MATCH_NON_EXHAUSTIVE; вернуть →
    зелёный.
 3. Push ветки в обе mirrors-точки satellite, тег 0.3.x по усмотрению.
