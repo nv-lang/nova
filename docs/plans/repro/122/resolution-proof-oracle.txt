@@ -1,0 +1,11 @@
+[31mFAIL:[0m .\hello_duckdb.nv
+  import resolution: 2 import error(s):
+  
+  in imported module 'duckdb.types' (.\../..\src\types.nv): 257:1: expected fn / type / let / const / test, got identifier
+  
+  in imported module 'duckdb.types' (.\../..\src\types.nv): 257:1: expected fn / type / let / const / test, got identifier
+
+===== SUMMARY =====
+PASS: 0  [31mFAIL[0m: 1  WARN: 0
+[1m[31merror:[0m[0m 1 file(s) failed type-check
+rc=1

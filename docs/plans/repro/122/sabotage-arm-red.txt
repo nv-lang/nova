@@ -1,0 +1,41 @@
+﻿[32mok:[0m src\db_effect.nv
+[32mok:[0m src\db_effect_test.nv
+[32mok:[0m src\db_real.nv
+[32mok:[0m src\db_real_test.nv
+[32mok:[0m src\duckdb.nv
+[32mok:[0m src\duckdb_test.nv
+[32mok:[0m src\encryption_test.nv (1 warning(s))
+[32mok:[0m src\errors.nv
+[32mok:[0m src\ffi.nv
+bash.exe :   [1m[33mwarning:[0m[0m src\encryption_test.nv:15:1: unused import `Value` — imported but never referenc
+ed in this file [unused-import]
+строка:2 знак:1
++ & "C:\Program Files\Git\bin\bash.exe" -l "D:/Sources/.opencode-data/o ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  [1m[33mwarn...[unused-import]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[31mFAIL:[0m src\sqltag.nv
+  src\sqltag.nv:53:5: error: [E_MATCH_NON_EXHAUSTIVE] `match` по сумме `SqlValue` не покрывает вариант: `U32`. Непокрыт
+ый вариант дал бы ТИХО неверный результат во время исполнения (D65-амендмент 2026-08-16, реестр №703). Добавь недостающ
+ие ветки — либо `_ => …`, если остаток действительно безразличен.
+  53 |     match v {
+    |     ^^^^^^^^^
+    | ... (13 more lines)
+  67 |     }
+    | ~~~~
+[31mFAIL:[0m src\sqltag_test.nv
+  D:\Sources\nv-lang\nova-duckdb\src\sqltag.nv:53:5: error: [E_MATCH_NON_EXHAUSTIVE] `match` по сумме `SqlValue` не пок
+рывает вариант: `U32`. Непокрытый вариант дал бы ТИХО неверный результат во время исполнения (D65-амендмент 2026-08-16,
+ реестр №703). Добавь недостающие ветки — либо `_ => …`, если остаток действительно безразличен.
+  53 |     match v {
+    |     ^^^^^^^^^
+    | ... (13 more lines)
+  67 |     }
+    | ~~~~
+[32mok:[0m src\types.nv
+
+===== SUMMARY =====
+PASS: 10  [31mFAIL[0m: 2  WARN: 1
+[1m[31merror:[0m[0m 2 file(s) failed type-check
+rc=1

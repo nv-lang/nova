@@ -1,0 +1,1 @@
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/pipeline/program.nv:157 (novac bug, not yours): pipeline: `novac_fn_twopkg_helper_greet__nova_str__to_nova_str` belongs to module `twopkg.helper`, which the entry's imports do not reach","poisoned_by":null}
