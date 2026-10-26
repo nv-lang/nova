@@ -1,3 +1,12 @@
+# 2026-10-26, task 122, integrator letter 02:10:
+# blockers 111 -> 112: reg 1928 (array literal in an enum payload position
+# reinterpreted as []u8 instead of converted element-wise -- the open
+# reg-1015 class through a door that entry does not name) is registered
+# OPEN and explicitly tag-blocking by the integrator's verdict, per the
+# 2026-08-16 owner policy on silent miscompilation. Same chronicle
+# mechanism as reg 1910/1899 below; not a waiver, closure or threshold
+# weakening. no_route/no_caveat unchanged (route: oracle, nearest hunting
+# pack; carrier caveat present).
 # 2026-10-25, task 092, integrator letter 04:57:
 # blockers 110 -> 111: reg 1910 (inactive-target #coerce pair returned by
 # coerce_row from the unfiltered registry, bypassing the D495
@@ -1567,7 +1576,7 @@ no_caveat=0
 # 2026-10-11, task #63: blockers 110 -> 109. Row 1878 closed after the #62
 #   fix was merged and its exact Windows artifact workflow passed, meeting
 #   the owner-approved lifecycle condition; no registry count or gap rewritten.
-blockers=111
+blockers=112
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
