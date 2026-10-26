@@ -633,7 +633,10 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     # делает зелёным — записи нет, страж зовёт novac сам.
     NOVAC_CHECK_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/novac-check-cache.XXXXXX")
     export NOVAC_CHECK_CACHE
-    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 600 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
+    # Стена 625: замер 2026-10-26 (задача 124) на ПУСТОЙ машине при
+    # NOVAC_POOL_JOBS=4, как на CI-раннере, — 491с, 500с, 500с; 625 = max + 25%.
+    # Разбор и летопись — в scripts/guards/gate-budget.baseline (2026-10-26).
+    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 625 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
         || echo "novac-check-cache: прогон не завершён — стражи досчитают недостающее сами"
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
     par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
