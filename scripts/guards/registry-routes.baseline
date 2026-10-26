@@ -1,3 +1,6 @@
+# Task 122 integration: re-measured at merge with main 66222e5d2.
+# Registry union keeps OPEN blockers 1925/1926 from main and 1928 from task 122.
+# Direct scanner count is recorded below; no row closed or verdict weakened.
 # 2026-10-26, task 122, integrator letter 02:10:
 # blockers 111 -> 112: reg 1928 (array literal in an enum payload position
 # reinterpreted as []u8 instead of converted element-wise -- the open
@@ -7,6 +10,26 @@
 # mechanism as reg 1910/1899 below; not a waiver, closure or threshold
 # weakening. no_route/no_caveat unchanged (route: oracle, nearest hunting
 # pack; carrier caveat present).
+# 2026-10-26, task 121 merge of main 09c317de2: two tag-blocking rows
+# meet -- 1925 (this branch, CHASTICHNO ZAKRYTO, the carrier fixed, the
+# class open) and 1926 (main, task 124's walls). Re-measured on the
+# merged registry; 1925 keeps its DA verdict until the class closes.
+# 2026-10-26, task 124 round 2, orchestrator's decision + integrator's
+# letters 14:14: blockers 111 -> 112 — reg 1926 (the night CI wall cascade:
+# the 600s novac-check-cache wall killed on slowed runners, no verdict) is
+# registered OPEN and explicitly tag-blocking with the route "fixed by
+# task 124". Not a waiver, closure or threshold weakening.
+# no_route/no_caveat unchanged.
+# 2026-10-25, task 121, integrator letter:
+# blockers 111 -> 112: reg 1925 (the A-E2 guard killed by the deadline
+# printing a false "ok: 88/88" post-mortem; a trap that destroys state
+# and RETURNS, kin of reg 475) is ЧАСТИЧНО ЗАКРЫТО -- the carrier is
+# fixed, the class (34 same-pattern trap sites) is open -- and is
+# explicitly tag-blocking by the integrator's verdict ("a false ok in
+# the gate undermines trust in the full gate", condition 0.3). The
+# growth is the chronicle-sanctioned kind: the defect became visible,
+# not new. no_route/no_caveat unchanged (the row is K2 with the class
+# and the carrier caveat present).
 # 2026-10-25, task 092, integrator letter 04:57:
 # blockers 110 -> 111: reg 1910 (inactive-target #coerce pair returned by
 # coerce_row from the unfiltered registry, bypassing the D495
@@ -1576,7 +1599,7 @@ no_caveat=0
 # 2026-10-11, task #63: blockers 110 -> 109. Row 1878 closed after the #62
 #   fix was merged and its exact Windows artifact workflow passed, meeting
 #   the owner-approved lifecycle condition; no registry count or gap rewritten.
-blockers=112
+blockers=114
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

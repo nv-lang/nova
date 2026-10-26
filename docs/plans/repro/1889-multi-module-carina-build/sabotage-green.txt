@@ -1,0 +1,13 @@
+nova.exe : carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd
+5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff621
+0d5; A built by published Oracle 0.1.0
+строка:2 знак:1
++ & .\nova-driver\target\release\nova.exe build target/repro120/twopkg/ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (carina-gate ver...ed Oracle 0.1.0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target/carina-build\main.59760.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build argv=["emit", "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-120-fix-reg-1889-multi-module-carina-build\\target/carina-build\\main.59760.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=0303cf5050d0f985629d242b3af91fdfc65439cdf8dbafbd1ac9ed119cb0ac7d
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\rt-archive-cache\b72aed7d1fe542d0\libnova_rt.lib runtime_sha256=65b0afca4af98c4cfbdbd297b122baac3d4ed9d68f075710cb62ce661dea5b1c
+nova build: D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.exe binary_sha256=b402ff891371dd72d4473fd1b11d5966c60dd7eb11c548266c906f690cb34dbe

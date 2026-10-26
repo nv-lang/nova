@@ -1,0 +1,49 @@
+CI nova-gate wall aborts on candidate 628570cb2 (integrate/t120, task 120
+rework round 1) — factura for the owner's freeze decision 2026-10-26 02:04
+(reg 1926) and for the day-window rerun.
+
+Run: https://github.com/ — run id 40231954894 (branch integrate/t120,
+headSha 628570cb28de14a53fb44e329a7abb5f48781c67). 8/9 jobs success in
+every attempt; the only red job is novac-gate, red in all three attempts
+with the identical wall pattern:
+
+  attempt 1 (push 20:41 UTC, job 121285375804, 42m26s)
+  attempt 2 (rerun --failed 21:34 UTC, job 121297115490)
+  attempt 3 (rerun --failed, job 121307940566)
+
+Each attempt, verbatim from the job log (timestamp prefix stripped):
+
+  with-deadline: ПРЕДЕЛ 600с ПРЕВЫШЕН — sh scripts/tools/novac-check-cache.sh ... убит.
+  with-deadline: ПРЕДЕЛ 300с ПРЕВЫШЕН — python scripts/guards/check-novac-emitted-unique.py ... убит.
+  NOVAC-GATE FAIL: одно C-имя определено дважды в юните (274 §9.1д п.4)
+  with-deadline: ПРЕДЕЛ 600с ПРЕВЫШЕН — bash scripts/guards/check-novac-diag-schema.sh ... убит.
+  NOVAC-GATE FAIL: check-novac-diag-schema.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)
+  with-deadline: ПРЕДЕЛ 600с ПРЕВЫШЕН — bash scripts/guards/check-novac-no-cascade.sh ... убит.
+  NOVAC-GATE FAIL: check-novac-no-cascade.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)
+  with-deadline: ПРЕДЕЛ 600с ПРЕВЫШЕН — bash scripts/guards/check-novac-fixture-expect.sh ... убит.
+  NOVAC-GATE FAIL: check-novac-fixture-expect.sh: ОБРЫВ, вердикта нет — предмет не судили (Г16, №1113)
+  NOVAC-GATE FAIL: ярус push вышел за бюджет времени (конвенция гейтов, Г4)
+
+Reference: the same guards in the GREEN run 40220967228 (candidate
+3b13fd3c5, 18:22 UTC, 25m29s total, job 121252245391):
+
+  novac-check-cache: фикстур 573, записей 573, стена 516с, потоков 4
+  check-novac-emitted-unique ok: юнитов эмиссии 269, объявленных имён 1122, повторов 0
+  [стена check-novac-diag-schema.sh: 19с] / no-cascade 21с / fixture-expect 19с
+  (schema guards read the cache novac-check-cache builds; when the cache
+  step is killed, each recomputes and hits its own 600с wall)
+
+Root: novac-check-cache is systemically marginal — 516s of the 600s wall
+(86%) in a green run; the night runner is ~15-20% slower, so the cache step
+dies first and the cascade follows. Task 120 content adds 2 of 573 fixtures
+plus docs/registry text — negligible load; the round-1 substantive red
+(check-no-machine-paths, guard 698) was fixed in 628570cb2 and is green.
+
+check-push-proven-by-ci.py 628570cb28de14a53fb44e329a7abb5f48781c67:
+FAIL — 1 finding: nova-gate red by an unrecorded cause (accepted entry
+#1442 covers other signatures).
+
+Owner's decision 2026-10-26 02:04 (via orchestrator): wait for rerun#2,
+no budget changes; rerun#2 red on the same wall -> STOP until the day
+window 08:30 MSK (reg 1926, night-merge freeze); no new reruns, no
+accepted-cause records.
