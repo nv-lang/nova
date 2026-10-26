@@ -633,7 +633,14 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     # делает зелёным — записи нет, страж зовёт novac сам.
     NOVAC_CHECK_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/novac-check-cache.XXXXXX")
     export NOVAC_CHECK_CACHE
-    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 600 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
+    # Стена 1067: замер на CI-VM 2026-10-26 (задача 124, круг 2) — 760с, 840с,
+    # 847с на трёх плацдарм-раннерах и 853с в четвёртом полном прогоне
+    # (финальный CI 40333870507, VM ...046040; засчитан замерным словом
+    # интегратора 17:38); убитый на 625с прогон 40312847975 — нижняя граница,
+    # в выборку не входит. 1067 = ceil(max(853) x 1.25). Разброс VM до 1.65x
+    # против быстрой (516с) — локальный замер его не видит. Летопись —
+    # scripts/guards/gate-budget.baseline (2026-10-26, круг 2).
+    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 1067 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
         || echo "novac-check-cache: прогон не завершён — стражи досчитают недостающее сами"
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
     par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
@@ -647,7 +654,14 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
     # 19с на пятнадцати фикстурах (замер 2026-08-23): пятнадцать запусков
     # процесса, а не медленная проверка. Поэтому ярус push, не loop.
-    guard --deadline 300 "$ROOT/scripts/guards/check-novac-emitted-unique.py" "$ROOT" || fail "одно C-имя определено дважды в юните (274 §9.1д п.4)"
+    # Стена 542: замер на CI-VM 2026-10-26 (задача 124, круг 2) — 380с, 423с,
+    # 430с на трёх плацдарм-раннерах и 433с в четвёртом полном прогоне
+    # (финальный CI 40333870507; засчитан замерным словом интегратора 17:38);
+    # убитый на 300с прогон 40312847975 — нижняя граница, в выборку не входит.
+    # 542 = ceil(max(433) x 1.25). Зелёный ~257с (2026-10-06) и убийства в
+    # каскаде реестра reg 1926 — тот же класс «предел впритык». Летопись —
+    # scripts/guards/gate-budget.baseline (2026-10-26, круг 2).
+    guard --deadline 542 "$ROOT/scripts/guards/check-novac-emitted-unique.py" "$ROOT" || fail "одно C-имя определено дважды в юните (274 §9.1д п.4)"
     # Храповик меры 0.2 (реестр №1665): ОДИН процесс `novac check` по всему
     # novac/src, множество отвергнутых сверено с базой в обе стороны. Один
     # процесс — секунды (замер в REPORT-p1665.md), поэтому не в par-блоке:
