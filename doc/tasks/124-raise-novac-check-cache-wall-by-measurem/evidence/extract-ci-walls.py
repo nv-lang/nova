@@ -55,8 +55,12 @@ def main():
         log = gh(f"repos/{REPO}/actions/jobs/{j['id']}/logs").decode("utf-8", "replace")
         t_esize = t_euniq = None
         for line in log.split("\n"):
-            if "novac-check-cache:" in line and "стена" in line:
+            if "novac-check-cache:" in line and ("стена" in line or "прогон не завершён" in line):
                 print("  cache:", line.strip())
+            if "ПРЕДЕЛ" in line and "ПРЕВЫШЕН" in line:
+                print("  KILL:", line.strip()[:220])
+            if "NOVAC-GATE FAIL" in line:
+                print("  FAIL:", line.strip()[:200])
             if "check-novac-emission-size" in line and ("ok" in line or "FAIL" in line):
                 t_esize = ts(line)
                 print("  esize:", line.strip()[:160])
