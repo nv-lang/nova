@@ -1,3 +1,18 @@
+# 221.1 package integration, 2026-10-27 (integrator): merge with main bb7a12c25.
+#   Union: main 115 + package-unique net +2 (1915/1916/1917 and 1922 added OPEN,
+#   1899/1910 closed bounded by the 092 acceptance) = blockers 117.
+# Task 123 integration with main 75c8dc31d: scanner count 115 OPEN blockers.
+# Row 1927 adds one to main's 114; no verdict or status is weakened.
+# 2026-10-26, task 123: blockers 111 -> 112: reg 1927 (pooled selftest limit
+# 300s for test-check-novac-module-tests.sh constructively tight: the limit
+# measured the SOLO cost while the gate judges the BATCH; killed the full
+# gate on a quiet machine without a verdict) is registered OPEN and
+# tag-blocking: a full GATE_EXIT=0 on the exact SHA is a tag condition
+# (owner, 2026-10-26) and this rubric reddened it falsely. Same
+# guard-sanctioned chronicle mechanism as reg 1910/1899 above; the fix
+# (named line BUDGET=300; FLOOR=450 in run-guard-selftest.sh with the
+# batch measurement in the comment) is on task 123's branch pending
+# acceptance. no_route/no_caveat unchanged.
 # 221.1 package integration, 2026-10-26 (integrator): merge with main 75c8dc31d.
 #   Union: main 114 + package-unique net +2 (1915/1916/1917 and 1922 added OPEN,
 #   1899/1910 closed bounded by the 092 acceptance; the package's 1926 is main's
@@ -1619,7 +1634,7 @@ no_caveat=0
 # 2026-10-26, integrator: 113 -> 114, row 1926 filed OPEN, BLOKIRUET TEG: DA (the marginal
 # novac-check-cache wall makes the push tier fail on the slowed runner; the tag needs green CI
 # on the exact SHA).
-blockers=116
+blockers=117
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
