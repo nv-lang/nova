@@ -1,3 +1,9 @@
+# 2026-10-30, task 127: blockers 117 -> 116 — reg 1922 (the driver dropping
+#   the seed's stdout JSONL diagnostics on a failed Carina emit) is CLOSED by
+#   the class fix in nova-driver (emit_failure_detail assembles BOTH child
+#   streams; proven red/green with sabotage). Closure on the task branch,
+#   pending acceptance; the scanner was re-run on the edited registry.
+#   no_route/no_caveat unchanged.
 # 221.1 package integration, 2026-10-27 (integrator): merge with main bb7a12c25.
 #   Union: main 115 + package-unique net +2 (1915/1916/1917 and 1922 added OPEN,
 #   1899/1910 closed bounded by the 092 acceptance) = blockers 117.
@@ -1634,7 +1640,7 @@ no_caveat=0
 # 2026-10-26, integrator: 113 -> 114, row 1926 filed OPEN, BLOKIRUET TEG: DA (the marginal
 # novac-check-cache wall makes the push tier fail on the slowed runner; the tag needs green CI
 # on the exact SHA).
-blockers=117
+blockers=116
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

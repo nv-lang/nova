@@ -174,18 +174,10 @@ pub(crate) fn build(
         &emitted,
     )?;
     if !emitted.status.success() {
-        let stderr = String::from_utf8_lossy(&emitted.stderr);
-        // B1 prints its §7 diagnostics as JSON on STDOUT; with stderr empty
-        // the refusal would otherwise surface as a blank message.
-        let detail = if stderr.trim().is_empty() {
-            String::from_utf8_lossy(&emitted.stdout)
-        } else {
-            stderr
-        };
         bail!(
             "Carina B1 emit failed (exit {}): {}",
             emitted.status.code().unwrap_or(1),
-            detail.trim()
+            emit_failure_detail(&emitted.stdout, &emitted.stderr)
         );
     }
     let c_prefix = emitted
@@ -348,6 +340,26 @@ pub(crate) fn build(
         cleanup_native_intermediates(&temp_exe, &obj_dir)?;
     }
     Ok(())
+}
+
+/// Failure detail of a Carina B1 emit child assembled from BOTH of its
+/// streams (registry №1922). B1 prints its §7 diagnostics as JSONL on
+/// STDOUT, so stderr alone cannot name the refusal: a stdout-only child
+/// would otherwise surface as a blank message, and a child writing to both
+/// streams must not have its stdout diagnostics dropped. Each stream's text
+/// appears exactly once.
+fn emit_failure_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    let stderr = stderr.trim();
+    let stdout = String::from_utf8_lossy(stdout);
+    let stdout = stdout.trim();
+    if stderr.is_empty() {
+        stdout.to_owned()
+    } else if stdout.is_empty() || stdout == stderr {
+        stderr.to_owned()
+    } else {
+        format!("{stderr}\nseed stdout: {stdout}")
+    }
 }
 
 /// Save the actual pinned seed child's raw streams before the success/failure
@@ -714,8 +726,8 @@ fn ps_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        capture_seed_child_if_requested, configure_seed_command, find_workspace_root,
-        seed_child_metadata,
+        capture_seed_child_if_requested, configure_seed_command, emit_failure_detail,
+        find_workspace_root, seed_child_metadata,
     };
     use std::path::PathBuf;
     use std::process::{ExitStatus, Output};
@@ -760,6 +772,47 @@ mod tests {
         if path.exists() {
             std::fs::remove_dir_all(path).unwrap();
         }
+    }
+
+    #[test]
+    fn emit_failure_detail_shows_stdout_jsonl_when_stderr_is_blank() {
+        // Registry №1922 carrier shape: B1 refuses with the §7 diagnostics on
+        // STDOUT and an empty stderr.
+        let jsonl = b"{\"id\":\"d0\",\"code\":\"E_NOVAC_SUBSET\"}\n";
+        assert_eq!(
+            emit_failure_detail(jsonl, b""),
+            "{\"id\":\"d0\",\"code\":\"E_NOVAC_SUBSET\"}"
+        );
+    }
+
+    #[test]
+    fn emit_failure_detail_shows_stderr_when_stdout_is_blank() {
+        assert_eq!(
+            emit_failure_detail(b"", b"link driver missing\n"),
+            "link driver missing"
+        );
+    }
+
+    #[test]
+    fn emit_failure_detail_keeps_both_streams_without_duplication() {
+        let detail = emit_failure_detail(b"stdout-diagnostics", b"stderr-notes\n");
+        assert!(detail.contains("stderr-notes"), "detail: {detail}");
+        assert!(detail.contains("stdout-diagnostics"), "detail: {detail}");
+        assert_eq!(detail.matches("stderr-notes").count(), 1);
+        assert_eq!(detail.matches("stdout-diagnostics").count(), 1);
+    }
+
+    #[test]
+    fn emit_failure_detail_does_not_repeat_identical_streams() {
+        assert_eq!(
+            emit_failure_detail(b"same text", b"same text\n"),
+            "same text"
+        );
+    }
+
+    #[test]
+    fn emit_failure_detail_is_blank_when_both_streams_are_blank() {
+        assert_eq!(emit_failure_detail(b"\n", b"  \n"), "");
     }
 
     #[test]
