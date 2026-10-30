@@ -1,0 +1,100 @@
+nova build program: 6 source file(s) staged under $WT\target/carina-build\config.68628.src
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/http.nv","start":2072,"end":2086},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/http.nv","start":2173,"end":2180},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/http.nv","start":5893,"end":5894},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/http.nv","start":5898,"end":5899},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/http.nv","start":5942,"end":5943},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/http.nv","start":5960,"end":5961},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":5160,"end":5164},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":5275,"end":5285},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":6036,"end":6040},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":6874,"end":6876},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":7005,"end":7009},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9928,"end":9929},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9933,"end":9934},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d13","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9957,"end":9962},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d14","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9971,"end":9972},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d15","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9976,"end":9977},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d16","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9987,"end":9988},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d17","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":9989,"end":9990},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d18","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10006,"end":10007},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d19","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10007,"end":10014},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d20","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10023,"end":10024},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d21","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10025,"end":10027},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d22","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10030,"end":10031},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d23","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10039,"end":10040},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d24","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10057,"end":10058},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d25","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10059,"end":10060},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d26","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10076,"end":10078},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d27","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10082,"end":10083},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d28","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10083,"end":10084},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d29","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10084,"end":10085},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d30","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10085,"end":10086},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d31","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/main.nv","start":10106,"end":10107},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d32","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":2017,"end":2027},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d33","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":2086,"end":2096},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d34","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":2160,"end":2161},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d35","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":2506,"end":2507},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d36","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":2508,"end":2520},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d37","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":2572,"end":2573},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d38","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":3727,"end":3731},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d39","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/relay.nv","start":3961,"end":5870},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d40","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":2169,"end":2175},"message":"outside the subset: effect `Upstream` has no runtime pieces in the shell novac links into -- its operation table, thread slot and dispatchers are the shell's, carried for the std effects its probe uses; an effect a file declares is not emitted yet (E5, effect declarations)","poisoned_by":null}
+
+{"id":"d41","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":5540,"end":5557},"message":"outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)","poisoned_by":null}
+
+{"id":"d42","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":5659,"end":5665},"message":"outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)","poisoned_by":null}
+
+{"id":"d43","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":6552,"end":6558},"message":"outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)","poisoned_by":null}
+
+{"id":"d44","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":6659,"end":6671},"message":"outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)","poisoned_by":null}
+
+{"id":"d45","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":6761,"end":6767},"message":"outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)","poisoned_by":null}
+
+{"id":"d46","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream.nv","start":6845,"end":6851},"message":"outside the subset: a record-form variant is constructed only where its value is placed -- a binding initializer, the body of a match arm, the tail of a value body or the right side of `=`; bind it first (E4, step 4d of 274.11 E.10)","poisoned_by":null}
+
+{"id":"d47","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\config.68628.src/flagship/http_proxy_chain/src/upstream_socks5.nv","start":888,"end":894},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}

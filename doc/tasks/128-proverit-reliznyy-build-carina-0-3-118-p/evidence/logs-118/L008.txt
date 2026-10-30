@@ -1,0 +1,9 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\basics\\demo.nv","start":578,"end":579},"message":"outside the subset: a spread `...xs` inside an array literal is not compiled yet (274.5 P5)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\basics\\demo.nv","start":737,"end":739},"message":"an array pattern needs a slice scrutinee (`[]T`)","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\basics\\demo.nv","start":755,"end":756},"message":"an array pattern needs a slice scrutinee (`[]T`)","poisoned_by":null}

@@ -1,0 +1,29 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":462,"end":468},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":469,"end":470},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":603,"end":604},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":611,"end":612},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":619,"end":620},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":881,"end":889},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":890,"end":891},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":959,"end":967},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":968,"end":969},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":1079,"end":1085},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":1086,"end":1087},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":1133,"end":1139},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":1140,"end":1141},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
