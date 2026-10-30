@@ -1,3 +1,3 @@
-carina-dep: driver=D:\Sources\nv-lang\worktrees\nova-opencode-129-ispravit-peredachu-vneshnih-ishodnikov-p\nova-driver\target\release\nova.exe sha256=7d00bc300331367131cbda805da4806f1857d188693cc90eb796c55c58187335
+carina-dep: driver=<worktree>\nova-driver\target\release\nova.exe sha256=7d00bc300331367131cbda805da4806f1857d188693cc90eb796c55c58187335
 carina-dep PASS: dep_build_min exit=0 stdout=1 lines binary_sha256=0ddd4aa1f2e9160523b0fbfeb7b2dc4d61171162a95c7e942e054717594254f8
 carina-dep PASS: the dependency fixture built through the pinned Carina B1 seed and matched its full expected stdout

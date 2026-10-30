@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """External-dependency regression check for the pinned Carina B1 driver build.
 
-Registry entry TBD (task 129): the driver must hand the pinned seed the
+Registry entry 1930 (task 129): the driver must hand the pinned seed the
 sources of the program's EXTERNAL DEPENDENCIES, staged one directory per
 module under `_deps/` with the dependency imports of the staged copies
 rewritten to relative paths. With the pre-fix walk (which stopped at the

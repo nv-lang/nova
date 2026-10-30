@@ -1,4 +1,4 @@
-// Registry №TBD (task 129): the stock `nova build` through the pinned Carina
+// Registry entry 1930 (task 129): the stock `nova build` through the pinned Carina
 // B1 must hand the seed the sources of the program's EXTERNAL DEPENDENCIES
 // (staged by the driver under `_deps/`); without them every name from a
 // dependency is unknown to the seed ("no such method in the declarations
