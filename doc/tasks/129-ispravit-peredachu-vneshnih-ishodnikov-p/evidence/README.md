@@ -23,7 +23,10 @@
 `NOVA_RT_DIR=<install>/nova_rt`, `NOVA_CG_INCLUDE=<worktree>/compiler-codegen`.
 Рабочие копии потребителей: nova-duckdb `a59a073`, nova-polaris
 `24f9d1757868`, nova-postgres `8a46520269cf` (те же, что у замера 128).
-Scratch сессионный — `D:\Temp\opencode\129`.
+Scratch сессионный — сначала `D:\Temp\opencode\129`, после замечания
+интегратора перенесён в объявленный средой сессионный scratch
+`%LOCALAPPDATA%\Temp\opencode\ses_mvv57le7eqn89n9963\129` (см. report.md,
+«СРЕДА/SCRATCH»).
 
 ## Команды
 
@@ -35,11 +38,22 @@ Scratch сессионный — `D:\Temp\opencode\129`.
 
 ## Файлы
 
-- `outcomes-18.tsv` — 18 строк: вход, сколько файлов стейджнуто, число
-  диагностик сида, первая диагностика дословно, распределение по файлам.
+- `outcomes-18.tsv` — 18 строк: вход, явный `result` (все FAIL), сколько
+  файлов стейджнуто, число диагностик сида, первая диагностика дословно
+  (следующий блокер), распределение по файлам.
 - `logs-18/` (18) — дословные stdout+stderr каждого входа ПОСЛЕ фикса.
-- `regression-61.tsv` — 61 строка: файл, rc, секунды, run_rc, run_rc замера
-  128, вердикт SAME/DIFF (все SAME).
+- `regression-61.tsv` — 61 строка первого прогона: файл, rc, секунды, run_rc,
+  run_rc замера 128, вердикт SAME/DIFF (все SAME).
+- `regression-62-arithmetic.txt` + `regression-62-arithmetic-build.txt` —
+  догон 62-го PASS-входа (`examples/basics/arithmetic.nv`, выпал из первого
+  прогона из-за сдвига `[1:]` под несуществующую шапку в run61.py): SAME,
+  итог регрессии 62/62.
+- `probe-ab-types.txt` — живая проба одноимённых модулей: депы `a` и `b` с
+  модулем `types` у каждого, разные значения; build rc=0, запуск печатает
+  дословно `a=111 b=222 only_a=1 only_b=2` — смешения деклараций нет.
+- `probe-ab-types-decoy.txt` — та же проба с приманкой (неимпортируемый
+  `give_a() => 999` в `b.types`): громкий отказ D84-неоднозначности — граница
+  сида (глобальный резолв по имени), отдельная строка №TBD в реестре.
 - `guard-red.txt` / `guard-green.txt` — страж `carina-build-dep.py` на
   саботированном (`collect_dep_roots` возвращает пустые корни) и на
   восстановленном драйвере.

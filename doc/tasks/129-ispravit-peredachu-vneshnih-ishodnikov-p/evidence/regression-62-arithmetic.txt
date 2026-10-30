@@ -1,0 +1,20 @@
+# The 62nd input of the task-128 PASS set, rerun after the fix (task 129).
+#
+# Why separate: run61.py read table-118.tsv with `splitlines()[1:]`, assuming
+# a header row; the table has none, so its first row -- examples/basics/
+# arithmetic.nv, itself a PASS -- was never rerun. The 61/61 figure of the
+# first regression pass was 61 of 62. This file is the missing input's rerun.
+#
+# Command (release driver of this branch, clang, NOVA_RT_DIR/NOVA_CG_INCLUDE
+# as in the 18-input reruns; build log: regression-62-arithmetic-build.txt):
+#   python run_arith.py
+#
+# Result (verbatim runner output):
+#   file=examples/basics/arithmetic.nv result=PASS rc=0 secs=22.3 run_rc=0 run_rc_128=0 verdict=SAME
+#   run stdout: 5! = 120
+#   fib(10) = 55
+#   sum 0..10 = 55
+#
+# Verdict: SAME against the task-128 measurement (rc=0, run_rc=0). With this
+# input the regression is 62/62 -- every PASS input of table-118.tsv builds
+# and runs exactly as measured before the fix.
