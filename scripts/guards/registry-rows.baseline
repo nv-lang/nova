@@ -1869,9 +1869,14 @@
 #   (check-main-fiber-invariant lives outside check-guard-wiring compliance, OPEN,
 #   the fix form is the owner's call); both numbers from the integrator.
 #   rows 1796->1798, max 1885->1887.
-rows=1837
-max=1928
-max=1928
+# 2026-10-30, task 128: row 1929 added -- pinned B1 rejects three Oracle-era
+#   regression examples (aggregator/regressions) as E_NOVAC_LANG citing
+#   D54/D406; number from the integrator (2026-10-30 19:03), filed OPEN,
+#   tag-blocking as an unresolved divergence in the mandatory release corpus.
+#   rows 1837->1838, max 1928->1929.
+rows=1838
+max=1929
+max=1929
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
