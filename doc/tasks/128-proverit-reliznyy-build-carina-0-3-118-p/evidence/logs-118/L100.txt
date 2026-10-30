@@ -1,0 +1,269 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":3192,"end":3193},"message":"outside the subset: `#impl` of this protocol is derived only for `Display`, `Equal` and `Serialize` -- the derived methods of the others (`Deserialize`, D341; `Hash`, `Clone`, `Compare`, `Debug`) are not synthesized yet (E2-b3)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5651,"end":5652},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5685,"end":5687},"message":"outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5709,"end":5713},"message":"outside the E1 subset: field must declare a type","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5713,"end":5729},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5777,"end":5779},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5780,"end":5785},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":5805,"end":5806},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6781,"end":6782},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6846,"end":6847},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6861,"end":6862},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6862,"end":6863},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6888,"end":6889},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d13","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6889,"end":6890},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d14","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":6905,"end":6906},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d15","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7002,"end":7004},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d16","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7006,"end":7014},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d17","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7221,"end":7222},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d18","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7372,"end":7380},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d19","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7564,"end":7565},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d20","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7628,"end":7629},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d21","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7643,"end":7644},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d22","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7649,"end":7650},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d23","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7656,"end":7657},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d24","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7658,"end":7659},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d25","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7790,"end":7791},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d26","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7872,"end":7875},"message":"outside the subset: a declared local type is not compiled yet (E2-b3)","poisoned_by":null}
+
+{"id":"d27","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":7951,"end":7959},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d28","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8338,"end":8339},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d29","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8403,"end":8413},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d30","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8751,"end":8754},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d31","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8755,"end":8756},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d32","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8806,"end":8809},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d33","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8810,"end":8811},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d34","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8861,"end":8864},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d35","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8865,"end":8866},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d36","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":8885,"end":8887},"message":"outside the subset: a declared local type is not compiled yet (E2-b3) -- the type written here is `Sql`","poisoned_by":null}
+
+{"id":"d37","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9397,"end":9398},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d38","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9463,"end":9473},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d39","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9569,"end":9572},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d40","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9573,"end":9574},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d41","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9637,"end":9640},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d42","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9641,"end":9642},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d43","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":9703,"end":9705},"message":"outside the subset: a declared local type is not compiled yet (E2-b3) -- the type written here is `Sql`","poisoned_by":null}
+
+{"id":"d44","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10251,"end":10252},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d45","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10347,"end":10357},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d46","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10388,"end":10391},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d47","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10392,"end":10393},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d48","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10456,"end":10459},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d49","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10460,"end":10461},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d50","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10560,"end":10562},"message":"outside the subset: a declared local type is not compiled yet (E2-b3) -- the type written here is `Sql`","poisoned_by":null}
+
+{"id":"d51","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10853,"end":10854},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d52","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10917,"end":10918},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d53","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10930,"end":10931},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d54","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10931,"end":10932},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d55","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10957,"end":10958},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d56","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10958,"end":10959},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d57","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":10974,"end":10975},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d58","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11533,"end":11534},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d59","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11573,"end":11583},"message":"outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)","poisoned_by":null}
+
+{"id":"d60","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11706,"end":11709},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d61","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11749,"end":11750},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d62","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11764,"end":11765},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d63","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11770,"end":11771},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d64","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11777,"end":11778},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d65","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11788,"end":11789},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d66","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":11791,"end":11792},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d67","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12609,"end":12610},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d68","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12754,"end":12755},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d69","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12840,"end":12841},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d70","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12855,"end":12856},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d71","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12861,"end":12862},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d72","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12868,"end":12869},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d73","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12879,"end":12880},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d74","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":12882,"end":12883},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d75","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":13104,"end":13105},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d76","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":13224,"end":13225},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d77","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":13486,"end":13487},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d78","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":13638,"end":13639},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d79","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14046,"end":14047},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d80","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14116,"end":14117},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d81","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14126,"end":14127},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d82","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14132,"end":14133},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d83","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14137,"end":14138},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d84","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14139,"end":14140},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d85","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14267,"end":14268},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d86","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14331,"end":14332},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d87","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14338,"end":14339},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d88","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14343,"end":14344},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d89","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14346,"end":14348},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d90","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14352,"end":14353},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d91","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14354,"end":14355},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d92","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14459,"end":14460},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d93","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":14621,"end":14622},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d94","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":15425,"end":15426},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d95","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":15938,"end":15939},"message":"outside the E1 subset: generic parameters are not compiled yet (planned for E2-b2)","poisoned_by":null}
+
+{"id":"d96","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":16187,"end":16189},"message":"outside the subset: a declared local type is not compiled yet (E2-b3) -- the type written here is `Sql`","poisoned_by":null}
+
+{"id":"d97","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17480,"end":17481},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d98","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17482,"end":17483},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d99","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17485,"end":17486},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d100","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17489,"end":17491},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d101","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17604,"end":17606},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d102","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17646,"end":17648},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d103","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17689,"end":17691},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d104","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17734,"end":17736},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d105","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17779,"end":17781},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d106","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":17829,"end":17833},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d107","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19023,"end":19024},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d108","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19025,"end":19026},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d109","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19028,"end":19029},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d110","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19032,"end":19034},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d111","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19145,"end":19147},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d112","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19188,"end":19190},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d113","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19229,"end":19231},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d114","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19269,"end":19271},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d115","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":19317,"end":19321},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d116","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":21134,"end":21134},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+
+{"id":"d117","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":21002,"end":21011},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d118","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":21061,"end":21062},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d119","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":21128,"end":21130},"message":"outside the subset: an array literal is compiled only as an initializer, a call argument, a constructor field, the body of a match arm, the right side of `=` or the tail of an `if`-value branch -- other positions are not compiled yet (E2, the basics horizon)","poisoned_by":null}
+
+{"id":"d120","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":21134,"end":21418},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d121","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":22463,"end":22469},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d122","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":24807,"end":24816},"message":"outside the subset: a function without a declared return type is not compiled yet (E2, the basics horizon) -- write the type the body returns","poisoned_by":null}
+
+{"id":"d123","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":26085,"end":26086},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d124","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":26130,"end":26131},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d125","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":26160,"end":26161},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d126","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":27672,"end":27681},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d127","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":27769,"end":27770},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d128","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":28227,"end":28233},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d129","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":28473,"end":28474},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d130","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":28503,"end":28504},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d131","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":28525,"end":28526},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d132","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":28784,"end":28920},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}

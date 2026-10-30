@@ -1,0 +1,7 @@
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$WT argv=["emit", "$WT\\examples\\basics\\match_disj_alternative_path.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=5976b1bca9c7d8fbab3d73bf03f97c6c68db2141207bacea2ec0168c69dd2f17
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$WT\target\rt-archive-cache\5df374581d2ea83b\libnova_rt.lib runtime_sha256=a7195cdcf91239768118b81f1f3250b33dd513528a8506f011dc21c133e403f8
+nova build: scratch-opencode\task128\run1\bin\examples__basics__match_disj_alternative_path.nv.exe binary_sha256=7b877131e31da2b072e374f126bd814107f55296c27e57ee729261007150c48d
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+

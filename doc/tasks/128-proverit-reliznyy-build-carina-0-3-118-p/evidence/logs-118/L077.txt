@@ -1,0 +1,26 @@
+nova build program: 3 source file(s) staged under $WT\target/carina-build\report_json_test.53336.src
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/api/report_json.nv","start":3599,"end":3600},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/api/report_json.nv","start":3809,"end":3812},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/api/report_json.nv","start":3813,"end":3814},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/api/report_json.nv","start":4642,"end":4643},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/api/report_json.nv","start":5004,"end":5005},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/domain/domain.nv","start":1353,"end":1354},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/domain/domain.nv","start":2242,"end":2243},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/domain/domain.nv","start":3289,"end":3290},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/domain/domain.nv","start":3438,"end":3439},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/domain/domain.nv","start":3589,"end":3590},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\report_json_test.53336.src/flagship/aggregator/src/domain/domain.nv","start":4440,"end":4441},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}

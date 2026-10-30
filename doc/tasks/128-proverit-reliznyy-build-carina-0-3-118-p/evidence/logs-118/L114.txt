@@ -1,0 +1,7 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\patterns.nv","start":763,"end":767},"message":"a bare `None` here has no type to take: it stands for an Option only where a return type says which one (`-> Option[int]`, as a tail or a `return` operand) -- a typed binding or a later assignment is not compiled yet (E2-b3)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\patterns.nv","start":823,"end":826},"message":"outside the subset: the head of this `for` is neither a vector `[]T` nor an iterator (a type with `next() -> Option[T]`, D58) -- a collection reached through `iter()` first is not compiled yet (274.7 B12)","poisoned_by":null}

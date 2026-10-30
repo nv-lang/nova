@@ -1,0 +1,41 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2053,"end":2054},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2058,"end":2059},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2105,"end":2106},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2124,"end":2125},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2126,"end":2127},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2147,"end":2148},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2176,"end":2177},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2186,"end":2187},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2187,"end":2188},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2188,"end":2189},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2194,"end":2195},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2195,"end":2196},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2214,"end":2216},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d13","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2219,"end":2220},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d14","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2223,"end":2224},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d15","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2232,"end":2233},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d16","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2237,"end":2238},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d17","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2270,"end":2452},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d18","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2667,"end":2724},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
