@@ -5,7 +5,9 @@
 // handed to novac"). No EXPECT_* marker on purpose: the dependency import
 // does not resolve in the spec_tests package context under the Oracle test
 // runner, so the judge of this fixture is scripts/tools/carina-build-dep.py
-// (driver + pinned B1), and an Oracle run must skip these files entirely.
+// (driver + pinned B1). The fixture lives under conformance/fixtures/ —
+// the corpus walker skips any directory named `fixtures` recursively (D376),
+// so an Oracle run never sees these files.
 module dep_build_min.main
 
 import mathdep.{triple}

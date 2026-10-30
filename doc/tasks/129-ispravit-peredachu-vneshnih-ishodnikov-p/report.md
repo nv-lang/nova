@@ -34,7 +34,7 @@ root peers), D376 (`_slow`), D99 + Plan 42.12 Ф.1 (OS-суффикс,
 `NOVA_TARGET_OS`), Plan 42 правило F (`_test`), 274.11 E.10 (видимость сида
 по последнему сегменту пути), D29 «Конфликты имён» (скоуп import-списка).
 
-ФИКСТУРЫ: `spec_tests/conformance/dep_build_min/` (пакет + path-деп внутри
+ФИКСТУРЫ: `spec_tests/conformance/fixtures/dep_build_min/` (пакет + path-деп внутри
 подмножества сида; без EXPECT_*-маркера намеренно — импорт депа не резолвится
 в контексте пакета spec_tests под Oracle-раннером, судья — страж) +
 `scripts/tools/carina-build-dep.py` (драйвер + pinned B1, build → запуск →

@@ -11,7 +11,10 @@ tests of nova-driver/src/program.rs pin the scan/stage/rewrite mechanics but
 NOT this wiring, and `nova test` cannot run the fixture through the Oracle
 (a dependency import does not resolve in the spec_tests package context --
 that is why the fixture files carry no EXPECT_* marker) -- neither replaces
-this check.
+this check. The fixture lives under conformance/fixtures/ because the
+corpus walker skips any directory named `fixtures` recursively (D376);
+the first placement at conformance/dep_build_min/ redened the conformance
+gate with E_D78_MODULE_PATH_MISMATCH (CI run 41108666626).
 
 The FULL stdout of the produced executable is compared line by line
 (CRLF-normalized) against the fixture's expected_stdout.txt sidecar.
@@ -80,7 +83,7 @@ def main() -> int:
         return fail("driver lacks the carina-b1-build-v1 stamp; refusing an Oracle/legacy CLI")
     print("carina-dep: driver=%s sha256=%s" % (driver, file_sha256(driver)))
 
-    src_dir = root / "spec_tests" / "conformance" / FIXTURE
+    src_dir = root / "spec_tests" / "conformance" / "fixtures" / FIXTURE
     entry = src_dir / ENTRY_NAME
     expected_path = src_dir / "expected_stdout.txt"
     if not entry.is_file():
