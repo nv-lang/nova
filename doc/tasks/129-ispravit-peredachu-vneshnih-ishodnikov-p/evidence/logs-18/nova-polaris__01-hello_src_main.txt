@@ -1,0 +1,3 @@
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+nova build program: 53 source file(s) staged under D:\Temp\opencode\129\install\target/carina-build\main.49184.src
+nova: Carina B1 emit failed (exit 2): {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}

@@ -95,7 +95,13 @@ pub(crate) fn build(
     // files into a fresh per-build tree with the package-relative layout
     // preserved, and hand THAT root to the seed. A program with no program
     // modules keeps the historical single-file invocation byte-for-byte.
-    let program_files = crate::program::discover_program_files(&entry, &manifest)?;
+    //
+    // Dependency modules join the same staged tree (task 129): without them
+    // the seed never sees a dependency's declarations and refuses every
+    // consumer with `E_NOVAC_SUBSET` ("no such method in the declarations
+    // handed to novac", measured by tasks 122/128).
+    let dep_roots = crate::program::collect_dep_roots(&manifest);
+    let discovery = crate::program::discover_program_files(&entry, &manifest, &dep_roots)?;
 
     let seed_capture_dir = env_path_override("NOVA_CARINA_CAPTURE_DIR");
     if seed_capture_dir.is_some() {
@@ -133,18 +139,18 @@ pub(crate) fn build(
     // Stage the program tree only when the program has modules of its own;
     // the single-file invocation keeps the historical root (the compiler's
     // own tree) and the real entry path, so the D89 golden path is untouched.
-    let (emit_entry, self_root) = if program_files.is_empty() {
+    let (emit_entry, self_root) = if discovery.files.is_empty() {
         (entry.clone(), repo.join("novac/src"))
     } else {
         let staged = crate::program::stage_program(
             &stage_dir,
             &manifest.source_root,
             &entry,
-            &program_files,
+            &discovery,
         )?;
         println!(
             "nova build program: {} source file(s) staged under {}",
-            program_files.len() + 1,
+            discovery.files.len() + 1,
             stage_dir.display()
         );
         (staged, stage_dir.clone())
@@ -161,7 +167,7 @@ pub(crate) fn build(
         .context("could not start pinned Carina B1 emit")?;
     // The staged tree exists for the emit child only; the generated C and
     // the captured diagnostics outlive it. --keep-artifacts keeps it.
-    if !keep_artifacts && !program_files.is_empty() {
+    if !keep_artifacts && !discovery.files.is_empty() {
         std::fs::remove_dir_all(&stage_dir)
             .with_context(|| format!("cannot remove program stage {}", stage_dir.display()))?;
     }

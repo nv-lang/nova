@@ -1,0 +1,16 @@
+// Registry №TBD (task 129): the stock `nova build` through the pinned Carina
+// B1 must hand the seed the sources of the program's EXTERNAL DEPENDENCIES
+// (staged by the driver under `_deps/`); without them every name from a
+// dependency is unknown to the seed ("no such method in the declarations
+// handed to novac"). No EXPECT_* marker on purpose: the dependency import
+// does not resolve in the spec_tests package context under the Oracle test
+// runner, so the judge of this fixture is scripts/tools/carina-build-dep.py
+// (driver + pinned B1), and an Oracle run must skip these files entirely.
+module dep_build_min.main
+
+import mathdep.{triple}
+
+fn main() Io -> () {
+    ro answer = triple(7)
+    println("triple(7) = ${answer}")
+}
