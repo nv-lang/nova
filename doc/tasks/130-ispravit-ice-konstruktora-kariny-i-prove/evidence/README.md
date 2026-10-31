@@ -1,56 +1,70 @@
-# Улики задачи 130 — ICE анонимного конструктора Карины (класс №1484/№1705)
+# Улики задачи 130 — ICE анонимного конструктора Карины (класс №1484/№1705, строка №1933)
 
 Снято 2026-10-31 на одной машине (Windows, clang). Всё — дословные выводы
 прогонов, без правок. ДОПУСТИМЫЕ доказательства — Carina-only (норма —
-спецификация, D478/D489/D491/D55/D215); Oracle-прогоны в подготовке не
-участвовали как судьи (перекрёстные наблюдения — см. report.md).
+спецификация, D478/D489/D491/D55/D52); Oracle-прогоны судьями не являются
+(см. report.md, «СПРАВКА СОВМЕСТИМОСТИ»).
 
-## Источники и бинари
+## Точные пути и команды (для независимого повторения)
 
-- Pinned B1 (источник RED): novac.exe sha256
-  `824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4`,
-  source `3729abcce42ec2d94efc898ec6eafe91ff6210d5`, ZIP `7e8264fd…` — как в
-  задачах 128/129, verify-seed PASS в каждом прогоне драйвера.
-- Канонический исправленный бинарь (GREEN): exe sha256
-  `de88e571ba60e7f569e35a615a37c772f03f79d6e13a0c3b6a83ea2f84f141e1`,
-  C sha256 `c6340905dfb014ad4e0823536e5898837a5380ebebfec686154991422ed1fe2a`,
-  собран ВОСПРОИЗВОДИМО из сданного состояния (см. `seed-backport/` и
-  `repro-from-commit.log`): `git archive 3729abcc novac std` + накладка
-  семи файлов бэкпорта + pinned B1 emit (rc=0, самосборка цела) + clang
-  через `nova-driver-support::native_build::compile_c_to_exe` (окно
-  `nova build`). Oracle в стадии B не участвовал.
-- Локальный ассет для повтора polaris: zip sha256
-  `339d7096db40ab2a062ece78858e756632ca1516b29e9d8fd8151c0c0c8ee74b`,
-  собран из канонического прогона; дескриптор —
-  `seed-descriptor-local.json` (пины репозитория НЕ тронуты; публикация —
-  владелец тегом, см. БЛОКЕР в report.md).
-
-## Команды
-
-- RED/GREEN пробы: `cd probes; NOVA_STD_PATH=<std> <novac.exe> emit <p.nv>`.
-- Воспроизведение бинаря: `repro-from-commit.log` (дерево из git archive,
-  семь файлов из `seed-backport/`, B1 emit, compile_c_to_exe).
+- Pinned B1 (источник RED):
+  `%LOCALAPPDATA%\Nova\carina-seeds\windows-x86_64\unpacked\nova-carina-0.2.1-windows-x86_64\novac.exe`
+  (sha256 `824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4`,
+  source `3729abcce42ec2d94efc898ec6eafe91ff6210d5`; ZIP из
+  `…\carina-seeds\windows-x86_64\nova-carina-0.2.1-windows-x86_64.zip`,
+  verify-seed PASS в каждом прогоне драйвера).
+- Канонический исправленный бинарь (GREEN) собирается repro-скриптом (ниже);
+  после прогона лежит в `<scratch>\130\repro\novac-fixed-from-commit.exe`
+  (в сборке задачи — `…\130\out\novac-fixed.exe`); C —
+  `<scratch>\130\repro\fixed-from-commit.c`.
+- ВОСПРОИЗВЕДЕНИЕ БИНАРЯ (полный сценарий, все шаги дословно):
+  1. `git -C <репозиторий> archive --format=tar -o base.tar 3729abcc… novac std`
+     и распаковать: база сида.
+  2. Наложить семь файлов из `evidence/seed-backport/check/` в
+     `novac/src/check/` (SHA-256 каждого — `seed-backport/MANIFEST.md`).
+  3. Emit запиненным B1 (самосборка; stdout = C):
+     `NOVA_STD_PATH=<base>/std/src NOVAC_SELF_PATH=<base>/novac/src <B1>/novac.exe emit <base>/novac/src/main.nv > fixed.c`
+     → 13 260 516 байт, sha256 `c6340905…` (стабильная связь исходник↔C;
+     перенос №TBD→№1933 в комментариях C не меняет).
+  4. Компиляция C — окно `nova build`: nova-driver-support
+     `native_build::compile_c_to_exe` (те же дефолты, что драйвер:
+     detect_toolchain(auto) → clang, rt_dir=`<runtime>/compiler-codegen/nova_rt`,
+     cg_include=`<runtime>/compiler-codegen`, Boehm, libuv detect_or_build,
+     mode Release; таймаут 900 с). Для одиночной команды использован
+     40-строчный помощник cc130 (scratch), вызывающий ровно эту функцию;
+     сам скрипт: `tools/repro_from_commit.sh` сессионного scratch.
+     Итог: exe (sha256 путь-зависим через PE-отладочную информацию — опора
+     связи C sha256 + MANIFEST).
+  5. Пробы: `cd probes; NOVA_STD_PATH=<base>/std/src <exe> emit <p>.nv`
+     (носители rc=0 с C на stdout; границы rc=1 с одной именованной
+     диагностикой). Дословно — `repro-from-commit.txt`.
+- СВОДКА ПО rc В ЛОГАХ: в ранних логах последняя строка `rc=1` — это выход
+  пробы-ГРАНИЦЫ (po2: ожидаемый именованный отказ) сквозь `set -e` старой
+  редакции скрипта, а не сбой воспроизведения; в финальной редакции скрипт
+  ловит rc каждой пробы и завершается 0 (`== repro complete`).
 - 12 входов polaris: install-контур (`docs/dev/carina-seeds`,
   `scripts/tools/carina-gate.py`, `novac/src`, `std`, `nova_rt`),
   `NOVA_RT_DIR=<install>/nova_rt`, скретч-копия драйвера с константами
-  ЛОКАЛЬНОГО сида (пост-тег состояние), `nova.exe build <input> -o …exe
+  ЛОКАЛЬНОГО сида (пост-тег состояние), `nova.exe build <вход> -o …exe
   --toolchain clang --timeout 300`.
 - std/src до/после: `nova check std/src` на базе 0b8438a34 и на ветке —
   дословно `PASS: 150 FAIL: 39 WARN: 58` (одинаково; 39 — предсуществующее).
 
-## Файлы
+## Файлы (.log → .txt: *.log игнорируется git, сняты дословно)
 
 - `seed-backport/` — ТОЧНЫЕ семь файлов бэкпорта + MANIFEST.md (SHA-256;
-  6/7 байт-идентичны коммиту efb2af8c4; calls.nv — база+хунки задачи).
-- `repro-from-commit.log` — воспроизведение: C/EXE sha256 + пробы.
+  6/7 совпадают с файлами ветки по модулю концов строк; calls.nv —
+  база+хунки задачи, без host_os-моста задачи 92).
+- `repro-from-commit.txt` — воспроизведение бинаря из сданного состояния
+  (C/EXE sha256, пробы).
 - `red-probes-pinned-b1.txt` — 7 форм на pinned B1: exit=2, ICE 632 дословно.
-- `green-probes-fixed-binary.txt` — 13 проб на каноническом бинаре
-  (носители rc=0, границы — именованные отказы).
-- `cycle_red.log`/`cycle_green.log`/`red2.log`/`cycle-final.log` — саботаж
-  RED/GREEN, два прохода, обе стороны.
-- `emit_fixed.log`, `compile_fixed.log`, `build_fixed.log` — циклы сборки.
+- `green-probes-fixed-binary.txt` — 13 проб на каноническом бинаре.
+- `cycle-red.txt` / `cycle-green.txt` / `red2.txt` / `cycle-final.txt` /
+  `cycle-v4.txt` — саботаж RED/GREEN, два прохода, обе стороны.
+- `build-fixed.txt`, `compile-fixed.txt`, `emit-fixed.txt` — циклы сборки.
 - `base-vs-main-compare.txt` — побайтовое сравнение файлов база/main.
-- `polaris-outcomes-12.tsv` + `polaris-logs/` — финал: 0 ICE на всех 12,
-  именованные отказы подмножества (843–981 диагностик на вход).
-- `polaris-01-stage-diags-named.txt` — ручной прогон стейджа 01-hello
-  каноническим бинарем: именованные диагностики, ни одного ICE.
+- `polaris-outcomes-12.tsv` + `polaris-logs/*.txt` — финал: 0 ICE на всех
+  12, именованные отказы подмножества (843–981 диагностик на вход).
+- `polaris-01-stage-diags-named.txt` — ручной прогон стейджа 01-hello.
+- `seed-descriptor-local.json` — дескриптор ЛОКАЛЬНОГО ассета (пины
+  репозитория не тронуты; публикация — отдельное решение владельца).

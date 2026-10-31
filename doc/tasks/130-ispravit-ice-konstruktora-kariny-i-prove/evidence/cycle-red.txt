@@ -1,0 +1,7 @@
+== emit (red) (04:25:53)
+== compile (red) (04:26:09)
+cc130: built C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mvvlx08e4ndgwzzjc7/130/out/novac-fixed.exe
+red p1484_match_arm rc=2 ice=1 :: {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type
+red m2_call_arg_record rc=2 ice=1 :: {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type
+red p1705_newtype rc=2 ice=1 :: {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type
+rc=0

@@ -1,0 +1,3 @@
+cc130: built C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mvvlx08e4ndgwzzjc7/130/out/novac-fixed.exe
+red2 mc1 rc=2 :: {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:644
+rc=0
