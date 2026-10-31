@@ -25,6 +25,7 @@ import ../sem.{shape_of, call_callee_text}
 import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnLookup, missing_sig_of}
 import ../sem.{no_vrow, ty_of_decl, variants_named}
+import ../sem.{Def}
 
 /// A TYPE in call position: the construction of a NEWTYPE, or an honest refusal.
 ///
@@ -115,6 +116,30 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     // lines up -- so its binding is the identity, recorded like every other so
     // the emitter has one way to walk a call.
     @chan.record_callee(e.id_of(), CalleeTarget.CalleeCtor(type_id), []TyId.new(), identity_slots(1))
+}
+
+/// The REPRESENTATION a newtype-in-call-position constructs from, as the
+/// expectation its ONE argument meets (`Wrap({ n: 1 })`, registry №1705) --
+/// `no_ty()` for anything else the callee table holds. The newtype has no
+/// row of its own, so `@param_expect` has nothing to say, and without the
+/// expectation an anonymous record constructor in the argument stayed
+/// unsettled and the lattice iced on it ("anonymous constructor without a
+/// spread"). `@record_newtype_ctor` above judges the same type again, by
+/// name, as it always has: this expectation only types what the walk meets.
+fn Checker @newtype_arg_expect(found Option[Def]) -> TyId {
+    ro d = found ?? ice_at("novac/src/check/ctor_calls.nv:130", "check: the callee row vanished between two reads of one Option")
+    ro tid = match d.target {
+        DefType(t_decl) => ty_of_decl(@ctx, t_decl)
+        // A function or a constant in callee position is no construction.
+        DefFn(_) => return no_ty()
+        DefConst(_) => return no_ty()
+    }
+    match decl_of_ty(@ctx, tid).kind {
+        TkNewtype => representation_of(@ctx, tid)
+        // A record's brace form carries its own name; the paren forms have a
+        // constructor row of their own: no expectation to hand the walk.
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => no_ty()
+    }
 }
 
 /// The construction of a PARENTHESISED record by call (`Pair(1, 2)`).

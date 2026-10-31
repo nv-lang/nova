@@ -45,12 +45,22 @@ const BARE_GENERIC_VARIANT_MSG = "a bare `None` here has no type to take: it sta
 /// A payload the walk could not type, so the sum's parameter stays unknown.
 const GENERIC_PAYLOAD_UNTYPED_MSG = "outside the subset: the type argument of this sum cannot be inferred from the payload -- its type is not decided here (E2-b3)"
 
-/// An anonymous record construction in a GENERIC payload slot the position
-/// does not name: the construction takes its type from its position, and a
-/// bare type parameter names no record -- inferring an anonymous record type
-/// is the form the subset does not compile (registry №1933). Said by name
-/// where the lattice's ask was the ice.
-const ANON_CTOR_GENERIC_MSG = "outside the subset: an anonymous record constructor takes the type of its position -- a declared parameter, a written return, a field; this generic payload slot names none, and inferring an anonymous record type is not compiled yet (E2-b)"
+/// The expectation ONE payload argument meets (registry №1933): its slot's
+/// own type when concrete; for a GENERIC slot, the binding the position's
+/// instance fixes -- the same binding `@type_generic_variant_call` below
+/// makes later (`Ok({ x: 9 })` for a `-> Res[Rec]` return names the slot);
+/// `no_ty()` when nothing here names a record. Written as guards with early
+/// returns, one question per line -- the variant question is a guard, not a
+/// dispatcher (П21).
+fn Checker @payload_arg_expect(pt TyId, saved TyId, sum_id TyId) -> TyId {
+    if !is_ty(pt) { return no_ty() }
+    if @ctx.tys.is_concrete(pt) { return pt }
+    if @ctx.tys.kind_of(pt) != TypeKind.TkParam { return no_ty() }
+    if !is_ty(saved) || @ctx.tys.kind_of(saved) != TypeKind.TkApp { return no_ty() }
+    if decl_index_of_ty(@ctx, saved) != decl_index_of_ty(@ctx, sum_id) { return no_ty() }
+    ro bound = @ctx.tys.arg(saved, @ctx.tys.param_slot_of(pt))
+    if is_ty(bound) && @ctx.tys.is_concrete(bound) { bound } else { no_ty() }
+}
 
 /// When a `Result` instance the shell lacks arrives (`no_shell_instance_msg`).
 const RESULT_ARRIVES = "novac emits no `Result` instance of its own yet (E2-b3)"
@@ -97,17 +107,7 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
         // record the instance fixes -- and with no expectation naming the
         // slot, nothing is decided here: the instance door refuses by name.
         ro pwant = if pslot < vd.payload_cnt {
-            ro pt = @ctx.payload_types[vd.payload_off + pslot]
-            if is_ty(pt) && @ctx.tys.is_concrete(pt) {
-                pt
-            } else if is_ty(pt) && @ctx.tys.kind_of(pt) == TypeKind.TkParam && is_ty(saved) &&
-                @ctx.tys.kind_of(saved) == TypeKind.TkApp &&
-                decl_index_of_ty(@ctx, saved) == decl_index_of_ty(@ctx, vd.sum_id) {
-                ro bound = @ctx.tys.arg(saved, @ctx.tys.param_slot_of(pt))
-                if is_ty(bound) && @ctx.tys.is_concrete(bound) { bound } else { no_ty() }
-            } else {
-                no_ty()
-            }
+            @payload_arg_expect(@ctx.payload_types[vd.payload_off + pslot], saved, vd.sum_id)
         } else {
             // More arguments than the payload takes: the arity door below
             // says so, by name, once.
@@ -126,15 +126,17 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
         // `typed_args` ask below would ice on the unsettled node (№1933).
         ro ax = arg_expr_of(c)
         if pslot <= vd.payload_cnt && !is_ty(pwant) && @out.len() == amark &&
-            ax.kind_of() == NodeKind.RecordCtor {
-            ro akids = branch_children(ax)
-            if akids.len() > 0 && akids[0].kind_of() != NodeKind.Name && !is_ty(@chan.type_if_known(ax.id_of())) {
-                @report_first_leaf_of(branch_children(c), ANON_CTOR_GENERIC_MSG)
-            } else {
-                // A named construction, or one already settled: not this door.
-            }
+            ax.kind_of() == NodeKind.RecordCtor && ctor_is_srcless(ax) &&
+            !is_ty(@chan.type_if_known(ax.id_of())) {
+            // The INSTANCE door's own sentence (GENERIC_PAYLOAD_UNTYPED_MSG,
+            // this file): the slot's type argument cannot be inferred from
+            // the payload, and an anonymous record is the form the subset
+            // cannot infer. Said HERE, before `typed_args` below would ask
+            // the lattice about the unsettled construction.
+            @report_first_leaf_of(branch_children(c), GENERIC_PAYLOAD_UNTYPED_MSG)
         } else {
-            // A typed slot, or an argument that already spoke for itself.
+            // A typed slot, a form with its own type source (a name, a
+            // spread), or an argument that already spoke for itself.
         }
     }
     @value_expect = saved

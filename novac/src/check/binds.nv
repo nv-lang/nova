@@ -413,9 +413,16 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
     // miss was the ice "anonymous constructor without a spread". Refused BY
     // NAME (E2-b) instead, and the name is bound poisoned so its later uses
     // stay silent: one cause, one diagnostic.
+    // A CONSTRUCTION WITH A SPREAD IS NOT THIS DOOR'S: the spread is a type
+    // source of its own (`type_of` answers the spread's type, and
+    // `@judge_record_ctor` judges a spread-carrying construction by names
+    // only), so it falls to the lattice below exactly as before this wave --
+    // refusing it here was the №TBD regression: `ro q = { ...p, a: 2.5 }`
+    // compiled green on B1 and was refused E2-b by the first cut of this
+    // branch. THE CLASS BOUNDARY: a form WITH a type source (a name, a
+    // spread) is the lattice's; a form WITHOUT one is the position's.
     if ik == NodeKind.RecordCtor {
-        ro ck = branch_children(init)
-        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name {
+        if ctor_is_srcless(init) {
             ro smark = @out.len()
             @settle_anon_ctor(init)
             if !is_ty(@chan.type_if_known(init.id_of())) {
@@ -434,7 +441,8 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
                 // initializer's is.
             }
         } else {
-            // A NAMED construction: its own name decides, as it always has.
+            // A named or spread-carrying construction: the lattice below is
+            // its type source, as it was before this wave.
         }
     } else {
         // Not a construction: the initializer's own walk decided.
@@ -549,6 +557,20 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
     }
 }
 
+/// Does this record construction CARRY A TYPE SOURCE of its own -- a name
+/// head or a spread (registry №1933, the №TBD spread regression of the first
+/// cut)? A form that has one is the lattice's; the settle door serves forms
+/// WITHOUT one only. Early returns, one question per line.
+fn ctor_is_srcless(e Node) -> bool {
+    ro kids = branch_children(e)
+    if kids.len() == 0 { return false }
+    if kids[0].kind_of() == NodeKind.Name { return false }
+    for c in kids {
+        if c.kind_of() == NodeKind.CtorSpread { return false }
+    }
+    true
+}
+
 /// ONE DOOR for an ANONYMOUS record constructor (`{ n: 1 }`, no name, no
 /// spread): its type is not its own, it is the POSITION's -- and this door
 /// settles it against `@value_expect` for every position that walks one.
@@ -568,22 +590,27 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
 /// shape -- a binding's initializer, which must name a type -- speaks at its
 /// own door; this one never does.
 fn Checker mut @settle_anon_ctor(e Node) -> () {
+    // A SPREAD-CARRYING FORM IS STILL THIS DOOR'S TO RECORD (registry №TBD,
+    // the round-2 spread probe): the channel's readers ask for the node's
+    // type by id, and the spread arm of `type_of` -- which they do not all
+    // call -- is not enough (`sp2`: "no type recorded for this node"). The
+    // position's expectation is judged and recorded for a spread form too
+    // (a disagreeing spread type is then the call key's own refusal, the
+    // D489/D491 rule that the position's type wins). What the srcless gate
+    // below (`ctor_is_srcless`) still protects is the E2-b REFUSAL doors:
+    // a binding and a bare generic slot refuse only forms WITHOUT a type
+    // source -- the bind door and the payload guard apply it themselves.
     // READ FIRST: judged already, by this door through another position or by
     // the return door's own judge. Re-judging would say a refused field twice
     // -- one cause, one diagnostic, the rule every mark around here keeps.
-    if is_ty(@chan.type_if_known(e.id_of())) { return } else {
-        // Not settled yet: the expectation decides below.
-    }
+    if is_ty(@chan.type_if_known(e.id_of())) { return }
     ro want = @concrete(@value_expect)
-    if !is_ty(want) || !@ctx.tys.is_concrete(want) {
-        // No expectation, or one that names no record yet: nothing is decided
-        // HERE. The silence is the answer the readers already keep for the
-        // shape; a refusal belongs to the position that owns one.
-        return
-    } else {
-        // A concrete type stands at the position: the construction is judged
-        // against it, once, and the answer recorded.
-    }
+    // No expectation, or one that names no record yet: nothing is decided
+    // HERE. The silence is the answer the readers already keep for the
+    // shape; a refusal belongs to the position that owns one.
+    if !is_ty(want) || !@ctx.tys.is_concrete(want) { return }
+    // A concrete type stands at the position: the construction is judged
+    // against it, once, and the answer recorded.
     ro mark = @out.len()
     @judge_record_ctor(e, want)
     if @out.len() > mark {

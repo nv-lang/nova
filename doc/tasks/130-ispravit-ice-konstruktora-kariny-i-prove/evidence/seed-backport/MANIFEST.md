@@ -17,10 +17,11 @@ Reproduction (no worktree edits, no scratch driver):
 
 ## SHA-256
 
-- `binds.nv`: `8901f52ef98e61d5bd83e986edea162de0a778f4b149d92e587b789287b97388` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
-- `calls.nv`: `cd7ecbedd037f080453da62501c89296154c65b7bc84d5683d075a5458c3152e` -- base 3729abcc + task-130 hunks only (no task-92 host_os bridge)
-- `const_types.nv`: `0e7b75ef23a69bf1e89dc3044b907fa021498b0d34d58e0dd192dc7eb4d957e2` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
-- `exprs.nv`: `010d50a147bc06ad076586ac0d111c931f0def0d48bb79fc6ca1b75142d9b023` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
-- `module_values.nv`: `18c74b770903c54abe58fddf43344719bcf67fba575d7874a3fe6821b4bcb5a7` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
-- `option_rules.nv`: `7ea9694aabdfc7039a44773804349f3fd039e62d85d81fd43056f0b908de6de6` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `binds.nv`: `5ac4dc742887b96a87a68d3867211e6b768b81e1222e0dbe6148fb5afd8508ac` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `calls.nv`: `5d5afe71241429758aec270b1f168cbc505bc66087f61cc41173eed9cfd10094` -- base 3729abcc + task-130 hunks only (no task-92 host_os bridge)
+- `const_types.nv`: `52d07e097865109d313897a9dc9281fbc3b7c529b0c585022f1300fbe7136ea1` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `ctor_calls.nv`: `03e256e34be0db60626cc5d6ac23e237d208ec3dff212f611af21fef30c77da2` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `exprs.nv`: `cbf977c78807af7bc60dedc9501d71a0ba2e6486793875b8af8ef89f6ca6d628` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `module_values.nv`: `a84170b5e839c978d6c1c3beed48f79a8f64523a96d9cb1df00228b0d2043ae6` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `option_rules.nv`: `259c8d271e0c42e322474702c0a4e1562118064a90812857c22b5482a002e2fc` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
 - `type_of.nv`: `0472a20f9ffb8d05b2433d8cd88ed4c2c9c3fbc79f00ccd34dd2c0c694612724` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)

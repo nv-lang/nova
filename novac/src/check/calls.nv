@@ -877,30 +877,13 @@ fn Checker mut @type_free_call(e Node) -> () {
     }
     ro pre = @expected_ids(arg_row, saved_expect)
     // A NEWTYPE in call position constructs from its representation
-    // (`Wrap({ n: 1 })`, registry №1705): the newtype has no row of its own,
-    // so `@param_expect` has nothing to say -- and without the expectation
-    // an anonymous record constructor in the argument stayed unsettled and
-    // the lattice iced on it ("anonymous constructor without a spread"). The
-    // REPRESENTATION is the argument's expectation here, and
-    // `@record_newtype_ctor` judges the same type again below, by name, as
-    // it always has: this walk only types what it meets.
-    ro rep = match found {
-        Some(d) => match d.target {
-            DefFn(_) => no_ty()
-            DefType(decl) => {
-                ro tid = ty_of_decl(@ctx, decl)
-                if decl_of_ty(@ctx, tid).kind == TypeKind.TkNewtype {
-                    representation_of(@ctx, tid)
-                } else {
-                    // A record's brace form carries its own name; the paren
-                    // forms have a constructor row of their own.
-                    no_ty()
-                }
-            }
-            DefConst(_) => no_ty()
-        }
-        None => no_ty()
-    }
+    // (`Wrap({ n: 1 })`, registry №1705): the expectation for its argument is
+    // computed by the construction's own file (`@newtype_arg_expect`,
+    // ctor_calls.nv) -- the newtype has no row of its own, so `@param_expect`
+    // has nothing to say, and without the expectation an anonymous record
+    // constructor in the argument stayed unsettled and the lattice iced on it
+    // ("anonymous constructor without a spread").
+    ro rep = @newtype_arg_expect(found)
     mut argi = 0
     for c in kids {
         // A NAMED argument's value is typed like a positional one (registry
@@ -934,7 +917,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
     // past silently.
     ro def = found ?? ice_at(
-        "novac/src/check/calls.nv:936",
+        "novac/src/check/calls.nv:919",
         "check: the callee row vanished between two reads of one Option")
     match def.target {
         DefFn(_) => {

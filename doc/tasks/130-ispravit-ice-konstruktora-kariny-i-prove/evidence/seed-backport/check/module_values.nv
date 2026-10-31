@@ -156,7 +156,7 @@ fn arrow_path(names []str) -> str {
 /// with the path from `name` round to itself.
 fn Checker mut @report_module_cycle(name str) -> () {
     ro row = raw_crow(@const_seen(name) ?? ice_at(
-        "novac/src/check/module_values.nv:148",
+        "novac/src/check/module_values.nv:158",
         "check: a module value in a cycle lost its row"))
     mut from = 0 - 1
     for i in 0..@mv_stack.len() {
@@ -182,7 +182,7 @@ fn Checker mut @report_module_cycle(name str) -> () {
             // Another module value's declaration.
         }
     }
-    ice_at("novac/src/check/module_values.nv:175", "check: a module value in a cycle without its declaration")
+    ice_at("novac/src/check/module_values.nv:185", "check: a module value in a cycle without its declaration")
 }
 
 /// A module value's initializer, typed ONCE into the file's channel

@@ -7,7 +7,7 @@ module anon_ctor.neg_3
 // an anonymous record is exactly the form the subset cannot infer. Refused
 // BY NAME (E2-b) where the lattice's ask was the ice of the №1933 class.
 //
-// NOVAC_EXPECT this generic payload slot names none
+// NOVAC_EXPECT cannot be inferred from the payload
 type Rec { x int }
 
 fn main() {

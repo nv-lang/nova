@@ -1,15 +1,17 @@
-﻿GREEN (canonical binary of the №1933 renumbered sources; C sha256 c6340905… unchanged — comments do not reach the C; exe sha256 39fd1de7…, build-path dependent, see repro-from-commit.log):
+GREEN (round-2 canonical binary; C sha256 43582961…, exe sha256 fb692833…; spread forms included):
 
-== p1484_match_arm rc=0 :: /* nova-effect-count: 11 */
-== m2_call_arg_record rc=0 :: /* nova-effect-count: 11 */
-== p1705_newtype rc=0 :: /* nova-effect-count: 11 */
-== po1_option_payload rc=0 :: /* nova-effect-count: 11 */
-== m1_tail_anon rc=0 :: /* nova-effect-count: 11 */
-== e2_nested_field rc=0 :: /* nova-effect-count: 11 */
-== m5_match_named rc=0 :: /* nova-effect-count: 11 */
-== po2_option_bare rc=1 :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"po2_option_bare.nv","start":48,"end":49},"message":"outside the sub
-== e1_bare_bind rc=1 :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"e1_bare_bind.nv","start":44,"end":46},"message":"outside the subset
-== e3_wrong_field_arg rc=1 :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"e3_wrong_field_arg.nv","start":87,"end":92},"message":"this record 
-== e4_nonrec_expect rc=1 :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"e4_nonrec_expect.nv","start":66,"end":67},"message":"this record co
-== neg4 rc=1 :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"neg4.nv","start":739,"end":740},"message":"outside the subset: a re
-== mc2_const_no_type rc=1 :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"mc2_const_no_type.nv","start":30,"end":31},"message":"outside the s
+== sp1_bind_spread :: rc=0 (C) :: /* nova-effect-count: 11 */
+== sp2_arg_spread :: rc=0 (C) :: /* nova-effect-count: 11 */
+== sp3_arm_spread :: rc=0 (C) :: /* nova-effect-count: 11 */
+== p1484_match_arm :: rc=0 (C) :: /* nova-effect-count: 11 */
+== m2_call_arg_record :: rc=0 (C) :: /* nova-effect-count: 11 */
+== p1705_newtype :: rc=0 (C) :: /* nova-effect-count: 11 */
+== po1_option_payload :: rc=0 (C) :: /* nova-effect-count: 11 */
+== m1_tail_anon :: rc=0 (C) :: /* nova-effect-count: 11 */
+== e2_nested_field :: rc=0 (C) :: /* nova-effect-count: 11 */
+== m5_match_named :: rc=0 (C) :: /* nova-effect-count: 11 */
+== po2_option_bare :: refused: :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"po2_option_bare.nv","start":48,"end":49},"message":"outsi
+== e1_bare_bind :: refused: :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"e1_bare_bind.nv","start":44,"end":46},"message":"outside 
+== e3_wrong_field_arg :: refused: :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"e3_wrong_field_arg.nv","start":87,"end":92},"message":"th
+== e4_nonrec_expect :: refused: :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"e4_nonrec_expect.nv","start":66,"end":67},"message":"this
+== mc2_const_no_type :: refused: :: {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"mc2_const_no_type.nv","start":30,"end":31},"message":"out

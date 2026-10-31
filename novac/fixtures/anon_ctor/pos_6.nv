@@ -1,0 +1,18 @@
+module anon_ctor.pos_6
+
+// A SPREAD IS A TYPE SOURCE OF ITS OWN (registry №TBD, the round-1
+// regression caught by CI run 41176026118 on pipeline_test.nv): `ro q = {
+// ...p, a: 2.5 }` compiled green on B1, the first cut of the settle wave
+// refused it (E2-b), and the fix draws the class boundary properly -- a
+// form WITH a type source (a name, a spread) is the lattice's; the settle
+// door serves forms WITHOUT one only (`ctor_is_srcless`). The program
+// prints the overridden field.
+//
+// The oracle builds and runs this file byte-for-byte the same (prints 2.5).
+type Pt { a f64 }
+
+fn main() {
+    ro p = Pt { a: 1.5 }
+    ro q = { ...p, a: 2.5 }
+    println(q.a)
+}

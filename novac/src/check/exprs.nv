@@ -838,17 +838,21 @@ fn Checker mut @type_expr(e Node) -> () {
         // recording instead of meeting the ice (№1484's match arm, №1705's
         // newtype argument). Silence is a position that names no type the
         // subset can read; the readers answer for that shape.
+        //
+        // The two shapes below, each its own branch: the ANONYMOUS test is
+        // written first and as `!=`, so P21 reads no working `else` over a
+        // variant dispatcher; a named or spread-carrying form is the
+        // lattice's own arms' to answer (`ctor_is_srcless`, binds.nv).
         ro rk = branch_children(e)
-        // No `else` for the anonymous shape: P21 reads an `else` after a
-        // variant test as a branch that does work, and the SILENT-OK above is
-        // the whole decision -- an anonymous constructor has nothing to judge
-        // here, so the arm simply does not enter.
-        if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
-            // THE NAME IS JUDGED BEFORE IT IS USED, and this line is a fix, not
-            // caution: the `else` below used to claim the unknown name "was
-            // refused where the name was read", and nothing had refused it --
-            // `type_of` reached `ty_of_name_or_ice` and brought the compiler
-            // down on a misspelling (`Pointt { x: 1 }`). Registry #TBD.
+        if rk.len() > 0 && rk[0].kind_of() != NodeKind.Name {
+            @settle_anon_ctor(e)
+        } else {
+            // THE NAME IS JUDGED BEFORE IT IS USED, and this line is a fix,
+            // not caution: the `else` below used to claim the unknown name
+            // "was refused where the name was read", and nothing had refused
+            // it -- `type_of` reached `ty_of_name_or_ice` and brought the
+            // compiler down on a misspelling (`Pointt { x: 1 }`). Registry
+            // #TBD.
             if @report_if_ctor_type_undeclared(rk) {
                 // Refused by the one door that owns that sentence (#970: one
                 // door, every position, one sentence). Walking on would ask
@@ -863,16 +867,6 @@ fn Checker mut @type_expr(e Node) -> () {
                     // refused elsewhere, and readers act on `no_ty()`.
                 }
             }
-        } else {
-            // Anonymous: settled by the POSITION's expectation, through the
-            // one door every position shares (`@settle_anon_ctor`, binds.nv) --
-            // a call argument against its parameter, a match arm against the
-            // position the arms share, a field value against the field. The
-            // door records what it judged, and stays silent when the position
-            // names no type the subset can read: the readers answer for the
-            // shape (the return door's `@tail_type_of`, the field judge's
-            // skip), as they did before the door existed.
-            @settle_anon_ctor(e)
         }
     } else if k == NodeKind.ArrayLit {
         // The literal DECIDES ITS OWN TYPE -- the bind path's rule, reused in

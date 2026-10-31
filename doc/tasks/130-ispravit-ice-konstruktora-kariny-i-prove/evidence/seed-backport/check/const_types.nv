@@ -99,10 +99,10 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
         @value_expect = wt
         @type_expr(init)
         @value_expect = csaved
-        // SILENT-OK: the expression door refused the initializer, one cause.
-        if @out.len() > cmark { return } else {
-            // Typed: the written type comparison below decides the rest.
-        }
+        // The expression door refused the initializer: one cause, said once
+        // -- nothing further is decided here.
+        if @out.len() > cmark { return }
+        // Typed: the written type comparison below decides the rest.
     } else {
         // A literal: typed below, by the written type when one is written.
     }

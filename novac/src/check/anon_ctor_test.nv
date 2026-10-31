@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/anon_ctor_test.nv -- the settle door's own tests (№1933).
+//
+// Donor: none -- the tests pin the subset's own one-door rule for a
+//        construction without a type source; no oracle behaviour is copied.
+// Role: check (layer 7) -- module tests for `@settle_anon_ctor` and the
+//       positions that deliver an expectation to it (binds/calls/
+//       option_rules/const doors of the №1484/№1705 class).
+// Used by: scripts/guards/check-novac-module-tests.sh (one batched run).
+// Guarded by: check-novac-module-tests, check-novac-file-size (this file
+//             exists because check_test.nv crossed 1000 lines).
+//
+// The helpers (diagnose / diagnose_first_msg) live in check_test.nv, the
+// same module's peer -- module tests compile the folder as one unit.
+
+module novac.check
+
+test "anonymous constructor: settled by its position's expectation, refused by name where none is (registry №1933, the №1484/№1705 class)" {
+    // The class: an anonymous record construction takes its type from the
+    // position it lands in, and until the settle door existed the two
+    // positions that DID carry an expectation -- a match arm's body (№1484)
+    // and a call argument (№1705, a newtype's representation) -- typed the
+    // construction with an expectation nobody consumed, and the next
+    // lattice ask was the ice "anonymous constructor without a spread".
+    ro arm = "module m\n\ntype Rec value {\n    x int\n}\n\nfn f(k int) -> Rec {\n    match k {\n        0 => { x: 9 }\n        _ => { x: 0 }\n    }\n}\n"
+    assert(diagnose(arm) == 0, "an anonymous construction as a match arm's body types by the arm's expectation -- got: ${diagnose_first_msg(arm)}")
+
+    // A CALL ARGUMENT against its parameter's record (№1705's other half
+    // is the newtype form, judged through `@newtype_arg_expect` in
+    // ctor_calls.nv by the representation it hands the call walk).
+    ro arg = "module m\n\ntype Bag value {\n    n int\n}\n\nfn take(b Bag) -> int {\n    b.n\n}\n\nfn f() -> int {\n    ro v = take({ n: 1 })\n    v\n}\n"
+    assert(diagnose(arg) == 0, "an anonymous construction as a call argument types by its parameter -- got: ${diagnose_first_msg(arg)}")
+
+    // A NEWTYPE's argument meets the representation: `Wrap({ n: 1 })` types
+    // `{ n: 1 }` as `Bag`, and the construction door accepts it as exactly
+    // the representation (the №1705 carrier itself).
+    ro wrap = "module m\n\ntype Bag value {\n    n int\n}\n\ntype Wrap Bag\n\nfn f() -> Wrap => Wrap({ n: 1 })\n"
+    assert(diagnose(wrap) == 0, "a newtype's anonymous argument types as the representation -- got: ${diagnose_first_msg(wrap)}")
+
+    // THE BOUNDARY, and the half that proves the refusal is the position's
+    // own: a binding with no written type names no record, and the answer
+    // there -- inferring an anonymous record type -- is a form the subset
+    // does not compile. One cause, by name, where the lattice's miss was
+    // the ice.
+    ro bare = "module m\n\ntype Rec value {\n    x int\n}\n\nfn f() -> int {\n    ro r = { x: 9 }\n    r.x\n}\n"
+    assert(diagnose(bare) == 1, "an anonymous construction bound with no written type is refused exactly once -- got: ${diagnose_first_msg(bare)}")
+    assert(diagnose_first_msg(bare).contains("an anonymous record constructor takes the type of its position"), "the refusal names the subset's boundary -- got: ${diagnose_first_msg(bare)}")
+
+    // THE CONTROL for the door reading before judging: a construction whose
+    // field the record lacks is refused by the field's own door, once --
+    // the judge must not say it a second time.
+    ro wrong = "module m\n\ntype Bag value {\n    n int\n}\n\nfn take(b Bag) -> int {\n    b.n\n}\n\nfn f() -> int {\n    ro v = take({ wrong: 1 })\n    v\n}\n"
+    assert(diagnose(wrong) == 1, "a wrong field in an anonymous argument is refused once, by its own door -- got: ${diagnose_first_msg(wrong)}")
+
+    // A SPREAD IS A TYPE SOURCE OF ITS OWN (the №TBD regression of the first
+    // cut): `ro q = { ...p, a: 2.5 }` compiles green exactly as it did
+    // before the wave -- the lattice answers the spread's type, and the
+    // bind door does not refuse a form that HAS a source.
+    ro spread = "module m\n\ntype Pt value {\n    a f64\n}\n\nfn f() -> f64 {\n    ro p = Pt { a: 1.5 }\n    ro q = { ...p, a: 2.5 }\n    q.a\n}\n"
+    assert(diagnose(spread) == 0, "a spread-carrying anonymous construction keeps the lattice as its type source -- got: ${diagnose_first_msg(spread)}")
+}
