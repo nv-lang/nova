@@ -1,0 +1,3 @@
+carina-ownpkg: driver=D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar\nova-driver\target\release\nova.exe sha256=8ded804dec70739f5d09b4d1121a4e4adaf20aab9e6cf2426f460b346174922f
+carina-ownpkg PASS: ownpkg_build_min exit=0 stdout=2 lines binary_sha256=a8e359c203c32516ad55a2fe54cec4f9ab29085d6edbcebd5c55359255dcd34c
+carina-ownpkg PASS: the own-package qualified-import fixture built through the pinned Carina B1 seed and matched its full expected stdout
