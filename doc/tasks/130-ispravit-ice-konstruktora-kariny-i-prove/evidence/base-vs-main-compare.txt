@@ -1,0 +1,30 @@
+﻿base(main-fix) vs main(base-fix) byte comparison, 2026-10-31:
+binds.nv, exprs.nv, type_of.nv, option_rules.nv: SHA-256 identical (fix ported 1:1).
+calls.nv: only diff is task 92's host_os bridge (3 lines, main only, present in base absent -- backport deliberately does not carry it)
++ and the ice_at self-name literal shift 933->936 caused by those 3 lines; the fix hunks themselves are byte-identical.
+
+git diff --no-index base/calls.nv main/calls.nv:
+diff --git "a/C:\\Users\\\320\225\320\262\320\263\320\265\320\275\320\270\320\271\\AppData\\Local\\Temp\\opencode\\ses_mvvlx08e4ndgwzzjc7\\130\\src-3729\\novac\\src\\check\\calls.nv" "b/D:\\Sources\\nv-lang\\worktrees\\nova-opencode-130-ispravit-ice-konstruktora-kariny-i-prove\\novac\\src\\check\\calls.nv"
+index 78ff3242a..3da2fd81b 100644
+--- "a/C:\\Users\\\320\225\320\262\320\263\320\265\320\275\320\270\320\271\\AppData\\Local\\Temp\\opencode\\ses_mvvlx08e4ndgwzzjc7\\130\\src-3729\\novac\\src\\check\\calls.nv"
++++ "b/D:\\Sources\\nv-lang\\worktrees\\nova-opencode-130-ispravit-ice-konstruktora-kariny-i-prove\\novac\\src\\check\\calls.nv"
+@@ -599,6 +599,9 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
+             // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
+             // its body is the program's, named by its owner's module; the call is
+             // judged by the owner's signature like an own call.
++        } else if @ctx.is_host_os_bridge(row) {
++            // The one approved bootstrap row uses the existing header-backed
++            // host hook; the exact row and ordinary call checks are preserved.
+         } else if !@ctx.interop.has(sym) && !@ctx.instantiates(row, []TyId.new()) {
+             @report_first_leaf_of(kids,
+                 "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
+@@ -931,7 +934,7 @@ fn Checker mut @type_free_call(e Node) -> () {
+     // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
+     // past silently.
+     ro def = found ?? ice_at(
+-        "novac/src/check/calls.nv:933",
++        "novac/src/check/calls.nv:936",
+         "check: the callee row vanished between two reads of one Option")
+     match def.target {
+         DefFn(_) => {
+

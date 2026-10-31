@@ -1,0 +1,24 @@
+﻿RED: pinned B1 novac.exe (sha256 824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4,
+source 3729abcce42ec2d94efc898ec6eafe91ff6210d5), probes/ dir, captured 2026-10-31:
+
+== p1484_match_arm.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
+== m2_call_arg_record.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
+== p1705_newtype.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
+== e1_bare_bind.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
+== e3_wrong_field_arg.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
+== e4_nonrec_expect.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
+== ar1_array_elem.nv -> exit=2
+{"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a spread","poisoned_by":null}
+
