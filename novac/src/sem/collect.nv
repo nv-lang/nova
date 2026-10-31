@@ -728,7 +728,11 @@ export fn collect_types_with(file Node, decls []Node, target_os str = "") -> Ctx
                     target_unknown_mask: target_unknown_mask)
             // An `extern "C" fn` of THIS file: the row is the FFI declaration's,
             // and the mark is the one fact every later reader asks (D282, task 131).
-            if is_extern_c(fk) { fns.mark_extern_c() }
+            if is_extern_c(fk) {
+                fns.mark_extern_c()
+            } else {
+                // A bodied declaration, or an extern of another ABI: no mark.
+            }
             fns.mark_linear(generic_linear(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))

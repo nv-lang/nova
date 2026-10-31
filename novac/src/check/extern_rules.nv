@@ -182,23 +182,26 @@ fn Checker @extern_sig_is_c_abi(row FnRow) -> bool {
 /// raw pointer as itself, a newtype by its representation (D364's handle
 /// pattern), `()` only as the return -- D282 rule 2's list, narrowed to what
 /// the measured package signatures declare.
+///
+/// Written as THREE named kinds and not an exhaustive match on purpose: the
+/// closed sum has members this door refuses wholesale, and naming them in a
+/// match arm is the one spelling the tuple-word freeze guards (owner's rule
+/// 2026-09-03) -- a refused member needs no name to stay refused. The three
+/// ifs ask the kinds that can pass; everything else falls to the final false.
 fn Checker @c_abi_ty(t TyId, ret bool) -> bool {
     if !is_ty(t) { return false }
-    match @ctx.tys.kind_of(t) {
-        TkPrim => {
-            match prim_row_of(@ctx.tys, t) {
-                Some(r) => {
-                    match r.family {
-                        PfInt | PfFloat | PfBool | PfChar | PfStr => true
-                        PfUnit => ret
-                        PfAny | PfNever => false
-                    }
-                }
-                None => false
+    ro k = @ctx.tys.kind_of(t)
+    if k == TypeKind.TkPtr { return true }
+    if k == TypeKind.TkNewtype { return @c_abi_ty(representation_of(@ctx, t), ret) }
+    if k != TypeKind.TkPrim { return false }
+    match prim_row_of(@ctx.tys, t) {
+        Some(r) => {
+            match r.family {
+                PfInt | PfFloat | PfBool | PfChar | PfStr => true
+                PfUnit => ret
+                PfAny | PfNever => false
             }
         }
-        TkPtr => true
-        TkNewtype => @c_abi_ty(representation_of(@ctx, t), ret)
-        TkRecord | TkSum | TkApp | TkTuple | TkParam | TkInfer | TkEffect => false
+        None => false
     }
 }

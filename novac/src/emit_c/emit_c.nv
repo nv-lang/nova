@@ -377,7 +377,7 @@ fn Emitter mut @emit_file_protos(file Node) -> () {
         ro row = decl_fn_row(c, @ctx) ?? ice_at(
             "novac/src/emit_c/emit_c.nv:377",
             "emit: a reached declaration with no row in the callable table")
-        // An `extern "C" fn` row's declaration is nobody's to define: its
+        // An `extern-C fn` row's declaration is nobody's to define: its
         // prototype comes from the ROW walk below, which every unit reaching
         // the symbol prints -- not only the unit owning the declaration
         // (D282, task 131).
@@ -390,7 +390,7 @@ fn Emitter mut @emit_file_protos(file Node) -> () {
     }
 }
 
-/// The C symbol an `extern "C" fn` row is called by: the declaration's own
+/// The C symbol an `extern-C fn` row is called by: the declaration's own
 /// name, LITERALLY -- the one emission that names by the source rather than by
 /// a mangling (D282 rule 3: no `nova_fn_` prefix, no registry, no module).
 /// Asked only of a row `FnTable @extern_c` answered true. Lives here, beside
@@ -399,7 +399,7 @@ fn Emitter mut @emit_file_protos(file Node) -> () {
 /// (decision 12), and a helper nobody else reads belongs with its pair.
 fn extern_c_symbol(ctx Ctx, row FnRow) -> str => ctx.fns.rows[raw_row(row)].name
 
-/// One `extern "C" fn` prototype per FFI symbol this unit REACHES, written
+/// One `extern-C fn` prototype per FFI symbol this unit REACHES, written
 /// from the ROW's own types -- the declaration's C signature, so the call
 /// sites below it compile against a declared symbol instead of C's implicit
 /// `int` fallback (the oracle leaves exactly that gap for non-tuple externs,
@@ -472,7 +472,7 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro fn_row = decl_fn_row(f, @ctx) ?? ice_at(
         "novac/src/emit_c/emit_c.nv:472",
         "emit: a declaration with no row in the callable table")
-    // An `extern "C" fn` declaration owns NO body to emit -- the symbol is the
+    // An `extern-C fn` declaration owns NO body to emit -- the symbol is the
     // library's, spelled by its literal name (D282). Its prototype is written
     // by `@emit_extern_c_protos` from the row; a definition here would be a
     // `static` function nobody links, named after a C symbol that already
