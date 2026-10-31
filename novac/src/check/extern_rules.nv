@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- the gate is novac's own reading of D282 (08-runtime.md,
+// rules 1-5): which extern declarations the measured minimal class admits and
+// which are declined BY NAME, with a stage each (P27/P13).
+// Role: the FFI declaration gate -- `@report_if_extern_decl` and its helpers,
+// cut out of check/rules.nv when task 131's gate pushed that file past the
+// thousand-line seam (decision 12, §10.4).
+// Used by: check/decl_forms.nv `@judge_fn_decl`, the one caller.
+// Guarded by: check-novac-file-size.py (this cut), the module tests of
+// novac/src/pipeline/extern_c_test.nv.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind}
+import ../builtins.{TypeKind, PrimFamily, BuiltinType}
+import ../sem.{declares_receiver, generic_names, prim_row_of, representation_of, extern_abi_at}
+import ../sem.{leaf_kind, leaf_text, branch_children}
+import ../sem.{FnRow, raw_row}
+import ../types.{TyId, is_ty}
+
+/// An `extern "ABI" fn` declaration: READ by the parser since 2026-10-20,
+/// and since task 131 (D282) COMPILED in the minimal class the measured
+/// package inputs use -- an ABI of `"C"`, a free function, no `unsafe`, no
+/// generics, and a signature of C-ABI types. Everything else the form can say
+/// is still refused BY NAME, one diagnostic per form, at the keyword the
+/// reader wrote: `extern "nova"` (the registry's spelling, the shell's
+/// question), `unsafe` (no unsafe-call door yet), a receiver, type
+/// parameters, a body (D282 rule 1: the form declares a symbol, it owns no
+/// body), and a signature type whose C ABI novac does not emit.
+///
+/// The EMISSION this gate now admits exists: the call site spells the
+/// declaration's LITERAL name (D282 rule 3) and the prototype comes from the
+/// row's own types -- see emit_expr.nv's CalleeFn arm and emit_c.nv's
+/// extern-prototype walk. Refusing the DECLARATION rather than its calls
+/// stays deliberate: the declaration is where the reader wrote the form, and
+/// one diagnostic at the form beats one per call site.
+///
+/// Answers `true` when it reported, so the caller can skip the rules that judge
+/// PARTS of a declaration novac will not compile at all: a second diagnostic
+/// about a part of a refused form is the cascade the no-cascade guard forbids.
+fn Checker mut @report_if_extern_decl(kids []Node, row FnRow) -> bool {
+    match extern_abi_at(kids) {
+        None => {
+            // A plain `fn`: not this form. Only the keyword marks it, never a
+            // wrapper node (parse/decls.nv `@extern_decl`).
+            return false
+        }
+        Some(abi) => {
+            // The form is extern: which ABI, and what shape, decides below.
+            // The keyword TOKEN the one refusal of this form lands on; `kw` is
+            // its own name, not the outer binding's (D347 R3 is the class a
+            // shadowing pattern here would trip).
+            ro t = match @extern_kw_at(kids) {
+                Some(kw) => kw
+                None => return false
+            }
+            if abi != "C" {
+                @refuse(t,
+                    "outside the subset: an extern ${abi} fn declaration -- only the C ABI is compiled yet, by the declaration's literal name; the registry-spelled runtime symbol arrives with the shell wave (D282, E2-b2)")
+                return true
+            } else {
+                // The C ABI: the minimal class below is what the measured
+                // package FFI layers (nova-duckdb, nova-tls via nova-postgres)
+                // declare -- no more of D282 than those signatures use.
+            }
+            if has_unsafe_lead(kids) {
+                @refuse(t,
+                    "outside the subset: an extern C unsafe fn declaration -- novac reads the unsafe leaf but compiles no unsafe-call door yet (D424, E4)")
+                return true
+            } else {
+                // No `unsafe` leaf: the measured layers declare none either.
+            }
+            if declares_receiver(kids) {
+                @refuse(t,
+                    "outside the subset: an extern declaration with a receiver -- an FFI declaration is a free function (D282, E2)")
+                return true
+            } else {
+                // A free function: the measured class.
+            }
+            if generic_names(kids).len() > 0 {
+                @refuse(t,
+                    "outside the subset: a generic extern C fn declaration -- one literal C symbol cannot name an instantiation (D282, E2-b3)")
+                return true
+            } else {
+                // Not generic: the C symbol is one.
+            }
+            if extern_has_body(kids) {
+                @refuse(t,
+                    "outside the subset: an extern declaration with a body -- the form declares a symbol the library owns, and a body contradicts it (D282 rule 1, E2)")
+                return true
+            } else {
+                // Bodyless, as the language writes it.
+            }
+            if !@extern_sig_is_c_abi(row) {
+                @refuse(t,
+                    "outside the subset: this extern C fn signature names a type whose C ABI novac does not emit yet (E2): the compiled class is integer, float, bool, char and str scalars, raw pointers, a newtype over one of those, and the unit as the return (D282 rule 2)")
+                return true
+            } else {
+                // The signature's types cross by the C ABI novac emits.
+            }
+            false
+        }
+    }
+}
+
+/// The `extern` keyword leaf of a declaration, where the form's one
+/// diagnostic lands. A separate door because `refuse` takes a TOKEN and the
+/// ABI question answers a position.
+fn Checker @extern_kw_at(kids []Node) -> Option[Token] {
+    for c in kids {
+        match c {
+            Leaf(t) => {
+                if t.kind == TokenKind.KwExtern {
+                    return Some(t)
+                } else {
+                    // Another leaf: the ABI string, `fn`, the name. Only the
+                    // keyword marks the form.
+                }
+            }
+            Branch { .. } => {}
+        }
+    }
+    None
+}
+
+/// Does the declaration carry the optional `unsafe` leaf of `extern "ABI"
+/// unsafe fn` (#815)?
+fn has_unsafe_lead(kids []Node) -> bool {
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        if leaf_kind(c) == TokenKind.KwUnsafe {
+            return true
+        } else {
+            // Another leaf: the keyword, the ABI string, the name.
+        }
+    }
+    false
+}
+
+/// Does the declaration carry a BODY -- a block or `=> expr`? An extern
+/// declaration owns none (D282 rule 1); `has_body` of sem/handed_bodies.nv
+/// answers the same question of a HANDED declaration, and this is the
+/// file's own tree's twin.
+fn extern_has_body(kids []Node) -> bool {
+    for c in kids {
+        ro k = c.kind_of()
+        if k == NodeKind.Block || k == NodeKind.FnExprBody {
+            return true
+        } else {
+            // A leaf or another branch: parameters, the return type, leads.
+        }
+    }
+    false
+}
+
+/// Is every parameter type and the return of `row` one whose C ABI novac
+/// emits (D282 rule 2, the measured class)? An UNRESOLVED type (`no_ty`, -1)
+/// answers true -- not because it is C-ABI, but because the type-name rules
+/// name it separately one line later, and a second diagnostic here about the
+/// same slot is the cascade the no-cascade rule forbids: the ABI question is
+/// only asked of a signature that has resolved.
+fn Checker @extern_sig_is_c_abi(row FnRow) -> bool {
+    // No row (recovery debris the collector dropped): the ABI question has no
+    // signature to ask of, and the rules after this gate name the form.
+    if raw_row(row) < 0 || raw_row(row) >= @ctx.fns.rows.len() { return true }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    for i in 0..fd.param_cnt {
+        ro t = @ctx.fns.params[fd.param_off + i].type_id
+        if !is_ty(t) { return true }
+        if !@c_abi_ty(t, false) {
+            return false
+        } else {
+            // This parameter crosses; the return is asked after the loop.
+        }
+    }
+    if !is_ty(fd.ret_id) { return true }
+    @c_abi_ty(fd.ret_id, true)
+}
+
+/// ONE type's C-ABI question, asked recursively: a scalar by its family, a
+/// raw pointer as itself, a newtype by its representation (D364's handle
+/// pattern), `()` only as the return -- D282 rule 2's list, narrowed to what
+/// the measured package signatures declare.
+fn Checker @c_abi_ty(t TyId, ret bool) -> bool {
+    if !is_ty(t) { return false }
+    match @ctx.tys.kind_of(t) {
+        TkPrim => {
+            match prim_row_of(@ctx.tys, t) {
+                Some(r) => {
+                    match r.family {
+                        PfInt | PfFloat | PfBool | PfChar | PfStr => true
+                        PfUnit => ret
+                        PfAny | PfNever => false
+                    }
+                }
+                None => false
+            }
+        }
+        TkPtr => true
+        TkNewtype => @c_abi_ty(representation_of(@ctx, t), ret)
+        TkRecord | TkSum | TkApp | TkTuple | TkParam | TkInfer | TkEffect => false
+    }
+}

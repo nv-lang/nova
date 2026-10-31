@@ -513,6 +513,7 @@ fn FnTable mut @mark_extern_c() -> () {
 /// Is this row an `extern "C" fn` declaration? Asked on the ROW (not the
 /// spelling and not the module): the ABI says whose symbol the name is, and
 /// only the row carries it past collect.
+#realtime nogc
 export fn FnTable @extern_c(row FnRow) -> bool {
     if raw_row(row) < 0 || raw_row(row) >= @rows.len() { return false }
     @rows[raw_row(row)].extern_c

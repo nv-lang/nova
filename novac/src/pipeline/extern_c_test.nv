@@ -12,7 +12,6 @@ module novac.pipeline
 import ../tree.{Node}
 import ../sem.{InteropTable, EmbedTable}
 import ../check.{check}
-import ../parse.{parse_decls}
 
 /// The prototype line the emitter wrote for a literal FFI symbol, or "".
 fn extern_proto_line(c str, name str) -> str {
@@ -35,7 +34,6 @@ test "an extern C fn is admitted, prototyped and called by its literal name (D28
     ro text = "module extern_c.pos\nextern \"C\" fn abs(v i32) -> i32\nfn main() -> i32 { abs(0 - 5) }"
     ro fr = front(text, []Node.new(), InteropTable.new(), EmbedTable.new())
     ro (diags, _) = check(fr.tree, fr.src, fr.ctx)
-    if diags.len() > 0 { panic(messages(diags)) }
     assert(diags.len() == 0, messages(diags))
     ro (ediags, c) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
                                               "extern_c_test.nv", EmbedTable.new())
@@ -68,7 +66,6 @@ test "an extern C fn over a handle newtype crosses by its representation (D364)"
     ro text = "module extern_c.handle\ntype CHandle int\nextern \"C\" fn make() -> CHandle\nextern \"C\" fn len_of(h CHandle) -> i64\nfn main() -> i64 { len_of(make()) }"
     ro (ediags, c) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
                                               "extern_c_test.nv", EmbedTable.new())
-    if ediags.len() > 0 { panic(messages(ediags)) }
     assert(ediags.len() == 0, messages(ediags))
     assert(extern_proto_line(c, "make") != "", c)
     assert(extern_proto_line(c, "len_of") != "", c)
@@ -114,7 +111,6 @@ test "an extern C fn of another module of the program is called by its literal n
     mut interop = InteropTable.new()
     mark_program(interop, decls)
     ro (diags, c) = compile_program_to_c(us, 1, decls, interop, EmbedTable.new())
-    if diags.len() > 0 { panic(messages(diags)) }
     assert(diags.len() == 0, messages(diags))
     assert(extern_proto_line(c, "abs") != "", c)
     assert(!has_c_definition(c, "abs"), c)
