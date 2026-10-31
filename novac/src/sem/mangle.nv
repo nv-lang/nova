@@ -70,14 +70,15 @@ export fn carrier_of(ctx Ctx, t TyId) -> TyId {
         ro is_new = match ctx.tys.kind_of(cur) {
             TkNewtype => true
             // TkEffect: an effect is not a newtype -- the peel stops here.
-            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => false
+            // TkFn (task 134): a function type is structural, not a newtype.
+            TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr | TkFn => false
         }
         if !is_new { return cur }
         cur = representation_of(ctx, cur)
         steps += 1
     }
     ice_at(
-        "novac/src/sem/mangle.nv:79",
+        "novac/src/sem/mangle.nv:80",
         "mangle: a newtype chain longer than the registry -- a cycle reached the carrier door")
 }
 
@@ -108,7 +109,7 @@ export fn is_payload_free_sum(ctx Ctx, t TyId) -> bool {
     match ctx.tys.kind_of(t) {
         TkSum => {}
         // TkEffect: an effect is not a sum -- the A4 question answers false.
-        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => { return false }
+        TkPrim | TkRecord | TkApp | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr | TkFn => { return false }
     }
     ro td = decl_of_ty(ctx, t)
     if is_runtime_abi_sum(td.name) { return false }
@@ -152,6 +153,28 @@ export fn ty_source_name(ctx Ctx, t TyId) -> str {
         TkPtr => {
             ro under = ty_source_name(ctx, ctx.tys.arg(t, 0))
             if ctx.tys.ptr_is_mut(t) { "*mut ${under}" } else { "*${under}" }
+        }
+        // A FUNCTION type reads as written too (task 134): `fn(int, str) ->
+        // bool` -- the parameters, then the result, which rides LAST in the
+        // args by the interning door's contract. The builder is consumed into
+        // the string IN THE ARM: a match arm is no return position, so the
+        // coercion the door's tail would give does not apply here (measured
+        // 2026-10-31: "match arms produce different types", E2-b3's rule).
+        TkFn => {
+            consume s = StringBuilder.new(cap: 32)
+            s.append("fn(")
+            ro arity = ctx.tys.arg_count(t) - 1
+            for i in 0..arity {
+                if i > 0 {
+                    s.append(", ")
+                } else {
+                    // The first parameter has nothing before it.
+                }
+                s.append(ty_source_name(ctx, ctx.tys.arg(t, i)))
+            }
+            s.append(") -> ")
+            s.append(ty_source_name(ctx, ctx.tys.arg(t, arity)))
+            s.into_str()
         }
     }
 }
@@ -237,7 +260,7 @@ export fn shape_of(ctx Ctx, t TyId) -> RecordShape {
         TkTuple => RecordShape.AnonPositionalTuple
         // TkEffect: an effect is not a record -- it takes the same "declares no
         // record" default as the rest of the residual group.
-        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkEffect | TkPtr => RecordShape.Record
+        TkPrim | TkSum | TkNewtype | TkApp | TkParam | TkInfer | TkEffect | TkPtr | TkFn => RecordShape.Record
     }
 }
 
@@ -317,16 +340,16 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
                 return CLayout { base: instance_struct_name(ctx, t), by_ptr: true }
             }
             TkParam => { ice_at(
-                "novac/src/sem/mangle.nv:319",
+                "novac/src/sem/mangle.nv:342",
                 "mangle: c_type of a type parameter — layout is asked before substitution") }
             TkInfer => { ice_at(
-                "novac/src/sem/mangle.nv:322",
+                "novac/src/sem/mangle.nv:345",
                 "mangle: c_type of an inference variable — a variable escaped its body") }
             // TkEffect: unreachable while the with-doors refuse non-handler values;
             // ice, not a fallback (E4 wave). Effect types get a C spelling with the
             // Effect-type stage, not by masquerading as a record pointer here.
             TkEffect => { ice_at(
-                "novac/src/sem/mangle.nv:328",
+                "novac/src/sem/mangle.nv:351",
                 "mangle: c_type of an EFFECT type — effect values are typed by with-doors, which are not built yet (E4 wave)") }
             // A tuple is a BY-VALUE mono struct (D123): its C type IS its
             // struct name, no pointer -- the same word `value` means on a
@@ -339,9 +362,17 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
                 ro under = c_type(ctx, ctx.tys.arg(t, 0))
                 return CLayout { base: if ctx.tys.ptr_is_mut(t) { under } else { "const ${under}" }, by_ptr: true }
             }
+            // A FUNCTION type has no C layout yet (task 134): the term exists
+            // so a closure-parameter SIGNATURE reads (std's map_err), and no
+            // VALUE of it is ever emitted while the checker refuses closure
+            // literals -- reaching here means that refusal was bypassed, which
+            // is an ice, not a spelling to invent.
+            TkFn => { ice_at(
+                "novac/src/sem/mangle.nv:370",
+                "mangle: c_type of a FUNCTION type -- a fn-typed value reached emission past the closure refusal (task 134)") }
         }
     }
-    ice_at("novac/src/sem/mangle.nv:344", "mangle: type id outside the registry — no silent int default (#652 class)")
+    ice_at("novac/src/sem/mangle.nv:375", "mangle: type id outside the registry — no silent int default (#652 class)")
 }
 
 /// C name of a user type's struct (no pointer): `Nova_<name>`.
@@ -353,13 +384,16 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
 /// as a struct in silence (П21).
 export fn c_struct(ctx Ctx, t TyId) -> str {
     if !is_ty(t) {
-        ice_at("novac/src/sem/mangle.nv:356", "mangle: struct name asked for `no type`")
+        ice_at("novac/src/sem/mangle.nv:387", "mangle: struct name asked for `no type`")
     }
     match ctx.tys.kind_of(t) {
-        TkPrim => { ice_at("novac/src/sem/mangle.nv:359", "mangle: a primitive has no struct name") }
+        TkPrim => { ice_at("novac/src/sem/mangle.nv:390", "mangle: a primitive has no struct name") }
         TkPtr => { ice_at(
-            "novac/src/sem/mangle.nv:360",
+            "novac/src/sem/mangle.nv:391",
             "mangle: a pointer has no struct name -- it is its pointee's type with a star") }
+        TkFn => { ice_at(
+            "novac/src/sem/mangle.nv:394",
+            "mangle: a function type has no struct name -- its values are not emitted while closures are refused (task 134)") }
         // THE SHAPE decides the prefix, and all three spellings are the
         // ORACLE's, measured off its own emission (P25 -- the fixed point of
         // behaviour, and here of the interop name): a plain record is
@@ -386,16 +420,16 @@ export fn c_struct(ctx Ctx, t TyId) -> str {
             return instance_struct_name(ctx, t)
         }
         TkParam => { ice_at(
-            "novac/src/sem/mangle.nv:388",
+            "novac/src/sem/mangle.nv:422",
             "mangle: struct name of a type parameter — no layout before substitution") }
         TkInfer => { ice_at(
-            "novac/src/sem/mangle.nv:391",
+            "novac/src/sem/mangle.nv:425",
             "mangle: struct name of an inference variable — a variable escaped its body") }
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). An effect owns operation rows, not a C
         // struct.
         TkEffect => { ice_at(
-            "novac/src/sem/mangle.nv:397",
+            "novac/src/sem/mangle.nv:431",
             "mangle: struct name of an EFFECT type — an effect declares no C struct; with-doors refuse non-handler values (E4 wave)") }
         // The typedef is self-named (`typedef struct X {...} X;`), so the
         // struct name and the C type are the one string.
@@ -476,7 +510,7 @@ export fn vec_op_c(ctx Ctx, vec_t TyId, name str, row FnRow) -> str {
     if ctx.interop.has(shell) { return shell }
     if raw_row(row) < 0 {
         ice_at(
-            "novac/src/sem/mangle.nv:478",
+            "novac/src/sem/mangle.nv:512",
             "mangle: an implicit vector operation the shell lacks reached emission with no row recorded")
     } else {
         // The row the checker recorded for this operation.
@@ -769,7 +803,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
         // generic took a `[]T` before the handed bodies did, which is why the
         // shallowness went unseen. An empty substitution is a run over a file,
         // where there is nothing to rewrite.
-        TkApp | TkTuple | TkPtr => {
+        TkApp | TkTuple | TkPtr | TkFn => {
             if subst.len() == 0 { return t }
             // READ, not interned: this door holds the context without the
             // right to grow the interner. The checker interned every term it
@@ -778,7 +812,7 @@ export fn subst_type(ctx Ctx, t TyId, subst []TyId) -> TyId {
             ro r = ctx.tys.subst_known(t, subst)
             if !is_ty(r) {
                 ice_at(
-                    "novac/src/sem/mangle.nv:780",
+                    "novac/src/sem/mangle.nv:814",
                     "mangle: a substituted type the checker never interned -- the instance was not typed through it")
             } else {
                 // Interned: the one id this term has.
@@ -842,6 +876,27 @@ fn ptr_tag(ctx Ctx, t TyId, subst []TyId) -> str {
     s
 }
 
+/// A FUNCTION type's tag inside one of OUR names (task 134): `_fn_`, the
+/// parameter tags joined by `_and_`, then `_to_` and the result's tag. The
+/// result rides LAST in the term's args (the interning door's contract), so
+/// it is `args[arg_count - 1]`, and the parameters are everything before it.
+fn fn_tag(ctx Ctx, t TyId, subst []TyId) -> str {
+    consume s = StringBuilder.new(cap: 48)
+    s.append("_fn_")
+    ro arity = ctx.tys.arg_count(t) - 1
+    for i in 0..arity {
+        if i > 0 {
+            s.append("_and_")
+        } else {
+            // The first parameter follows `_fn_` directly.
+        }
+        s.append(type_tag(ctx, ctx.tys.arg(t, i), subst))
+    }
+    s.append("_to_")
+    s.append(type_tag(ctx, ctx.tys.arg(t, arity), subst))
+    s
+}
+
 /// An identifier-safe tag for a type, for use INSIDE a C name.
 ///
 /// `c_type` cannot serve here: it answers with C syntax (`Nova_Pt*`), and a
@@ -884,7 +939,7 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // what `T` stands for.
         TkParam => type_tag(ctx, subst_type(ctx, t, subst), subst)
         TkInfer => ice_at(
-            "novac/src/sem/mangle.nv:886",
+            "novac/src/sem/mangle.nv:941",
             "mangle: type_tag of an inference variable — inference arrives at E2-b3")
         // TkEffect: unreachable while the with-doors refuse non-handler values;
         // ice, not a fallback (E4 wave). A callable named BY an effect type is a
@@ -892,8 +947,12 @@ fn type_tag(ctx Ctx, t TyId, subst []TyId) -> str
         // A POINTER in one of OUR names: the pointee's tag behind a piece that
         // cannot be a parameter separator (`ptr_tag`).
         TkPtr => ptr_tag(ctx, t, subst)
+        // A FUNCTION type in one of OUR names (task 134): the parameters' tags
+        // joined by `_and_` behind a `_fn_` piece, then `_to_` and the result's
+        // tag -- pieces, never a name, exactly as `_of_` and `_ptr_` are.
+        TkFn => fn_tag(ctx, t, subst)
         TkEffect => ice_at(
-            "novac/src/sem/mangle.nv:895",
+            "novac/src/sem/mangle.nv:954",
             "mangle: type_tag of an EFFECT type — an effect value reaches a callable name only through a with-door bug (E4 wave)")
     }
 }

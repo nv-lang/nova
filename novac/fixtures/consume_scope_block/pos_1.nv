@@ -1,0 +1,27 @@
+module consume_scope_block.pos_1
+
+// The D188 scope block: `consume x = EXPR { BODY }` with the brace on the
+// SAME line -- the binding lives exactly for BODY, and its cleanup runs
+// where BODY ends (task 134, class B2). Until 2026-10-31 the brace fell out
+// as the NEXT statement and read as a record constructor, so the form died
+// in check with "a record constructor is compiled only as ...". The binding
+// being visible inside the body (`f.get()` prints 7) and the line after the
+// block prove the shape read whole; the cleanup itself is effect-pure and
+// prints nothing (D188: no I/O in `@cleanup`). The empty cleanup body is
+// deliberate: a bare `()` statement is outside the ERA parser's subset on
+// the vanilla and the patched seed alike ("did not parse" -- a pre-existing
+// hole, not this task's), so the body stands empty and the fixture's subject
+// stays the scope block in `main`.
+type Flag consume { n int }
+
+fn Flag consume @cleanup(_outcome ScopeOutcome) -> () {
+}
+
+fn Flag @get() -> int => @n
+
+fn main() {
+    consume f = Flag { n: 7 } {
+        println(f.get())
+    }
+    println("after")
+}

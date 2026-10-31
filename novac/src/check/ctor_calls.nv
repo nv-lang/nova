@@ -72,7 +72,9 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
     ro is_newtype = match decl_of_ty(@ctx, type_id).kind {
         TkNewtype => true
         // TkEffect: an effect is not a newtype -- no construction by call.
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => false
+        // TkFn (task 134): a function type is a structural term, and no call
+        // constructs one -- closures arrive with their own stage.
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr | TkFn => false
     }
     if !is_newtype {
         @report_first_leaf_of(kids,

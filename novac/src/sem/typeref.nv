@@ -112,6 +112,71 @@ export fn ty_of_type_ref(pk []Node, at int, recv_t TyId, tps []str, param_rows [
     } else {
         // Not a pointer: the shapes below answer.
     }
+    // A FUNCTION type (D43, task 134): `fn(int, str) -> bool`. The parser
+    // keeps the run flat -- `fn`, the balanced paren run of the parameters,
+    // an optional `->` and the result (type_ref.nv) -- so the reading mirrors
+    // the tuple arm's comma walk, with TWO differences that keep it its own
+    // arm: the parameter list may be EMPTY (`fn() -> bool` -- a tuple never
+    // is, and a walk that reads after the opener would poison the form on
+    // the `)`), and the result stands BEHIND the run, not inside it. Each
+    // parameter and the result read through THIS door; an unreadable part
+    // makes the whole type `no_ty()`, the application's own rule.
+    //
+    // The term's args carry the parameters in order with the result LAST
+    // (`Interner.fn_type`), so `args[arg_count - 1]` is always the result.
+    //
+    // Until this arm the form read as nothing, and the harvest dropped EVERY
+    // signature that names it -- std's `map_err`, `flat_map`, `filter` among
+    // them -- so the call site was told "no such method in the declarations
+    // handed to novac" about a method whose only fault was a closure's
+    // signature (the 118-corpus sweep's class A2).
+    if leaf_kind(head) == TokenKind.KwFn {
+        if at + 1 >= pk.len() || !is_leaf_kind(pk[at + 1], TokenKind.LParen) { return no_ty() }
+        mut fargs = []TyId.new()
+        mut depth = 0
+        mut close = -1
+        for i in at + 1..pk.len() {
+            ro c = pk[i]
+            if is_leaf_kind(c, TokenKind.LParen) || is_leaf_kind(c, TokenKind.LBracket) {
+                depth += 1
+                // The run's OWN opener: the first parameter starts after it,
+                // unless the list is empty (the next leaf closes it).
+                if depth == 1 && is_leaf_kind(c, TokenKind.LParen) &&
+                    !(i + 1 < pk.len() && is_leaf_kind(pk[i + 1], TokenKind.RParen)) {
+                    fargs.push(ty_of_type_ref(pk, i + 1, recv_t, tps, param_rows, types, defs, tys))
+                } else {
+                    // A nested opener inside a parameter: that parameter's own
+                    // read covers it.
+                }
+            } else if is_leaf_kind(c, TokenKind.RParen) || is_leaf_kind(c, TokenKind.RBracket) {
+                depth -= 1
+                if depth == 0 {
+                    close = i
+                    break
+                } else {
+                    // A nested run closed: still inside the parameters.
+                }
+            } else if depth == 1 && is_leaf_kind(c, TokenKind.Comma) {
+                fargs.push(ty_of_type_ref(pk, i + 1, recv_t, tps, param_rows, types, defs, tys))
+            } else {
+                // Inside a parameter: its own read consumed it.
+            }
+        }
+        if close < 0 { return no_ty() }
+        // The result: behind `->`, or unit by omission -- Nova writes unit
+        // by writing nothing, and the parser's own note says so.
+        ro res = if close + 1 < pk.len() && is_leaf_kind(pk[close + 1], TokenKind.Arrow) {
+            ty_of_type_ref(pk, close + 2, recv_t, tps, param_rows, types, defs, tys)
+        } else {
+            ty_of_type_name(UNIT_TYPE_NAME, tps, param_rows, types, defs)
+        }
+        for a in fargs {
+            if !is_ty(a) { return no_ty() }
+        }
+        if !is_ty(res) { return no_ty() }
+        fargs.push(res)
+        return tys.fn_type(fargs)
+    }
     // A TUPLE type: `(int, str)` arrives as the parser's balanced paren run
     // (type_ref.nv keeps it flat on purpose), so the components are the
     // positions right after `(` and after every depth-1 comma -- each read

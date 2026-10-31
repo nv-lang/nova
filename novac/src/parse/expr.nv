@@ -237,10 +237,10 @@ fn Cursor mut @turbofish() -> Node {
 /// so the emitted constant stays one token) -- everything else becomes a
 /// Unary node.
 fn Cursor mut @primary() -> Node {
-    if @peek() == TokenKind.DotDot {
-        // A LEADING `..` (open-left range/slice, D144/D238/D470: `t[..b]` is
-        // one of the five legal Range forms in index position, on par with
-        // `t[a..]`). `..` is a BINARY operator only (is_binop/binding_power);
+    if @peek() == TokenKind.DotDot || @peek() == TokenKind.DotDotEq {
+        // A LEADING `..` or `..=` (open-left range/slice, D144/D238/D470:
+        // `t[..b]` and `..=b` stand among the five legal Range forms, on par
+        // with `t[a..]`). `..` is a BINARY operator only (is_binop/binding_power);
         // it never appears as a prefix in that table, so without this branch
         // `@primary()` had no case for it and fell into the generic Err
         // recovery, eating the `..` as one stray token (registry #1241).

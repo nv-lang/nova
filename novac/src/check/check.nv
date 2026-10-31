@@ -155,6 +155,21 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // that a form of the language, so the arm has nothing of its
                 // own to say and the children are walked like anyone else's.
                 Block => {}
+                DeferStmt => {
+                    // `defer` (D90): the word is lexed and the form is parsed
+                    // whole, so the refusal names the debt honestly -- running
+                    // the body at scope exit, LIFO, on every way out is the
+                    // E2 effects/consume horizon's, and the word no longer
+                    // has to lie as a record constructor to be seen (the
+                    // keyword-parity doctrine, registry #1089; the
+                    // 118-corpus sweep's consume_tour, task 134). The body's
+                    // statements are NOT walked after the refusal: the
+                    // program is already refused, and diagnostics from inside
+                    // a form we do not compile would cascade noise onto one
+                    // honest refusal (the lead invariant's other half).
+                    @reject_first_leaf_of(children, DEFER_MSG)
+                    return
+                }
                 MethodCall => {
                     @report_if_unknown_method(children)
                     @report_if_ordered_args(children)

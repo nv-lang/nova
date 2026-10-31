@@ -42,15 +42,16 @@ export type TypeKind enum
     | TkNewtype /// a NEWTYPE: a distinct nominal type over a representation (`type Row int`), its underlying type in the interner's args
     | TkTuple /// a structural TUPLE (D123): head = ARITY, components in the interner's args -- no declaration, its identity IS its components (B15 step 3)
     | TkPtr /// a raw POINTER (D216): `*T` and `*mut T` -- head = 1 for `*mut`, 0 for `*T`; the pointee in the interner's args (274.11 E.10 step 3: std's `Vec[T]` body reads `@data *mut T`)
+    | TkFn /// a FUNCTION type (D43): `fn(int, str) -> bool` -- head = ARITY, parameters then the result in the interner's args (task 134, class A2: a parameter typed by a closure's signature must read the form, or the harvest drops the whole method and the call site is told "no such method")
     | TkEffect /// an EFFECT declaration (E4 wave, 274.11): `type Fs effect { ... }` -- the marker kind: owns operation rows, not field/variant rows; values of handler type are typed by the `with` doors, the term reuses the Record interning until the Effect-type stage lands (named in the with-typing wave)
 
 /// How many kinds there are. The interner's bucket arithmetic multiplies by
 /// this, so it lives NEXT TO the enum it counts (owner's question 2026-08-16:
 /// "what is that 6?" — a magic constant one file away from its source is the
 /// first thing to drift when a kind is added). Every dispatch on TypeKind is
-/// an exhaustive match, so a tenth kind is a compile error at each site —
+/// an exhaustive match, so an added kind is a compile error at each site —
 /// and this constant is the ONE place a match cannot reach, hence the note.
-export const TYPE_KIND_COUNT = 10
+export const TYPE_KIND_COUNT = 11
 
 /// Name of the program entry function.
 export const ENTRY_FN = "main"
@@ -753,6 +754,10 @@ export const WITH_WORD = "with"
 export const SUPERVISED_WORD = "supervised"
 /// `spawn { .. }`, read by spelling.
 export const SPAWN_WORD = "spawn"
+/// `defer { .. }` (D90) -- a KEYWORD since 2026-10-31 (task 134), but the
+/// word itself stays in the one registry: it entered RESERVED_WORDS before
+/// the lexer, so the keyword table names it through this constant (P5).
+export const DEFER_WORD = "defer"
 
 ro RESERVED_WORDS = []str.of("alias", "blocking", "defer", "detach", "effect", "errdefer", "external",
     "false", "forbid", "interrupt", "lemma", "let", "loop", "okdefer", "parallel", "priv", "protocol",

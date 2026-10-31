@@ -84,10 +84,12 @@ fn Checker @is_owned_kind(kinds []TyId, t TyId) -> bool {
     if !is_ty(t) { return false }
     if is_kind_of(kinds, t) || @is_consume_decl(t) { return true }
     // A type with ARGUMENTS holds them -- an application, a structural record on the
-    // stack, a newtype's representation -- except a raw pointer, which owns nothing.
+    // stack, a newtype's representation -- except a raw pointer, which owns nothing,
+    // and a function type (task 134), whose args are its SIGNATURE: `fn() -> SB` does
+    // not hold a StringBuilder, it would return one -- nobody holds a result yet.
     // A NEWTYPE over a must-consume type is must-consume itself -- D156, amendment
     // 2026-10-03 (the owner's word on report 14's question 4; the pointer is in D52).
-    if @ctx.tys.kind_of(t) == TypeKind.TkPtr { return false }
+    if @ctx.tys.kind_of(t) == TypeKind.TkPtr || @ctx.tys.kind_of(t) == TypeKind.TkFn { return false }
     for i in 0..@ctx.tys.arg_count(t) {
         if @is_owned_kind(kinds, @ctx.tys.arg(t, i)) { return true }
     }

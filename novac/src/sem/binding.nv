@@ -480,6 +480,18 @@ export fn type_admits(tys Interner, want TyId, got TyId) -> bool {
         // TkEffect: not a unification variable and nothing structural to
         // unify -- an effect admits only ITSELF, exactly as the nominal
         // kinds in the group.
+        // A FUNCTION type admits structurally, exactly as a tuple does
+        // (task 134): same arity, and every argument -- the parameters and
+        // the result riding last -- admits. Nothing coerces INTO a fn type.
+        TkFn => {
+            if tys.kind_of(got) != TypeKind.TkFn { return false }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return false }
+            for i in 0..n {
+                if !type_admits(tys, tys.arg(want, i), tys.arg(got, i)) { return false }
+            }
+            return true
+        }
         TkPrim | TkRecord | TkSum | TkInfer | TkNewtype | TkEffect => { return want == got }
     }
 }
@@ -531,6 +543,20 @@ export fn slot_binding_in(tys Interner, want TyId, got TyId, slot int) -> TyId {
         }
         // TkEffect: a marker nominal carries no parameter slot anywhere -- no
         // binding, as the kinds in the group.
+        // Deduction walks INTO a function type as into a tuple (task 134):
+        // a slot occurring in a parameter or in the result binds exactly as
+        // it does in a component -- and a generic std method whose callable
+        // parameter mentions the slot (`fn(T) -> Vec[U]`) fixes it here.
+        TkFn => {
+            if tys.kind_of(got) != TypeKind.TkFn { return no_ty() }
+            ro n = tys.arg_count(want)
+            if n != tys.arg_count(got) { return no_ty() }
+            for i in 0..n {
+                ro b = slot_binding_in(tys, tys.arg(want, i), tys.arg(got, i), slot)
+                if is_ty(b) { return b }
+            }
+            return no_ty()
+        }
         TkPrim | TkRecord | TkSum | TkInfer | TkNewtype | TkEffect => { return no_ty() }
     }
 }

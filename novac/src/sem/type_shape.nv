@@ -46,7 +46,7 @@ fn single_type_arg(ctx Ctx, t TyId) -> TyId {
     ro is_app = match k {
         TkApp => true
         // TkEffect: an effect is not an application -- no single type argument.
-        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => false
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr | TkFn => false
     }
     if !is_app { return no_ty() }
     if ctx.tys.arg_count(t) != 1 { return no_ty() }
@@ -85,7 +85,7 @@ export fn coalesce_ok_variant(ctx Ctx, t TyId) -> VariantRow {
     ro is_app = match k {
         TkApp => true
         // TkEffect: an effect is not an application -- no `??` container answer.
-        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr => false
+        TkPrim | TkRecord | TkSum | TkParam | TkInfer | TkNewtype | TkTuple | TkEffect | TkPtr | TkFn => false
     }
     if !is_app { return no_vrow() }
     ro decl = decl_of_ty(ctx, t)

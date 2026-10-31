@@ -459,7 +459,16 @@ undated=53
 #   reason -- a program type named like a struct the interop shell defines gets the D381
 #   module-qualified C base (sem `type_base`), every shape, and a file with no module the
 #   empty-modpath formula `Nova__<Name>`. refusals 137 -> 136, the guard's count on the tree.
-refusals=136
+# 2026-10-31, task 134 (classes A2/B3 of the 118 corpus; registry 221.1 rows are this
+#   merge's): refusals 136 -> 138, undated per door UNCHANGED (67). Two new refusals are
+#   DATED and replace a LIE, not coverage: `defer { .. }` (D90) used to fall apart into
+#   "record constructor only as a binding initializer" (the keyword-parity class, #1089);
+#   it now parses whole and is refused by name (DEFER_MSG) with its stage (E2) -- defer
+#   itself stays the E2 horizon's debt (owner's word 2026-10-31). A fn-typed parameter
+#   (D43) used to drop the signature from the harvest ("no such method in the declarations
+#   handed to novac"); it now reads, and in a COMPILED declaration is refused by name
+#   (FN_PARAM_MSG) with its stage (E4, the handler-value wave, D474).
+refusals=138
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

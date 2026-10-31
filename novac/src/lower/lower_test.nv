@@ -429,7 +429,10 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
     // The upper bound is a LOCAL since wave P5: the lowering places it before
     // the loop, and the header spells the local (evaluated once).
     ro h = b.named(TyId(3), "hi")
-    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: h }))
+    // `incl: false` -- this test's head is the EXCLUSIVE range; the inclusive
+    // flag arrived with task 134 (`..=` lexed and lowered, both spellings
+    // united in BinOp.Range).
+    ro c = b.begin_loop(LoopHead.Range(RangeHead { var: i, lo: stand_in_expr(), hi: h, incl: false }))
     b.end_loop(c)
     b.end_body()
     ro f = b.finish()
@@ -439,6 +442,7 @@ test "a range loop keeps its variable -- a binding local -- and its bounds in th
                 assert(r.var == i)
                 assert(f.locals[raw_local(r.var)].name == "i")
                 assert(r.hi == h)
+                assert(!r.incl)
             }
             While(_) => assert(false)
             Each(_) => assert(false)

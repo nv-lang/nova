@@ -618,7 +618,18 @@ fn Checker @concrete(t TyId) -> TyId => subst_type(@ctx, t, @substs)
 /// only move the message.
 fn Checker mut @type_stmt(st Node) -> () {
     ro k = st.kind_of()
-    if k == NodeKind.Call {
+    if k == NodeKind.Block {
+        // A BARE BLOCK statement (task 134, class B1): a nested scope
+        // standing as a statement, typed through the SAME block door a fn
+        // body takes. The tail-value logic inside cannot misfire here: the
+        // tail slot is keyed on the fn BODY's id and this block is nobody's
+        // body, so every statement takes the ordinary statement door. Until
+        // this arm the block fell through in silence (this chain's own
+        // contract, quoted above: "NOT typed and NOT iced") -- and a binding
+        // written inside never reached the scope, so the name was "unknown"
+        // at its use.
+        @type_block(st)
+    } else if k == NodeKind.Call {
         @type_call_stmt(st)
     } else if k == NodeKind.IfStmt || k == NodeKind.WhileStmt {
         ro kids = branch_children(st)

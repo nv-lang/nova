@@ -63,13 +63,27 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // type node a plain identifier" skipped the binding -- the body then said
     // "unknown name" about a parameter written right above (measured
     // 2026-08-26, the first probe of the wave). The shapes B2 did NOT take
-    // (`*T`, fn types, tuples) keep today's path: the form rule already named
-    // them, and a second refusal here would be the cascade class.
+    // (`*T`, tuples) keep today's path: the form rule already named them, and
+    // a second refusal here would be the cascade class. FN TYPES left that
+    // group on 2026-10-31 (task 134): the form READS now (the typeref door
+    // interns the term), so the refusal lives below with its own name.
     ro slice_start = tnode.kind_of() == NodeKind.LeafNode &&
         leaf_kind(tnode) == TokenKind.EmptyBrackets
     // A RAW POINTER parameter (`src *T`, std's `RawMem.copy_n_nonoverlapping`,
     // 274.11 E.10 step 4c-2): the row holds its type, so it binds like the rest.
     ro ptr_start = tnode.kind_of() == NodeKind.LeafNode && leaf_kind(tnode) == TokenKind.Star
+    // A FUNCTION-TYPED parameter (`f fn(int) -> int`, D43, task 134):
+    // the form READS -- that is what keeps a HANDED signature with a closure
+    // parameter (std's `map_err`/`flat_map`/`filter`) in the registry instead
+    // of dropping the whole method into "no such method". But no VALUE of the
+    // type is compiled while closure literals are refused, so in a COMPILED
+    // declaration the parameter is refused BY NAME -- instead of the silent
+    // skip below, which left the name unbound and let the emitter ice on a
+    // layout the subset does not have.
+    if tnode.kind_of() == NodeKind.LeafNode && leaf_kind(tnode) == TokenKind.KwFn {
+        @report_first_leaf_of(pk, FN_PARAM_MSG)
+        return false
+    }
     if !tnode.is_ident() && !slice_start && !ptr_start {
         return true
     } else {

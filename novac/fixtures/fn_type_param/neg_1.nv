@@ -1,0 +1,16 @@
+module fn_type_param.neg_1
+
+// NOVAC_EXPECT a parameter of function type
+// ONE seeded cause: a COMPILED declaration whose parameter is typed by a
+// function type (D43). The signature READS since 2026-10-31 (task 134,
+// class A2) -- that is what keeps a handed declaration like std's
+// `map_err` in the registry instead of dropping it into "no such method" --
+// but no VALUE of a function type is compiled while closure literals are
+// refused, so a compiled declaration with one is refused by name rather
+// than emitted into an ice on the C layout. The body never calls the
+// parameter, so the refusal at the declaration stays the ONLY cause.
+fn apply(f fn(int) -> int, x int) -> int => x
+
+fn main() {
+    println(1)
+}
