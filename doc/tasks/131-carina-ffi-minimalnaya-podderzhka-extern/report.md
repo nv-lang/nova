@@ -107,5 +107,12 @@ abi == "C"`) → 5 тестов краснеют ДОСЛОВНО refusal-тек
 
 ## ВЕТКА/КОММИТ
 
-task/131-carina-ffi-minimalnaya-podderzhka-extern @ <хеш коммита>;
-кандидат integrate/t131 — CI.
+task/131-carina-ffi-minimalnaya-podderzhka-extern @ 9ef833db729a03dc9b93f6124d903ea90dc2d1ae
+(фикс 71d8a35bd на свежем main 89e5809e7); кандидат integrate/t131 — тот же
+хеш, CI под наблюдением (crew_watch, check-push-proven-by-ci.py).
+
+Пересечение с триажем 133 (48 отказов корпуса): строка 19 их таблицы —
+`typed_pointers/basic_pointer.nv`, единственный вход корпуса на СТАРОМ
+отказе extern — после фикса прогнозируемо уходит дальше (в моём классе:
+extern с сырыми указателями); перегон бинаррём невозможен (блокер сида),
+прогноз по исходникам, честно помечен как прогноз.
