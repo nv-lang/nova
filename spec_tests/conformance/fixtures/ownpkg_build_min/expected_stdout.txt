@@ -1,0 +1,2 @@
+Hello, Nova!
+triple(7) = 21

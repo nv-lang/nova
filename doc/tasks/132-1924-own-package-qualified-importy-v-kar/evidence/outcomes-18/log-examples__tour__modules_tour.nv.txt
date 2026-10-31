@@ -1,0 +1,4 @@
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova build program: 3 source file(s) staged under $WT\target/carina-build\modules_tour.69764.src
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\std/src/unicode/case.nv","start":4140,"end":4142},"message":"in the instance of `to_uppercase`: outside the subset: `[]T.new(...)` takes no arguments here -- a capacity (or the raw-parts form) is not compiled yet; write `[]T.new()` (274.5 P3, registry 221.1 #1457)","poisoned_by":null}
