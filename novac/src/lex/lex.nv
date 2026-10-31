@@ -41,6 +41,8 @@
 
 module novac.lex
 
+import ../builtins.{DEFER_WORD}
+
 
 /// Every lexeme class of the subset; two-char operators lex BEFORE their
 /// one-char prefixes; ErrorTok carries unrecognized bytes losslessly.
@@ -70,6 +72,7 @@ export type TokenKind enum
     | KwElse
     | KwExtern
     | KwUnsafe
+    | KwDefer
     | Hash
     | Ident
     | IntLit
@@ -135,111 +138,13 @@ export type TokenKind enum
     | ShlAssign
     | ShrAssign
     | DotDot
+    | DotDotEq /// `..=` -- the inclusive range operator (03-syntax, the five Range forms)
     | Ellipsis
     | Colon
     | At
     | Arrow
     | ErrorTok
     | Eof
-
-/// How this kind of token is SPELLED, for a diagnostic that names what was
-/// expected.
-///
-/// A full `match` and not a lookup over the handful of kinds a refusal happens
-/// to use today (P21 p.4 asks a table to be a match): exhaustiveness is checked
-/// by the compiler, so a token kind added later cannot arrive without a
-/// spelling, and the diagnostic cannot quietly fall back to saying nothing.
-///
-/// Punctuation and keywords come back quoted, because the reader is meant to
-/// type them; a class of token comes back as prose ("a name"), because there is
-/// nothing to quote.
-#realtime nogc
-export fn spelling_of(k TokenKind) -> Option[str] => match k {
-    KwModule => Some("`module`")
-    KwFn => Some("`fn`")
-    KwIf => Some("`if`")
-    KwReturn => Some("`return`")
-    KwFor => Some("`for`")
-    KwIn => Some("`in`")
-    KwMut => Some("`mut`")
-    KwRo => Some("`ro`")
-    KwConsume => Some("`consume`")
-    KwWhile => Some("`while`")
-    KwBreak => Some("`break`")
-    KwContinue => Some("`continue`")
-    KwType => Some("`type`")
-    KwMatch => Some("`match`")
-    KwAs => Some("`as`")
-    KwIs => Some("`is`")
-    KwImport => Some("`import`")
-    KwUse => Some("`use`")
-    KwExport => Some("`export`")
-    KwTest => Some("`test`")
-    KwConst => Some("`const`")
-    KwElse => Some("`else`")
-    KwExtern => Some("`extern`")
-    KwUnsafe => Some("`unsafe`")
-    Hash => Some("`#`")
-    Ident => Some("a name")
-    IntLit => Some("an integer literal")
-    FloatLit => Some("a float literal")
-    StrLit => Some("a string literal")
-    CharLit => Some("a char literal")
-    StrFrag => Some("a string fragment")
-    InterpOpen => Some("a slot opener")
-    InterpClose => Some("a slot closer")
-    LParen => Some("`(`")
-    RParen => Some("`)`")
-    LBrace => Some("`{`")
-    RBrace => Some("`}`")
-    EmptyBrackets => Some("`[]`")
-    LBracket => Some("`[`")
-    RBracket => Some("`]`")
-    Dot => Some("`.`")
-    Comma => Some("`,`")
-    Semicolon => Some("`;`")
-    Plus => Some("`+`")
-    Minus => Some("`-`")
-    Star => Some("`*`")
-    Slash => Some("`/`")
-    Lt => Some("`<`")
-    Le => Some("`<=`")
-    Gt => Some("`>`")
-    Ge => Some("`>=`")
-    Percent => Some("`%`")
-    EqEq => Some("`==`")
-    BangEq => Some("`!=`")
-    Question2 => Some("`??`")
-    Question => Some("`?`")
-    AmpAmp => Some("`&&`")
-    PipePipe => Some("`||`")
-    Amp => Some("`&`")
-    Caret => Some("`^`")
-    Shl => Some("`<<`")
-    Shr => Some("`>>`")
-    Tilde => Some("`~`")
-    Bang => Some("`!`")
-    Pipe => Some("`|`")
-    FatArrow => Some("`=>`")
-    Assign => Some("`=`")
-    PlusAssign => Some("`+=`")
-    MinusAssign => Some("`-=`")
-    StarAssign => Some("`*=`")
-    SlashAssign => Some("`/=`")
-    PercentAssign => Some("`%=`")
-    AmpAssign => Some("`&=`")
-    PipeAssign => Some("`|=`")
-    CaretAssign => Some("`^=`")
-    ShlAssign => Some("`<<=`")
-    ShrAssign => Some("`>>=`")
-    DotDot => Some("`..`")
-    Ellipsis => Some("`...`")
-    Colon => Some("`:`")
-    At => Some("`@`")
-    Arrow => Some("`->`")
-    ErrorTok => None
-    Eof => Some("end of file")
-}
 
 /// One green token: no positions stored (widths, not positions — offsets
 /// derive by prefix summing; the lossless invariant makes that exact).
@@ -376,14 +281,14 @@ export fn paren_delta(k TokenKind) -> int {
         LParen => 1
         RParen => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | KwDefer | Hash | Ident |
         KwIs | KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LBrace | RBrace | EmptyBrackets | LBracket | RBracket | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
-        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+        DotDot | DotDotEq | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
 }
 
@@ -393,14 +298,14 @@ export fn bracket_delta(k TokenKind) -> int {
         LBracket => 1
         RBracket => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | KwDefer | Hash | Ident |
         KwIs | KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | LBrace | RBrace | EmptyBrackets | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
-        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+        DotDot | DotDotEq | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
 }
 
@@ -411,14 +316,14 @@ export fn brace_delta(k TokenKind) -> int {
         LBrace => 1
         RBrace => -1
         KwModule | KwFn | KwIf | KwReturn | KwFor | KwIn | KwMut | KwRo | KwConsume | KwWhile | KwType | KwMatch |
-        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | Hash | Ident |
+        KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern | KwUnsafe | KwDefer | Hash | Ident |
         KwIs | KwBreak | KwContinue | IntLit | FloatLit | CharLit | StrFrag | InterpOpen | InterpClose |
         StrLit | LParen | RParen | EmptyBrackets | LBracket | RBracket | Dot | Comma | Semicolon | Plus | Minus |
         Star | Slash | Lt | Le | Gt | Ge | Percent | EqEq | BangEq |
         Question2 | Question | AmpAmp | PipePipe | Amp | Caret |
         Shl | Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign | MinusAssign | StarAssign |
         SlashAssign | PercentAssign | AmpAssign | PipeAssign | CaretAssign | ShlAssign | ShrAssign |
-        DotDot | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
+        DotDot | DotDotEq | Ellipsis | Colon | At | Arrow | ErrorTok | Eof => 0
     }
 }
 
@@ -467,7 +372,9 @@ export fn brace_delta(k TokenKind) -> int {
 // guessed. Plan 274, section E2: "Horizons: basics in full -> control/records/sums ->
 // generics and mono -> effects/consume" -- effects are E2's LAST horizon. Section E4
 // confirms it from the other side: MIR arrives when E2's width reaches effects and
-// consume. `defer`/`errdefer` (D90) are the consume half of the same horizon.
+// consume. `errdefer` (D90) is the consume half of the same horizon; `defer` left
+// this list on 2026-10-31 -- it is LEXED now (task 134), and check refuses the form
+// by name instead of the lexer lying about it.
 // KEYWORD-PARITY: with -- debt (E2, the effects/consume horizon)
 // KEYWORD-PARITY: throw -- debt (E2, the effects/consume horizon)
 // KEYWORD-PARITY: interrupt -- debt (E2, the effects/consume horizon)
@@ -481,8 +388,12 @@ export fn brace_delta(k TokenKind) -> int {
 // KEYWORD-PARITY: select -- debt (E2, the effects/consume horizon)
 // KEYWORD-PARITY: effect -- debt (E2, the effects/consume horizon)
 // KEYWORD-PARITY: handler -- debt (E2, the effects/consume horizon)
-// KEYWORD-PARITY: defer -- debt (E2, the effects/consume horizon)
 // KEYWORD-PARITY: errdefer -- debt (E2, the effects/consume horizon)
+// KEYWORD-PARITY: defer -- by design (lexed since 2026-10-31, task 134: the word is in
+// builtins' RESERVED_WORDS, so P5 bars the literal arm here, and a CONSTANT arm in a
+// match over `str` type-checks but miscompiles -- the measured detour below. The word
+// arrives by the DEFER_WORD comparison at the door's head; COMPILING the form is the
+// E2 horizon's debt, and check says so by name)
 //
 // `protocol` has a wave of its own -- B3a, in the PARENT plan 274 and not in 274.7:
 // "the form `type X protocol { ... }` stops being a syntax error". The first version of
@@ -498,7 +409,15 @@ export fn brace_delta(k TokenKind) -> int {
 // for either would be worse than the ratchet holding them.
 
 /// Keyword kind for an identifier text, or Ident when it is not a keyword.
-fn keyword_kind(t str) -> TokenKind => match t {
+fn keyword_kind(t str) -> TokenKind {
+    // `defer` (D90) is the ONE keyword not spelled in the table below: the
+    // word entered builtins' RESERVED_WORDS before the lexer learned it, so
+    // P5 routes the name through DEFER_WORD -- and a CONSTANT arm in a match
+    // over `str` type-checks but miscompiles (the measured detour the table
+    // documents below), so the word arrives by comparison, not by pattern
+    // (task 134, 2026-10-31).
+    if t == DEFER_WORD { return TokenKind.KwDefer }
+    match t {
     "module" => TokenKind.KwModule
     "fn" => TokenKind.KwFn
     "if" => TokenKind.KwIf
@@ -558,6 +477,12 @@ fn keyword_kind(t str) -> TokenKind => match t {
     // language has. A missing keyword does not stay missing quietly.
     "extern" => TokenKind.KwExtern
     "unsafe" => TokenKind.KwUnsafe
+    // `defer` (D90) is handled by the early return above, not by an arm
+    // here: unlexed, the word read as a NAME and `defer { ... }` fell apart
+    // into a record constructor -- the exact lie the parity table above
+    // exists against (registry #1089's class, the 118-corpus sweep's
+    // consume_tour). COMPILING the form is the E2 effects/consume horizon's
+    // debt, and check says so by name.
     // `else` was not a keyword until 2026-08-18, and the miss wore a
     // disguise: `if c { } else { }` was refused with "record constructor
     // only as a binding initializer", because the brace after the
@@ -568,6 +493,7 @@ fn keyword_kind(t str) -> TokenKind => match t {
     // wildcard is the type's own partiality, not a hidden case (P21 p.3):
     // whatever is not a keyword IS an identifier.
     _ => TokenKind.Ident
+    }
 }
 
 /// Token kind for a one-byte punctuation, or ErrorTok when unknown.
@@ -947,6 +873,12 @@ export fn lex(src str) -> []Token {
                 0x2E => match c1 {                          // .
                     0x2E => match c2 {
                         0x2E => { i += 3; kind = TokenKind.Ellipsis }
+                        // `..=` -- the inclusive range (03-syntax: five Range
+                        // forms, `a..=b` among them). Unlexed, it split into
+                        // `..` + `=`, the head of a `for` derailed, and the
+                        // loop's body brace read as a record constructor
+                        // (the http_proxy_chain carriers, tasks 133/134).
+                        0x3D => { i += 3; kind = TokenKind.DotDotEq }
                         _ => { i += 2; kind = TokenKind.DotDot }
                     }
                     _ => { i += 1; kind = TokenKind.Dot }

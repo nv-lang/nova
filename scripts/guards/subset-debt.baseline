@@ -172,7 +172,13 @@
 #   empty-modpath formula `Nova__<Name>`. undated 55 -> 54, the guard's count on the tree.
 # 2026-10-06, task #18, merge of origin/main f2b6517c7: both moves above were made on 55 independently and
 #   each took a DIFFERENT refusal away, so together 54 -> 53 -- the guard's count on the merged tree.
-undated=53
+# 2026-10-31, integrate/t134 candidate build: undated 53 -> 52, EARNED by task 131's
+#   extern split (registry 1932, D282), taken late: its six named refusals are all dated,
+#   so the undated blanket it replaced was the last of its count -- origin/main alone
+#   measures 52 (the guard's own pattern home, counted per literal); the "move not"
+#   note above understated by one. Task 134's share: zero -- its two new refusals
+#   are dated, its own tree measures 53.
+undated=52
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -464,7 +470,17 @@ undated=53
 #   named, dated refusals in check/extern_rules.nv (per-ABI, unsafe, receiver,
 #   generic, body, non-C-ABI signature) when the minimal extern-C class became
 #   compiled: 136 - 1 + 6 = 141. Same debt, better said; undated counts move not.
-refusals=141
+# 2026-10-31, task 134 (classes A2/B3 of the 118 corpus; registry 221.1 rows are this
+#   merge's): refusals 141 -> 143 on the merged tree (136 -> 138 on the branch),
+#   undated per door UNCHANGED (67). Two new refusals are
+#   DATED and replace a LIE, not coverage: `defer { .. }` (D90) used to fall apart into
+#   "record constructor only as a binding initializer" (the keyword-parity class, reg 1089);
+#   it now parses whole and is refused by name (DEFER_MSG) with its stage (E2) -- defer
+#   itself stays the E2 horizon's debt (owner's word 2026-10-31). A fn-typed parameter
+#   (D43) used to drop the signature from the harvest ("no such method in the declarations
+#   handed to novac"); it now reads, and in a COMPILED declaration is refused by name
+#   (FN_PARAM_MSG) with its stage (E4, the handler-value wave, D474).
+refusals=143
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

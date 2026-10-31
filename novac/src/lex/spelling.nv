@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- a spelling table is a dictionary, not an algorithm; the
+//        shape follows lex.nv's own token inventory.
+// Role: layer 1's dictionary half -- the SPELLING of every token kind, for
+//       diagnostics that name what was expected. Split out of lex.nv by
+//       MEANING, not by arithmetic (decision 12), when the lexer crossed a
+//       thousand lines on 2026-10-31 (task 134 added defer and ..=): lex.nv
+//       turns bytes into tokens; this file only answers "how is this kind
+//       written". Same module (novac.lex): TokenKind needs no import.
+// Used by: every refusal door that spells a token (check/rules.nv and
+//          neighbours), through the module door, not the file.
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py,
+//   check-novac-doc-language.py.
+// novac/src/lex/spelling.nv -- the token-kind spelling table.
+
+module novac.lex
+
+/// How this kind of token is SPELLED, for a diagnostic that names what was
+/// expected.
+///
+/// A full `match` and not a lookup over the handful of kinds a refusal happens
+/// to use today (P21 p.4 asks a table to be a match): exhaustiveness is checked
+/// by the compiler, so a token kind added later cannot arrive without a
+/// spelling, and the diagnostic cannot quietly fall back to saying nothing.
+///
+/// Punctuation and keywords come back quoted, because the reader is meant to
+/// type them; a class of token comes back as prose ("a name"), because there is
+/// nothing to quote.
+#realtime nogc
+export fn spelling_of(k TokenKind) -> Option[str] => match k {
+    KwModule => Some("`module`")
+    KwFn => Some("`fn`")
+    KwIf => Some("`if`")
+    KwReturn => Some("`return`")
+    KwFor => Some("`for`")
+    KwIn => Some("`in`")
+    KwMut => Some("`mut`")
+    KwRo => Some("`ro`")
+    KwConsume => Some("`consume`")
+    KwWhile => Some("`while`")
+    KwBreak => Some("`break`")
+    KwContinue => Some("`continue`")
+    KwType => Some("`type`")
+    KwMatch => Some("`match`")
+    KwAs => Some("`as`")
+    KwIs => Some("`is`")
+    KwImport => Some("`import`")
+    KwUse => Some("`use`")
+    KwExport => Some("`export`")
+    KwTest => Some("`test`")
+    KwConst => Some("`const`")
+    KwElse => Some("`else`")
+    KwExtern => Some("`extern`")
+    KwUnsafe => Some("`unsafe`")
+    KwDefer => Some("`defer`")
+    Hash => Some("`#`")
+    Ident => Some("a name")
+    IntLit => Some("an integer literal")
+    FloatLit => Some("a float literal")
+    StrLit => Some("a string literal")
+    CharLit => Some("a char literal")
+    StrFrag => Some("a string fragment")
+    InterpOpen => Some("a slot opener")
+    InterpClose => Some("a slot closer")
+    LParen => Some("`(`")
+    RParen => Some("`)`")
+    LBrace => Some("`{`")
+    RBrace => Some("`}`")
+    EmptyBrackets => Some("`[]`")
+    LBracket => Some("`[`")
+    RBracket => Some("`]`")
+    Dot => Some("`.`")
+    Comma => Some("`,`")
+    Semicolon => Some("`;`")
+    Plus => Some("`+`")
+    Minus => Some("`-`")
+    Star => Some("`*`")
+    Slash => Some("`/`")
+    Lt => Some("`<`")
+    Le => Some("`<=`")
+    Gt => Some("`>`")
+    Ge => Some("`>=`")
+    Percent => Some("`%`")
+    EqEq => Some("`==`")
+    BangEq => Some("`!=`")
+    Question2 => Some("`??`")
+    Question => Some("`?`")
+    AmpAmp => Some("`&&`")
+    PipePipe => Some("`||`")
+    Amp => Some("`&`")
+    Caret => Some("`^`")
+    Shl => Some("`<<`")
+    Shr => Some("`>>`")
+    Tilde => Some("`~`")
+    Bang => Some("`!`")
+    Pipe => Some("`|`")
+    FatArrow => Some("`=>`")
+    Assign => Some("`=`")
+    PlusAssign => Some("`+=`")
+    MinusAssign => Some("`-=`")
+    StarAssign => Some("`*=`")
+    SlashAssign => Some("`/=`")
+    PercentAssign => Some("`%=`")
+    AmpAssign => Some("`&=`")
+    PipeAssign => Some("`|=`")
+    CaretAssign => Some("`^=`")
+    ShlAssign => Some("`<<=`")
+    ShrAssign => Some("`>>=`")
+    DotDot => Some("`..`")
+    DotDotEq => Some("`..=`")
+    Ellipsis => Some("`...`")
+    Colon => Some("`:`")
+    At => Some("`@`")
+    Arrow => Some("`->`")
+    ErrorTok => None
+    Eof => Some("end of file")
+}

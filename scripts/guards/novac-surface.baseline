@@ -4,6 +4,14 @@
 # сужение без опускания — красный (протухшая база пропустит следующий рост).
 # Снято 2026-08-16. Заметь sem: широчайшая дверь наружу — до-дженериковый реестр.
 #
+#   2026-10-31 (задача 134, классы A2/B3 корпуса 118; записи реестра 221.1 — этого же слияния):
+#   builtins 103 -> 104, types 32 -> 33. `DEFER_WORD` — слово `defer` в едином реестре имён
+#   (П5): оно вошло в RESERVED_WORDS раньше лексера, и таблица ключевых слов читает его
+#   константой (литерал вне builtins запрещён; ребро lex -> builtins заведено в §3 той же
+#   правкой). `Interner @fn_type` — дверь интернирования fn-ТИПА (D43): канонический вид
+#   TkFn строится только здесь; спрашивает sem/typeref.nv (рука KwFn), чтобы сигнатура с
+#   fn-параметром попадала в реестр, а не выпадала с «no such method».
+#
 #   2026-10-07 (задача #31, №1813), sem 396 -> 397, types 30 -> 32: `note_fences` -- ограда A4 единицы
 #   вливается в ограду ПРОГРАММЫ; наружу потому, что её зовёт конвейер программы (pipeline/program.nv)
 #   между проверкой всех единиц и печатью. `Interner @arg_pool_len` / `@arg_pool_at` -- обход пула
@@ -367,7 +375,7 @@
 # builtins 102 -> 103 (2026-10-25, task 092 acceptance repair): `HOST_BOOTSTRAP_MODULE`
 # names the bootstrap module ("novac") so `sem/handed_bodies.nv` recognizes it when
 # validating the host-OS bridge identity instead of retyping the literal (P5).
-builtins 103
+builtins 104
 # 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
 #   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
 #   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.
@@ -1351,7 +1359,7 @@ tree 25
 # types 26 -> 28 (2026-10-01, Karina window, 274.11 E.10 step 3a): Interner.@ptr (the pointer term, asked by sem/typeref.nv)
 #   and Interner.@ptr_is_mut (its mutability, asked by sem/binding.nv and sem/mangle.nv).
 # 2026-10-01, Carina window (274.11 E.10 step 4c): types 28 -> 30: `Interner @find` / `@subst_known` -- the read-only half of interning, for `sem.subst_type`, which holds the context without the right to grow the interner.
-types 32
+types 33
 # builtins 7 -> 9 (2026-08-16): `is_bool_literal` и `bool_c_literal` — язык
 # спрашивают ЗДЕСЬ. Вопрос владельца про список литералов вскрыл, что булев
 # литерал в подмножестве вообще нельзя было написать: bool получался только из

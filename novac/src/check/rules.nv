@@ -69,7 +69,7 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         // is an application through the D239 sugar, and the
                         // resolver reads it -- so `mut xs []int` is a shape,
                         // not a refusal.
-                        LBracket | Star | KwRo | KwMut | KwFn | LParen => true
+                        LBracket | Star | KwRo | KwMut | LParen => true
                         // Everything else cannot start one: a keyword of a
                         // declaration or statement, a literal, an operator,
                         // a separator, or the file's end.
@@ -77,16 +77,22 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         // and `mut T` name types, `consume T` does not, so a
                         // second mode word after the first is a different
                         // mistake and must not be called a type form.
-                        EmptyBrackets |
+                        // `fn` LEFT the form list on 2026-10-31 (task 134,
+                        // class A2): the fn TYPE reads (D43, the TkFn term),
+                        // so the parameter interns and is refused BY NAME at
+                        // binding time (FN_PARAM_MSG, check/params.nv) instead
+                        // of the shape being turned away wholesale here.
+                        EmptyBrackets | KwFn |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
-                        KwIs | KwUnsafe | Hash | Ident | IntLit | FloatLit | StrLit | CharLit | Question2 | Question |
+                        KwIs | KwUnsafe | KwDefer | Hash | Ident | IntLit | FloatLit | StrLit | CharLit |
+                        Question2 | Question |
                         KwBreak | KwContinue | StrFrag | InterpOpen | InterpClose | RParen | LBrace |
                         RBrace | RBracket | Dot | Comma | Semicolon | Plus | Minus | Slash | Lt | Le | Gt |
                         Ge | Percent | EqEq | BangEq | AmpAmp | PipePipe | Amp | Caret | Shl |
                         Shr | Tilde | Bang | Pipe | FatArrow | Assign | PlusAssign |
                         MinusAssign | StarAssign | SlashAssign | PercentAssign | AmpAssign |
-                        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | Ellipsis |
+                        PipeAssign | CaretAssign | ShlAssign | ShrAssign | DotDot | DotDotEq | Ellipsis |
                         Colon | At | Arrow | ErrorTok | Eof => false
                     }
                     if is_form {
@@ -119,6 +125,12 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 // `EmptyBrackets` counts as a DECLARED type since step B2: the
                 // slice sugar is an application, and the resolver reads it.
                 if t.kind == TokenKind.Ident || t.kind == TokenKind.EmptyBrackets { return }
+                // `fn` counts too since 2026-10-31 (task 134, class A2): the fn
+                // type READS (D43) as a flat leaf run the TkFn term is interned
+                // from, so the type is declared -- and the parameter is refused
+                // BY NAME at binding time (FN_PARAM_MSG, check/params.nv), not
+                // by the wholesale shape doors below.
+                if t.kind == TokenKind.KwFn { return }
                 // The parser reads the whole type reference now (owner
                 // 2026-08-17: "a type can be more complex, generics for
                 // instance"), so a slice, a qualifier or a function type
@@ -132,8 +144,10 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 t.kind == TokenKind.Star ||
                     t.kind == TokenKind.KwRo ||
                     t.kind == TokenKind.KwMut ||
-                    t.kind == TokenKind.KwFn ||
                     t.kind == TokenKind.LParen
+                // `KwFn` LEFT this list on 2026-10-31 (task 134, class A2):
+                // the fn type reads (D43), the parameter interns, and the
+                // named refusal fires at binding (FN_PARAM_MSG, params.nv).
                 if is_form {
                     @report_first_leaf_of(kids, TYPE_FORM_MSG)
                     return
@@ -450,7 +464,10 @@ fn Checker mut @report_if_range_outside_for(kids []Node, index_pos bool = false)
     if kids.len() < 2 { return }
     ro op = kids[1]
     if op.kind_of() != NodeKind.LeafNode { return }
-    if leaf_kind(op) == TokenKind.DotDot {
+    // Both range operators: `..=` outside a for-head is exactly as refused
+    // as `..` (task 134, class B3) -- the door answers about the POSITION,
+    // and the position rule does not change with the operator's spelling.
+    if leaf_kind(op) == TokenKind.DotDot || leaf_kind(op) == TokenKind.DotDotEq {
         if index_pos {
             @report_first_leaf_of(kids, SLICE_MSG)
         } else {
