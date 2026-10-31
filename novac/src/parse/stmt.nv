@@ -172,16 +172,32 @@ fn Cursor @pattern_head_ahead() -> bool {
 /// Cursor at a statement's leading `{`: does the brace open an ANONYMOUS
 /// RECORD CONSTRUCTOR (a legal tail/argument/initializer expression) rather
 /// than a bare block? The constructor's first entry gives it away: `name:`,
-/// the `name` shorthand (a `,` or the closing `}` right after it) or the
-/// `..base` spread. No statement opens with any of those, so the peek is the
-/// whole answer -- and `{ x }` keeps reading as a one-field constructor,
-/// exactly as the statement chain read it before 2026-10-31.
+/// the `name` shorthand (a `,` or the closing `}` right after it), the
+/// `@name` receiver punning (D52 rule 1) or the `...base` spread (D60 --
+/// Ellipsis, never DotDot). No statement opens with any of those, so the
+/// peek is the whole answer -- and `{ x }` keeps reading as a one-field
+/// constructor, exactly as the statement chain read it before 2026-10-31.
+/// The same question the expression doors ask before gluing `Name {` /
+/// `a.b {` (expr.nv) -- ONE predicate, the oracle's looks_like_record_lit
+/// discipline; an empty `{}` is a block, never a constructor (Plan 52.2,
+/// D55 §5).
 fn Cursor @anon_ctor_ahead() -> bool {
     ro t1 = @peek(skip: 1)
-    if t1 == TokenKind.DotDot { return true }
+    if t1 == TokenKind.Ellipsis { return true }
+    if t1 == TokenKind.At { return @peek(skip: 2) == TokenKind.Ident }
     if t1 != TokenKind.Ident { return false }
     ro t2 = @peek(skip: 2)
     t2 == TokenKind.Colon || t2 == TokenKind.Comma || t2 == TokenKind.RBrace
+}
+
+/// Cursor at the `{` after a record HEAD (`Pt {`, `Node.Branch {`): does the
+/// brace open the constructor? The anonymous question (@anon_ctor_ahead)
+/// plus the EMPTY constructor: `Pt { }` after a head is a construction,
+/// judged against its declaration (registry #812, the pipeline contract),
+/// while a bare `{ }` in statement position is an empty block (Plan 52.2,
+/// D55 §5).
+fn Cursor @named_ctor_ahead() -> bool {
+    @anon_ctor_ahead() || @peek(skip: 1) == TokenKind.RBrace
 }
 
 /// Parse one statement: if/while/return/mut/ro/for, or an expression (assignment).

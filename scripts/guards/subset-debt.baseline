@@ -468,7 +468,16 @@ undated=53
 #   (D43) used to drop the signature from the harvest ("no such method in the declarations
 #   handed to novac"); it now reads, and in a COMPILED declaration is refused by name
 #   (FN_PARAM_MSG) with its stage (E4, the handler-value wave, D474).
-refusals=138
+# 2026-10-31, task 134 (the check x K6 hunt's fn-field-no-door, registry reg 1940):
+#   FN_FIELD_MSG joins -- 138 -> 139. A REPLACEMENT, not an addition: before the
+#   134 diff the fn-typed field's form was turned away wholesale by the type-form
+#   door (KwFn stood in the form lists, TYPE_FORM_MSG blamed the SHAPE); now the
+#   type reads (D43) and the refusal names the real debt at the real position --
+#   the parameter door's own class (FN_PARAM_MSG was the same replacement one
+#   position over). The field text must be its own const: reusing the parameter
+#   text for a field would be the one-message-for-two-forms class (reg 1170).
+#   undated_by_door unchanged (the refusal is dated, E4).
+refusals=139
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

@@ -1,0 +1,14 @@
+module fn_type_field.neg_1
+
+// NOVAC_EXPECT a field of function type
+// ONE seeded cause: a record FIELD typed by a function type (D43). The type
+// reads since 2026-10-31 (task 134) -- and an own record's every field is
+// printed through `c_type`, which has no layout for a function type, so
+// without the door this declaration iced in mangling with no fn value
+// anywhere (the 134 hunt's fn-field-no-door). The refusal names the honest
+// debt (closure values arrive with the handler-value wave, E4).
+type FnHolder { f fn(int) -> int, n int }
+
+fn main() {
+    println("unreachable")
+}

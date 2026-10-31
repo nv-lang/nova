@@ -312,7 +312,8 @@ fn Cursor mut @primary() -> Node {
             kids.push(@take())
             @call_args(kids)
             e = @node(NodeKind.MethodCall, kids)
-        } else if @peek() == TokenKind.LBrace && !@no_ctor && is_qualified_ctor_head(kids) {
+        } else if @peek() == TokenKind.LBrace && !@no_ctor && is_qualified_ctor_head(kids) &&
+            @named_ctor_ahead() {
             // A QUALIFIED record-form variant construction, `Node.Branch { id,
             // kind, children }` (D486's `qual-head`, the pattern's own head):
             // the head is ONE Name of three leaves -- sum, dot, variant -- so
@@ -825,7 +826,7 @@ fn Cursor mut @atom() -> Node {
             @call_args(kids)
             return @node(NodeKind.Call, kids)
         }
-        if @peek() == TokenKind.LBrace && !@no_ctor {
+        if @peek() == TokenKind.LBrace && !@no_ctor && @named_ctor_ahead() {
             mut kids = []Node.of(@node(NodeKind.Name, []Node.of(name)), @take())
             @ctor_fields(kids)
             return @node(NodeKind.RecordCtor, kids)
