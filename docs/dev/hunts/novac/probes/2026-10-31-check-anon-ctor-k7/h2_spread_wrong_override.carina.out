@@ -1,1 +1,0 @@
-{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"h2_spread_wrong_override.nv","start":93,"end":96},"message":"a value of type `str` stands in this field, which is `f64` -- no implicit conversion between named types (E7301, D405)","poisoned_by":null}

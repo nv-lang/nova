@@ -134,12 +134,11 @@ fn Checker @newtype_arg_expect(found Option[Def]) -> TyId {
         DefFn(_) => return no_ty()
         DefConst(_) => return no_ty()
     }
-    match decl_of_ty(@ctx, tid).kind {
-        TkNewtype => representation_of(@ctx, tid)
-        // A record's brace form carries its own name; the paren forms have a
-        // constructor row of their own: no expectation to hand the walk.
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => no_ty()
-    }
+    // Not a newtype -- a record's brace form carries its own name, the paren
+    // forms have a constructor row of their own: no expectation to hand the
+    // walk. A guard return, not a dispatcher (P21).
+    if @ctx.tys.kind_of(tid) != TypeKind.TkNewtype { return no_ty() }
+    representation_of(@ctx, tid)
 }
 
 /// The construction of a PARENTHESISED record by call (`Pair(1, 2)`).

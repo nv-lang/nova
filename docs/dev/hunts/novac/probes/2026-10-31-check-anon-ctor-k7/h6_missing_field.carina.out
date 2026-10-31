@@ -1,1 +1,0 @@
-{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"h6_missing_field.nv","start":86,"end":87},"message":"this record construction omits a declared field -- construction always requires every field (D17, spec 02-types.md:152 and :1677) (#812)","poisoned_by":null}

@@ -1,7 +1,0 @@
-type Bag { a f64, n int }
-
-fn main() {
-    ro b = Bag { a: 1.5, n: 1 }
-    ro q = { ...b, a: "s" }
-    println("${q.n}")
-}

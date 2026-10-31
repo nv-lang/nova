@@ -1,8 +1,0 @@
-type Bag { n int }
-type Opt[T] enum Some(T) | None
-
-fn f() -> Opt[Bag] => Some({ wrong: 1 })
-
-fn main() {
-    println("no")
-}

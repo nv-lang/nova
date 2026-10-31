@@ -1,6 +1,0 @@
-type Bag { n int }
-
-fn main() {
-    ro v = [{ n: 1 }]
-    println("${v.len()}")
-}

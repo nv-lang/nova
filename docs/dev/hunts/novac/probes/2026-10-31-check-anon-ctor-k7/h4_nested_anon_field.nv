@@ -1,9 +1,0 @@
-type Inner { n int }
-type Outer { inner Inner }
-
-fn mk() -> Outer => { inner: { n: 1 } }
-
-fn main() {
-    ro o = mk()
-    println("${o.inner.n}")
-}

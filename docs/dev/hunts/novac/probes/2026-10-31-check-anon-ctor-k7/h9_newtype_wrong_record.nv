@@ -1,9 +1,0 @@
-type Bag { n int }
-type Other { m int }
-type Wrap Bag
-
-fn mk() -> Wrap => Wrap({ m: 1 })
-
-fn main() {
-    println("no")
-}

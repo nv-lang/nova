@@ -1,7 +1,0 @@
-type Bag { n int, m int }
-
-fn take(b Bag) -> int => b.n
-
-fn main() {
-    println(take({ n: 1 }))
-}
