@@ -340,7 +340,13 @@ fn Cursor mut @stmt() -> Node {
                     // lowering all key their records off the FINAL tree.
                     mut sk = []Node.of(bc[0])
                     sk.push(@node(NodeKind.BindStmt, kids))
-                    sk.append(bc[1..])
+                    // The canon `bc[1..]` is an open-end slice: it lowers to
+                    // Vec[Node].end_index, which the self-compile shell does
+                    // not carry (CI novac-gate self-accepted, 2026-10-31).
+                    for i in 1..bc.len() {
+                        // nova:allow W_MANUAL_SLICE_COPY -- slice not compiled yet, registry 1170
+                        sk.push(bc[i])
+                    }
                     return @node(NodeKind.Block, sk)
                 }
                 Leaf(_) => {
