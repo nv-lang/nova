@@ -3,8 +3,8 @@ nova: libuv not built, building (one-time, ~30 sec)...
 nova: libuv.lib built (37 files)
 nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...
 nova: libnova_rt.lib built (14 files)
-nova: libnova_rt archive built (C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mvvlx08e4ndgwzzjc7/130/src-3729\target\rt-archive-cache\c3d758e868b8df70\libnova_rt.lib)
-cc130: built C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mvvlx08e4ndgwzzjc7/130/out/novac-fixed.exe
+nova: libnova_rt archive built (<scratch130>/src-3729\target\rt-archive-cache\c3d758e868b8df70\libnova_rt.lib)
+cc130: built <scratch130>/out/novac-fixed.exe
 == cc130 rc=0 (04:23:49)
--rwxr-xr-x 1 Евгений 197121 3166208 Oct 31 04:23 /c/Users/Евгений/AppData/Local/Temp/opencode/ses_mvvlx08e4ndgwzzjc7/130/out/novac-fixed.exe
+-rwxr-xr-x 1 <user> 197121 3166208 Oct 31 04:23 <scratch130>/out/novac-fixed.exe
 rc=0

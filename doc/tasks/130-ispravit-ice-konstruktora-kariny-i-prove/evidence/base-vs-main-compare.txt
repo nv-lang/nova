@@ -4,10 +4,10 @@ calls.nv: only diff is task 92's host_os bridge (3 lines, main only, present in 
 + and the ice_at self-name literal shift 933->936 caused by those 3 lines; the fix hunks themselves are byte-identical.
 
 git diff --no-index base/calls.nv main/calls.nv:
-diff --git "a/C:\\Users\\\320\225\320\262\320\263\320\265\320\275\320\270\320\271\\AppData\\Local\\Temp\\opencode\\ses_mvvlx08e4ndgwzzjc7\\130\\src-3729\\novac\\src\\check\\calls.nv" "b/D:\\Sources\\nv-lang\\worktrees\\nova-opencode-130-ispravit-ice-konstruktora-kariny-i-prove\\novac\\src\\check\\calls.nv"
+(diff header: <scratch130>/src-3729/novac/src/check/calls.nv vs <worktree>/novac/src/check/calls.nv)
 index 78ff3242a..3da2fd81b 100644
---- "a/C:\\Users\\\320\225\320\262\320\263\320\265\320\275\320\270\320\271\\AppData\\Local\\Temp\\opencode\\ses_mvvlx08e4ndgwzzjc7\\130\\src-3729\\novac\\src\\check\\calls.nv"
-+++ "b/D:\\Sources\\nv-lang\\worktrees\\nova-opencode-130-ispravit-ice-konstruktora-kariny-i-prove\\novac\\src\\check\\calls.nv"
+(diff header: <scratch130>/src-3729/novac/src/check/calls.nv vs <worktree>/novac/src/check/calls.nv)
++++ "b/<worktree>\\novac\\src\\check\\calls.nv"
 @@ -599,6 +599,9 @@ fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec
              // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
              // its body is the program's, named by its owner's module; the call is

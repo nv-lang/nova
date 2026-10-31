@@ -1,5 +1,5 @@
 emit ok
-cc130: built C:/Users/Евгений/AppData/Local/Temp/opencode/ses_mvvlx08e4ndgwzzjc7/130/out/novac-fixed.exe
+cc130: built <scratch130>/out/novac-fixed.exe
 compile ok
 stage rc=2
 {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/check/type_of.nv:644 (novac bug, not yours): check: anonymous constructor withou
