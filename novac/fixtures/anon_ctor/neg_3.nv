@@ -1,0 +1,16 @@
+module anon_ctor.neg_3
+
+// ONE seeded cause: an anonymous construction in a GENERIC payload slot the
+// position does not name (`Some({ x: 9 })` with no written return). The
+// construction takes its type from its position, and a bare type parameter
+// names no record; the instance door infers the slot from the payload, and
+// an anonymous record is exactly the form the subset cannot infer. Refused
+// BY NAME (E2-b) where the lattice's ask was the ice of the №TBD class.
+//
+// NOVAC_EXPECT this generic payload slot names none
+type Rec { x int }
+
+fn main() {
+    ro r = Some({ x: 9 })
+    println("no")
+}

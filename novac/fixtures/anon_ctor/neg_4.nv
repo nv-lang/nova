@@ -1,0 +1,19 @@
+module anon_ctor.neg_4
+
+// ONE seeded cause: an anonymous construction as a file's OWN const
+// initializer is refused by the shape walk's position gate (E2, the
+// records/sums horizon) -- a pre-existing boundary the settle wave does not
+// widen. A HANDED module's constants take the written type instead (the
+// polaris carrier, http/status.nv -- see the task 130 evidence); this file's
+// own form stays the gate's to refuse, BY NAME. Before the settle door the
+// same file answered the gate with a follow-up ice ("anonymous constructor
+// without a spread"); the pinned text is the one cause that must remain.
+//
+// NOVAC_EXPECT a record constructor is compiled only as
+type StatusCode { code int }
+
+const StatusCode.OK StatusCode = { code: 200 }
+
+fn main() {
+    println("no")
+}

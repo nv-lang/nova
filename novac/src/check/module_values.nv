@@ -93,7 +93,17 @@ fn Checker mut @type_module_value_at(row int) -> () {
     @mv_state[row] = 1
     @mv_stack.push(row)
     ro saved_expect = @value_expect
-    @value_expect = no_ty()
+    // The WRITTEN type is the initializer's expectation (D478's "a binding
+    // with a declared type", the position a typed local holds in binds.nv):
+    // `const StatusCode.OK StatusCode = { code: 200 }` types its anonymous
+    // construction as the written record, judged and recorded by the settle
+    // door. Until this line the expectation was CLEARED here, and an
+    // anonymous construction in the initializer reached the lattice
+    // unsettled -- the №TBD ice "anonymous constructor without a spread"
+    // (the polaris carriers of task 129's measurement, http/status.nv's
+    // constants among them). A declaration that writes no type keeps the
+    // old silence.
+    @value_expect = @written_const_type(cd.decl)
     if cd.init.len() > 0 {
         @type_module_value(cd.init[0])
     } else {

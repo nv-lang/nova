@@ -1,0 +1,17 @@
+module anon_ctor.neg_1
+
+// ONE seeded cause: a binding with no written type names no record for an
+// anonymous construction to take. The oracle INFERS an anonymous record
+// type here -- a form the subset does not compile -- and until the settle
+// door existed the initializer reached the lattice unsettled, whose miss
+// was the ice "anonymous constructor without a spread" (the №1484/№1705
+// class). Refused BY NAME (E2-b), the subset's own boundary, and the name
+// is bound poisoned so its later uses stay silent.
+//
+// NOVAC_EXPECT an anonymous record constructor takes the type of its position
+type Rec { x int }
+
+fn main() {
+    ro r = { x: 9 }
+    println(r.x)
+}

@@ -876,6 +876,31 @@ fn Checker mut @type_free_call(e Node) -> () {
         FnUnknown | FnOverloaded(_) => no_row()
     }
     ro pre = @expected_ids(arg_row, saved_expect)
+    // A NEWTYPE in call position constructs from its representation
+    // (`Wrap({ n: 1 })`, registry №1705): the newtype has no row of its own,
+    // so `@param_expect` has nothing to say -- and without the expectation
+    // an anonymous record constructor in the argument stayed unsettled and
+    // the lattice iced on it ("anonymous constructor without a spread"). The
+    // REPRESENTATION is the argument's expectation here, and
+    // `@record_newtype_ctor` judges the same type again below, by name, as
+    // it always has: this walk only types what it meets.
+    ro rep = match found {
+        Some(d) => match d.target {
+            DefFn(_) => no_ty()
+            DefType(decl) => {
+                ro tid = ty_of_decl(@ctx, decl)
+                if decl_of_ty(@ctx, tid).kind == TypeKind.TkNewtype {
+                    representation_of(@ctx, tid)
+                } else {
+                    // A record's brace form carries its own name; the paren
+                    // forms have a constructor row of their own.
+                    no_ty()
+                }
+            }
+            DefConst(_) => no_ty()
+        }
+        None => no_ty()
+    }
     mut argi = 0
     for c in kids {
         // A NAMED argument's value is typed like a positional one (registry
@@ -883,7 +908,16 @@ fn Checker mut @type_free_call(e Node) -> () {
         // the key's `type_of` iced on it. It binds by name, not by place: no
         // positional expectation (part 7 of p274-carina-k1).
         if !is_arg_node(c) { continue }
-        ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
+        ro want = if c.kind_of() == NodeKind.NamedArg {
+            no_ty()
+        } else if argi == 0 && is_ty(rep) {
+            // The newtype's ONE argument meets its representation (№1705):
+            // `Wrap({ n: 1 })` types `{ n: 1 }` as `Bag` before the
+            // construction door judges it.
+            rep
+        } else {
+            @param_expect(arg_row, argi, pre)
+        }
         argi += 1
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_arg(c) { continue }
@@ -900,7 +934,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
     // past silently.
     ro def = found ?? ice_at(
-        "novac/src/check/calls.nv:902",
+        "novac/src/check/calls.nv:936",
         "check: the callee row vanished between two reads of one Option")
     match def.target {
         DefFn(_) => {

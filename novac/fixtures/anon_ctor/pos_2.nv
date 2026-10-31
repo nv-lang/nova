@@ -1,0 +1,18 @@
+module anon_ctor.pos_2
+
+// An anonymous record constructor as a CALL ARGUMENT (registry №TBD, the
+// №1484/№1705 class): the parameter's declared type is the argument's
+// expectation, and until the settle door existed the walk typed the
+// argument with that expectation nobody consumed -- the call key then asked
+// the lattice, whose miss was the ice "anonymous constructor without a
+// spread". The argument now types as its parameter's record, and the
+// program prints the field the callee read out of it.
+//
+// The oracle builds and runs this file byte-for-byte the same (prints 41).
+type Bag { n int }
+
+fn take(b Bag) -> int => b.n
+
+fn main() {
+    println(take({ n: 41 }))
+}

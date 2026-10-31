@@ -404,6 +404,41 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
     } else {
         // Either not a constructor, or a constructor whose name IS declared.
     }
+    // AN ANONYMOUS constructor initializer (`ro r = { x: 9 }`, registry №TBD)
+    // is settled by the ONE door every position shares (`@settle_anon_ctor`):
+    // judged against the position's expectation and recorded when there is
+    // one. A binding with no written type names none -- the oracle infers an
+    // anonymous record there, which the subset does not compile -- and until
+    // this door existed the initializer reached the lattice unsettled, whose
+    // miss was the ice "anonymous constructor without a spread". Refused BY
+    // NAME (E2-b) instead, and the name is bound poisoned so its later uses
+    // stay silent: one cause, one diagnostic.
+    if ik == NodeKind.RecordCtor {
+        ro ck = branch_children(init)
+        if ck.len() > 0 && ck[0].kind_of() != NodeKind.Name {
+            ro smark = @out.len()
+            @settle_anon_ctor(init)
+            if !is_ty(@chan.type_if_known(init.id_of())) {
+                if @out.len() == smark {
+                    @report_first_leaf_of(kids, ANON_CTOR_BIND_NO_TYPE_MSG)
+                } else {
+                    // SILENT-OK: the construction's own door refused it by
+                    // name a moment ago; a second word here would be the
+                    // cascade the poisoned binding exists to prevent.
+                }
+                @scope.bind(vname, no_ty(), bind_mode_at(kids))
+                return
+            } else {
+                // Settled and recorded: the initializer's type is read back
+                // through the lattice's own door below, as every recorded
+                // initializer's is.
+            }
+        } else {
+            // A NAMED construction: its own name decides, as it always has.
+        }
+    } else {
+        // Not a construction: the initializer's own walk decided.
+    }
     ro vtype = type_of(init, @ctx, @scope, @chan)
     @record(init, vtype)
     if ik == NodeKind.RecordCtor {
@@ -512,6 +547,52 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
             // they hold no expression to type.
         }
     }
+}
+
+/// ONE DOOR for an ANONYMOUS record constructor (`{ n: 1 }`, no name, no
+/// spread): its type is not its own, it is the POSITION's -- and this door
+/// settles it against `@value_expect` for every position that walks one.
+/// Judged through the construction's own judge (`@judge_record_ctor` -- one
+/// construction, one set of rules, the same door a named construction takes)
+/// and RECORDED on the node, because the readers that ask later -- a call
+/// key's `typed_args`, the arm fold's lattice ask, `type_of`'s own anonymous
+/// arm -- read the channel, and an unrecorded anonymous constructor was the
+/// ice "check: anonymous constructor without a spread" (registry №1484's
+/// match arm, №1705's newtype argument: legal programs, compiler bugs).
+///
+/// SILENT by design when the position names no type the subset can read: a
+/// bare `no_ty()` (the readers answer for the shape -- the return door's
+/// `@tail_type_of`, the field judge's skip), a type parameter or an
+/// unresolved inference (they name no record; the generic instance doors
+/// keep their own answers). The one position that owns a REFUSAL for the
+/// shape -- a binding's initializer, which must name a type -- speaks at its
+/// own door; this one never does.
+fn Checker mut @settle_anon_ctor(e Node) -> () {
+    // READ FIRST: judged already, by this door through another position or by
+    // the return door's own judge. Re-judging would say a refused field twice
+    // -- one cause, one diagnostic, the rule every mark around here keeps.
+    if is_ty(@chan.type_if_known(e.id_of())) { return } else {
+        // Not settled yet: the expectation decides below.
+    }
+    ro want = @concrete(@value_expect)
+    if !is_ty(want) || !@ctx.tys.is_concrete(want) {
+        // No expectation, or one that names no record yet: nothing is decided
+        // HERE. The silence is the answer the readers already keep for the
+        // shape; a refusal belongs to the position that owns one.
+        return
+    } else {
+        // A concrete type stands at the position: the construction is judged
+        // against it, once, and the answer recorded.
+    }
+    ro mark = @out.len()
+    @judge_record_ctor(e, want)
+    if @out.len() > mark {
+        // The construction's own door refused it -- a field the record lacks,
+        // a paren form written by brace. No type is recorded: a refused
+        // construction has none, and its readers act on `no_ty()`.
+        return
+    }
+    @record(e, want)
 }
 
 /// Bind a name whose initializer was REFUSED, with no type -- so its later uses
@@ -807,6 +888,12 @@ const OPEN_NOT_EXHAUSTIVE_MSG = "a `match` on a type whose values cannot all be 
 /// One text for the rule: the reader must not guess whether two wordings
 /// mean two limits.
 const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different types (no arm coercion before E2-b3)"
+
+/// An anonymous record constructor bound with no written type: the position
+/// names no record, and inferring an anonymous record type (the oracle's
+/// answer) is not compiled. E2-b, the subset's own boundary -- said by name
+/// where the lattice's miss was an ice (registry №TBD).
+const ANON_CTOR_BIND_NO_TYPE_MSG = "outside the subset: an anonymous record constructor takes the type of its position -- a declared parameter, a written return, a field; this binding names none, and inferring an anonymous record type is not compiled yet (E2-b)"
 
 /// May the language call vector operation `name` over `vec_t` IMPLICITLY -- a
 /// literal's constructor and push, `xs[i]`, a `for`'s len and index? Yes when

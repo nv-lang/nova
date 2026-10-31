@@ -1,0 +1,23 @@
+module anon_ctor.pos_4
+
+// A GENERIC payload slot named by the position (registry №TBD): `Some({ x:
+// 9 })` for a `-> Option[Rec]` -- the payload slot is the sum's parameter,
+// and the construction takes the record the POSITION'S instance fixes for
+// it, the same binding the instance door makes from the same expectation.
+// This is the shape of task 129's polaris carrier (`Ok({ lower: ... })` in
+// nova-http's header.nv -- a `Result`'s payload slot); until the settle
+// wave it iced on the lattice ask ("anonymous constructor without a
+// spread"). `Option` here because novac spells Option instances itself; a
+// `Result` instance of custom types the shell does not carry is refused by
+// that pre-existing interop door (E2-b), named, with or without an
+// anonymous construction.
+//
+// The oracle builds and runs this file byte-for-byte the same (prints ok).
+type Rec { x int }
+
+fn mk() -> Option[Rec] => Some({ x: 9 })
+
+fn main() {
+    ro r = mk()
+    println("ok")
+}

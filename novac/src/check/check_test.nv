@@ -997,3 +997,53 @@ test "`is` on a value of a statically known non-sum type is E_IS_NON_ANY (D54)" 
     assert(diagnose(sum_ok) == 0, diagnose_first_msg(sum_ok))
 }
 
+test "anonymous constructor: settled by its position's expectation, refused by name where none is (registry №TBD, the №1484/№1705 class)" {
+    // The class: an anonymous record construction takes its type from the
+    // position it lands in, and until the settle door existed the two
+    // positions that DID carry an expectation -- a match arm's body (№1484)
+    // and a call argument (№1705, a newtype's representation) -- typed the
+    // construction with an expectation nobody consumed, and the next
+    // lattice ask was the ice "anonymous constructor without a spread".
+    // The door judges the construction against the expectation and records
+    // the answer; a position that names no type refuses BY NAME (E2-b),
+    // which is the one below's boundary, not a crash.
+    ro arm = "module m\n\ntype Rec value {\n    x int\n}\n\nfn f(k int) -> Rec {\n    match k {\n        0 => { x: 9 }\n        _ => { x: 0 }\n    }\n}\n"
+    assert(diagnose(arm) == 0, "an anonymous construction as a match arm's body types by the arm's expectation -- got: ${diagnose_first_msg(arm)}")
+
+    // A CALL ARGUMENT against its parameter's record (№1705's other half
+    // is the newtype form, judged by the same door through the
+    // representation the call walk hands it).
+    ro arg = "module m\n\ntype Bag value {\n    n int\n}\n\nfn take(b Bag) -> int {\n    b.n\n}\n\nfn f() -> int {\n    ro v = take({ n: 1 })\n    v\n}\n"
+    assert(diagnose(arg) == 0, "an anonymous construction as a call argument types by its parameter -- got: ${diagnose_first_msg(arg)}")
+
+    // A NEWTYPE's argument meets the representation: `Wrap({ n: 1 })` types
+    // `{ n: 1 }` as `Bag`, and the construction door accepts it as exactly
+    // the representation (the №1705 carrier itself).
+    ro wrap = "module m\n\ntype Bag value {\n    n int\n}\n\ntype Wrap Bag\n\nfn f() -> Wrap => Wrap({ n: 1 })\n"
+    assert(diagnose(wrap) == 0, "a newtype's anonymous argument types as the representation -- got: ${diagnose_first_msg(wrap)}")
+
+    // THE BOUNDARY, and the half that proves the refusal is the position's
+    // own: a binding with no written type names no record, and the oracle's
+    // answer there -- inferring an anonymous record type -- is a form the
+    // subset does not compile. One cause, by name, where the lattice's miss
+    // was the ice.
+    ro bare = "module m\n\ntype Rec value {\n    x int\n}\n\nfn f() -> int {\n    ro r = { x: 9 }\n    r.x\n}\n"
+    assert(diagnose(bare) == 1, "an anonymous construction bound with no written type is refused exactly once -- got: ${diagnose_first_msg(bare)}")
+    assert(diagnose_first_msg(bare).contains("an anonymous record constructor takes the type of its position"), "the refusal names the subset's boundary -- got: ${diagnose_first_msg(bare)}")
+
+    // THE CONTROL for the door reading before judging: a construction whose
+    // field the record lacks is refused by the field's own door, once --
+    // the judge must not say it a second time.
+    ro wrong = "module m\n\ntype Bag value {\n    n int\n}\n\nfn take(b Bag) -> int {\n    b.n\n}\n\nfn f() -> int {\n    ro v = take({ wrong: 1 })\n    v\n}\n"
+    assert(diagnose(wrong) == 1, "a wrong field in an anonymous argument is refused once, by its own door -- got: ${diagnose_first_msg(wrong)}")
+
+    // A GENERIC payload slot named by the position (`Some({ x: 9 })` for a
+    // `-> Option[Rec]`, the polaris carrier's shape) is judged and recorded
+    // through the same door -- but NOT as a sample here: this collector
+    // carries no std declarations, and a generic sum cannot be declared in
+    // the file (the E1 subset gate). The corner is pinned where the std
+    // declarations are real: novac/fixtures/anon_ctor/pos_4.nv (accepted,
+    // behaviour-matched with the oracle) and neg_3.nv (the bare slot,
+    // refused by name).
+}
+

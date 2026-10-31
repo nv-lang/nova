@@ -80,19 +80,32 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
     if at < 0 { return }
     ro init = kids[at]
     ro is_lit = init.kind_of() == NodeKind.Lit
+    // The WRITTEN type is read BEFORE the initializer is typed, and is the
+    // initializer's EXPECTATION (D478's "a binding with a declared type"):
+    // an anonymous record construction (`const StatusCode.OK StatusCode =
+    // { code: 200 }`, registry №TBD -- the polaris carriers of task 129's
+    // measurement) is judged against it and recorded by the settle door, so
+    // the `type_of` ask below reads a recording instead of meeting the ice
+    // "anonymous constructor without a spread". Computed here, once, because
+    // the literal branch below asks for it too.
+    ro wt = @written_const_type(kids)
     // A constant EXPRESSION of literals (`const C u8 = 40 + 2`) is typed by the
     // walk like any expression, then takes the written type as a literal does
     // (D489), by its exact value.
     ro adapts = is_lit || is_const_int_expr(init)
     if !is_lit {
-        ro before = @out.len()
+        ro cmark = @out.len()
+        ro csaved = @value_expect
+        @value_expect = wt
         @type_expr(init)
+        @value_expect = csaved
         // SILENT-OK: the expression door refused the initializer, one cause.
-        if @out.len() > before { return }
+        if @out.len() > cmark { return } else {
+            // Typed: the written type comparison below decides the rest.
+        }
     } else {
         // A literal: typed below, by the written type when one is written.
     }
-    ro wt = @written_const_type(kids)
     // SILENT-OK: no written type -- the initializer's own type is the answer (D44).
     if !is_ty(wt) { return }
     ro own = type_of(init, @ctx, @scope, @chan)
