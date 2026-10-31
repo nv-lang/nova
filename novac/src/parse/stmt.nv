@@ -324,9 +324,7 @@ fn Cursor mut @stmt() -> Node {
                     // lowering all key their records off the FINAL tree.
                     mut sk = []Node.of(bc[0])
                     sk.push(@node(NodeKind.BindStmt, kids))
-                    for i in 1..bc.len() {
-                        sk.push(bc[i])
-                    }
+                    sk.append(bc[1..])
                     return @node(NodeKind.Block, sk)
                 }
                 Leaf(_) => {
