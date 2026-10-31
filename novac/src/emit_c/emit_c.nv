@@ -217,6 +217,10 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
     // -- in a program -- one of another module, whose bodies follow all
     // prototypes.
     e.emit_file_protos(file)
+    // The FFI symbols this unit reaches, declared for the C compiler from
+    // their rows' signatures (D282, task 131) -- beside the file's own
+    // prototypes, so every call site below compiles against a declaration.
+    e.emit_extern_c_protos()
     ro at_bodies = e.body.byte_len()
     e.emit_file(file)
     for k in 0..insts.len() {
@@ -373,11 +377,60 @@ fn Emitter mut @emit_file_protos(file Node) -> () {
         ro row = decl_fn_row(c, @ctx) ?? ice_at(
             "novac/src/emit_c/emit_c.nv:373",
             "emit: a reached declaration with no row in the callable table")
+        // An `extern "C" fn` row's declaration is nobody's to define: its
+        // prototype comes from the ROW walk below, which every unit reaching
+        // the symbol prints -- not only the unit owning the declaration
+        // (D282, task 131).
+        if @ctx.fns.extern_c(row) { continue }
         if @ctx.fns.is_entry_row(row) { continue }
         ro fd = @ctx.fns.rows[raw_row(row)]
         @emit_signature(c, decl_name(c), row, no_subst(),
             @ctx.fns.params[fd.param_off..fd.param_off + fd.param_cnt], fd.ret_id)
         @body.append(";\n")
+    }
+}
+
+/// One `extern "C" fn` prototype per FFI symbol this unit REACHES, written
+/// from the ROW's own types -- the declaration's C signature, so the call
+/// sites below it compile against a declared symbol instead of C's implicit
+/// `int` fallback (the oracle leaves exactly that gap for non-tuple externs,
+/// emit_c.rs's [bug-2 audit-197 fix] names it; novac declares the prototype).
+///
+/// Why a ROW walk and not the tree: the unit that CALLS the FFI symbol is
+/// usually not the unit that DECLARES it (a package's `ffi.nv` module beside
+/// its wrapper module), and the callee's row -- handed into this unit's table
+/// by harvest -- carries the whole signature. A program may print the same
+/// prototype in two units: two identical declarations of one C symbol are
+/// legal C, and the alternative (a program-wide dedupe) would buy nothing the
+/// linker does not already check.
+///
+/// `-> ()` is C `void` (D282 rule 5): the oracle emits `void` returns for the
+/// runtime's own unit-returning FFI, and a `nova_unit` return would be a
+/// one-byte struct nobody's ABI says.
+fn Emitter mut @emit_extern_c_protos() -> () {
+    for r in 0..@ctx.fns.rows.len() {
+        ro row = FnRow(r)
+        if !@reach.has(row) { continue }
+        if !@ctx.fns.extern_c(row) { continue }
+        ro fd = @ctx.fns.rows[r]
+        @body.append("extern ")
+        if is_unit_ty(@ctx, fd.ret_id) {
+            @body.append("void")
+        } else {
+            @body.append(c_type(@ctx, fd.ret_id))
+        }
+        @body.append(" ${fd.name}(")
+        mut first = true
+        for i in 0..fd.param_cnt {
+            ro p = @ctx.fns.params[fd.param_off + i]
+            @body.append(if first { "" } else { ", " })
+            @body.append(c_type(@ctx, p.type_id))
+            @body.append(" ")
+            @body.append(c_ident(p.name))
+            first = false
+        }
+        @body.append(if first { "void" } else { "" })
+        @body.append(");\n")
     }
 }
 
@@ -410,6 +463,12 @@ fn Emitter mut @emit_fn(f Node) -> () {
     ro fn_row = decl_fn_row(f, @ctx) ?? ice_at(
         "novac/src/emit_c/emit_c.nv:410",
         "emit: a declaration with no row in the callable table")
+    // An `extern "C" fn` declaration owns NO body to emit -- the symbol is the
+    // library's, spelled by its literal name (D282). Its prototype is written
+    // by `@emit_extern_c_protos` from the row; a definition here would be a
+    // `static` function nobody links, named after a C symbol that already
+    // exists (task 131).
+    if @ctx.fns.extern_c(fn_row) { return }
     // The TYPES come from the ROW, as a VIEW: the registry decided them while
     // collecting, and asking `defs` again was a second door to one decision
     // that answered DIFFERENTLY for `x T` (found 2026-08-20). `ret_id` is -1

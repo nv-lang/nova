@@ -1,15 +1,16 @@
 module extern_decl.neg_1
 
-// ONE seeded cause: the `extern "ABI" fn` form (D282, plan 91.12 F.-1). The
-// parser READS it since 2026-08-20 -- until then the answer was "syntax error:
-// this is not a form of the language", about a form the language has and std's
-// whole FFI layer is written in. What novac lacks is the emission, so check
-// declines the form BY NAME, at the keyword the reader wrote.
-//
-// The parameters name a type novac does not know (`CStr`) and the declaration
-// has no body: both would be a second and third diagnostic if the refusal of
-// the FORM did not stop the walk. One cause, one diagnostic.
-extern "C" fn fs_open(path CStr, flags int) -> int
+// ONE seeded cause: the `extern "nova" fn` form (D282, plan 91.12 F.-1). The
+// parser READS the whole FFI family since 2026-08-20, and since task 131 the
+// minimal MEASURED class -- an `extern "C" fn` free function with a C-ABI
+// signature -- is COMPILED (the call is emitted by the declaration's literal
+// name; see pos_1.nv beside this file). What novac still declines is the
+// REST of the family, each by name at the `extern` keyword: this file's
+// `extern "nova"` (the registry-spelled runtime symbol is not emitted for a
+// program module), `extern "C" unsafe fn` (no unsafe-call door yet, D424), a
+// generic extern, one with a body, and a signature type outside the C-ABI
+// class (D282 rule 2).
+extern "nova" fn rt_ticks() -> u64
 
 fn main() {
     println(1)

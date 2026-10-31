@@ -19,6 +19,7 @@ import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR}
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO, SERIALIZE_PROTO}
 import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args, leaf_text, cfg_attr_state, decl_fn_row}
+import ../sem.{FnRow, no_row}
 
 /// An `import` declaration, judged by the subset walk.
 fn Checker mut @walk_import(children []Node) -> () {
@@ -136,7 +137,9 @@ fn Checker mut @judge_fn_decl(n Node, children []Node) -> bool {
             return true
         }
     }
-    if @report_if_extern_decl(children) {
+    // The row by NODE, the same door the emitter asks: the extern gate judges
+    // the signature's TYPES off the row the collector registered (task 131).
+    if @report_if_extern_decl(children, decl_fn_row(n, @ctx) ?? no_row()) {
         // The whole FORM is refused, so the rules below have nothing left to
         // judge: they ask about a declaration novac will not compile.
         return true

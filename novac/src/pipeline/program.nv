@@ -148,6 +148,11 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         for r in 0..ctx.fns.rows.len() {
             ro row = FnRow(r)
             if !reach.has(row) || ctx.fns.compiles_body(row) || !ctx.in_program(row) { continue }
+            // An `extern "C" fn` row of a program module names a symbol the
+            // LIBRARY owns: no unit of the program defines it, so it takes no
+            // wanted name and owes no body -- the calling unit prints the
+            // prototype from the row and the literal call (D282, task 131).
+            if ctx.fns.extern_c(row) { continue }
             ro owner = index_of(mods, ctx.fns.rows[r].handed_from)
             // The unit's OWN module handed back to it (its file among the
             // program's declarations): its own row answers the call.
