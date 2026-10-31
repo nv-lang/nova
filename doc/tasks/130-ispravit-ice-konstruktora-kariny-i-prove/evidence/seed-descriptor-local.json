@@ -1,7 +1,7 @@
 {
   "asset_name": "nova-carina-0.2.2-130fix-windows-x86_64.zip",
   "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.2-130fix/nova-carina-0.2.2-130fix-windows-x86_64.zip",
-  "sha256": "339d7096db40ab2a062ece78858e756632ca1516b29e9d8fd8151c0c0c8ee74b",
+  "sha256": "d7b824d23a0fee7ecfeaaa2ff45de9d3552b69468359d96e43075d8631b4d4b3",
   "platform": "windows-x86_64",
   "source_revision": "3729abcce42ec2d94efc898ec6eafe91ff6210d5+task130-anon-ctor",
   "compiler_provenance": "carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5+task130-anon-ctor; B1 + class fix, no Oracle in stage B",

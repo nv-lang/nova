@@ -404,7 +404,7 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
     } else {
         // Either not a constructor, or a constructor whose name IS declared.
     }
-    // AN ANONYMOUS constructor initializer (`ro r = { x: 9 }`, registry №TBD)
+    // AN ANONYMOUS constructor initializer (`ro r = { x: 9 }`, registry №1933)
     // is settled by the ONE door every position shares (`@settle_anon_ctor`):
     // judged against the position's expectation and recorded when there is
     // one. A binding with no written type names none -- the oracle infers an
@@ -892,7 +892,7 @@ const ARMS_DISAGREE_MSG = "outside the subset: match arms produce different type
 /// An anonymous record constructor bound with no written type: the position
 /// names no record, and inferring an anonymous record type (the oracle's
 /// answer) is not compiled. E2-b, the subset's own boundary -- said by name
-/// where the lattice's miss was an ice (registry №TBD).
+/// where the lattice's miss was an ice (registry №1933).
 const ANON_CTOR_BIND_NO_TYPE_MSG = "outside the subset: an anonymous record constructor takes the type of its position -- a declared parameter, a written return, a field; this binding names none, and inferring an anonymous record type is not compiled yet (E2-b)"
 
 /// May the language call vector operation `name` over `vec_t` IMPLICITLY -- a

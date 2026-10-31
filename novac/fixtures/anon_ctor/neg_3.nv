@@ -5,7 +5,7 @@ module anon_ctor.neg_3
 // construction takes its type from its position, and a bare type parameter
 // names no record; the instance door infers the slot from the payload, and
 // an anonymous record is exactly the form the subset cannot infer. Refused
-// BY NAME (E2-b) where the lattice's ask was the ice of the №TBD class.
+// BY NAME (E2-b) where the lattice's ask was the ice of the №1933 class.
 //
 // NOVAC_EXPECT this generic payload slot names none
 type Rec { x int }

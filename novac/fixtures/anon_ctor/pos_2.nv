@@ -1,6 +1,6 @@
 module anon_ctor.pos_2
 
-// An anonymous record constructor as a CALL ARGUMENT (registry №TBD, the
+// An anonymous record constructor as a CALL ARGUMENT (registry №1933, the
 // №1484/№1705 class): the parameter's declared type is the argument's
 // expectation, and until the settle door existed the walk typed the
 // argument with that expectation nobody consumed -- the call key then asked

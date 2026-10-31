@@ -48,7 +48,7 @@ const GENERIC_PAYLOAD_UNTYPED_MSG = "outside the subset: the type argument of th
 /// An anonymous record construction in a GENERIC payload slot the position
 /// does not name: the construction takes its type from its position, and a
 /// bare type parameter names no record -- inferring an anonymous record type
-/// is the form the subset does not compile (registry №TBD). Said by name
+/// is the form the subset does not compile (registry №1933). Said by name
 /// where the lattice's ask was the ice.
 const ANON_CTOR_GENERIC_MSG = "outside the subset: an anonymous record constructor takes the type of its position -- a declared parameter, a written return, a field; this generic payload slot names none, and inferring an anonymous record type is not compiled yet (E2-b)"
 
@@ -87,7 +87,7 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
         // The PAYLOAD's own type is the argument's expectation (D55/D491, the
         // same rule the free-call walk applies through `@param_expect`): an
         // anonymous record constructor in the position (`Sv.Rec({ n: 1 })`,
-        // registry №TBD) is judged against it and recorded, instead of
+        // registry №1933) is judged against it and recorded, instead of
         // reaching `typed_args` below unsettled -- the lattice's ice on the
         // №1484/№1705 class. A GENERIC payload slot (`Ok(..)` of `Result[T,
         // E]`, the polaris carrier `Ok({ lower: ... })` of nova-http) names
@@ -123,7 +123,7 @@ fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
         // will ever be read for it -- the instance door below infers the
         // slot from the payload, and an anonymous record is exactly the form
         // the subset cannot infer. Refused by name HERE, where the lattice's
-        // `typed_args` ask below would ice on the unsettled node (№TBD).
+        // `typed_args` ask below would ice on the unsettled node (№1933).
         ro ax = arg_expr_of(c)
         if pslot <= vd.payload_cnt && !is_ty(pwant) && @out.len() == amark &&
             ax.kind_of() == NodeKind.RecordCtor {

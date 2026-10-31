@@ -833,7 +833,7 @@ fn Checker mut @type_expr(e Node) -> () {
         // `coerce_pair/neg_1.nv` ("anonymous constructor without a spread"),
         // which is that door saying, correctly, that the question has no
         // answer at this end. THE DOOR: `@settle_anon_ctor` (binds.nv, the
-        // registry №TBD wave) judges the construction against
+        // registry №1933 wave) judges the construction against
         // `@value_expect` and records the answer, so the askers read a
         // recording instead of meeting the ice (№1484's match arm, №1705's
         // newtype argument). Silence is a position that names no type the

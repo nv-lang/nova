@@ -624,7 +624,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             return ctx.ty_of_name_or_ice(expr_leaf_name(kids[0]))
         }
         // Anonymous `{ ... }`: settled by its POSITION's expectation and
-        // RECORDED there (`@settle_anon_ctor`, binds.nv -- registry №TBD,
+        // RECORDED there (`@settle_anon_ctor`, binds.nv -- registry №1933,
         // the №1484/№1705 wave). This door READS the recording, it does not
         // re-derive it -- the same rule the Index/IfExpr/ArrayLit arms above
         // state, for the same reason: the walk decided, and a second door

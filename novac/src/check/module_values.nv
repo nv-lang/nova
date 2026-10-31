@@ -99,7 +99,7 @@ fn Checker mut @type_module_value_at(row int) -> () {
     // construction as the written record, judged and recorded by the settle
     // door. Until this line the expectation was CLEARED here, and an
     // anonymous construction in the initializer reached the lattice
-    // unsettled -- the №TBD ice "anonymous constructor without a spread"
+    // unsettled -- the №1933 ice "anonymous constructor without a spread"
     // (the polaris carriers of task 129's measurement, http/status.nv's
     // constants among them). A declaration that writes no type keeps the
     // old silence.

@@ -997,7 +997,7 @@ test "`is` on a value of a statically known non-sum type is E_IS_NON_ANY (D54)" 
     assert(diagnose(sum_ok) == 0, diagnose_first_msg(sum_ok))
 }
 
-test "anonymous constructor: settled by its position's expectation, refused by name where none is (registry №TBD, the №1484/№1705 class)" {
+test "anonymous constructor: settled by its position's expectation, refused by name where none is (registry №1933, the №1484/№1705 class)" {
     // The class: an anonymous record construction takes its type from the
     // position it lands in, and until the settle door existed the two
     // positions that DID carry an expectation -- a match arm's body (№1484)

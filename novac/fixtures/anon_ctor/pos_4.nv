@@ -1,6 +1,6 @@
 module anon_ctor.pos_4
 
-// A GENERIC payload slot named by the position (registry №TBD): `Some({ x:
+// A GENERIC payload slot named by the position (registry №1933): `Some({ x:
 // 9 })` for a `-> Option[Rec]` -- the payload slot is the sum's parameter,
 // and the construction takes the record the POSITION'S instance fixes for
 // it, the same binding the instance door makes from the same expectation.

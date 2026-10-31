@@ -83,7 +83,7 @@ fn Checker mut @type_const_decl(kids []Node) -> () {
     // The WRITTEN type is read BEFORE the initializer is typed, and is the
     // initializer's EXPECTATION (D478's "a binding with a declared type"):
     // an anonymous record construction (`const StatusCode.OK StatusCode =
-    // { code: 200 }`, registry №TBD -- the polaris carriers of task 129's
+    // { code: 200 }`, registry №1933 -- the polaris carriers of task 129's
     // measurement) is judged against it and recorded by the settle door, so
     // the `type_of` ask below reads a recording instead of meeting the ice
     // "anonymous constructor without a spread". Computed here, once, because

@@ -17,10 +17,10 @@ Reproduction (no worktree edits, no scratch driver):
 
 ## SHA-256
 
-- `binds.nv`: `8ed1438eacbeef1f3da8eab2572b821561e5aaa2f3756ca7d9c8176a791924af` == commit efb2af8c4 (byte-identical)
+- `binds.nv`: `8901f52ef98e61d5bd83e986edea162de0a778f4b149d92e587b789287b97388` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
 - `calls.nv`: `cd7ecbedd037f080453da62501c89296154c65b7bc84d5683d075a5458c3152e` -- base 3729abcc + task-130 hunks only (no task-92 host_os bridge)
-- `const_types.nv`: `3d1a4937c07db46b877658b52056d651ceca6e5d165bf4c1c550bfa2df3c9f9b` == commit efb2af8c4 (byte-identical)
-- `exprs.nv`: `195547c2c947a8c6519e313254e0c9849a2e8c5d779b98f6d123f4175963462e` == commit efb2af8c4 (byte-identical)
-- `module_values.nv`: `56b8de814fab96217d3194a67ce750e9a6635d9d4cc5d73cccc11714a8bf1a41` == commit efb2af8c4 (byte-identical)
-- `option_rules.nv`: `64b818d03c1da8c7afbfd1e68432dd68826fa520b6c0051aced56360d7de0ece` == commit efb2af8c4 (byte-identical)
-- `type_of.nv`: `0435ef7cb4aed3b32a91bfb0209f35d64b7c22015f1f56659d3c22284900f162` == commit efb2af8c4 (byte-identical)
+- `const_types.nv`: `0e7b75ef23a69bf1e89dc3044b907fa021498b0d34d58e0dd192dc7eb4d957e2` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `exprs.nv`: `010d50a147bc06ad076586ac0d111c931f0def0d48bb79fc6ca1b75142d9b023` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `module_values.nv`: `18c74b770903c54abe58fddf43344719bcf67fba575d7874a3fe6821b4bcb5a7` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `option_rules.nv`: `7ea9694aabdfc7039a44773804349f3fd039e62d85d81fd43056f0b908de6de6` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
+- `type_of.nv`: `0472a20f9ffb8d05b2433d8cd88ed4c2c9c3fbc79f00ccd34dd2c0c694612724` == the branch's novac/src/check file (byte-identical modulo line endings; the committed blob is LF)
