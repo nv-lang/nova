@@ -1894,8 +1894,11 @@
 # 2026-10-31, task 134 candidate, merge of origin/main 5e494fd86 (task 130 landed its
 #   rows 1933, 1934, 1943): union by numbers; 1933-1934 and 1935-1942 all have rows
 #   now and leave gaps=. rows 1849->1852, max 1942->1943; measured on the merged tree.
-rows=1852
-max=1943
+# 2026-10-31, task 134 candidate, guard-defect row 1944 (check-hunter-fold judged a
+#   merge without full history; number from the integrator): rows 1852->1853,
+#   max 1943->1944.
+rows=1853
+max=1944
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

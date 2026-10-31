@@ -131,5 +131,29 @@ if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o9" 2>&1; then
     rc=1
 fi
 
-[ "$rc" -eq 0 ] && echo "test-check-hunter-fold ok: девять подделок покраснели, здоровый макет и живая половина зелёные"
+# ── зелёный мердж-макет (№1944): свёртка, пришедшая с влитой стороны ─────
+# От мердж-коммита обход истории по умолчанию (упрощение TREESAME) не заходит
+# в сторону, где отчёт жил и был свёрнут, если файла нет ни в результате
+# мерджа, ни в первом родителе, — и краснил честную свёртку. Воспроизведено на
+# кандидате 753fe22f6 (CI run 41224395457): без --full-history красно, с ним
+# зелено. Макет обязан быть ЗЕЛЁНЫМ.
+mk_root
+MB=$(git -C "$T" branch --show-current)
+git -C "$T" checkout -qb side
+printf 'side report\n' > "$T/docs/dev/hunts/novac/2026-02-02-side-k4.md"
+git -C "$T" add docs/dev/hunts/novac/2026-02-02-side-k4.md
+git -C "$T" commit -qm "side hunt report"
+git -C "$T" rm -q docs/dev/hunts/novac/2026-02-02-side-k4.md
+git -C "$T" commit -qm "fold it on the side"
+git -C "$T" checkout -q "$MB"
+git -C "$T" merge -q --no-ff side -m "merge side"
+printf 'СВЁРНУТО | 2026-02-02-side-k4 | check | К4 | находок 0 | —\n' \
+    >> "$T/docs/dev/hunts/novac/LEDGER.md"
+if ! NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o10" 2>&1; then
+    echo "FAIL: свёртка, пришедшая мерджем с влитой стороны, краснит — история читается без --full-history (№1944)" >&2
+    tail -2 "$T.o10" | sed 's/^/    /' >&2
+    rc=1
+fi
+
+[ "$rc" -eq 0 ] && echo "test-check-hunter-fold ok: девять подделок покраснели; здоровый макет, мердж-макет (№1944) и живая половина зелёные"
 exit "$rc"
