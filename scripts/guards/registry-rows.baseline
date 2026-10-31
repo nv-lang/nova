@@ -1879,9 +1879,10 @@
 #   free functions of two deps); both numbers from the integrator. 1929 was task
 #   128's row in flight; it landed in main f998f9359 and leaves gaps= by this
 #   merge. rows 1838->1840, max 1929->1931.
-rows=1844
-max=1938
-max=1938
+rows=1848
+# 2026-10-31, task 134: rows 1939-1942 added (the check x K6 hunt over the task's own territory; numbers from the integrator); rows 1844->1848, max 1938->1942.
+max=1942
+#   (max 1938 -> 1942 by the line above; the 1938 setting of 05d42780a is superseded.)
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
