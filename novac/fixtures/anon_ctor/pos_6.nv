@@ -1,6 +1,6 @@
 module anon_ctor.pos_6
 
-// A SPREAD IS A TYPE SOURCE OF ITS OWN (registry №TBD, the round-1
+// A SPREAD IS A TYPE SOURCE OF ITS OWN (registry №1934, the round-1
 // regression caught by CI run 41176026118 on pipeline_test.nv): `ro q = {
 // ...p, a: 2.5 }` compiled green on B1, the first cut of the settle wave
 // refused it (E2-b), and the fix draws the class boundary properly -- a

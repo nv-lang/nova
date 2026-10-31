@@ -127,7 +127,7 @@ fn Checker mut @record_newtype_ctor(e Node, kids []Node, type_id TyId) -> () {
 /// spread"). `@record_newtype_ctor` above judges the same type again, by
 /// name, as it always has: this expectation only types what the walk meets.
 fn Checker @newtype_arg_expect(found Option[Def]) -> TyId {
-    ro d = found ?? ice_at("novac/src/check/ctor_calls.nv:130", "check: the callee row vanished between two reads of one Option")
+    ro d = found ?? ice_at("novac/src/check/ctor_calls.nv:130", "check: the Def row vanished before the newtype expectation was computed")
     ro tid = match d.target {
         DefType(t_decl) => ty_of_decl(@ctx, t_decl)
         // A function or a constant in callee position is no construction.

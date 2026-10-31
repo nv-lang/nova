@@ -25,7 +25,7 @@
   3. Emit запиненным B1 (самосборка; stdout = C):
      `NOVA_STD_PATH=<base>/std/src NOVAC_SELF_PATH=<base>/novac/src <B1>/novac.exe emit <base>/novac/src/main.nv > fixed.c`
      → 13 260 516 байт, sha256 `c6340905…` (стабильная связь исходник↔C;
-     перенос №TBD→№1933 в комментариях C не меняет).
+     перенос №1934→№1933 в комментариях C не меняет).
   4. Компиляция C — окно `nova build`: nova-driver-support
      `native_build::compile_c_to_exe` (те же дефолты, что драйвер:
      detect_toolchain(auto) → clang, rt_dir=`<runtime>/compiler-codegen/nova_rt`,

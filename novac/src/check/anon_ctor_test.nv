@@ -52,7 +52,7 @@ test "anonymous constructor: settled by its position's expectation, refused by n
     ro wrong = "module m\n\ntype Bag value {\n    n int\n}\n\nfn take(b Bag) -> int {\n    b.n\n}\n\nfn f() -> int {\n    ro v = take({ wrong: 1 })\n    v\n}\n"
     assert(diagnose(wrong) == 1, "a wrong field in an anonymous argument is refused once, by its own door -- got: ${diagnose_first_msg(wrong)}")
 
-    // A SPREAD IS A TYPE SOURCE OF ITS OWN (the №TBD regression of the first
+    // A SPREAD IS A TYPE SOURCE OF ITS OWN (the №1934 regression of the first
     // cut): `ro q = { ...p, a: 2.5 }` compiles green exactly as it did
     // before the wave -- the lattice answers the spread's type, and the
     // bind door does not refuse a form that HAS a source.

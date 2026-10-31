@@ -417,7 +417,7 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
     // source of its own (`type_of` answers the spread's type, and
     // `@judge_record_ctor` judges a spread-carrying construction by names
     // only), so it falls to the lattice below exactly as before this wave --
-    // refusing it here was the №TBD regression: `ro q = { ...p, a: 2.5 }`
+    // refusing it here was the №1934 regression: `ro q = { ...p, a: 2.5 }`
     // compiled green on B1 and was refused E2-b by the first cut of this
     // branch. THE CLASS BOUNDARY: a form WITH a type source (a name, a
     // spread) is the lattice's; a form WITHOUT one is the position's.
@@ -558,7 +558,7 @@ fn Checker mut @judge_record_ctor(ctor Node, vtype TyId) -> () {
 }
 
 /// Does this record construction CARRY A TYPE SOURCE of its own -- a name
-/// head or a spread (registry №1933, the №TBD spread regression of the first
+/// head or a spread (registry №1933, the №1934 spread regression of the first
 /// cut)? A form that has one is the lattice's; the settle door serves forms
 /// WITHOUT one only. Early returns, one question per line.
 fn ctor_is_srcless(e Node) -> bool {
@@ -590,7 +590,7 @@ fn ctor_is_srcless(e Node) -> bool {
 /// shape -- a binding's initializer, which must name a type -- speaks at its
 /// own door; this one never does.
 fn Checker mut @settle_anon_ctor(e Node) -> () {
-    // A SPREAD-CARRYING FORM IS STILL THIS DOOR'S TO RECORD (registry №TBD,
+    // A SPREAD-CARRYING FORM IS STILL THIS DOOR'S TO RECORD (registry №1934,
     // the round-2 spread probe): the channel's readers ask for the node's
     // type by id, and the spread arm of `type_of` -- which they do not all
     // call -- is not enough (`sp2`: "no type recorded for this node"). The
