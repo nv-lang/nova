@@ -1,0 +1,943 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::check_expr` -- the half that answers "what type does
+// this expression have" positively, kind by kind, with no default: an unknown
+// shape is an ICE, never a silent int (the #652 class this project paid for).
+//
+// Role: the lattice. The walk decides WHERE to look; this file answers WHAT a
+// node's type is.
+// Used by: check/typing.nv (every record into the channel goes through it).
+// Guarded by: check-novac-resolve-discipline.py (no linear name resolution,
+// no silent int default), check-novac-file-size.py.
+//
+// Split out of typing.nv on 2026-08-17 when that file crossed the
+// thousand-line line (decision 12 / P13). The two questions are read
+// separately often enough that the cut is along meaning, not size.
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice_at}
+import ../builtins.{ENTRY_FN, is_bool_literal, RECV_BINDING, SELF_TYPE}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{variants_named, ctor_head_variant, VariantRow, variant_sum_count}
+import ../sem.{ArgClass, ArgSpec, CallForm, Ctx, CheckOut, raw_row, ParamMode, carrier_of, arm_body_at, branch_children}
+import ../sem.{LitArg, is_const_int_expr}
+// M3a: the literal token -> primitive table lives in `sem`, asked by both consumers.
+import ../sem.{literal_prim_of}
+import ../sem.{call_callee_text, is_expr_kind, leaf_text, leaf_kind, expr_leaf_name, subst_type, raw_vrow, no_vrow}
+import ../sem.{is_vrow, is_arg_node, arg_expr_of, arg_name_of}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{decl_of_ty}
+import ../resolve.{FieldIndex}
+import ../sem.{option_payload, for_head_elem}
+import ../sem.{is_numeric_prim, is_float_prim}
+import ../types.{Interner}
+import ../builtins.{TypeKind}
+
+/// The lookup key of a call whose every position CAN be typed: the receiver in
+/// position zero, then one type per written argument.
+///
+/// The same shape `check` builds with `no_ty()` in the argument slots --
+/// same door, same order: one builder per stage of KNOWLEDGE, not one per kind
+/// of call. `from` is the index of the first argument child.
+fn typed_call_key(kids []Node, from int, recv Node, recv_t TyId, ctx Ctx, scope Scope,
+                  chan CheckOut, fres FieldIndex) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    // The receiver is parameter zero (plan 273), so it carries a CLASS like any
+    // other argument: `mut b; b.m()` selects the `mut @m` overload, which is
+    // the precedent the whole mode axis generalizes from (P14 rule 2).
+    ro rcls = recv_class(typed_arg_class(recv, ctx, scope, chan, fres))
+    out.push(ArgSpec { type_id: recv_t, cls: rcls, name: "", lit: LitArg.NotLit })
+    out.append(typed_args(kids, from, ctx, scope, chan, fres))
+    out
+}
+
+/// One slot per written argument, each carrying its TYPE. The typed twin of
+/// `unknown_args`, and the same walk: children before `from` are syntax -- the
+/// callee, or the receiver, the dot and the name -- and a punctuation leaf is
+/// no argument.
+///
+/// A free call's key is exactly this, with no position zero; a method call's is
+/// this after the receiver. One rule, two callers, so the two spellings of a
+/// call cannot start disagreeing about what a key is.
+fn typed_args(kids []Node, from int, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> []ArgSpec {
+    mut out = []ArgSpec.new()
+    mut i = 0
+    for c in kids {
+        if i >= from && is_arg_node(c) {
+            // The named form wraps its value, so both the TYPE and the CLASS
+            // are questions about the expression inside -- and the NAME is what
+            // the wrapper adds.
+            ro ax = arg_expr_of(c)
+            out.push(ArgSpec { type_id: type_of(ax, ctx, scope, chan),
+                               cls: typed_arg_class(ax, ctx, scope, chan, fres), name: arg_name_of(c),
+                               lit: arg_lit_of(ax) })
+        } else {
+            // Syntax, not an argument: the argument cursor stays put while the
+            // child cursor advances.
+        }
+        i += 1
+    }
+    out
+}
+
+/// WHAT this argument is, for rule P14: a place, a temporary, or a promise.
+///
+/// The classes are decided by the SHAPE of the expression and, for a BOUND
+/// NAME, by how it was bound -- which is why the scope carries the mode. An
+/// owned temporary is a value nobody else holds: a literal, a call result, a
+/// constructor, the value of an operator or of a `match`. A name answers with
+/// its binding, and so does the receiver `@`: it IS a bound name (typing.nv
+/// walked). A FIELD -- `x.f`, `@f`, `x.f.g` -- is a place whose mutability is
+/// its ROOT's (`field_class`); an index of something is a temporary here, the
+/// narrower answer.
+#realtime nogc
+fn arg_class(e Node, scope Scope) -> ArgClass {
+    ro k = e.kind_of()
+    if k == NodeKind.Name || k == NodeKind.SelfExpr {
+        // A BOUND NAME -- written as an identifier, or as the receiver `@`.
+        // THE RECEIVER ANSWERS AS A NAME, NOT AS A TEMPORARY (hunt check x K4,
+        // 2026-09-04). Until this arm knew it, a SelfExpr fell to the tail
+        // below as an owned temporary, although its mode was bound in the
+        // scope and read by nobody: every `mut` method called through `@` was
+        // refused (152 such methods in novac's own source), a `consume`
+        // method through `@` was ACCEPTED where the oracle refuses, and an
+        // overload by receiver mode picked the `ro` body in silence. Three
+        // syntaxes carry the receiver -- `@m()`, `f(@)`, `(@).m()` -- and
+        // all three arrive here.
+        return class_of_binding(binding_name_of(e), scope)
+    }
+    if k == NodeKind.Paren { return arg_class(branch_children(e)[1], scope) }
+    if k == NodeKind.FieldAccess || k == NodeKind.SelfField { return field_class(e, scope) }
+    ArgClass.ArgOwnedTemp
+}
+
+/// The class of a FIELD place: its ROOT binding decides (02-types.md:13463-13478,
+/// the `walk_root` of a mut call through a chain; :11978-11981, a field of a
+/// `mut` binding is writable, of a `ro` one is not). A `mut` or `consume` root
+/// makes the field a MUTABLE place -- `ArgMut`, never `ArgConsume`: moving out
+/// of a field is a different question, and `mut` is what the root lends. Any
+/// other root -- `ro`, or a value that is no binding (`f().x`) -- answers `ro`.
+///
+/// Until 2026-10-01 every field answered `ro` "conservatively", on the claim
+/// that `ro` is the class every mode accepts. It is not: a `mut` parameter or
+/// receiver refuses it (P14), so `@ir.temp(t)` inside a `mut` method and
+/// `o.c.bump()` on a `mut` local were refused -- 89 times over novac's own
+/// `lower/` (registry 1560), forms the oracle compiles.
+#realtime nogc
+fn field_class(e Node, scope Scope) -> ArgClass {
+    ro root = if e.kind_of() == NodeKind.SelfField {
+        class_of_binding(RECV_BINDING, scope)
+    } else {
+        // `x.f`: the receiver of the access is child zero.
+        ro base = branch_children(e)[0]
+        ro bk = base.kind_of()
+        if bk == NodeKind.FieldAccess || bk == NodeKind.SelfField || bk == NodeKind.Paren ||
+           bk == NodeKind.Name || bk == NodeKind.SelfExpr {
+            arg_class(base, scope)
+        } else {
+            // A value that is no binding (a call, a literal): no place to lend.
+            ArgClass.ArgRo
+        }
+    }
+    match root {
+        ArgMut => ArgClass.ArgMut
+        ArgConsume => ArgClass.ArgMut
+        ArgRo => ArgClass.ArgRo
+        ArgOwnedTemp => ArgClass.ArgRo
+        ArgTempRecv => ArgClass.ArgRo
+    }
+}
+
+/// The class of a RECEIVER: what the argument class says, except that an owned
+/// temporary is a place for the length of its own call -- `StringBuilder.new(
+/// cap: 4).append(s)` writes into the hoisted temp (D33, 02-types.md:13526:
+/// a chain rooted in an rvalue has no binding to check). Until registry 1630
+/// the temporary was refused by every `mut` method ("no such method"), and in
+/// a longer chain the refusal went silent and iced in `type_of`.
+#realtime nogc
+fn recv_class(c ArgClass) -> ArgClass => match c {
+    ArgOwnedTemp => ArgClass.ArgTempRecv
+    ArgRo => ArgClass.ArgRo
+    ArgMut => ArgClass.ArgMut
+    ArgConsume => ArgClass.ArgConsume
+    ArgTempRecv => ArgClass.ArgTempRecv
+}
+
+/// The class of an argument whose call is ALREADY TYPED: a call that hands out
+/// a `ro` VIEW (`-> ro []T`, D176) is a place the caller may only read, so it
+/// answers `ro` where any other call result is an owned temporary -- and a
+/// `mut` receiver or parameter then has no candidate for it, as the spec says
+/// ("forbids calling `mut` methods on a value of type `ro T`", registry 1458).
+/// Every other shape answers what `arg_class` answers.
+fn typed_arg_class(e Node, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> ArgClass {
+    if call_hands_ro_view(e, ctx, chan) { return ArgClass.ArgRo }
+    // A FLUENT CALL hands out its RECEIVER (`-> @`, D409; the `mut` chain of
+    // D181): `c.reset().set_pos(4)` calls `set_pos` on the place `c` is, so
+    // the call answers its receiver's class -- a `mut` place stays one. Until
+    // registry 1540 every call result was an owned temporary here, and the
+    // second `mut` link was refused under P14 where the oracle compiles it.
+    if Some(recv) = fluent_receiver(e, ctx, chan) {
+        return typed_arg_class(recv, ctx, scope, chan, fres)
+    } else {
+        // Not a call that returns its receiver: the shape decides below.
+    }
+    // AN OWNED FIELD OF AN OWNED RECEIVER (D133, "Field-aware flow"): inside a
+    // `consume` method, `@body` of a field declared `consume body T` is the
+    // record's own obligation, and moving it out -- `@body.into_str()` -- is
+    // how the method closes the record (at its exit every `consume` field is
+    // Consumed). `field_class` lends a field as `mut` and nothing more; this
+    // is the one place a field hands over ownership. Refused by P14 until
+    // registry #1719 (novac's own emit_c.nv `@into_parts`).
+    if owned_field_of_owned_recv(e, ctx, scope, chan, fres) { return ArgClass.ArgConsume }
+    arg_class(e, scope)
+}
+
+/// Is `e` a field path rooted at `@` -- `@f`, `@f.g`, through parens -- whose
+/// every link is declared `consume` (D133), inside a method whose receiver is
+/// `consume`? Only such a place may move out (02-types.md, "Field-aware flow"
+/// and "Nested field paths": `@inner.tx.commit()`). A receiver that is `mut`
+/// keeps the field a `mut` place here: the D133 rotate pattern (consume, then
+/// rebind before the exit) needs the field's state tracked, which the flow
+/// does not do yet -- refused by P14, registry #1723.
+fn owned_field_of_owned_recv(e Node, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return owned_field_of_owned_recv(branch_children(e)[1], ctx, scope, chan, fres) }
+    ro kids = branch_children(e)
+    if k == NodeKind.SelfField {
+        if kids.len() < 2 || class_of_binding(RECV_BINDING, scope) != ArgClass.ArgConsume { return false }
+        ro owner = scope.type_of_name(RECV_BINDING)
+        return is_ty(owner) && fres.field_is_owned(ctx.fields, owner, leaf_text(kids[1]))
+    }
+    if k != NodeKind.FieldAccess || kids.len() < 3 { return false }
+    if !owned_field_of_owned_recv(kids[0], ctx, scope, chan, fres) { return false }
+    ro owner = chan.type_if_known(kids[0].id_of())
+    is_ty(owner) && fres.field_is_owned(ctx.fields, owner, leaf_text(kids[2]))
+}
+
+/// The RECEIVER expression of a method call whose decided callee returns its
+/// receiver (`-> @`) -- or None. Read from the channel's decision, never
+/// re-resolved; parens are looked through, as `arg_class` does.
+fn fluent_receiver(e Node, ctx Ctx, chan CheckOut) -> Option[Node] {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return fluent_receiver(branch_children(e)[1], ctx, chan) }
+    if k != NodeKind.MethodCall { return None }
+    if !chan.has_callee(e.id_of()) { return None }
+    match chan.callee_of(e.id_of()).target {
+        CalleeFn(row) => {
+            if ctx.fns.rows[raw_row(row)].ret_self {
+                return Some(branch_children(e)[0])
+            } else {
+                // A method with any other return: its value is a fresh one.
+                return None
+            }
+        }
+        // A variant, a construction, a synthesized display and an effect
+        // operation hand out a fresh value, never the receiver.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => None
+    }
+}
+
+/// Does this CALL hand out a `ro` view -- is its decided callee a row whose
+/// return is written `-> ro T` (D176, registry 1458)? Read from the channel's
+/// decision, never re-resolved; an undecided call answers false (its refusal
+/// already spoke). Parens are looked through, as `arg_class` does.
+fn call_hands_ro_view(e Node, ctx Ctx, chan CheckOut) -> bool {
+    ro k = e.kind_of()
+    if k == NodeKind.Paren { return call_hands_ro_view(branch_children(e)[1], ctx, chan) }
+    if k != NodeKind.Call && k != NodeKind.MethodCall { return false }
+    if !chan.has_callee(e.id_of()) { return false }
+    match chan.callee_of(e.id_of()).target {
+        CalleeFn(row) => ctx.fns.rows[raw_row(row)].ret_ro
+        // A variant, a construction, a synthesized display and an effect
+        // operation hand out a fresh value: no view.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+    }
+}
+
+/// The name a BOUND expression is looked up under: an identifier's own text,
+/// or the receiver's symbol for `@` (typing.nv binds RECV_BINDING to the
+/// callable's receiver mode before the body is walked).
+#realtime nogc
+fn binding_name_of(e Node) -> str {
+    if e.kind_of() == NodeKind.SelfExpr { return RECV_BINDING }
+    expr_leaf_name(e)
+}
+
+/// The class of a BOUND name: the ONE answerer for a name and for `@` (the
+/// K4 hunt found the second spelling answered by shape instead). A name bound
+/// nowhere -- `true`/`false` are literals wearing a name -- is a temporary,
+/// which is exactly what it is.
+#realtime nogc
+fn class_of_binding(nm str, scope Scope) -> ArgClass {
+    if !scope.is_bound(nm) { return ArgClass.ArgOwnedTemp }
+    match scope.mode_of_name(nm) {
+        ModeRo => ArgClass.ArgRo
+        ModeMut => ArgClass.ArgMut
+        ModeConsume => ArgClass.ArgConsume
+    }
+}
+
+/// Is this expression a BARE NUMERIC LITERAL -- `1`, `-1`, `0x1F`, `2.5` -- the
+/// one shape whose type its POSITION decides (D227 rule 2)? Asked when a call's
+/// typed key is built, so the resolver can admit it into any parameter of its
+/// family (`ArgSpec.lit`), and by the operand door below. A string or char
+/// literal is not one: their types are their own.
+#realtime nogc
+fn lit_arg_of(e Node) -> LitArg {
+    // An untyped integer CONSTANT EXPRESSION (`40 + 2`) is a literal to every
+    // position (D489, the Rule): admitted, adapted and judged for fit by its
+    // exact value as one -- part 9 of p274-carina-k1.
+    if e.kind_of() != NodeKind.Lit {
+        if is_const_int_expr(e) { return LitArg.IntLitArg }
+        return LitArg.NotLit
+    }
+    ro lk_kids = branch_children(e)
+    ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
+    if lk == TokenKind.IntLit { return LitArg.IntLitArg }
+    if lk == TokenKind.FloatLit { return LitArg.FloatLitArg }
+    LitArg.NotLit
+}
+
+/// The literal family of an ARGUMENT: a bare numeric literal's, or -- registry
+/// 1697 (D489) -- that of an `if`/`match` value whose every value tail is a
+/// numeric literal of one family (`take(if c < 0 { -1 } else { 0 })`): such a
+/// value is its literals, and takes its parameter's type as a bare one does.
+fn arg_lit_of(e Node) -> LitArg {
+    ro k = e.kind_of()
+    if k != NodeKind.IfExpr && k != NodeKind.MatchExpr { return lit_arg_of(e) }
+    tail_family(e)
+}
+
+/// Is this a literal's family, not `NotLit`? A sum is told by `match`, never by
+/// `==` (D363: `==` on a sum needs `Equal`, and `LitArg` declares none).
+#realtime nogc
+fn is_lit_family(l LitArg) -> bool {
+    match l {
+        NotLit => false
+        IntLitArg | FloatLitArg => true
+    }
+}
+
+/// Are two literal families the same one? Two `NotLit` are not a family.
+#realtime nogc
+fn same_lit_family(a LitArg, b LitArg) -> bool {
+    match a {
+        NotLit => false
+        IntLitArg => match b {
+            IntLitArg => true
+            NotLit | FloatLitArg => false
+        }
+        FloatLitArg => match b {
+            FloatLitArg => true
+            NotLit | IntLitArg => false
+        }
+    }
+}
+
+/// The one literal family of `n`'s value tails, or `NotLit` when a tail is
+/// anything else or two families meet. An `if` without `else` is no value.
+fn tail_family(n Node) -> LitArg {
+    ro k = n.kind_of()
+    if k == NodeKind.Lit { return lit_arg_of(n) }
+    if k == NodeKind.Block {
+        ro t = block_tail(n)
+        if t.id_of() == n.id_of() { return LitArg.NotLit }
+        return tail_family(t)
+    }
+    if k != NodeKind.IfExpr && k != NodeKind.MatchExpr { return LitArg.NotLit }
+    mut fam = LitArg.NotLit
+    mut tails = 0
+    for c in branch_children(n) {
+        ro ck = c.kind_of()
+        ro is_tail = ck == NodeKind.Block || ck == NodeKind.IfExpr || ck == NodeKind.MatchArm
+        if !is_tail { continue }
+        ro f = tail_family(if ck == NodeKind.MatchArm { arm_value_of(c) } else { c })
+        if !is_lit_family(f) || (tails > 0 && !same_lit_family(f, fam)) { return LitArg.NotLit }
+        fam = f
+        tails += 1
+    }
+    if tails < 2 { return LitArg.NotLit }
+    fam
+}
+
+/// The type an OPERAND takes beside the other operand: a bare numeric literal
+/// takes the other side's numeric type when its family admits it (D405: "an
+/// int literal without an explicit width infers to the type of the other
+/// operand"; D227 rule 2 for a float literal), anything else keeps its own.
+/// ONE door for the lattice and the judge: the lattice answers "what type does
+/// `a + 1` have" on demand, the judge decides and RECORDS the literal's type;
+/// both must say the same, so both ask here (#908's lesson: two answerers to
+/// one question diverge on the first form one of them forgets).
+///
+#realtime nogc
+fn adapt_operand(e Node, own TyId, other TyId, tys Interner) -> TyId {
+    if !is_ty(other) { return own }
+    // A NEWTYPE over a number takes the literal too (D52 amendment 2026-09-04,
+    // rule 2: `a + 1` with `a FnRow` is legal and gives `FnRow`): the literal is
+    // asked of the representation, and the operand takes the newtype itself.
+    ro rep = numeric_rep(tys, other)
+    match lit_arg_of(e) {
+        NotLit => { return own }
+        IntLitArg => { if !is_numeric_prim(tys, rep) { return own } }
+        FloatLitArg => { if !is_float_prim(tys, rep) { return own } }
+    }
+    other
+}
+
+/// The type a value COMPUTES as for D52's operators: a newtype is peeled to its
+/// representation (one level per step, a chain peels fully), anything else is
+/// itself. Asked of the interner, the door this file already has: the
+/// representation is argument zero of a newtype's term (`representation_of`).
+fn numeric_rep(tys Interner, t TyId) -> TyId {
+    mut cur = t
+    mut steps = 0
+    // Bounded: each step moves to a different term, and a cycle among newtypes
+    // is a declaration the checker refuses before any operator is typed.
+    while is_ty(cur) && tys.kind_of(cur) == TypeKind.TkNewtype && steps < 64 {
+        cur = tys.arg(cur, 0)
+        steps += 1
+    }
+    cur
+}
+
+/// The TARGET type of a cast, resolved from the type written after `as`.
+///
+/// The subset's cast targets are plain identifiers (`r as int`), so the last
+/// identifier child IS the type. A target novac does not know is an ice here
+/// and a REFUSAL in the walk -- the walk runs first, so a refused cast never
+/// reaches this door.
+#realtime nogc
+fn cast_target_of(e Node, ctx Ctx) -> TyId {
+    mut found = no_ty()
+    for c in branch_children(e) {
+        if !c.is_ident() { continue }
+        // The registry answers with an Option, so the Option is what is read --
+        // not laundered through a sentinel and compared with it a line later.
+        // That detour was here until the owner pointed at it: it turns a real
+        // "absent" into a number somebody must remember to test, which is the
+        // no-silent-default class this compiler exists to refuse.
+        if Some(id) = ctx.ty_of_name(leaf_text(c)) {
+            found = id
+        } else {
+            // Not a type name: an identifier of the cast's own syntax, and the
+            // target is decided by the ones that do resolve.
+        }
+    }
+    if !is_ty(found) {
+        ice_at(
+            "novac/src/check/type_of.nv:428",
+            "check: a cast whose target type the registry does not know reached the lattice")
+    } else {
+        // A type the registry holds: that is the cast's value type.
+    }
+    found
+}
+
+/// Type of an expression over the tiny registry lattice. Every kind is
+/// judged positively; the residual is an ice, never an int (#652 class).
+///
+/// `chan` is the channel THIS run is filling, and the lattice reads it for one
+/// question only: a generic call's `-> T` names a type PARAMETER, and which
+/// type that parameter stands for is a property of the CALL, recorded when the
+/// callee was resolved. Reading it here is not a second opinion -- it is the
+/// checker's own record, and the walk records a callee before it ever asks
+/// about the node above it (E2-b2). Without it the lattice answered `TkParam`
+/// for `id[int](4)`, and every consumer downstream -- the printer set, the
+/// operator rules, a binding's type -- judged a parameter instead of an int.
+#realtime nogc
+fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
+    ro k = e.kind_of()
+    if k == NodeKind.Lit {
+        // DECIDED BY THE WALK when the literal stands in a TYPED POSITION -- a
+        // parameter of another width, the other operand of an operator (D227
+        // rule 2, D405): the walk records the position's type and this door
+        // reads it, as it does for `??` below. With nothing recorded the
+        // literal is its own kind (D44: `int`, `f64`).
+        ro decided = chan.type_if_known(e.id_of())
+        if is_ty(decided) { return decided }
+        // A negated literal is [Minus, lit] — judge the LAST leaf.
+        ro lk_kids = branch_children(e)
+        ro lk = leaf_kind(lk_kids[lk_kids.len() - 1])
+        // THE TABLE LIVES IN `sem`, and both consumers ask it there (M3a): the other one
+        // is the lowering of a `println` argument, which has no position type to read
+        // first. Keeping a copy here would have been a second home for one rule.
+        return literal_prim_of(lk, ctx)
+    }
+    if k == NodeKind.Coalesce || k == NodeKind.Try {
+        // DECIDED by the walk (the payload of the left side; of `x?`'s operand,
+        // try_rules.nv), read here -- re-deriving it would be the second door
+        // the channel exists to close.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.Name {
+        ro nm = expr_leaf_name(e)
+        if is_bool_literal(nm) { return ctx.prims.bool_id }
+        // A LOCAL SHADOWS A CONSTANT, so the scope answers first; a name the
+        // scope does not bind may still be a module constant, and its type is
+        // a DECISION the walk recorded (274.5 wave B2) -- read, never redone.
+        if !scope.is_bound(nm) {
+            return chan.type_if_known(e.id_of())
+        } else {
+            // Bound locally: the scope is the answer, as it has always been.
+        }
+        return scope.type_of_name(nm)
+    }
+    if k == NodeKind.MethodCall {
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: method call without a name")
+        ro mname = leaf_text(kids[2])
+        // DECIDED BY THE CHECKER FIRST (sub-plan L2): a generic method resolved
+        // on an instance receiver records its callee and its SUBSTITUTED return
+        // in the channel; the lookup below would answer with the row's declared
+        // return -- `T`, or `Vec[T]` -- which is not this call's type. Before
+        // the decision the channel is empty and the signature answers as before.
+        ro nid = e.id_of()
+        // THE CHANNEL IS THE ONLY SOURCE (274.4 §2): the checker records the
+        // callee BEFORE any node above asks for this call's type (see the doc
+        // of this fn), so by the time type_of runs the decision exists. Until
+        // 274.4 this arm re-ran its own fns.lookup when the channel was
+        // silent -- a second resolution of the same root, and the exact door
+        // the resolver split closes. A silent channel is now a pass-order
+        // violation and answers as one: an ice, not a retry.
+        // The TYPE is asked first: a refused call carries a recorded type
+        // and no callee (a refusal is a decision too), and only then the
+        // callee's declared return. Silence on both is the violation.
+        ro known = chan.type_if_known(nid)
+        if is_ty(known) { return known }
+        if !chan.has_callee(nid) {
+            // A POISONED RECEIVER IS THE ONE LEGAL SILENCE, and telling it
+            // apart from a pass-order violation is the whole of this branch.
+            // When an earlier statement refused a binding, `binds.nv` still
+            // binds the name with `no_ty()` so its later uses raise no second
+            // complaint -- and a method call on such a name is never decided,
+            // because the judge has nothing to look a method up on. The
+            // absence of a decision is then the ANSWER, not a broken pass
+            // order.
+            //
+            // MEASURED 2026-09-20 (registry No. 1168). The check stayed
+            // correct while the form could not be parsed at all; reading a
+            // qualified arm pattern opened the path, and `check/check.nv`
+            // began to ice where it used to produce diagnostics. Both halves
+            // are needed to see it -- a match whose arms are qualified, and a
+            // method call on a receiver whose type never arrived -- which is
+            // why neither half alone reproduces.
+            //
+            // THE PASS-ORDER CHECK ITSELF STAYS, and that is deliberate: it
+            // catches a real class (274.4, two answers to one question), and
+            // removing it to silence this case would trade a guard for a
+            // symptom. What it gains here is a distinguishing question --
+            // is the receiver typed at all -- instead of treating every
+            // silence as a violation.
+            ro recv_t = type_of(kids[0], ctx, scope, chan)
+            if !is_ty(recv_t) { return no_ty() }
+            // A POISONED ARGUMENT is the same legal silence one slot later: the
+            // judge left an overload set undecided because an argument reads a
+            // name an earlier refusal bound with no type (`args_read_poisoned`).
+            if args_read_poisoned(kids, 3, scope) { return no_ty() }
+            ice_at(
+                "novac/src/check/type_of.nv:538",
+                "check: method call reached type_of with no decision in the channel (274.4 pass-order)")
+        }
+        return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
+    }
+    // `@field` inside a method body: the receiver is a BINDING (`@`), so this
+    // is a field access on it and needs no separate rule. Outside a method the
+    // binding does not exist, and the answer is absence -- which `check`
+    // refuses by name rather than icing here (P12).
+    if k == NodeKind.InterpStr {
+        // The walk records str where it judges the slots; silence is a
+        // refused literal, and readers act on no_ty().
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.SelfExpr {
+        // The walk recorded the receiver's type where it verified the
+        // binding; silence is `@` outside a method, already refused.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.SelfField {
+        // THE CHANNEL IS THE ONLY SOURCE (274.4 step 3): the walk records the
+        // field's type where it verifies the field exists. `@field` outside a
+        // method body records nothing, and no_ty() is that answer.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.FieldAccess {
+        // Same rule: the walk decided, this door reads. Re-resolving the
+        // field NAME here was the second door of the field root -- the exact
+        // shape the method calls lost in step 2. Silence is a refused or
+        // unwalked access, and readers act on no_ty().
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.TupleExpr {
+        // Same rule again (B15 step 4a): the walk interned the pair term and
+        // recorded it; silence is a refused literal, and readers act on
+        // no_ty().
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.Index {
+        // Same rule as the field access above: the walk decided, this door
+        // reads. The Index arm of the walk asks the receiver's application for
+        // its element and RECORDS the answer -- so re-deriving it here would be
+        // the second door of one root, and the two could disagree.
+        //
+        // Its absence was an ICE on novac's own source (five files iced; this
+        // is one of them). Nothing asked for an index's type until an index
+        // stood UNDER something -- `rs[i].xs[0]`, where the outer index makes
+        // the walk type a field whose receiver is itself an index. Silence is a
+        // refused or unwalked index, and readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.ArrayLit {
+        // Decided by `type_array_lit` and RECORDED before anyone asks; the
+        // lattice reads it back. Tolerant, not strict: a literal the checker
+        // refused has no type, and its readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.IfExpr {
+        // Same rule as Index/ArrayLit/TupleExpr above (registry #TBD, the
+        // argument-position wave): `@type_if_value` records the agreed
+        // branch type before anyone asks here -- this door reads, it does
+        // not re-derive. Its absence iced the moment `is_expr_kind` and the
+        // `type_expr` dispatcher both learned the argument position but this
+        // one had not: `pick(if c {10} else {20})` reached the fallback ice
+        // at the bottom of this function. Silence is a refused `if` (no
+        // else, disagreeing branches), and readers act on `no_ty()`.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.Unsafe {
+        // `@type_unsafe` records the block's tail type before anyone asks (274.11
+        // E.10 step 3c); silence is a refused block or a statement-shaped one.
+        return chan.type_if_known(e.id_of())
+    }
+    if k == NodeKind.RecordCtor {
+        ro kids = branch_children(e)
+        // A record-form VARIANT's construction is a value of its SUM.
+        if Some(v) = ctor_head_variant(ctx, kids[0]) {
+            return ctx.variant_rows[raw_vrow(v)].sum_id
+        } else {
+            // A record's own name, or the anonymous form below.
+        }
+        if kids[0].kind_of() == NodeKind.Name {
+            // `Self { .. }`: the checker decided the type on the head (D66,
+            // registry 1557) -- `Self` is no registry name.
+            if expr_leaf_name(kids[0]) == SELF_TYPE { return chan.type_if_known(kids[0].id_of()) }
+            return ctx.ty_of_name_or_ice(expr_leaf_name(kids[0]))
+        }
+        // Anonymous `{ ... }`: settled by its POSITION's expectation and
+        // RECORDED there (`@settle_anon_ctor`, binds.nv -- registry №TBD,
+        // the №1484/№1705 wave). This door READS the recording, it does not
+        // re-derive it -- the same rule the Index/IfExpr/ArrayLit arms above
+        // state, for the same reason: the walk decided, and a second door
+        // re-deciding is how two answers drift apart. Silence is a position
+        // that named no type the subset can read (the boundary is said by
+        // name where the position owns a refusal) or a construction its own
+        // door refused; the ice below stands for a caller that asks about a
+        // construction no door ever settled.
+        ro settled = chan.type_if_known(e.id_of())
+        if is_ty(settled) { return settled }
+        // Anonymous `{ ...src, ... }`: the record type is the spread's.
+        for c in kids {
+            if c.kind_of() == NodeKind.CtorSpread {
+                return type_of(branch_children(c)[1], ctx, scope, chan)
+            }
+        }
+        ice_at("novac/src/check/type_of.nv:644", "check: anonymous constructor without a spread")
+    }
+    if k == NodeKind.IsTest {
+        // A type test is a `bool` (D54); its legality was the walk's.
+        return ctx.prims.bool_id
+    }
+    if k == NodeKind.Cast {
+        // The value of a cast is the TARGET type -- resolved by name, because a
+        // cast writes the type it wants. Legality is the WALK's business
+        // (`type_cast`), so by the time the lattice is asked the pair has been
+        // judged and this is the answer it established.
+        // A POINTER target was typed through the reference door and RECORDED
+        // (`@type_ptr_cast`); the name door below cannot read `*mut T`.
+        ro recorded = chan.type_if_known(e.id_of())
+        if is_ty(recorded) { return recorded }
+        return cast_target_of(e, ctx)
+    }
+    if k == NodeKind.Paren || k == NodeKind.Unary || k == NodeKind.Bin {
+        // A CONSTANT EXPRESSION a position adapted (`k(40 + 2)` at `b u8`) was
+        // RECORDED with the position's type, as a literal is (D489); its parts
+        // keep their own. Read first, so the lattice and the judge agree.
+        if is_const_int_expr(e) {
+            ro decided = chan.type_if_known(e.id_of())
+            if is_ty(decided) { return decided }
+        } else {
+            // Not a constant: its type is computed below from its parts.
+        }
+    } else {
+        // Not an operator form: the kinds below answer for themselves.
+    }
+    if k == NodeKind.Paren {
+        // Parens carry no meaning of their own: the type is the inner
+        // expression's, and the emitter reprints them for grouping.
+        return type_of(branch_children(e)[1], ctx, scope, chan)
+    }
+    if k == NodeKind.Unary {
+        ro kids = branch_children(e)
+        ro operand = type_of(kids[1], ctx, scope, chan)
+        // `!` is strictly logical on bool and is NOT overloadable
+        // (D46 AMEND 2026-08-02, @not retracted), so its answer is bool and
+        // nothing else. `-` and `~` keep the operand's type (@neg / @bitnot
+        // on a user type return Self by convention; the subset only emits the
+        // primitive path and check refuses the rest).
+        ro answer = match un_op_of(leaf_kind(kids[0])) {
+            Not => ctx.prims.bool_id
+            Negate | BitNot => operand
+        }
+        return answer
+    }
+    if k == NodeKind.Bin {
+        ro kids = branch_children(e)
+        // The RESULT type is a property of the operator, so it is decided by
+        // an exhaustive match on the decision -- not by asking the token
+        // whether it happens to be one of three comparisons.
+        match bin_op_of(leaf_kind(kids[1])) {
+            Less | LessEq | Greater | GreaterEq => { return ctx.prims.bool_id }
+            Equal | NotEqual => { return ctx.prims.bool_id }
+            AndAlso | OrElse => { return ctx.prims.bool_id }
+            Range => { ice_at(
+                "novac/src/check/type_of.nv:702",
+                "check: a range is not an expression outside a for-head") }
+            // Arithmetic AND the bitwise family: the operands' OWN numeric type,
+            // decided below -- `u8 & 0x0F` is a `u8` (D405: one concrete integer
+            // type on both sides), not an `int`. Until 2026-09-04 the bitwise arms
+            // answered `int` without looking (#910).
+            Add | Sub | Mul | Div | Modulo | BitAnd | BitOr | BitXor | ShiftLeft | ShiftRight => {}
+        }
+        ro lt0 = type_of(kids[0], ctx, scope, chan)
+        ro rt0 = type_of(kids[2], ctx, scope, chan)
+        // A POISONED OPERAND poisons the expression (registry 1322's follow-up):
+        // no type means refused where it was typed, and the lattice answers
+        // `no_ty()` -- the tolerant rule every recorded kind above follows.
+        // Measured 2026-09-25: once handed records' fields were read,
+        // `fd.param_off + rslot` with `fd` bound poisoned by an index refusal
+        // reached the invariant below and iced three files of novac's own
+        // check/ (params, option_rules, methods). The ICE stays for what it was
+        // written for: a TYPED operand that is not numeric.
+        if !is_ty(lt0) || !is_ty(rt0) { return no_ty() }
+        // A bare literal on one side takes the other side's type (the one
+        // door the judge records through -- see adapt_operand).
+        ro lt = adapt_operand(kids[0], lt0, rt0, ctx.tys)
+        ro rt = adapt_operand(kids[2], rt0, lt0, ctx.tys)
+        // Both sides PROVEN the same numeric primitive: that is the result
+        // (`i8 + i8` is `i8`, `f32 * f32` is `f32`) -- arithmetic on
+        // str/bool/records is not a silent int (#652 class), it is an
+        // invariant break here.
+        if lt == rt && is_numeric_prim(ctx.tys, lt) { return lt }
+        // ONE NEWTYPE over a number on both sides (D52 amendment, rule 1): the
+        // result is the newtype itself -- `FnRow + FnRow` is a `FnRow`.
+        if lt == rt && is_numeric_prim(ctx.tys, numeric_rep(ctx.tys, lt)) { return lt }
+        // Two numeric operands of DIFFERENT types: the operator judge refused
+        // this node (spec/conversions.md, wave B4), and a refusal is also a
+        // decision (274.4 step 2) -- the left operand's type is what the
+        // refused expression is typed as, so the walk past it stays alive.
+        // Until 2026-09-05 `int` beside `f64` answered `f64` here, on the
+        // oracle's measured behaviour and against the spec.
+        if is_numeric_prim(ctx.tys, lt) && is_numeric_prim(ctx.tys, rt) { return lt }
+        // An INVARIANT (#700 triage 2026-09-30): `"a" + 1` is refused by
+        // `@report_if_operator_needs_protocol` (check/operators.nv), which
+        // returns before exprs.nv records this node's type -- the only road
+        // here. Pinned by pipeline/handed_fields_test.nv and check_test.nv.
+        ice_at(
+            "novac/src/check/type_of.nv:745",
+            "check: binary arithmetic on non-numeric operands past check (#652 class)")
+    }
+    if k == NodeKind.MatchExpr {
+        // THE AGREED TYPE, when the value door recorded one (`@type_match`):
+        // it was folded while each arm's binders were IN SCOPE. Re-deriving it
+        // below after the walk asks the first arm's body with its binders
+        // gone, so `P(x) => x` answered "no type" and a block-tail match was
+        // lowered as a statement -- the fn returned 0 (registry entry filed
+        // 2026-10-01 with the `|`-binder wave).
+        ro agreed = chan.type_if_known(e.id_of())
+        if is_ty(agreed) { return agreed }
+        // A POISONED SCRUTINEE: every arm pattern refused silently (the
+        // cascade rule of `@bind_variant_pattern`), so no arm body was walked,
+        // and the first one, asked here, ices on a construction nobody
+        // recorded. The refusal stands where the scrutinee was typed.
+        ro mk = branch_children(e)
+        if mk.len() > 1 && !is_ty(chan.type_if_known(mk[1].id_of())) { return no_ty() }
+        // The match's value type: its FIRST arm expression (the corpus arms
+        // agree by construction; the type checker wave will judge).
+        mut arms = 0
+        for c in branch_children(e) {
+            if c.kind_of() == NodeKind.MatchArm {
+                arms += 1
+                ro ak = branch_children(c)
+                // An arm whose children are all punctuation cannot come from a
+                // successful parse; until 2026-08-19 this answered -1 and the
+                // unknown type travelled on, which is the same shape the
+                // sibling case below already refuses out loud.
+                ro at = arm_body_at(ak) ?? ice_at(
+                    "novac/src/check/type_of.nv:775",
+                    "check: a match arm with no body reached type_of")
+                // A BLOCK arm leaves through `return` and yields the match no
+                // value (274.5 wave B9): `no_ty()` is that answer, and the
+                // callers that record a type already test `is_ty` first. The
+                // lattice must not walk into a block -- its statement kinds
+                // have no type rule, and asking would be the #652 ice about
+                // a form nobody wrote as a value.
+                //
+                // A BARE `return` ARM IS THE SAME FACT WITHOUT THE BRACES,
+                // and it joins the test rather than getting a line of its
+                // own: `A => return 1` and `A => { return 1 }` leave through
+                // the function alike, so a door that told them apart would
+                // be answering about punctuation.
+                //
+                // MEASURED 2026-09-20, and the measurement is why the pair
+                // is written together. The parser learnt the braceless form
+                // an hour ago; the braced one had been read since wave B9,
+                // so this door knew the RULE and not the second spelling of
+                // it, and answered the #652 ice the comment above predicts.
+                // The statement-position match was fine throughout -- only
+                // the VALUE position asks here -- which is why the shape
+                // needs `match` in a tail to reproduce.
+                ro body = ak[at]
+                ro bk = body.kind_of()
+                if bk == NodeKind.Block || bk == NodeKind.RetStmt || bk == NodeKind.LoopCtl {
+                    // THE NEXT ARM IS ASKED, not the match abandoned
+                    // (registry 1191). An arm that leaves yields no value,
+                    // which is not the same as the MATCH having none: in
+                    // `match k { A => return n  B => 7 }` the second arm is
+                    // the value and the first merely departs. Returning
+                    // `no_ty()` on the first arm left the match untyped, so
+                    // the lowering gave it no destination, the 7 was emitted
+                    // as `(void)(7)` and the function returned zero. The
+                    // oracle printed 7. This mirrors the checker's own fold,
+                    // which has carried Nones through since it was written --
+                    // the two answers to one question had drifted apart.
+                    continue
+                } else {
+                    // An arm with a value: it answers for the match.
+                }
+                return type_of(body, ctx, scope, chan)
+            }
+        }
+        // ARMS THAT ALL LEAVE are not an absence of arms, and telling the two
+        // apart is what this counter is for (registry 1191). `match k { A =>
+        // return 1  B => return 2 }` yields the match no value -- a fact, not a
+        // fault -- while a match with NO arms is a program nobody can mean. The
+        // first version of the scan above walked off the end into the ice below
+        // and killed the compiler on a correct program.
+        // The then-branch leaves, so no `else` is owed (P31 form 2): what
+        // follows IS the no-arms case the ice below was written for.
+        if arms > 0 { return no_ty() }
+        // An INVARIANT (#700 triage 2026-09-30): a value `match` with no arms
+        // is refused by `@type_match` (check/match_arms.nv, EMPTY_MATCH_MSG)
+        // before its type is recorded. Pinned by check/check_test.nv.
+        ice_at("novac/src/check/type_of.nv:832", "check: match without arms past check")
+    }
+    if k == NodeKind.Call {
+        // `size_of[T]()` (D216) is no row's call: the checker recorded its
+        // type with its substitution (274.11 E.10 step 4c-2).
+        if chan.has_subst(e.id_of()) { return ctx.prims.int_id }
+        // `embed("path")` (D412) is no row's call either: the checker recorded
+        // its `[]u8` beside the door's row (check/embed_call.nv).
+        if chan.embed_row_at(e.id_of()) >= 0 { return chan.type_of(e.id_of()) }
+        // `assert(..)` and `panic(..)` are no row's calls either: the intrinsic
+        // door noted the call and recorded its type (`()`, `never`).
+        if chan.contract_of(e.id_of()).is_some() { return chan.type_of(e.id_of()) }
+        // ONE lookup answers "what is this name" (the rustc Res model),
+        // then the kind decides.
+        ro cname = call_callee_text(branch_children(e))
+        // A variant constructor is a call whose type is its SUM: asked of the
+        // sums (wave B6, #964); the checker refused an ambiguous name already,
+        // so the first row is the one when any is there.
+        ro (vfirst, vn) = if ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { variants_named(ctx, cname) }
+        if vn >= 1 {
+            // A name SEVERAL sums declare is the POSITION's to resolve (D478):
+            // until the checker has recorded its choice -- an argument waits for
+            // its parameter (`@type_deferred_args`) -- it has no type of its
+            // own, and the key's slot stays open (registry 1647).
+            if !chan.has_callee(e.id_of()) && variant_sum_count(ctx, cname) > 1 { return no_ty() }
+            // The row the CHECKER chose when several sums declare the name (by
+            // the expectation, D478 -- calls.nv): the first row would be
+            // another sum, and the node typed twice (registry 1632).
+            ro sid = ctx.variant_rows[raw_vrow(decided_variant(chan, e, vfirst))].sum_id
+            // A GENERIC sum's constructor names an INSTANCE (`Some(3)` is an
+            // `Option[int]`), decided by the walk from the payload and RECORDED
+            // (wave W4, option_rules): the family term is not a type a value
+            // has, so the lattice reads the decision instead of re-deriving it.
+            if decl_of_ty(ctx, sid).tparam_cnt > 0 { return chan.type_of(e.id_of()) }
+            return sid
+        }
+        ro def = ctx.defs.def_of(cname) ?? ice_at(
+            "novac/src/check/type_of.nv:868",
+            "check: call target not in the registry (#652 class)")
+        if DefFn(decl_row) = def.target {
+            // The ROW the checker resolved, when it recorded one: `defs` is
+            // keyed by the bare name and lives by last-write-wins, so with two
+            // overloads it answers with the last. The channel holds the
+            // decision, and reading it here is what makes a generic call
+            // answerable at all -- its substitution rides in the same record.
+            ro nid = e.id_of()
+            ro row = if chan.has_callee(nid) { raw_row(chan.callee_of(nid).callable_row()) } else { raw_row(decl_row) }
+            ro ret = ctx.fns.rows[row].ret_id
+            // A RETURN THE COLLECTOR COULD NOT READ was refused by name at the
+            // declaration (`@report_if_return_unread`, registry 1383): the call is
+            // poisoned, not a broken invariant.
+            if !is_ty(ret) { return no_ty() }
+            // A generic callee returns `-> T`: the concrete type is the one
+            // this CALL's substitution puts in that slot, through the one door
+            // that applies a substitution. An ordinary call carries an empty
+            // substitution and the return type is already itself.
+            if chan.has_callee(nid) {
+                return subst_type(ctx, ret, chan.callee_subst_of(nid))
+            } else {
+                // Nothing recorded for this node: the walk has not resolved
+                // this call yet (the diagnostics path asks the lattice while
+                // narrowing), so the row's own return type is the answer.
+            }
+            return ret
+        }
+        // A TYPE in call position CONSTRUCTS a value, and the checker recorded
+        // which type when it judged the form -- so the answer is a READ, not a
+        // second decision. Before 2026-08-21 this line iced: an internal
+        // compiler error printed at `Row(7)`, a legal form of the language.
+        if chan.has_callee(e.id_of()) {
+            // The type the construction builds -- read from the arm that HOLDS
+            // it. The other two arms cannot be here (the kind was judged
+            // above), and they say so instead of being swallowed by a `_`.
+            return match chan.callee_of(e.id_of()).target {
+                CalleeCtor(id) => id
+                // A CONSTRUCTOR is a function (the owner's rule, 2026-09-03),
+                // so a type in call position may legitimately be recorded as
+                // one -- and then the expression's type is the row's RETURN,
+                // which for a constructor is the record itself. This line iced
+                // until V2b, when the rule made the case real.
+                CalleeFn(row) => ctx.fns.rows[raw_row(row)].ret_id
+                CalleeVariant(_) => ice_at(
+                    "novac/src/check/type_of.nv:913",
+                    "check: a type in call position recorded as a variant construction")
+                CalleeSynthDisplay(_) => ice_at(
+                    "novac/src/check/type_of.nv:916",
+                    "check: a type in call position recorded as a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, never on a call")
+                CalleeEffectOp(_) => ice_at(
+                    "novac/src/check/type_of.nv:919",
+                    "check: a type in call position recorded as an effect operation -- an operation's head is an EFFECT, never a type in call position")
+            }
+        }
+        // Nothing recorded: the form was refused (a record's positional
+        // construction, a wrong arity), and a refused node has no type.
+        ice_at(
+            "novac/src/check/type_of.nv:926",
+            "check: a type in call position with no construction recorded -- the refusal should have stopped this walk")
+    }
+    ice_at(
+        "novac/src/check/type_of.nv:930",
+        "check: expression kind without a type rule — no silent int default (#652 class)")
+}
+
+/// The variant row the checker RECORDED for this construction, or `first` when
+/// it recorded none -- a pure read of the decision, never a second choice.
+fn decided_variant(chan CheckOut, e Node, first VariantRow) -> VariantRow {
+    if !chan.has_callee(e.id_of()) { return first }
+    match chan.callee_of(e.id_of()).target {
+        CalleeVariant(v) => v
+        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => first
+    }
+}

@@ -1,4 +1,4 @@
-﻿GREEN (final binary be28805e..., built from 3729abcc+fix, no Oracle in stage B):
+﻿GREEN (canonical reproducible binary, exe sha256 de88e571..., built from the committed evidence seed-backport over 3729abcc, no Oracle in stage B):
 
 == p1484_match_arm :: /* nova-effect-count: 11 */
 == m2_call_arg_record :: /* nova-effect-count: 11 */

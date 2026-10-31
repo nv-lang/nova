@@ -1,0 +1,1006 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `report_method_error` / clang `Sema::NoteAllOverloadCandidates`
+// for "a refusal names the candidate set, not the nearest guess"; rustc
+// `FnCtxt::check_argument_types` for the order (arguments are typed, THEN the
+// callee is resolved). NOT taken: inference (E2-b3) and any tie-break -- D429
+// R5 says exact wins and ambiguity is an error, never a preference.
+// Role: layer 7 -- resolving a free CALL: the key it is looked up by, and the name of its refusal.
+// Used by: typing.nv (the one caller); the module tests judge the messages through compile().
+// Guarded by: check-novac-file-size.py (this file exists because typing.nv crossed 1000 lines), the pipeline module
+// tests, check-novac-no-cascade.sh (one cause, one diagnostic).
+// novac/src/check/calls.nv -- how a free call is resolved and how its refusal
+// is named.
+//
+// A co-equal file of the `check` module, cut along MEANING: "which callable is
+// this call" and "why does none fit" is one question with several answers, and
+// each answer must name the cause it established rather than the nearest one
+// (D420). typing.nv crossed the thousand-line limit when the typed key arrived,
+// which is what made the seam visible rather than what created it.
+//
+// The RULE the order encodes: the key of a call is its argument TYPES, because
+// Nova overloads by parameters (D84). A key of unknowns matches by arity alone,
+// and that was live until 2026-08-21: `show(c)` with `fn show(x f64)` and a
+// record argument was accepted, and the emitter wrote a struct pointer where a
+// double was declared.
+
+module novac.check
+
+import ../sem.{is_arg_node, arg_expr_of}
+import ../sem.{c_free_symbol}
+// Which arguments have an observable order (F65) -- the same door the rule and
+// the lowering ask, so the three cannot disagree on WHICH arguments they mean.
+import ../sem.{contains_call}
+
+import ../tree.{Node, raw_node, NodeKind}
+// #1493: the file's import declarations are read leaf by leaf (`visible_imports`).
+import ../sem.{branch_children, leaf_text, file_decls}
+import ../diag.{ice_at}
+import ../builtins.{TypeKind, RECV_BINDING}
+import ../sem.{LitArg, ArgSpec, CallForm, CalleeTarget, decl_of_ty, Ctx, CheckOut, FnRow, raw_row, coerce_row}
+import ../sem.{subst_type, slot_binding_in, representation_of, generic_names, is_arg_value_kind, branch_children}
+import ../sem.{ty_source_name, bind_fault, bind_slots, identity_slots, no_row, SlotBind}
+import ../sem.{ArgClass, ParamMode, ParamDef, mode_admits, call_arg_at}
+import ../sem.{shape_of, call_callee_text}
+import ../types.{TyId, no_ty, is_ty}
+import ../resolve.{FnLookup, FieldIndex}
+// Came with the call arms lifted out of `@type_expr` (2026-09-15): imports are
+// per FILE in Nova, so a body that moves between files of ONE module still has to
+// bring the names it uses. Computed from what the moved text actually mentions,
+// not guessed, and then verified by building: the compiler named the first missing one.
+import ../sem.{no_vrow, ty_of_decl, variant_named_in, is_vrow}
+
+/// The lookup key of a free call: one slot per written argument, no position
+/// zero. Same shape, same door, one position fewer.
+///
+/// The UNTYPED key is now the DIAGNOSTIC's tool rather than resolution's: it
+/// answers "does any row of this name take this many arguments", which is what
+/// separates a wrong arity from a wrong type when the typed key fit nothing.
+fn free_call_key(kids []Node, scope Scope) -> []ArgSpec {
+    unknown_args(kids, 1, scope)
+}
+
+/// The TYPED key of a free call: one slot per argument, each its own type.
+fn typed_free_key(kids []Node, ctx Ctx, scope Scope, chan CheckOut, fres FieldIndex) -> []ArgSpec {
+    typed_args(kids, 1, ctx, scope, chan, fres)
+}
+
+/// Name a free call's refusal precisely: unknown name, wrong arity, or a type
+/// that does not fit -- and in the last case, whether D429 makes the call legal
+/// Nova that novac merely cannot emit yet.
+fn Checker mut @refuse_free_call(kids []Node, cname str, key []ArgSpec) -> () {
+    if !@res.has_name(cname) {
+        @report_first_leaf_of(kids, "outside the subset: this name is not a callable novac knows")
+        return
+    } else {
+        // The name is known, so the cause is the shape of the call.
+    }
+    mut single_row = no_row()
+    // BINDING BEFORE ARITY (wave 4). With defaults and named arguments, "how
+    // many arguments" is no longer the first question -- `bump(5, 2)` writes
+    // exactly as many as the declaration takes and is still refused, and
+    // `bump(5)` writes fewer and is legal. The binding names which rule it is,
+    // and it may only do so when the name carries ONE declaration: with two, a
+    // message about `by` would be a statement about a candidate nobody chose.
+    if Some(row) = @res.only_row_of(cname) {
+        if Some(why) = @binding_refusal(row, key) {
+            @report_first_leaf_of(kids, why)
+            return
+        } else {
+            // It binds: the cause is a type or a BINDING CLASS, named below.
+            single_row = row
+        }
+    } else {
+        // Overloaded (or unknown): the questions below answer.
+    }
+    // The same question with the TYPES removed: if nothing fits by arity
+    // alone, the arity is the cause and the types never mattered.
+    match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
+        FnUnknown => {
+            // registry #1255: `free_call_key` erases TYPE (every slot is
+            // `no_ty()`, which `type_admits` accepts unconditionally) but it
+            // does NOT erase CLASS -- `unknown_args` still fills the real
+            // `ArgClass` per argument, and `fits` still asks `mode_admits`
+            // with it. So a call whose one declaration's SHAPE binds fine
+            // (checked above) but whose argument is the wrong CLASS for its
+            // parameter's mode (`bump(mut x int)` called `bump(x)` with a
+            // `ro x` -- one parameter, one argument) reaches here too, and
+            // "no function of this name takes this many arguments" named the
+            // wrong axis: the count was never in question, the BINDING was
+            // (measured on p14, the K4 hunt's #1255). When the one known
+            // declaration's own FORM matches this call (it is a free
+            // function, not a method reached the wrong way), the real cause
+            // is a slot `@refuse_arg_type` can name -- type OR, since this
+            // fix, class. A form mismatch (the one declaration is a method)
+            // is still an arity-shaped question this door cannot answer more
+            // precisely, and keeps the arity text.
+            if raw_row(single_row) >= 0 && !@ctx.fns.rows[raw_row(single_row)].has_recv {
+                @refuse_arg_type(kids, single_row, key, CallForm.FreeCall)
+            } else {
+                @report_first_leaf_of(kids,
+                    "outside the subset: no function of this name takes this many arguments")
+            }
+        }
+        // Several rows take this many arguments and none of them fits the
+        // types. Naming a position would mean naming ONE candidate as the
+        // intended one, and which was intended is exactly what is unknown.
+        FnOverloaded(_) => @report_first_leaf_of(kids,
+            "outside the subset: no overload of this name accepts these argument types")
+        FnFound(row) => @refuse_arg_type(kids, row, key, CallForm.FreeCall)
+    }
+}
+
+/// registry #1255: WHY a mode (P14: `ro`/`mut`/`consume`) refuses this
+/// argument's class, worded like the D102 binding refusals beside it -- no
+/// "outside the subset" prefix, because a class mismatch is not a subset
+/// limit either: the oracle refuses it too, under its own name, and the
+/// parity of the two verdicts is what check-novac-differential holds
+/// (`E_MUT_ARG_NOT_MUTABLE`, checked directly against
+/// `nova-cli/target/release/nova.exe check` on the carrier below).
+/// `ModeRo` never reaches here -- `mode_admits(ModeRo, _)` is unconditionally
+/// true (P14: `ro` takes anything) -- so the arm is unreachable and loud
+/// about it, not a silently-wrong string.
+fn mode_refusal_msg(p ParamDef, got ArgClass) -> str {
+    match p.mode {
+        ModeRo => ice_at(
+            "novac/src/check/calls.nv:144",
+            "check: a `ro` parameter's mode never refuses an argument's class (P14)")
+        // The RECEIVER of a `mut` method says what the receiver door says
+        // (`@refuse_method_call`, methods.nv): one fact, one sentence.
+        ModeMut => if p.name == RECV_BINDING {
+            MUT_METHOD_ON_RO_PLACE_MSG
+        } else {
+            "parameter `${p.name}` needs a mutable place (`mut`, or a `consume` binding) -- this argument is not one (P14)"
+        }
+        ModeConsume => "parameter `${p.name}` needs ownership (an owned temporary, or a binding declared `consume`) -- this argument is not one (P14)"
+    }
+}
+
+/// The one candidate of this arity did not fit: name the FIRST position whose
+/// type differs or whose CLASS the parameter's mode refuses (registry #1255:
+/// a class mismatch used to reach only the arity-shaped "no function of this
+/// name takes this many arguments", one door up, because the lookup that
+/// filters by class has no way to say WHICH axis failed -- this door already
+/// walks every slot, so it is the one that can), and say when a `#coerce`
+/// pair (D429) makes the call legal. The FORM decides the pair's arm of the
+/// message: the free coercing stage runs before any refusal, the method one
+/// has not arrived (E2-b3 M3 tail) -- and each text must claim only the stage
+/// its path actually ran (D420).
+fn Checker mut @refuse_arg_type(kids []Node, row FnRow, key []ArgSpec, form CallForm) -> () {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    // BY SLOT, not by written position (wave 4): with a named argument the two
+    // are different, and comparing `key[i]` against `params[off + i]` would name
+    // the wrong parameter -- or none, when the call omits a defaulted one.
+    // The WHOLE binding at once, not slot by slot: this is the refusal path, so
+    // one small vector costs nothing and `check` asks sem ONE question instead
+    // of two (the per-slot primitive stays inside sem, where the lookup door
+    // needs it allocation-free).
+    ro slots = bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key)
+    for s in 0..fd.param_cnt {
+        ro at = slots[s].arg_row
+        // Nothing written fills this slot: its default does, and a default has
+        // no type to disagree with. `continue` IS the other branch (P31 form 2).
+        if at < 0 { continue }
+        ro want = @ctx.fns.params[fd.param_off + s]
+        if want.type_id == key[at].type_id {
+            // The TYPE agrees. The CLASS may still not (P14) -- checked only
+            // now, because a type disagreement is judged first below and must
+            // not be shadowed by a class question at some OTHER slot.
+            if mode_admits(want.mode, key[at].cls) {
+                continue
+            } else if want.mode == ParamMode.ModeMut && key[at].cls != ArgClass.ArgRo &&
+                      @is_owned_kind(@consume_kinds, key[at].type_id) {
+                // A FRESH must-consume value in a `mut` position: D476 judges it,
+                // the same judge the view position has (D476 s1, s4).
+                // The receiver is slot zero (plan 273); a method's written arguments
+                // start after it, at child 3.
+                ro arg = match form {
+                    FreeCall => call_arg_at(kids, 1, at)
+                    MethodCall => if at == 0 { kids[0] } else { call_arg_at(kids, 3, at - 1) }
+                }
+                @judge_fresh_in_view(arg, key[at].type_id)
+                return
+            } else if want.mode == ParamMode.ModeMut && @is_value_type(want.type_id) && want.name != RECV_BINDING {
+                // A LANGUAGE error, not a subset limit: a `mut` parameter of a
+                // VALUE type is the caller's own storage (D326 revision R3),
+                // and this argument has none to write back into. NOT the
+                // RECEIVER: a value temporary as a `mut @` receiver is legal
+                // (D32, `&v` / hoist + `&temp`) -- the subset refusal below
+                // stands for it until the hoist arrives (registry 1630); part 7
+                // of p274-carina-k1 found part 6 calling it a language error.
+                @reject_first_leaf_of(kids, "parameter `${want.name}` of a value type needs a mutable place -- this argument has no storage the call could write back into (E_MUT_ARG_NOT_MUTABLE, D326 revision R3)")
+                return
+            } else {
+                // A `ro` PLACE where a mutable one is needed is a LANGUAGE
+                // error (registry 1577, D488; the oracle refuses it too,
+                // E_LOCAL_NOT_MUT / E_MUT_ARG_NOT_MUTABLE). Any other class --
+                // a temporary handed to a `mut` parameter, which the oracle
+                // compiles -- stays the subset's refusal it was.
+                @report_first_leaf_kind(kids, mode_refusal_msg(want, key[at].cls),
+                    if key[at].cls == ArgClass.ArgRo { DiagKind.LangError } else { DiagKind.SubsetDebt })
+                return
+            }
+        } else {
+            // The type itself disagrees: judged below, as before this fix.
+        }
+        match coerce_row(@ctx, key[at].type_id, want.type_id) {
+            // D429: a pair IS declared for this position, and since wave 5 a
+            // pair novac can EMIT is taken by the coercing stage before any
+            // refusal -- so reaching here means the stage declined it, and the
+            // reason it declines is always the same one: the pair's method is a
+            // declaration novac read but emits no body for (std's own), and the
+            // inserted call would name a C symbol that exists nowhere.
+            //
+            // THIS TEXT USED TO SAY "novac does not compile a method body yet",
+            // and that stopped being true with wave 3g -- a refusal describing a
+            // limit we no longer have sends the reader to the wrong place (D420).
+            Some(_) => match form {
+                FreeCall => @report_first_leaf_of(kids,
+                    "outside the subset: this argument coerces through a `#coerce` method whose body novac does not emit -- the pair is declared on a type whose methods arrive as signatures only (D429 R7 names the call, so there must be one to name)")
+                // No method coercing stage ran, so the text may not claim one
+                // declined: the pair is declared and the stage is the gap.
+                MethodCall => @report_first_leaf_of(kids,
+                    "outside the subset: this argument reaches the parameter only through a declared `#coerce` pair, and the coercing stage for method calls has not arrived yet (E2-b3)")
+            }
+            // Two different numbers are D491's -- a language error with the
+            // oracle's code; any other pair stays the subset's (overloads,
+            // generics and coercions it has not read yet may still fit).
+            None => if differ_numeric(@ctx, key[at].type_id, want.type_id) {
+                ro amsg = numeric_position_msg(@ctx, key[at].type_id, want.type_id, "as this argument")
+                @reject_first_leaf_of(kids, amsg)
+            } else {
+                @report_first_leaf_of(kids,
+                    "outside the subset: this argument's type is not the one this function declares here")
+            }
+        }
+        return
+    }
+    // Every slot matched, so `fits` refused for a reason the slots cannot
+    // explain -- and it judges only the form, the binding and the slots.
+    ice_at("novac/src/check/calls.nv:259", "check: a candidate of the right arity refused with every position matching")
+}
+
+/// WHY this call does not bind to this declaration -- or `None` when it binds
+/// and the cause lies elsewhere -- in `@refuse_arg_type` (this file, the next
+/// door down). Both askers reach it when `None` comes back here:
+/// `@refuse_free_call` in this file and the method judge in `methods.nv`.
+///
+/// D102 is the authority and every arm names the RULE, because these are not
+/// subset limits: `bump(5, 2)` is not Nova novac cannot compile yet, it is Nova
+/// the language refuses -- the oracle refuses it too, in its own words. So the
+/// message carries no "outside the subset" and does carry the PARAMETER's name,
+/// which is what the reader has to look at (D420).
+fn Checker @binding_refusal(row FnRow, key []ArgSpec) -> Option[str] {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro off = fd.param_off
+    match bind_fault(@ctx.fns.params, off, fd.param_cnt, key) {
+        FaultNone => None
+        FaultPositionalDefaulted(s) => Some(
+            "parameter `${@ctx.fns.params[off + s].name}` has a default value, so it is passed by name only (D102)")
+        FaultNamedRequired(s) => Some(
+            "parameter `${@ctx.fns.params[off + s].name}` has no default value, so it is passed positionally, not by name (D102)")
+        FaultMissing(s) => Some(
+            "this call omits `${@ctx.fns.params[off + s].name}`, a parameter with no default value")
+        FaultDuplicate(s) => Some(
+            "parameter `${@ctx.fns.params[off + s].name}` is bound twice by this call (D102)")
+        FaultUnknownName(i) => Some(
+            "this callable declares no parameter named `${key[i].name}`")
+        FaultPositionalAfterNamed(_) => Some(
+            "a positional argument stands after a named one -- positional arguments come first (D102)")
+        FaultTooManyArgs(_) => Some(
+            "this call writes more arguments than the callable declares")
+    }
+}
+
+/// D429 R5's SECOND STAGE: the exact key fitted nothing, so a DECLARED pair may
+/// carry an argument to its parameter.
+///
+/// Donor: none for the RULE -- D429 is Nova's own, and it is stricter than every
+/// donor I know: pairs are declared in the program (never known by the
+/// compiler), one level only, no chains, and the exact match always wins. What
+/// IS taken is the SHAPE of a two-stage overload resolution: C++ ranks an
+/// implicit conversion below an exact match, and Swift does the same for its
+/// `ExpressibleBy*` conformances. Both name ambiguity as an error rather than
+/// picking, which is R5 exactly.
+///
+/// Why a stage of its own and not a widening of `fits`: the exact stage must
+/// [INV-PROPERTY] "the exact stage never touches the pair table" is held by
+/// CONSTRUCTION, not by care: `@fits` does not call `coerce_row`, and it cannot --
+/// the table lives on `Ctx` and the door takes none. Add the call and the no-alloc
+/// guard reddens on the same line, because the walk allocates.
+///
+/// stay exact. A door that accepted a coercible argument would make
+/// `take(bytes)` and `take("s")` one question, and the answer to the second
+/// depends on a table the first does not consult at all (P14: compilation speed is
+/// priority one, and the pair table is a linear walk).
+fn Checker mut @resolve_coerce_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
+    mut winner = no_row()
+    mut second = no_row()
+    // The chain, walked through the two doors rather than materialised: the same
+    // walk `lookup` does, and for the same reason it allocates nothing.
+    mut row = @res.first_row_of(cname)
+    while raw_row(row) >= 0 {
+        ro here = row
+        row = @res.next_row_of(row)
+        // The asker's view (#1521): a row its body cannot name is no candidate.
+        if !@res.free_candidate(@ctx.fns, here) { continue }
+        if !@coerces_into(here, key) { continue }
+        if raw_row(winner) < 0 {
+            winner = here
+        } else {
+            second = here
+        }
+    }
+    if raw_row(second) >= 0 {
+        // TWO candidates reachable through declared pairs. D429 R5 refuses
+        // rather than ranking: the pairs lead to DIFFERENT targets, and there is
+        // no rule in the language that would prefer one target over another.
+        @report_first_leaf_of(kids,
+            "E_COERCE_AMBIGUOUS: two declared `#coerce` pairs make this call applicable, to different target types -- D429 R5 refuses rather than choosing (name the conversion at the call site)")
+        return
+    } else {
+        // At most one candidate: either it takes the call or nothing does.
+    }
+    if raw_row(winner) < 0 {
+        @refuse_free_call(kids, cname, key)
+        return
+    } else {
+        // One candidate, reachable through a pair per position.
+    }
+    ro fd = @ctx.fns.rows[raw_row(winner)]
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(winner), []TyId.new(),
+        @coerced_slots(winner, key))
+}
+
+/// Does every position of this row take its argument -- as written, or through a
+/// declared pair? A candidate that needs a pair novac cannot EMIT is not a
+/// candidate: the inserted call names a C symbol, and novac emits no std body.
+fn Checker @coerces_into(row FnRow, key []ArgSpec) -> bool {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    if !@ctx.fns.compiles_body(row) { return false }
+    match bind_fault(@ctx.fns.params, fd.param_off, fd.param_cnt, key) {
+        FaultNone => {}
+        FaultPositionalAfterNamed(_) => return false
+        FaultTooManyArgs(_) => return false
+        FaultPositionalDefaulted(_) => return false
+        // Same answer as its mirror above, and for the same reason: a call that
+        // does not BIND is not a candidate, whichever half of D102 it breaks.
+        FaultNamedRequired(_) => return false
+        FaultUnknownName(_) => return false
+        FaultDuplicate(_) => return false
+        FaultMissing(_) => return false
+    }
+    mut needs_pair = false
+    // THE SLOT index is the position in the binding; `sb.arg_row` is the ARGUMENT it
+    // holds, and with a named argument the two differ. Reading the parameter by
+    // the argument's index is the mistake this counter exists to prevent -- I
+    // made it here first (2026-08-23), and only the C compiler said so.
+    mut s = -1
+    for sb in bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key) {
+        s += 1
+        if sb.arg_row < 0 { continue }
+        ro want = @ctx.fns.params[fd.param_off + s].type_id
+        ro got = key[sb.arg_row].type_id
+        if want == got { continue }
+        if !is_ty(got) { return false }
+        match coerce_row(@ctx, got, want) {
+            Some(via) => {
+                if !@ctx.fns.compiles_body(via) { return false } else { needs_pair = true }
+            }
+            None => return false
+        }
+    }
+    // A row that needs NO pair would have fitted the exact stage; reaching here
+    // without one means the arity matched and the types did too, which the exact
+    // stage already refused for a reason of its own. Saying so keeps this stage
+    // from quietly re-deciding what stage one decided.
+    needs_pair
+}
+
+/// The binding of the winning row, with each position's declared conversion in
+/// its own slot -- the decision the emitter reads (D429 R7 names the call).
+fn Checker @coerced_slots(row FnRow, key []ArgSpec) -> []SlotBind {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    mut out = []SlotBind.new()
+    mut s = -1
+    for sb in bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key) {
+        s += 1
+        if sb.arg_row < 0 {
+            out.push(sb)
+            continue
+        }
+        ro want = @ctx.fns.params[fd.param_off + s].type_id
+        ro got = key[sb.arg_row].type_id
+        if want == got {
+            out.push(sb)
+            continue
+        }
+        out.push(SlotBind { arg_row: sb.arg_row, via_row: coerce_row(@ctx, got, want) ?? no_row() })
+    }
+    out
+}
+
+/// A GENERIC candidate cannot fit an exact key: until the turbofish
+/// substitutes them, its parameters ARE type parameters, so `dbl[int]` and
+/// `dbl[str]` both declare `x T` and no argument type can equal that.
+///
+/// So the stages are separate BY CONSTRUCTION, which is R5 in its own shape:
+/// the exact key decides first, and only what it leaves unresolved is offered
+/// to a generic row -- picked by arity here, and judged position by position
+/// under the substitution in `record_free_callee`, where the substitution
+/// exists. A PLAIN row of the right arity that the exact key rejected is not
+/// accepted here: its types are the cause, and the refusal says so.
+fn Checker mut @resolve_generic_or_refuse(e Node, kids []Node, cname str, key []ArgSpec) -> () {
+    match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
+        FnFound(row) => {
+            if @ctx.fns.rows[raw_row(row)].tparam_cnt > 0 {
+                @record_free_callee(e, kids, row, key)
+            } else {
+                // A PLAIN row of the right arity that the exact key rejected:
+                // its types are the cause, and a declared pair may still carry
+                // them (D429 R5 stage two). The coercing stage refuses by name
+                // when no pair helps, so nothing is swallowed here.
+                @resolve_coerce_or_refuse(e, kids, cname, key)
+            }
+        }
+        // No row of this arity, or several: the COERCING stage gets its turn
+        // before any refusal (D429 R5 stage two), and it refuses by name when
+        // no declared pair helps either.
+        FnUnknown => @resolve_coerce_or_refuse(e, kids, cname, key)
+        FnOverloaded(_) => @resolve_coerce_or_refuse(e, kids, cname, key)
+    }
+}
+
+/// E2-b3 WAVE 1 -- ARGUMENT-DIRECTED DEDUCTION: the substitution read off the
+/// ARGUMENTS when the call writes no turbofish.
+///
+/// Donor: Go 1.18, whose inference starts from the types of the arguments and
+/// never walks the body (`dbl(4)` binds `T = int` because the first parameter
+/// declares `T` and the first argument is an int). rustc's `InferCtxt` gives the
+/// bidirectional half INSIDE a body, and that half is deliberately NOT here:
+/// wave 1 reads only the call's own arguments, so no inference variable exists
+/// to escape.
+///
+/// WRITES NOTHING. The caller records into the SAME channel the turbofish path
+/// records into, so a substitution keeps ONE source; a second writer would make
+/// mono ask two places which instance a call means.
+///
+/// Refuses BY NAME in both failing cases, because a silent choice here picks
+/// somebody else's symbol: nothing fixes a slot (a parameter this call does not
+/// pass, or a slot mentioned only in the return type), and two arguments
+/// demanding different types for one slot.
+fn Checker mut @deduce_from_args(row FnRow, key []ArgSpec, kids []Node) -> Option[[]TyId] {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    // THE CALL'S POSITION (part 7 of p274-carina-k1, D489): the expectation the
+    // caller restored around this call -- a declared return, an outer argument's
+    // parameter -- fixes the slots the declared return mentions. The arguments
+    // were typed under it (`@type_arg_expecting`), so a literal agrees; a typed
+    // argument that fixes a slot otherwise WINS, and the mismatch is then the
+    // return's or the argument's own refusal, as before.
+    ro pre = @expected_ids(row, @value_expect)
+    mut ids = []TyId.new()
+    for slot in 0..fd.tparam_cnt {
+        mut found = no_ty()
+        mut first_at = 0      // WHICH argument fixed the slot: named in the refusal
+        mut clash_at = -1     // WHICH argument disagreed; -1 = none did
+        // A BARE NUMERIC LITERAL fixes a slot only when nothing else does (D489:
+        // it has no type until its position gives one -- `bs.push(4)` with `bs
+        // []u8` is a `u8`); it is admitted afterwards by `@adapt_literal_args`.
+        mut lit_found = no_ty()
+        mut lit_at = 0
+        for i in 0..key.len() {
+            if i >= fd.param_cnt { break }
+            ro lit_bound = slot_binding_in(@ctx.tys, @ctx.fns.params[fd.param_off + i].type_id, key[i].type_id, slot)
+            if is_lit_family(key[i].lit) && is_ty(lit_bound) {
+                if !is_ty(lit_found) {
+                    lit_found = lit_bound
+                    lit_at = i
+                } else {
+                    // A later literal: the first one stands in when nothing else fixes the slot.
+                }
+                continue
+            } else {
+                // Not a literal: it fixes the slot below.
+            }
+            // STRUCTURAL (sub-plan L2): the slot's binding INSIDE the parameter's
+            // type, so a receiver `Vec[int]` against `Vec[T]` fixes T the way
+            // `int` against `x T` does; `no_ty` when the slot is not in there.
+            ro at = slot_binding_in(@ctx.tys, @ctx.fns.params[fd.param_off + i].type_id, key[i].type_id, slot)
+            if !is_ty(at) { continue }
+            if is_ty(found) {
+                if found != at {
+                    if clash_at < 0 {
+                        clash_at = i
+                    } else {
+                        // Already reporting the FIRST disagreement: a third
+                        // argument adds no information a reader can act on.
+                    }
+                } else {
+                    // The same type twice: `pick(1, 2)` mentions T at both
+                    // positions and agrees, which is the ordinary case.
+                }
+            } else {
+                found = at
+                first_at = i
+            }
+        }
+        if !is_ty(found) && is_ty(lit_found) {
+            found = lit_found
+            first_at = lit_at
+        } else {
+            // A typed argument fixed the slot, or nothing did (refused below).
+        }
+        if clash_at >= 0 && differ_numeric(@ctx, key[clash_at].type_id, found) {
+            // Two NUMBERS for one slot: D491's rule, with the oracle's code --
+            // `v.push(x)` with `v []int` and `x u8` is not the subset's gap.
+            @reject_first_leaf_of(kids, numeric_position_msg(@ctx, key[clash_at].type_id, found,
+                "as argument ${clash_at + 1} (argument ${first_at + 1} made it `${ty_source_name(@ctx, found)}`)"))
+            return None
+        } else {
+            // No clash, or a clash that is not two numbers: below.
+        }
+        if clash_at >= 0 {
+            // BOTH POSITIONS AND BOTH TYPES (wave 2). The schema carries ONE
+            // span (§7), so the second position lives in the message -- donor:
+            // Go, whose inference failure names the argument whose type does
+            // not match what an earlier argument already inferred. Positions
+            // are 1-based because the reader counts arguments as written.
+            @report_first_leaf_of(kids,
+                "outside the subset: argument ${clash_at + 1} is ${ty_source_name(@ctx, key[clash_at].type_id)}, but argument ${first_at + 1} already fixed this type parameter to ${ty_source_name(@ctx, found)} -- novac names the conflict instead of choosing (E2-b3)")
+            return None
+        }
+        if !is_ty(found) && slot < pre.len() {
+            found = pre[slot]
+        } else {
+            // An argument fixed it, or the position says nothing about it.
+        }
+        if !is_ty(found) {
+            @report_first_leaf_of(kids,
+                "outside the subset: no argument fixes this type parameter, and the call's position does not either (E2-b3)")
+            return None
+        }
+        ids.push(found)
+    }
+    Some(ids)
+}
+
+/// GENERIC and its type arguments are not read yet.
+///
+/// A generic row carries an unknown return type by construction: its `-> T`
+/// names a type PARAMETER, not a type. Until E2-b2 step 2 reads the turbofish
+/// and records the substitution, a call to such a row must leave through a
+/// DIAGNOSTIC: without this the first generic call reached `type_of`, hit
+/// `assert(ret >= 0)` and turned a user mistake into an internal compiler
+/// error — the exact class P12 forbids (measured by the step-1 probe,
+/// 2026-08-19).
+fn Checker mut @record_free_callee(e Node, kids []Node, row FnRow, key []ArgSpec) -> () {
+    // VISIBILITY FIRST (#1493, D29): a function of another module is callable only
+    // when this file imported it -- a LANGUAGE error, not subset debt.
+    ro vfd = @ctx.fns.rows[raw_row(row)]
+    if !@res.sees_row(@ctx.fns, row) {
+        @reject_first_leaf_of(kids, "undefined identifier `${vfd.name}`: it is declared in module `${vfd.handed_from}` and this file does not import it -- a name of another module is visible only through `import <module>.{${vfd.name}}` (D29)")
+        return
+    }
+    // A HANDED free function (wave W6): its body is std's, so the call is emitted
+    // as the shell's symbol -- and the shell has to carry it, or the refusal
+    // names the true reason (the row exists now; "not a callable" was the wrong
+    // one, #925). A generic handed free function has an instance name the shell
+    // would spell by substitution; not this wave.
+    ro hfd = @ctx.fns.rows[raw_row(row)]
+    // A GENERIC handed free function is judged once its substitution is known
+    // (below): its instance is made from the body novac was handed (274.11
+    // E.10 step 4c-2, `Ctx @instantiates`), or refused by name there.
+    // HANDED is the row's fact (`compiles_body` false), not its module's
+    // spelling: std may be handed without a module line (`handed_from` ""),
+    // and asking `!= ""` skipped the shell question for every such function --
+    // a call printed under a shell name the shell does not carry (task 4).
+    if !@ctx.fns.compiles_body(row) && @ctx.handed.decl_of(row).is_some() && hfd.tparam_cnt == 0 {
+        ro sym = c_free_symbol(@ctx, row)
+        if @ctx.in_program(row) {
+            // A function of ANOTHER MODULE OF THE PROGRAM (274.11 E.10 step 2a):
+            // its body is the program's, named by its owner's module; the call is
+            // judged by the owner's signature like an own call.
+        } else if !@ctx.interop.has(sym) && !@ctx.instantiates(row, []TyId.new()) {
+            @report_first_leaf_of(kids,
+                "outside the subset: `${hfd.name}` is declared in module `${hfd.handed_from}`, whose bodies novac does not compile into this unit yet (E2-b2 multi-file), and the shell novac links into carries no `${sym}` for it")
+            return
+        } else {
+            // A handed std function the shell carries: called by the shell's name.
+        }
+    } else {
+        // The file's own callable, or a constructor row: nothing to ask the shell.
+    }
+    ro want = hfd.tparam_cnt
+    ro given = generic_names(kids)
+    if want == 0 {
+        if given.len() > 0 {
+            @report_first_leaf_of(kids,
+                "outside the subset: type arguments on a function that declares none")
+        } else {
+            ro pfd = @ctx.fns.rows[raw_row(row)]
+            @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), []TyId.new(),
+                bind_slots(@ctx.fns.params, pfd.param_off, pfd.param_cnt, key))
+        }
+        return
+    } else {
+        // A generic callable: the turbofish decides which instance is meant.
+    }
+    mut ids = []TyId.new()
+    if given.len() == 0 {
+        // E2-b3 WAVE 1: no turbofish is no longer a refusal -- the arguments
+        // decide. Until 2026-08-23 this line refused by name, and that refusal
+        // was honest for E2-b2, where the turbofish WAS the whole mapping.
+        if Some(deduced) = @deduce_from_args(row, key, kids) {
+            ids = deduced
+        } else {
+            // `deduce_from_args` already named which of the two cases it was.
+            return
+        }
+    } else {
+        // Written explicitly: the count and the names are judged below.
+    }
+    if given.len() > 0 {
+        if given.len() != want {
+            @report_first_leaf_of(kids,
+                "outside the subset: the call gives a different number of type arguments than the declaration binds")
+            return
+        } else {
+            // As many arguments as the declaration binds: each is resolved below.
+        }
+        for name in given {
+            ids.push(@type_arg_named(name))
+        }
+    } else {
+        // Deduced above; the judging below is the same for both sources.
+    }
+    // WHERE the call sits decides which refusal. Inside a generic body -- and
+    // this run carries a substitution exactly then -- an unresolved type
+    // argument is `inner[T](x)`: the name is a type parameter of the enclosing
+    // declaration, and novac neither composes one substitution with another nor
+    // infers. Saying "novac does not know this type" there sends the reader to
+    // hunt a typo in correct code, which is the D420 class.
+    for id in ids {
+        if !is_ty(id) {
+            if @substs.len() > 0 {
+                @report_first_leaf_of(kids,
+                    "outside the subset: a type argument inside a generic body is not resolved -- novac composes no substitution with another and infers none (E2-b3)")
+            } else {
+                @report_type_arg_unknown(kids)
+            }
+            return
+        } else {
+            // A type the registry knows: it can stand in the substitution.
+        }
+    }
+    // THE BOUND AS A FILTER (wave 3b): the substitution is known here and only
+    // here (check/bounds.nv, the one door for a function and a method).
+    // SILENT-OK: the door refused the unmet bound by name.
+    if !@bounds_hold(kids, row, ids) { return }
+    // THE ARGUMENTS, judged under the substitution. A generic row's parameters
+    // are type PARAMETERS, so the lookup could not compare them: `dbl[int]`
+    // and `dbl[str]` declare the same `x T`. Both halves are known only HERE --
+    // the substitution was just read -- so this is where `dbl[int]("s")` is
+    // refused instead of being emitted as an int function taking a string.
+    // A HANDED generic body becomes an instance of this unit's, or the call is
+    // refused by name: the shell's spelling of a generic free instance is not
+    // novac's to guess.
+    if !@ctx.fns.compiles_body(row) && !@ctx.instantiates(row, ids) {
+        @report_first_leaf_of(kids,
+            "outside the subset: a generic free function of a handed module is not compiled into this unit yet (E2-b2 multi-file)")
+        return
+    } else {
+        // The file's own generic, or an instance this unit makes.
+    }
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    for i in 0..key.len() {
+        if subst_type(@ctx, @ctx.fns.params[fd.param_off + i].type_id, ids) == key[i].type_id { continue }
+        @report_first_leaf_of(kids,
+            "outside the subset: this argument's type is not the one the instance declares under these type arguments")
+        return
+    }
+    // The substitution is read, judged and RECORDED -- the call names the
+    // instance `(row, ids)`, and from here the chain is closed: mono keys the
+    // reachable set by that pair, the pipeline types the body once per
+    // instance through `check_instance`, and the emitter writes one C function
+    // per instance under `c_callable(ctx, row, subst)`. Until 2026-08-21 this
+    // line was a refusal, because recording a call whose instance nobody
+    // emitted would have named a symbol that exists nowhere.
+    @intern_instance_sig(row, ids)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeFn(row), ids,
+        bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key))
+}
+
+/// A method call, and the ONE shape that wears its spelling without being one:
+
+/// THE TYPE OF EVERY ARGUMENT, into the channel (F65).
+///
+/// The lowering hoists an effectful argument into a temporary so that the
+/// order of effects is the source's rather than C's, and a temporary needs a
+/// type. Until this door the channel knew the call's type and the receiver's
+/// and nothing about the arguments, so the hoist skipped every one of them
+/// and the ordering silently did not happen.
+///
+/// ASKED ONLY WHEN NOTHING WAS REFUSED: `type_of` on a node the walk has just
+/// refused is an ice, and the callers place this after their own
+/// `@out.len() > before` guard for exactly that reason.
+/// THE TYPE OF EVERY EFFECTFUL ARGUMENT, into the channel (F65).
+///
+/// The lowering hoists an argument that calls something into a local of its
+/// own, so the order of effects is the source's rather than C's -- and a
+/// local needs a type. The channel knew the call's type and the receiver's
+/// and nothing about the arguments.
+///
+/// ONLY THE EFFECTFUL ONES, and the narrowness is not caution: recording
+/// every argument put this answer in FIRST and the position's answer
+/// second, so a literal beside a named operand -- which takes the
+/// position's width (D405) -- made the channel assert `a node was typed
+/// twice with different answers`. It was right to. A literal contains no
+/// call, so asking `contains_call` removes the collision rather than
+/// arbitrating it.
+fn Checker mut @record_arg_types(kids []Node, from int) -> () {
+    mut i = 0
+    for k in kids {
+        // A named argument's VALUE is what the hoist lays down (registry 1684).
+        ro c = arg_expr_of(k)
+        if i < from || !is_arg_value_kind(c.kind_of()) {
+            // The callee of a free call, and the receiver, dot and name of a
+            // method call, are children too -- and none of them is an
+            // argument. `is_arg_node` could not say so: it knows the KIND
+            // and nothing about position.
+            i += 1
+            continue
+        } else {
+            // An argument: its type is what the hoist needs.
+        }
+        i += 1
+        // NEVER OVERWRITE AN ANSWER THE CHANNEL ALREADY HAS. A literal beside
+        // a named operand is recorded with the POSITION's width (D405), and the
+        // lattice, asked on its own, says `int` -- so a blanket record wrote a
+        // second, different answer and the channel asserted, correctly: `a node
+        // was typed twice with different answers`. Three cells of
+        // `pipeline/decls_test` said it within a minute of the first build.
+        if !contains_call(c) {
+            // ONLY WHAT THE HOIST WILL TAKE, and that is the narrow set: an
+            // argument whose evaluation ORDER is observable, i.e. one that
+            // calls something. Recording every argument put MY answer in first
+            // and the position's answer second -- a literal beside a named
+            // operand takes the position's WIDTH (D405), the lattice says
+            // `int`, and the channel asserted `a node was typed twice with
+            // different answers`. Correctly: it forbids two answers, and the
+            // later one was the right one. A literal contains no call, so the
+            // narrow rule removes the collision instead of arbitrating it.
+            continue
+        } else {
+            // An effectful argument: the hoist needs a type for its temporary.
+        }
+        ro at = type_of(c, @ctx, @scope, @chan)
+        if is_ty(at) {
+            @record(c, at)
+        } else {
+            // SILENT-OK: a form the lattice has no answer for -- it is not
+            // refused here, it simply has no type to record, and the hoist
+            // leaves such an argument inline as it always did.
+        }
+    }
+}
+/// The refusal text for a callee no registry knows, built OUTSIDE the door that
+/// finds (or fails to find) it. The door asks a table, and a door that asks a
+/// table does not allocate (P18/P14): interpolation lives here, in a plain
+/// function that looks nothing up. Carried inline in `@type_free_call` until
+/// 2026-09-22 (registry 221.1 #1286).
+fn unknown_callee_msg(cname str) -> str =>
+    "outside the subset: `${cname}` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)"
+
+/// A call by bare name: a variant constructor, a declared callable, or the subset's one
+/// builtin. Lifted out of `@type_expr` together with the method-call arm, for the same
+/// reason and with the same property: it reads its own children and answers for the node.
+fn Checker mut @type_free_call(e Node) -> () {
+    ro kids = branch_children(e)
+    ro cname = call_callee_text(kids)
+    // A VARIANT CONSTRUCTOR by bare name (`Red(7)`) is asked of the sums
+    // first (wave B6, #964): one sum -> that variant, its payload bound by
+    // position; several -> ambiguous, refused by name.
+    // A type, fn or const DECLARED IN THIS FILE outranks any variant of the
+    // name (`Pair(1, 2)` for the file's tuple type beside a std variant `Pair`).
+    ro (vfirst, vn) = if @ctx.defs.declared_by_file(cname) { (no_vrow(), 0) } else { @variants_named_here(cname) }
+    // SEVERAL sums declare the name: the POSITION picks the one it expects
+    // (D478, the door a bare name takes in exprs.nv) -- `Err(..)` in std's
+    // `[]u8 @to_str` under a `-> Result[..]`, made from its body in a unit
+    // whose own sums declare an `Err` too (registry 1632, the self-build).
+    ro by_expect = if vn > 0 { variant_named_in(@ctx, cname, @value_expect) } else { no_vrow() }
+    if is_vrow(by_expect) {
+        @type_variant_call(e, kids, by_expect)
+        // SILENT-OK: the variant door records the call or refuses it by name.
+        return
+    } else if vn > 1 {
+        @report_first_leaf_of(kids, AMBIGUOUS_VARIANT_MSG)
+        return
+    } else if vn == 1 {
+        // The construction door (option_rules, wave W4): a file sum's row,
+        // or a generic sum's INSTANCE inferred from the payload.
+        @type_variant_call(e, kids, vfirst)
+        return
+    } else {
+        // Not a variant: a callable of the name table, below.
+    }
+    // The language's INTRINSICS by bare name -- `embed`, `size_of`, `assert`:
+    // no row of anyone's, each its own door (check/embed_call.nv).
+    // SILENT-OK: the intrinsic's own door recorded its type or refused it by name.
+    if @typed_as_intrinsic(e, kids, cname) { return }
+    ro found = @ctx.defs.def_of(cname)
+    // FIRST FLOOR, found by probing the guards above (2026-08-16): a
+    // trailing `1 +` or `!` swallows the NEXT statement as its operand,
+    // so `println(...)` lands in expression position -- and `println` is
+    // the subset's one builtin, present in no registry. The lattice then
+    // called that a compiler bug and panicked `novac check`. It is a user
+    // mistake: an unknown callee in a value position is refused here, at
+    // the call's own name.
+    if found.is_none() {
+        // NAME THE ACTUAL CALLEE (hunt novac/check x K4, 2026-09-21, N7):
+        // the message used to say "println is a statement here, not a
+        // value" UNCONDITIONALLY, as if that were the cause -- true for
+        // the case the comment above was written about, false for every
+        // OTHER name that lands here (measured on a tail `panic("no")`,
+        // which the oracle accepts: the refusal named a builtin that
+        // does not even appear in that file). `println` stays as the
+        // one worked example of the CLASS this door refuses, not a
+        // claim about the file being read.
+        @report_first_leaf_of(kids, unknown_callee_msg(cname))
+        return
+    }
+    // ARGUMENTS FIRST, since 2026-08-21. The key of a call IS its argument
+    // types -- Nova overloads by parameters (D84) -- and a key of unknowns
+    // matches by ARITY ALONE. Measured live: `show(c)` with `fn show(x f64)`
+    // and `c` a record was accepted, and the emitter wrote
+    // `novac_fn_show__nova_f64__to_nova_f64(c)` -- a struct pointer where a
+    // double is declared. Invalid C from a program the oracle refuses,
+    // which is the worst direction a divergence can point.
+    //
+    // The walk is also what VERIFIES each argument (names, fields, methods
+    // exist), and only a verified expression may be handed to the lattice,
+    // whose miss is an ice until #700. So a refusal inside an argument stops
+    // the resolution: the type it would answer with is not trustworthy.
+    ro before = @out.len()
+    // An argument is not the tail: the expectation stays outside the call
+    // (a bare `None` argument is refused by its cause, not typed as the
+    // fn's return -- option_rules, wave W4).
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
+    // THE ONE ROW this name and arity can mean, asked before the arguments are
+    // typed, so each argument meets its PARAMETER's type as its expectation
+    // (part 7, `@type_arg_expecting`); an overload set gives none.
+    ro arg_row = match @res.lookup(@ctx.fns, @ctx.tys, cname, free_call_key(kids, @scope), CallForm.FreeCall) {
+        FnFound(r) => r
+        FnUnknown | FnOverloaded(_) => no_row()
+    }
+    ro pre = @expected_ids(arg_row, saved_expect)
+    // A NEWTYPE in call position constructs from its representation
+    // (`Wrap({ n: 1 })`, registry №1705): the newtype has no row of its own,
+    // so `@param_expect` has nothing to say -- and without the expectation
+    // an anonymous record constructor in the argument stayed unsettled and
+    // the lattice iced on it ("anonymous constructor without a spread"). The
+    // REPRESENTATION is the argument's expectation here, and
+    // `@record_newtype_ctor` judges the same type again below, by name, as
+    // it always has: this walk only types what it meets.
+    ro rep = match found {
+        Some(d) => match d.target {
+            DefFn(_) => no_ty()
+            DefType(decl) => {
+                ro tid = ty_of_decl(@ctx, decl)
+                if decl_of_ty(@ctx, tid).kind == TypeKind.TkNewtype {
+                    representation_of(@ctx, tid)
+                } else {
+                    // A record's brace form carries its own name; the paren
+                    // forms have a constructor row of their own.
+                    no_ty()
+                }
+            }
+            DefConst(_) => no_ty()
+        }
+        None => no_ty()
+    }
+    mut argi = 0
+    for c in kids {
+        // A NAMED argument's value is typed like a positional one (registry
+        // 1630): `g(2, by: s.byte_len())` left the inner call undecided, and
+        // the key's `type_of` iced on it. It binds by name, not by place: no
+        // positional expectation (part 7 of p274-carina-k1).
+        if !is_arg_node(c) { continue }
+        ro want = if c.kind_of() == NodeKind.NamedArg {
+            no_ty()
+        } else if argi == 0 && is_ty(rep) {
+            // The newtype's ONE argument meets its representation (№1705):
+            // `Wrap({ n: 1 })` types `{ n: 1 }` as `Bag` before the
+            // construction door judges it.
+            rep
+        } else {
+            @param_expect(arg_row, argi, pre)
+        }
+        argi += 1
+        // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
+        if @is_deferred_arg(c) { continue }
+        @type_arg_expecting(arg_expr_of(c), want)
+    }
+    @value_expect = saved_expect
+    if @out.len() > before { return }
+    // Nothing was refused: every argument has a type worth recording (F65).
+    @record_arg_types(kids, 1)
+    // The `is_none()` guard above returned, so the row is there. It is read
+    // from the SAME Option rather than looked up a second time: `def_of`
+    // answers with the row, so there is no index to carry and no second
+    // question to ask (wave B4). What the target decides is a match,
+    // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
+    // past silently.
+    ro def = found ?? ice_at(
+        "novac/src/check/calls.nv:933",
+        "check: the callee row vanished between two reads of one Option")
+    match def.target {
+        DefFn(_) => {
+            // NOT `def.payload`: `defs` is keyed by the bare name and lives
+            // by last-write-wins, so with two overloads it answers with the
+            // LAST one -- `describe(1)` went to the `str` overload, silently
+            // (owner's review 2026-08-19). The callable registry knows the
+            // whole set; narrowing by argument types arrives with E2-b3, and
+            // until then an ambiguous name is REFUSED rather than guessed.
+            // FreeCall: a callable declared WITH a receiver must not
+            // answer `f(x)`. Until 2026-08-20 the form was not part of the
+            // query, and `byte_len("abc")` reached `str @byte_len()` by
+            // arity alone -- accepted here, refused by the oracle, and
+            // emitted as one string argument to a two-parameter function.
+            ro key = typed_free_key(kids, @ctx, @scope, @chan, @fres)
+            match @lookup_call(cname, key, CallForm.FreeCall) {
+                FnFound(row) => {
+                    ro rmark = @out.len()
+                    @record_free_callee(e, kids, row, key)
+                    // Only a call that RESOLVED types its deferred arguments: a
+                    // refusal of the callee is the cause, said once.
+                    if @out.len() == rmark {
+                        @type_deferred_args(kids, 1, false, row, key)
+                    } else {
+                        // SILENT-OK: the callee door refused by name already.
+                    }
+                }
+                // What stays overloaded under a TYPED key is a real D84
+                // tie -- unless a slot novac could not type matched every
+                // overload, which is ignorance, not ambiguity (the M1
+                // guard; one rule for both call forms). Coercion never
+                // breaks a tie: D429 R5 ranks pairs BELOW an exact fit,
+                // and here two exact fits already stand.
+                FnOverloaded(_) => {
+                    if key_fully_typed(key) {
+                        @report_first_leaf_of(kids,
+                            "this call fits more than one function and none is more specific -- an ambiguity is refused, never chosen (D84)")
+                    } else if args_read_poisoned(kids, 1, @scope) {
+                        // SILENT-OK: an argument reads a poisoned name -- the earlier
+                        // refusal is the cause (`@args_read_poisoned`, methods.nv).
+                    } else {
+                        @report_first_leaf_of(kids,
+                            "outside the subset: an argument's type is not decided yet, so this overloaded function is not narrowed")
+                    }
+                }
+                // The name may be known and the arity may match: what did
+                // not fit is then a TYPE, and the refusal says which of the
+                // three it is (D420: name the cause you established, not
+                // the nearest one).
+                FnUnknown => @resolve_generic_or_refuse(e, kids, cname, key)
+            }
+        }
+        // A TYPE in call position is a CONSTRUCTION, and the subset knows
+        // exactly one: a newtype over a representation (`Row(7)`). Judged
+        // HERE rather than left to the lattice, which used to ice on it --
+        // an internal compiler error printed at a legal form of the
+        // language (the integrator's measurement 2026-08-21). The record
+        // form (`Cel(1.5)`, which the oracle accepts positionally) is
+        // refused BY NAME, because novac emits the brace form only.
+        DefType(decl) => @record_newtype_ctor(e, kids, ty_of_decl(@ctx, decl))
+        // A CONSTANT in call position: a constant is a value, and a value
+        // is not callable. Refused by name rather than left to the
+        // lattice, for the same reason the type arm above is judged here.
+        DefConst(_) => @report_first_leaf_of(kids,
+            "outside the subset: a constant is a value, and a value is not callable")
+    }
+    // D227 rule 2: whichever path above recorded a callable, a bare
+    // literal argument now takes the type of the parameter the binding
+    // gave it (and rule 3 judges its range). Reads the channel, so the
+    // generic, turbofish and coercing paths need no hook of their own.
+    @adapt_literal_args(e, kids, 1, 0)
+}

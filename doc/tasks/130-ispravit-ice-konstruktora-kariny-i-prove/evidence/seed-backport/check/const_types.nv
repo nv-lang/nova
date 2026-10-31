@@ -1,0 +1,157 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go `types2` `constDecl` -- a constant with a written type converts its
+// (untyped) initializer to that type, and a literal that does not fit is an
+// error at the declaration; NOT taken: Go's untyped-constant arithmetic at
+// arbitrary precision (Nova's literal rule is D55/D227, one literal at a time).
+// Role: layer 7 -- the TYPE of a module-level constant: the type it WRITES
+//   (`const B_LF u8 = 0x0A`) when it writes one, its initializer's otherwise;
+//   and the range judgement of a literal initializer against the written type.
+// Used by: exprs.nv (a name that reads a constant, `@const_type_of`) and
+//   check.nv (the ConstDecl arm of the walk, `@type_const_decl`).
+// Guarded by: nova test novac/src/pipeline/module_value_test.nv (the written
+//   type cases), the fixtures novac/fixtures/const_typed through
+//   check-novac-differential.sh and check-novac-no-cascade.sh.
+// novac/src/check/const_types.nv -- what type a constant has.
+//
+// A co-equal file of the `check` module, cut out of exprs.nv (975 lines) when
+// the question grew a second half: until registry 1546 the type was read off
+// the initializer ALONE, so `const B u8 = 0x0A` was an `int` at every read and
+// `b == B` on a `u8` was refused as two numeric types -- 27 refusals over
+// novac's own source in the 0.2 measure.
+
+module novac.check
+
+import ../tree.{Node, NodeKind, is_node}
+import ../lex.{TokenKind}
+import ../sem.{raw_crow, const_init_at, const_type_at, ty_of_type_ref, leaf_kind, ty_source_name}
+import ../sem.{is_const_int_expr}
+import ../types.{TyId, no_ty, is_ty}
+
+/// The TYPE of a module constant, or `no_ty()` when the name is not one.
+///
+/// A WRITTEN type wins (D200 spells `const NAME T = expr`, D55 point 4: a
+/// literal takes its target's type): a bare literal initializer takes it. Without a written type the
+/// initializer's own type is the answer (`export const TYPE_KIND_COUNT = 7`).
+/// The initializer is typed ONCE, at the declaration (`@type_const_decl`),
+/// not at every read.
+fn Checker mut @const_type_of(name str) -> TyId {
+    ro row = match @const_seen(name) {
+        None => return no_ty()
+        Some(r) => r
+    }
+    ro cd = @ctx.consts.rows[raw_crow(row)]
+    // A HANDED module value carries no initializer -- its cell and its
+    // initializer are its owner's -- and is registered only with a WRITTEN
+    // type (sem/harvest.nv `harvest_module_value`): that type is its type.
+    if cd.init.len() == 0 { return @written_const_type(cd.decl) }
+    // A MODULE VALUE's type was recorded ONCE, when its initializer was
+    // typed (`@type_module_value`): read it there -- the lattice cannot type
+    // an initializer that reads another module value. An instance channel
+    // never typed the initializer, so the lattice answers there.
+    if cd.once {
+        ro rec = @chan.type_if_known(cd.init[0].id_of())
+        if is_ty(rec) { return rec }
+    } else {
+        // A constant: typed by its declaration at every use, below.
+    }
+    // The WRITTEN type is the constant's type, full stop: an initializer of
+    // another type is refused once, at the declaration (`@type_const_decl`,
+    // E7301), so a read never sees a second answer and never cascades.
+    ro wt = @written_const_type(cd.decl)
+    if is_ty(wt) { return wt }
+    type_of(cd.init[0], @ctx, @scope, @chan)
+}
+
+/// A constant's initializer, typed ONCE at its declaration, so the channel
+/// holds what the emitter reads when it prints the initializer at each use.
+///
+/// - A bare literal under a written type takes that type (D55 point 4) and must
+///   fit it (D227 rule 3: `const B u8 = 300` is E_LIT_OUT_OF_RANGE), through
+///   the one range door; its node records the written type, so the literal is
+///   spelled in the declared width.
+/// - Any other initializer is typed by the expression door, which records
+///   it -- a cast (`const C u8 = ('x' as u8)`) is emitted from the pair its
+///   door recorded, and an unrecorded cast was a hole the emitter iced on.
+/// - A literal with no written type stays the literal's own (D44), recorded
+///   by nobody, exactly as before registry 1546.
+fn Checker mut @type_const_decl(kids []Node) -> () {
+    ro at = const_init_at(kids)
+    // SILENT-OK: no initializer -- the parser already refused the declaration.
+    if at < 0 { return }
+    ro init = kids[at]
+    ro is_lit = init.kind_of() == NodeKind.Lit
+    // The WRITTEN type is read BEFORE the initializer is typed, and is the
+    // initializer's EXPECTATION (D478's "a binding with a declared type"):
+    // an anonymous record construction (`const StatusCode.OK StatusCode =
+    // { code: 200 }`, registry №TBD -- the polaris carriers of task 129's
+    // measurement) is judged against it and recorded by the settle door, so
+    // the `type_of` ask below reads a recording instead of meeting the ice
+    // "anonymous constructor without a spread". Computed here, once, because
+    // the literal branch below asks for it too.
+    ro wt = @written_const_type(kids)
+    // A constant EXPRESSION of literals (`const C u8 = 40 + 2`) is typed by the
+    // walk like any expression, then takes the written type as a literal does
+    // (D489), by its exact value.
+    ro adapts = is_lit || is_const_int_expr(init)
+    if !is_lit {
+        ro cmark = @out.len()
+        ro csaved = @value_expect
+        @value_expect = wt
+        @type_expr(init)
+        @value_expect = csaved
+        // SILENT-OK: the expression door refused the initializer, one cause.
+        if @out.len() > cmark { return } else {
+            // Typed: the written type comparison below decides the rest.
+        }
+    } else {
+        // A literal: typed below, by the written type when one is written.
+    }
+    // SILENT-OK: no written type -- the initializer's own type is the answer (D44).
+    if !is_ty(wt) { return }
+    ro own = type_of(init, @ctx, @scope, @chan)
+    // SILENT-OK: the initializer already has the written type; its door recorded it.
+    if !adapts && own == wt { return }
+    if adapt_operand(init, own, wt, @ctx.tys) != wt {
+        // ANOTHER TYPE than the one written: the declaration is refused, in
+        // the return door's words (E7301; E_IMPLICIT_NARROWING for an integer
+        // narrowing), and the written type stays the constant's at every read.
+        // Two numbers are D491's (E_IMPLICIT_NARROWING, widening too); any
+        // other pair keeps the return door's E7301 sentence.
+        ro cmsg = if differ_numeric(@ctx, own, wt) {
+            numeric_position_msg(@ctx, own, wt, "as this constant's value (written `${ty_source_name(@ctx, wt)}`)")
+        } else {
+            const_mismatch_msg(ty_source_name(@ctx, own), ty_source_name(@ctx, wt), false)
+        }
+        @reject_first_leaf_of([]Node.of(init), cmsg)
+        return
+    } else {
+        // A literal the written type takes, or a value already of it.
+    }
+    // SILENT-OK: a non-literal of the written type -- its door recorded it.
+    if !adapts { return }
+    if @lit_fits_or_refuse(init, wt) && is_node(init.id_of()) {
+        @record(init, wt)
+    } else {
+        // Out of range: the door reported it, and nothing is recorded for
+        // an emission that will not happen.
+    }
+}
+
+/// The refusal of an initializer of another type than the written one -- the
+/// return door's sentence with the constant's words (return_rules.nv).
+fn const_mismatch_msg(from str, to str, narrows bool) -> str {
+    if narrows {
+        return "cannot initialize a constant declared `${to}` with a value of type `${from}` -- implicit int narrowing loses range; use an explicit `... as ${to}` cast (D54, E_IMPLICIT_NARROWING)"
+    }
+    "cannot initialize a constant declared `${to}` with a value of type `${from}` (E7301): no implicit conversion between named types (D405, spec/conversions.md) -- convert with `as`, or fix the declaration"
+}
+
+/// The type a constant's declaration WRITES between its name and `=`, or
+/// `no_ty()` when it writes none (or a handed declaration's name this file's
+/// registry does not hold -- then the initializer answers, as before 1546).
+fn Checker mut @written_const_type(kids []Node) -> TyId {
+    ro at = const_type_at(kids)
+    if at < 0 { return no_ty() }
+    ty_of_type_ref(kids, at, no_ty(), []str.new(), []TyId.new(), @ctx.types, @ctx.defs, @ctx.tys)
+}
+

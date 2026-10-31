@@ -1,0 +1,971 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::check_expr` -- one dispatcher over expression kinds
+// that records what it decided; Go `types2.Checker.expr` for the same split
+// between "type this statement" and "type this expression". NOT taken:
+// rustc's `Expectation` plumbing (type-directed expectation arrives with the
+// real checker at E2-b3, and copying its shape now would be a second door).
+// Role: layer 7's writing half, expression side -- the dispatcher that types
+// one expression and records the answer through the channel.
+// Used by: typing.nv (the statement walk calls it), and nothing else -- the
+// channel is the interface for every other module.
+// Guarded by: check-novac-no-silent-skip.py (no branch decides nothing),
+// check-novac-channel-one-writer.py (only this module writes the channel),
+// check-novac-match-exhaustive.py (every sum answered),
+// check-novac-file-size.py (this file exists because typing.nv crossed 1000
+// lines, exactly as typing.nv exists because check.nv did).
+// novac/src/check/exprs.nv -- typing ONE expression.
+//
+// Split out of typing.nv on 2026-08-31, and the seam is by MEANING rather than
+// by arithmetic: typing.nv answers "what are the parts of a declaration" --
+// a file, a function, a block, a statement, a parameter -- and this file
+// answers "what is the type of THIS expression". Both are one module (a folder
+// is one module of co-equal files), so `Checker` and its state are shared and
+// nothing new is exported.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice_at}
+import ../builtins.{ENTRY_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{EQUAL_METHOD, DISPLAY_PROTO}
+import ../sem.{gate_names, field_range_of, raw_frow}
+import ../sem.{c_method_symbol}
+import ../sem.{is_const_int_expr}
+import ../builtins.{DISPLAY_METHOD}
+import ../sem.{raw_crow}
+import ../sem.{variant_range_of, VariantRow, variant_named_in}
+import ../resolve.{FnLookup}
+import ../names.{NameTable, NamespaceId}
+import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{decl_of_ty}
+import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
+import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
+import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
+import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor}
+import ../sem.{ty_source_name, digit_index}
+import ../sem.{interp_slices, const_init_interpolates}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{coalesce_payload, option_payload, is_coalesce_return}
+import ../sem.{shape_of}
+import ../sem.{is_int_prim, is_numeric_prim, prim_row_of}
+import ../builtins.{BuiltinType, PrimFamily, FMT_PROTO, DISPLAY_METHOD}
+import ../sem.{LitArg}
+
+/// One expression: record what the emitter asks about, walk what it emits.
+// `@const_type_of` -- the type of a module constant, written or read off its
+// initializer -- lives in const_types.nv since registry 1546.
+
+/// A read of `name` from a handler literal's op body, bound OUTSIDE the
+/// literal: record the capture (E.9 step 3) -- by address for a `mut`
+/// binding, which the op may write, by copy otherwise. Every enclosing
+/// literal whose mark the binding is below captures it too, outermost
+/// first, so the read itself points at the INNERMOST one's row -- the
+/// context it is read through.
+fn Checker mut @note_if_capture(e Node, name str) -> () {
+    if @cap_marks.len() == 0 { return }
+    ro row = @scope.row_of(name)
+    if row < 0 { return }
+    ro by_ref = match @scope.mode_of_name(name) {
+        ModeMut => true
+        ModeRo | ModeConsume => false
+    }
+    for i in 0..@cap_marks.len() {
+        if row < @cap_marks[i] {
+            @chan.record_capture(@cap_owners[i], e.id_of(), name, row, @scope.type_of_name(name), by_ref)
+        } else {
+            // Bound inside this literal (or deeper): not its capture.
+        }
+    }
+}
+
+/// Is `name` a module value whose initializer was refused? Its type was
+/// never recorded in the file's channel, where every initializer is typed
+/// before any function; outside the file's channel (an instance) nothing is
+/// known about it here, and the ordinary doors answer.
+fn Checker @is_poisoned_module_value(name str) -> bool {
+    if @substs.len() > 0 { return false }
+    ro row = match @const_seen(name) {
+        None => return false
+        Some(r) => r
+    }
+    ro cd = @ctx.consts.rows[raw_crow(row)]
+    cd.once && cd.init.len() > 0 && !is_ty(@chan.type_if_known(cd.init[0].id_of()))
+}
+
+/// May this slot take a GENERIC INSTANCE's `@display` (274.7 B1b-3)?
+///
+/// A plain type always may -- the question is only about `TkApp`. Two
+/// conditions, and neither is a matter of taste:
+///
+///  1. the head is a RECORD. `instance_body` (`sem/mangle.nv:514`) ICES on a
+///     generic SUM, saying the oracle's family spelling (`NovaOpt_`/`NovaRes_`)
+///     arrives with its own wave -- so taking one here turns a named refusal
+///     into a compiler crash;
+///  2. the SHELL carries the symbol. An instance method reaches novac only
+///     through the interop surface, and a row found by the resolver says the
+///     SIGNATURE exists, not that the FUNCTION does. Measured 2026-09-18: the
+///     shell carries `Vec____nova_int_method_display` and nothing for
+///     `Option`/`Result`.
+///
+/// A row with a body of OURS needs neither: we emit it ourselves.
+fn Checker @instance_display_ok(t TyId, row FnRow) -> bool {
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return true }
+    if @ctx.fns.compiles_body(row) { return true }
+    // THE RECORD-ONLY CONDITION IS GONE (2026-09-18, same evening): novac now
+    // spells a generic SUM by the oracle family (`c_instance_method`), so the
+    // only question left is the one that was always the real one -- does the
+    // SHELL carry this symbol. Keeping the kind check would refuse forms that
+    // work, which is the mirror of accepting forms that do not.
+    //
+    // AND THE ORDER MAKES A WRONG SPELLING SAFE, which is worth naming because
+    // it was not designed for and is easy to lose. The symbol novac BUILDS is
+    // checked against the surface the shell ACTUALLY carries, so a spelling
+    // that is wrong for some family answers "not present" and the slot is
+    // refused BY NAME -- it cannot emit a call to a symbol nobody defines. The
+    // spellings are read off the shell (record and sum both), but the families
+    // not yet measured degrade to a refusal instead of to a broken program.
+    @ctx.interop.has(c_method_symbol(@ctx, t, DISPLAY_METHOD))
+}
+
+/// May this slot take a SYNTHESIZED `@display` -- the one novac writes itself?
+///
+/// Three conditions, all necessary: the type is a RECORD, it is opted into the
+/// protocol through its gates, and every field is a primitive. The last one is
+/// the limit of what the synthesis can spell today; a field of a record type
+/// would need the synthesis to recurse, and it does not.
+fn Checker @synth_display_ok(t TyId) -> bool {
+    if @ctx.tys.kind_of(t) != TypeKind.TkRecord { return false }
+    ro td = decl_of_ty(@ctx, t)
+    if !gate_names(@ctx.gates, td.gate_off, td.gate_cnt, DISPLAY_PROTO) {
+        return false
+    }
+    match field_range_of(td) {
+        None => false
+        Some((first, cnt)) => {
+            for i in 0..cnt {
+                ro fd = @ctx.fields.rows[raw_frow(first) + i]
+                match prim_row_of(@ctx.tys, fd.type_id) {
+                    None => { return false }
+                    Some(_) => {}
+                }
+            }
+            cnt > 0
+        }
+    }
+}
+
+/// The lookup key of `display(mut f Fmt)` on this receiver.
+///
+/// TYPED, not named: the resolver matches the parameter's type, so a
+/// `display(mut w Write)` does not answer for it. The oracle checks the same
+/// way and for the same reason (#634: seven types kept a display over `Write`
+/// through a migration and crashed).
+fn Checker @display_key_of(t TyId) -> []ArgSpec {
+    ro fmt_t = match @ctx.defs.type_decl(FMT_PROTO) {
+        None => no_ty()
+        Some(d) => ty_of_decl(@ctx, d)
+    }
+    mut key = []ArgSpec.new()
+    key.push(ArgSpec { type_id: t, cls: ArgClass.ArgRo, name: "", lit: LitArg.NotLit })
+    key.push(ArgSpec { type_id: fmt_t, cls: ArgClass.ArgMut, name: "", lit: LitArg.NotLit })
+    key
+}
+
+/// The `display(mut f Fmt)` row of the key's receiver type (D422, the spec's
+/// first route; 274.7 B1b-1), or None. The lookup is TYPED, so the parameter's
+/// type is what matches and `display(mut w Write)` does not -- the oracle
+/// checks the parameter for the same reason (#634: seven types kept a display
+/// over `Write` through a migration and crashed). A door that asks the
+/// resolver and allocates nothing (P18).
+#realtime nogc
+fn Checker @display_row_of(key []ArgSpec) -> Option[FnRow] {
+    if !is_ty(key[1].type_id) { return None }
+    match @res.lookup(@ctx.fns, @ctx.tys, DISPLAY_METHOD, key, CallForm.MethodCall) {
+        FnFound(row) => Some(row)
+        FnUnknown | FnOverloaded(_) => None
+    }
+}
+
+/// One expression: record what the emitter asks about, walk what it emits.
+fn Checker mut @type_expr(e Node) -> () {
+    ro k = e.kind_of()
+    if k == NodeKind.Try {
+        // `a?` (D85): its own door, with `?? return` (try_rules.nv).
+        @type_try(e)
+    } else if k == NodeKind.Unsafe {
+        @type_unsafe(e)
+    } else if k == NodeKind.MatchExpr {
+        // A `match` AS A VALUE where an `if` value stands -- an argument, an
+        // element, a field, the right of an assignment, a scrutinee (sweep 9):
+        // the arms through the one match door, the agreed type recorded for the
+        // lowering's temporary, exactly as an initializer's match is.
+        ro mark = @out.len()
+        @type_match(e)
+        if @out.len() == mark {
+            ro mt = type_of(e, @ctx, @scope, @chan)
+            if is_ty(mt) {
+                @record(e, mt)
+            } else {
+                // Untypeable after a clean walk: no type to hand the lowering.
+            }
+        } else {
+            // Refused inside an arm, by name: nothing to record.
+        }
+    } else if k == NodeKind.IfExpr {
+        // A CALL ARGUMENT is a legal position too (registry #TBD, the B14
+        // door widened the same way B13's record constructor was): this
+        // generic dispatcher is where `@type_free_call`'s argument loop
+        // (`calls.nv`) reaches every argument through `@type_expr`, and
+        // until now it had no arm for `IfExpr` at all -- `check.nv`'s shape
+        // walk refused the position before typing was ever asked. The tail
+        // and initializer positions call `@type_if_value` directly and
+        // never reach this dispatcher; an argument does, so this is the
+        // one new call site the class needed.
+        @type_if_value(e)
+    } else if k == NodeKind.InterpStr {
+        // Every slot's expression is a real node (I2): walked, typed, and
+        // its display type judged -- str and int carry builder inserts
+        // today. The literal's own type is str; the emitter reads the slot
+        // types from the nodes, not from a side record.
+        ro ikids = branch_children(e)
+        // BAD ESCAPES IN THE LITERAL PIECES (registry #TBD): the plain-StrLit
+        // walk (`Lit` arm, `check.nv`) refuses an unknown escape before it
+        // ever reaches typing -- this arm used to skip straight to the slot
+        // loop below, which only visits expression children (`is_expr_kind`)
+        // and never looks at the StrFrag leaves at all. `"a\qb${o}"` compiled
+        // clean where `"a\qb"` alone was refused: same bytes, no judge ever
+        // saw them. Checked first, same order as the Lit arm (escape before
+        // interpolation-shape refusals).
+        ro before_esc = @out.len()
+        @report_if_bad_escape(ikids)
+        if @out.len() > before_esc { return }
+        for i in 0..ikids.len() {
+            ro c = ikids[i]
+            if !is_expr_kind(c.kind_of()) { continue }
+            // A FORMAT SPEC ON THIS SLOT (`${expr:?}`, D229, registry #1231):
+            // the parser reads the `:` `?` pair as two leaves right after the
+            // slot's expression, so its presence is a lookahead of ONE from
+            // here. Refused before `type_expr`/`type_of` run at all -- the
+            // spec asks for Debug output, and letting the ordinary Display
+            // route below run instead would compile a program that silently
+            // ignores what it asked for.
+            if i + 1 < ikids.len() {
+                ro nx = ikids[i + 1]
+                if nx.kind_of() == NodeKind.LeafNode && leaf_kind(nx) == TokenKind.Colon {
+                    @report_first_leaf_of(ikids, INTERP_SPEC_MSG)
+                    return
+                }
+            }
+            ro before = @out.len()
+            @type_expr(c)
+            if @out.len() > before { return }
+            ro st = type_of(c, @ctx, @scope, @chan)
+            // A POISONED TYPE STOPS HERE, and this line is the other half of
+            // the cascade rule `binds.nv` states: when an initializer is
+            // refused, the name is STILL bound, with `no_ty()`, so that its
+            // later uses do not raise a second complaint about an unknown
+            // name. That promise binds the CONSUMER too. Without this line
+            // the slot walks on and asks the display doors about `TyId(-1)`,
+            // and `kind_of` refuses it by contract -- an ICE, which is the
+            // worst possible answer: the compiler says IT is broken when the
+            // program merely had an earlier mistake, already reported.
+            //
+            // MEASURED 2026-09-20, and the measurement is the reason the
+            // comment is this long. The binding half landed 2026-09-19
+            // (`398cdb1ab`) and traded a cosmetic "unknown name" for a
+            // CRASH: `ro from = mystery(1)` then `"a ${from} b"` iced, while
+            // the same three lines on the build of 2026-09-17 gave two
+            // honest diagnostics. Worse than the crash was its reach -- the
+            // ICE aborts the whole run, so a batch check stopped at the
+            // first file that hit it and every count of "how far is
+            // self-hosting" became a function of argument order (3, 15, 935
+            // and 1495 diagnostics on one unchanged tree; registry No. 1168).
+            //
+            // THE GUARD IS AT THE ENTRY, not in each display door, because
+            // there are three of them (`display_row_of`, `synth_display_ok`,
+            // `instance_display_ok`) and a rule spread over three doors is
+            // one door away from the next hole. `prim_row_of` already guards
+            // itself -- which is why the crash came from further in.
+            // SILENT-OK: the slot's own refusal is already recorded, and
+            // the reasoning is the paragraph above -- said in four words a
+            // machine can read, because the paragraph is not one of them.
+            if !is_ty(st) { return }
+            // EVERY PRIMITIVE FAMILY through its carrier (wave B1a, 274.7): the
+            // spec routes the slot through `Display` (D422), which every universe
+            // row implements --
+            // integers of any width, both floats, bool, char, str. NOT through
+            // the carrier: a newtype is a distinct type and the spec (D422) asks
+            // it for its own Display -- the oracle's checker refuses `${m}` on a
+            // newtype (E_INTERP_NO_DISPLAY), measured on the wave's own carrier
+            // before it was committed. That is B1b's ground. Until 2026-09-05
+            // this line held
+            // the slot to `{str, int}` by IDENTITY of two ids: the #910 class
+            // ("is it an integer?" asked of one id) surviving because it refused
+            // instead of miscompiling. The one exception is spelled by name.
+            match prim_row_of(@ctx.tys, st) {
+                None => {
+                    // A DECLARED type displays through its own `@display(mut f
+                    // Fmt)` (D422; the spec's first route, 274.7 B1b-1). The
+                    // lookup is TYPED, so the parameter's type is what matches
+                    // and `display(mut w Write)` does not -- the oracle checks
+                    // the parameter for the same reason (#634: seven types kept a
+                    // display over `Write` through a migration and crashed).
+                    // A GENERIC instance (`Box[int]`) displays through an instance
+                    // method, whose type arguments the collector must reach and
+                    // whose spelling is the instance one -- the two facts
+                    // `record_instance_method` settles for a written call. Until
+                    // the slot judge goes through that door (274.7 B1b-2) it does
+                    // not claim the type: refusing is the honest answer, and
+                    // `c_callable` with an empty substitution would be a wrong
+                    // program.
+                    // A GENERIC INSTANCE IS ASKED THE SAME QUESTION AS ANY
+                    // OTHER TYPE, and only then refused (274.7 B1b-3). Until
+                    // 2026-09-18 the refusal stood BEFORE the lookup, which
+                    // made "novac cannot spell this instance" and "this type
+                    // has no display" the same answer -- and they are not:
+                    // `Vec[int]`'s method IS in the shell and IS spellable,
+                    // while `Option`/`Result` are held by two other things.
+                    // The instance's TYPE ARGUMENTS travel with the decision,
+                    // because the emitter needs them for the symbol: an empty
+                    // substitution would name a function that does not exist.
+                    match @display_row_of(@display_key_of(st)) {
+                        None => {
+                            // NO METHOD OF ITS OWN -- so the GATE decides
+                            // (D422 auto-derive, D109 amended 2026-09-18).
+                            // The order matters and is the spec's: an explicit
+                            // `@display` WINS over the synthesis, which is why
+                            // this arm is reached only after the lookup failed
+                            // ("Explicit > auto-derive", `08-runtime.md`).
+                            if @synth_display_ok(st) {
+                                @record(c, st)
+                                @chan.record_implicit(c.id_of(),
+                                    CalleeTarget.CalleeSynthDisplay(st),
+                                    []TyId.new(), identity_slots(1))
+                            } else {
+                                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                                return
+                            }
+                        }
+                        Some(row) => {
+                            // FOUND A ROW IS NOT ENOUGH FOR AN INSTANCE, and the
+                            // measurement that put this line here is worth keeping:
+                            // with only the lookup, `${Some(1)}` stopped being a
+                            // NAMED REFUSAL and became an ICE -- `mangle: an
+                            // instance of a generic SUM has the oracle's family
+                            // spelling`. An ice is worse than a refusal: the
+                            // refusal says which form is not read yet, the ice
+                            // says the compiler is broken. Two conditions, each
+                            // asked of the thing it is about:
+                            //   * novac must be able to SPELL the instance --
+                            //     `instance_body` ices on a generic sum by design,
+                            //     so only a RECORD head is taken (274.7 B1b-3);
+                            //   * the shell must CARRY the symbol -- the surface
+                            //     is what the probe kept alive, and a name the
+                            //     linker cannot find is a wrong program.
+                            if !@instance_display_ok(st, row) {
+                                @report_first_leaf_of(ikids, INTERP_TYPE_MSG)
+                                return
+                            } else {
+                                // Spellable and present.
+                            }
+                            @record(c, st)
+                            // THE SUBSTITUTION IS THE INSTANCE'S OWN ARGUMENTS
+                            // when the slot's type is an application, and empty
+                            // otherwise. One line, because the emitter asks the
+                            // channel rather than re-deriving: `c_callable` with
+                            // an empty substitution on an instance names a symbol
+                            // the shell does not carry.
+                            mut targs = []TyId.new()
+                            if @ctx.tys.kind_of(st) == TypeKind.TkApp {
+                                for i in 0..@ctx.tys.arg_count(st) {
+                                    targs.push(@ctx.tys.arg(st, i))
+                                }
+                            } else {
+                                // A plain type substitutes nothing.
+                            }
+                            // The slot's own value may be a call (`${f()}`), so the
+                            // display it triggers goes to the channel's IMPLICIT
+                            // table, not to the node's `res` (which the bare-name
+                            // emitter reads for variant values -- the ICE the first
+                            // carrier hit).
+                            @chan.record_implicit(c.id_of(), CalleeTarget.CalleeFn(row),
+                                targs, identity_slots(1))
+                        }
+                    }
+                }
+                Some(row) => {
+                    if row.family == PrimFamily.PfInt && !row.signed && row.bits == 64 {
+                        @report_first_leaf_of(ikids, INTERP_U64_MSG)
+                        return
+                    }
+                    @record(c, st)
+                }
+            }
+        }
+        @record(e, @ctx.prims.str_id)
+    } else if k == NodeKind.Coalesce {
+        // `a ?? b`: the payload of `a` when it is Some, `b` when it is None.
+        // The TYPE is the LEFT side's payload and never the right's -- the
+        // oracle's own rule (`v.first() ?? 0` on a `Vec[uint]` is `uint`, not
+        // the literal's `int`), so the right side is CHECKED against it and
+        // does not decide it.
+        ro qk = branch_children(e)
+        ro before = @out.len()
+        @type_expr(qk[0])
+        if @out.len() > before { return }
+        ro lt = type_of(qk[0], @ctx, @scope, @chan)
+        // THE CONTAINER DOOR, not the Option door (registry 1084, 2026-09-13). D86 gives
+        // `??` two containers -- `Some(v)` and `Ok(v)` both yield `v` -- and novac read
+        // only the first for eleven days, refusing the other with no stage and no reason
+        // recorded anywhere. The list of containers lives in `coalesce_ok_variant`; this
+        // rule asks it and does not repeat it.
+        ro payload = coalesce_payload(@ctx, lt)
+        // A LEFT SIDE THAT READS A POISONED NAME has no type because an EARLIER
+        // initializer was refused (`defs.type_decl(t) ?? no_decl()` after `ro
+        // defs = DefTable.new()` was): the cause already spoke, and "this left
+        // side is neither" would be its echo (one cause, one diagnostic).
+        if !is_ty(lt) && reads_poisoned(qk[0], @scope) {
+            // SILENT-OK: the refused initializer of the name read here is the cause.
+            return
+        } else {
+            // A typed left side, or one with no poisoned read: judged below.
+        }
+        if !is_ty(payload) {
+            @reject_first_leaf_of(qk, COALESCE_NONOPT_MSG)
+            return
+        } else {
+            // A container: the payload of its value-carrying variant is this
+            // expression's type -- the LEFT side decides, never the fallback.
+        }
+        // BOTH CONTAINERS ARE COMPILED (sweep 11): an Option through the Option door's
+        // Some-test, a `Result` through the general head test of its `Ok` variant
+        // (lower/lower_coalesce.nv) -- never a `Result` through the Option door.
+        // THE LEFT OPERAND'S TYPE IS RECORDED, not left to the lattice: the
+        // emitter declares the Option temporary from the channel, and a FREE
+        // call there (`name(true) ?? "none"`) had no record -- a method call
+        // records its own, so the hole showed only with W4's first free
+        // Option-returning fn (channel.nv "no type recorded for this node").
+        @record(qk[0], lt)
+        if is_coalesce_return(qk) {
+            // `X ?? return R` (D86 amended 2026-09-01): its own door, beside `?`.
+            // SILENT-OK: the door wrote its refusal when it did not admit the form.
+            if !@type_coalesce_return(e, qk) { return }
+        } else if qk.len() > 2 {
+            @type_expr(qk[2])
+            if @out.len() > before { return }
+        } else {
+            // A recovery shape with no fallback: the parser already spoke.
+        }
+        @record(e, payload)
+    } else if k == NodeKind.Lit {
+        // An interpolated literal reaching the tree WHOLE is a nested one
+        // (a string inside a slot): the lexer splits only the outer level,
+        // and the I1 judge's form rule refuses these.
+        @judge_interp_lit(e)
+        @judge_char_lit(e)
+    } else if k == NodeKind.Name {
+        // FIRST FLOOR. An unbound name is a USER mistake, and check is where a
+        // user mistake becomes a diagnostic with a position. Before this, the
+        // lattice met it and called it a compiler bug (an ice) -- caught by
+        // the mutation fuzzer on truncated files, three of 192.
+        // The parser builds a Name AROUND its identifier leaf (parse.nv: both
+        // constructions pass exactly one child), so a childless one is a
+        // broken invariant, not a shape to skip -- the same reading as Paren
+        // below, where a silent skip surfaced as "no type recorded" from
+        // another module, one pass later.
+        ro nk = branch_children(e)
+        assert(nk.len() > 0, "check: a name node without its identifier leaf")
+        match nk[0] {
+            Leaf(t) => {
+                // A NAME MAY BE BOUND AT FILE LEVEL TOO (274.5 wave B2): a
+                // module constant lives in the declaration registry, not in
+                // the block scope, and asking only the scope called it
+                // unbound. The order is deliberate -- a local shadows a
+                // constant, which is what every reader expects.
+                if is_bool_literal(t.text) || @scope.is_bound(t.text) {
+                    // Bound, or `true`/`false`: nothing to refuse -- the
+                    // lattice reads a Name from the scope. A binding made
+                    // OUTSIDE the handler literal being typed is a capture,
+                    // and the emitter must know it (E.9 step 3).
+                    @note_if_capture(e, t.text)
+                } else if @settle_module_value(t.text) {
+                    // A module value read while its own initializer is being
+                    // typed: a CYCLE, which no order computes (274.5 S6).
+                    // Asked BEFORE the type -- settling a value not typed
+                    // yet is what gives it one.
+                    @report_module_cycle(t.text)
+                } else if @is_poisoned_module_value(t.text) {
+                    // SILENT-OK: a module value whose initializer was refused;
+                    // that refusal is the one cause, and a read of it saying
+                    // "unknown name" as well would be a cascade.
+                } else if @const_type_of(t.text) != no_ty() {
+                    // A constant: BOTH decisions are recorded here -- the type
+                    // from its initializer, and WHICH constant it is, so the
+                    // emitter substitutes the initializer instead of resolving
+                    // the name itself (274.4 rule E).
+                    // I1 boundary first: an INTERPOLATED initializer would be
+                    // substituted where no hoist ran -- refused by name.
+                    match @const_seen(t.text) {
+                        Some(row) => {
+                            if const_init_interpolates(@ctx, row) {
+                                @refuse(t, INTERP_CONST_MSG)
+                                return
+                            }
+                            @record(e, @const_type_of(t.text))
+                            @chan.record_const(e.id_of(), row)
+                        }
+                        None => ice_at(
+                            "novac/src/check/exprs.nv:519",
+                            "check: a constant typed by name that the registry does not carry")
+                    }
+                } else {
+                    // A payload-less VARIANT as a VALUE (bare `Dot`, the
+                    // variant-value wave): the definition registry answers,
+                    // the type is the owning sum, and the decision is the
+                    // same CalleeVariant a `C(7)` call writes -- with nothing
+                    // to bind. A local binding shadows a variant: the scope
+                    // was asked first, above.
+                    // The name is asked of the SUMS, not of the name table (wave
+                    // B6, #964): one sum declares it -> that variant; several ->
+                    // the bare name is ambiguous and refused by name; none -> an
+                    // unknown name.
+                    ro (vfound, vn) = @variants_named_here(t.text)
+                    ro is_variant = vn >= 1
+                    // D478 (owner, 2026-09-16): two sums declaring one name is
+                    // not a verdict. The POSITION'S EXPECTATION is asked, and
+                    // the refusal stays only where there is no expectation, or
+                    // where it names another type. The admitted case walks the
+                    // SAME path as an unambiguous one -- one door per root
+                    // (274.4).
+                    // Asked whenever ANY sum declares the name (registry
+                    // 1647): a file sum's `None` beside the language's Option
+                    // one counts as one visible here (the file's set wins the
+                    // count), yet the position may expect the other.
+                    ro picked = if vn > 0 {
+                        variant_named_in(@ctx, t.text, @value_expect)
+                    } else {
+                        no_vrow()
+                    }
+                    ro vrow = if is_vrow(picked) { picked } else { vfound }
+                    if vn > 1 && !is_vrow(picked) {
+                        @refuse(t, AMBIGUOUS_VARIANT_MSG)
+                    } else if is_variant {
+                        // The value door (option_rules, wave W4): a file sum's
+                        // value, or a generic sum's instance from the position's
+                        // expectation (`None` at a tail).
+                        @type_bare_variant_value(e, t, vrow)
+                    } else {
+                        // Not a variant: decided below as an unknown name.
+                    }
+                    if !is_variant {
+                        @refuse(t, "unknown name: nothing with this name is bound at this point")
+                    } else {
+                        // The variant branch above already decided this
+                        // name: recorded its value or refused its payload.
+                    }
+                }
+            }
+            Branch { .. } => {}
+        }
+    } else if k == NodeKind.SelfExpr {
+        // Bare `@` is the receiver itself: bound by the method walk, typed
+        // by the binding. Outside a method body there is no receiver, and
+        // that absence is the user's mistake to hear about.
+        if @scope.is_bound(RECV_BINDING) {
+            @record(e, @scope.type_of_name(RECV_BINDING))
+        } else {
+            @report_first_leaf_of(branch_children(e), BARE_SELF_MSG)
+        }
+    } else if k == NodeKind.SelfField {
+        // `@field` in an instance body: the receiver is a BINDING (wave 3g),
+        // so the owner's type is in scope, and the field's type is a DECISION
+        // recorded here (274.4 step 3) -- the lattice reads it back. Outside
+        // a method body the walk records nothing and readers act on no_ty().
+        ro kids = branch_children(e)
+        if kids.len() >= 2 && @scope.is_bound(RECV_BINDING) {
+            match kids[1] {
+                Leaf(t) => {
+                    ro owner = @scope.type_of_name(RECV_BINDING)
+                    if @fres.has_field(@ctx.fields, @field_owner(owner), t.text) {
+                        @record(e, @field_under(owner, @fres.field_type(@ctx.fields, @field_owner(owner), t.text)))
+                    } else {
+                        @refuse(t, "unknown field: this type has no field with this name")
+                    }
+                }
+                Branch { .. } => {}
+            }
+        } else {
+            // No receiver bound: `@field` outside a method body has nothing
+            // to read from (D458: `@` is bound by the method's receiver
+            // parameter). Until #1459 this branch said "refused by the subset
+            // walk" -- and the walk's SelfField arm defers to THIS place, so
+            // nobody refused it: `ro v = @x` in a free fn passed check, and
+            // the oracle's check passes it too, then fails in C on an
+            // undeclared `nova_self`. Refused here, the same way bare `@` is.
+            @reject_first_leaf_of(kids, SELF_FIELD_OUTSIDE_MSG)
+        }
+    } else if k == NodeKind.FieldAccess {
+        // REACHABLE, unlike the three above: `s.` with nothing after the dot
+        // gives two children (parse stops rather than inventing a name), and
+        // that is a USER mistake -- so it is a refusal, at the dot.
+        ro kids = branch_children(e)
+        if kids.len() < 3 {
+            @report_first_leaf_of(kids, "outside the subset: a field access needs a name after the dot")
+            return
+        }
+        // SILENT-OK: the head judge DECIDED for this node -- recorded the
+        // variant's value or refused -- and the field walk must not run twice.
+        // NEITHER DOMAIN HOLDS THE HEAD: refused here, where the dot is
+        // visible. The name walk below would say "nothing is bound" -- true
+        // about values and silent about types, which is half the answer when
+        // the author meant a type (registry #1150).
+        if @report_if_path_head_unknown(kids) { return }
+        if @judge_type_head_variant(e, kids, -1) { return }
+        ro before = @out.len()
+        @type_expr(kids[0])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        // Same first floor for a field: the owner is known now, so "this type
+        // has no such field" is answerable here, at the field's own position.
+        ro owner = type_of(kids[0], @ctx, @scope, @chan)
+        // RECORDED, not merely computed: the emitter has to know whether the
+        // operand is a VALUE record (`.`) or a GC pointer (`->`), and the answer
+        // is a type the checker already established here. Before this, the
+        // emission asked the channel, got nothing and printed `->` for a value
+        // record -- `(a->n)` on a struct, which clang refuses (2026-08-23).
+        // A POISONED OWNER says nothing more (one cause, one diagnostic): the
+        // operand typed without a new refusal and still has no type, so it is a
+        // name an earlier refusal bound with none (`@bind_poisoned`) -- the
+        // method call's receiver has the same silence (type_of.nv). Asking the
+        // record door about it answered "unknown field" for a field that exists:
+        // `ro r = t.rows[i]` refused at the index, then `r.a` refused again.
+        if !is_ty(owner) {
+            // SILENT-OK: the earlier refusal that poisoned the operand already spoke.
+            return
+        }
+        @record(kids[0], owner)
+        // A POSITIONAL owner is judged before the record door, by its SHAPE.
+        // The anonymous term has no declaration for `has_field` to ask, and
+        // its arity is what the term's head stores (B15 step 4a). The
+        // DECLARED positional shape is refused by name below rather than
+        // routed here: its components live in field rows, not in the head, and
+        // its declaration is not read by the parser yet -- so the refusal is
+        // the pointer to what to build the day it is. Both used to hide behind
+        // `is_tuple`, whose name said "tuple" and meant "anonymous" (owner,
+        // 2026-09-04): the oracle ACCEPTS `p.0` on `type Pair(int, int)`, and
+        // this door would have sent it to the record path as field `0`.
+        ro shape = shape_of(@ctx, owner)
+        ro declared_positional = match shape {
+            PositionalTuple => true
+            Record | ValueRecord | NamedTuple | AnonNamedTuple | AnonPositionalTuple => false
+        }
+        if declared_positional {
+            @report_first_leaf_of(kids, DECL_POSITIONAL_PROJ_MSG)
+            return
+        }
+        ro anon_positional = match shape {
+            AnonPositionalTuple => true
+            Record | ValueRecord | NamedTuple | PositionalTuple | AnonNamedTuple => false
+        }
+        if anon_positional {
+            match kids[2] {
+                Leaf(t) => {
+                    ro idx = digit_index(t.text)
+                    if idx < 0 {
+                        @refuse(t, "a tuple has numbered components: write `t.0`, not a field name")
+                    } else if idx >= @ctx.tys.arg_count(owner) {
+                        @reject(t, "tuple projection out of range: the tuple has fewer components")
+                    } else {
+                        @record(e, @ctx.tys.arg(owner, idx))
+                    }
+                }
+                // SILENT-OK: a branch in the field slot is a recovery shape
+                // the parser already refused -- nothing to judge twice here.
+                Branch { .. } => {}
+            }
+            // SILENT-OK: every leaf arm above DECIDED (record or refusal),
+            // and the projection judged is the whole tuple question.
+            return
+        }
+        match kids[2] {
+            Leaf(t) => {
+                if !@fres.has_field(@ctx.fields, @field_owner(owner), t.text) || !@field_visible(owner, t.text) {
+                    @refuse(t, "unknown field: this type has no field with this name")
+                } else {
+                    // The field exists -- and ITS TYPE IS A DECISION (274.4
+                    // step 3): recorded here, read by everyone. Until this
+                    // wave the lattice re-resolved the field NAME on every
+                    // ask -- the same second door the method calls had.
+                    @record(e, @field_under(owner, @fres.field_type(@ctx.fields, @field_owner(owner), t.text)))
+                }
+            }
+            Branch { .. } => {}
+        }
+    } else if k == NodeKind.MethodCall {
+        @type_method_call(e)
+    } else if k == NodeKind.Call {
+        @type_free_call(e)
+    } else if k == NodeKind.Cast {
+        @type_cast(e)
+    } else if k == NodeKind.IsTest {
+        @type_is_test(e)
+    } else if k == NodeKind.TupleExpr {
+        // A tuple literal: type every component, intern the pair term (the
+        // step 3 constructor), record the node. Components are the BRANCH
+        // children -- every expression is a branch (Lit and Name included,
+        // the parser wraps their leaf), while the parens, commas and recovery
+        // gaps are leaves.
+        ro kids = branch_children(e)
+        ro before = @out.len()
+        mut comps = []TyId.new()
+        for c in kids {
+            match c {
+                Leaf(_) => {}
+                Branch { .. } => {
+                    @type_expr(c)
+                    if @out.len() > before { return }
+                    comps.push(type_of(c, @ctx, @scope, @chan))
+                }
+            }
+        }
+        for t in comps {
+            if !is_ty(t) {
+                // A component whose type this walk cannot answer: the hole is
+                // already named (or is a bare name the channel does not
+                // record) -- interning a pair around no_ty would poison the
+                // term. SILENT-OK: the projection judge answers on read.
+                return
+            }
+        }
+        @record(e, @ctx.tys.tuple(comps))
+    } else if k == NodeKind.Paren {
+        // The parser builds `( expr )` with three children ALWAYS (the
+        // closing paren is a zero-width MissingToken when absent), so a
+        // shorter one is a broken invariant, not a shape to skip. A silent
+        // `return` here used to leave the node untyped, and the hole then
+        // surfaced as "no type recorded" from the channel -- an ice about the
+        // wrong thing, in the wrong module, one pass later (owner's question
+        // 2026-08-16: "what does this return mean?" -- it meant nothing good).
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: a parenthesised expression without its three parts")
+        ro before = @out.len()
+        @type_expr(kids[1])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        @record(e, type_of(e, @ctx, @scope, @chan))
+    } else if k == NodeKind.Unary {
+        // Same reasoning: the parser builds `op operand`, two children, always.
+        ro kids = branch_children(e)
+        assert(kids.len() >= 2, "check: a prefix operator without its operand")
+        ro before = @out.len()
+        @type_expr(kids[1])
+        // The mark, not the file's count: a refusal in an EARLIER declaration
+        // used to stop this walk too, and `@type_bind` then skipped its
+        // `@scope.bind` -- every later name came out "unknown" (probe
+        // 2026-08-20). The question is about THIS expression.
+        if @out.len() > before { return }
+        if @report_if_unary_needs_protocol(kids) { return }
+        @record(e, type_of(e, @ctx, @scope, @chan))
+    } else if k == NodeKind.Bin {
+        // And again: `left op right`, three children, by construction.
+        ro kids = branch_children(e)
+        assert(kids.len() >= 3, "check: a binary expression without its three parts")
+        // Operands first (they are what can be unknown), then the answer for
+        // THIS node: the whole expression's type decides the emitted shape
+        // (f64 is raw C, int is the checked helper).
+        // The mark is taken BEFORE the left operand (274.5, found by the
+        // census: `@names.find(s) >= 0` on a field of an unhanded type). A
+        // refusal inside EITHER operand makes this expression's own answers
+        // untrustworthy, and asking the lattice about a refused method call
+        // is the pass-order ice by design. The mark, not the file's count:
+        // a refusal in an EARLIER declaration must not stop this walk
+        // (probe 2026-08-20) -- the question is about THIS expression.
+        ro before = @out.len()
+        @type_expr(kids[0])
+        @type_expr(kids[2])
+        if @out.len() > before { return }
+        if @report_if_operator_needs_protocol(kids) { return }
+        // The OPERANDS' types are recorded too: equality on `str` is a method
+        // call, not a C operator, so the emitter must know what it compares —
+        // and it may only READ that, never work it out (the channel rule).
+        @record(kids[0], type_of(kids[0], @ctx, @scope, @chan))
+        @record(kids[2], type_of(kids[2], @ctx, @scope, @chan))
+        @record(e, type_of(e, @ctx, @scope, @chan))
+        // AND THE DECISION ITSELF (274.4 §1): which callable
+        // this operator dispatches to, if it dispatches at all.
+        // Recorded here because after the checker nobody
+        // decides: the emitter reads the channel and prints.
+        // `str` equality is the one operator of the subset that
+        // lowers to a CALL; every other pair lowers to a C
+        // operator, and the ABSENCE of a callee says so.
+        @record_operator_callee(e, kids)
+    } else if k == NodeKind.Index {
+        // TYPED WHERE THE SCOPE IS (fix 2026-08-31). The element type comes
+        // from `@type_index`, which also carries every subset refusal about an
+        // index -- one door, asked once, in the pass that can answer it.
+        ro it = @type_index(e)
+        if is_ty(it) {
+            @record(e, it)
+        } else {
+            // Refused inside `@type_index`, by name; nothing to record, and
+            // readers act on `no_ty()`.
+        }
+    } else if k == NodeKind.RecordCtor {
+        // ARGUMENT POSITION (wave B13). A NAMED constructor carries its own
+        // type, which `type_of` answers; recording it here is what the emitter
+        // reads back, and its absence was an ICE the probe caught before this
+        // wave was committed -- "no type recorded for this node".
+        //
+        // The judgement goes through the SAME door the binding path uses, not a
+        // copy of it: one construction, one set of rules.
+        //
+        // AN ANONYMOUS `{ n: 1 }` IS NOT ASKED HERE, and the gate is why: its
+        // type is not its own, it is the type of the POSITION it lands in --
+        // a declared return, a field. Asking `type_of` about it iced on
+        // `coerce_pair/neg_1.nv` ("anonymous constructor without a spread"),
+        // which is that door saying, correctly, that the question has no
+        // answer at this end. THE DOOR: `@settle_anon_ctor` (binds.nv, the
+        // registry №TBD wave) judges the construction against
+        // `@value_expect` and records the answer, so the askers read a
+        // recording instead of meeting the ice (№1484's match arm, №1705's
+        // newtype argument). Silence is a position that names no type the
+        // subset can read; the readers answer for that shape.
+        ro rk = branch_children(e)
+        // No `else` for the anonymous shape: P21 reads an `else` after a
+        // variant test as a branch that does work, and the SILENT-OK above is
+        // the whole decision -- an anonymous constructor has nothing to judge
+        // here, so the arm simply does not enter.
+        if rk.len() > 0 && rk[0].kind_of() == NodeKind.Name {
+            // THE NAME IS JUDGED BEFORE IT IS USED, and this line is a fix, not
+            // caution: the `else` below used to claim the unknown name "was
+            // refused where the name was read", and nothing had refused it --
+            // `type_of` reached `ty_of_name_or_ice` and brought the compiler
+            // down on a misspelling (`Pointt { x: 1 }`). Registry #TBD.
+            if @report_if_ctor_type_undeclared(rk) {
+                // Refused by the one door that owns that sentence (#970: one
+                // door, every position, one sentence). Walking on would ask
+                // `type_of` about a name the registry does not hold.
+            } else {
+                ro ct = type_of(e, @ctx, @scope, @chan)
+                if is_ty(ct) {
+                    @record(e, ct)
+                    @judge_record_ctor(e, ct)
+                } else {
+                    // A DECLARED name whose type the lattice still cannot give:
+                    // refused elsewhere, and readers act on `no_ty()`.
+                }
+            }
+        } else {
+            // Anonymous: settled by the POSITION's expectation, through the
+            // one door every position shares (`@settle_anon_ctor`, binds.nv) --
+            // a call argument against its parameter, a match arm against the
+            // position the arms share, a field value against the field. The
+            // door records what it judged, and stays silent when the position
+            // names no type the subset can read: the readers answer for the
+            // shape (the return door's `@tail_type_of`, the field judge's
+            // skip), as they did before the door existed.
+            @settle_anon_ctor(e)
+        }
+    } else if k == NodeKind.ArrayLit {
+        // The literal DECIDES ITS OWN TYPE -- the bind path's rule, reused in
+        // the two positions wave B8 adds: `type_array_lit` interns `Vec[elem]`
+        // (a WRITE the lattice must not do) and refuses by name; the recorded
+        // type is what a call key or a constructor field reads back.
+        ro lit_t = @type_array_lit(e)
+        if is_ty(lit_t) {
+            @record(e, lit_t)
+        } else {
+            // Refused inside type_array_lit, by name; nothing to record.
+        }
+    } else if k == NodeKind.HandlerLit {
+        // A HANDLER LITERAL (E4 wave, 274.11): `effect Fs { read(p) -> []u8
+        // => ... }`. Typed by its own door against the effect's op schema;
+        // this arm exists so the doors that admit the form -- the with
+        // binding's handler position, a binding initializer -- reach the
+        // typist through the ONE expression dispatcher. NOT in
+        // is_expr_kind on purpose: a general argument walk never swallows
+        // a handler literal silently (E.5 defers first-class handler
+        // values; where the language will want one, its door will call
+        // this typist, the match precedent).
+        @type_handler_lit(e)
+    } else {
+        // The kinds `is_expr_kind` admits and this chain does not name are
+        // Lit and MatchExpr, and neither has work HERE: a literal's type is
+        // a property of its own token (the lattice reads it without help),
+        // and the two doors that admit a match -- a binding's initializer and
+        // a fn's expression body -- call @type_match themselves.
+    }
+}
+
+// The operator judges -- which operand types an operator is compiled for, the
+// literal-adaptation step and the printer set -- live in `operators.nv`, the
+// co-equal file of this module that owns operators (moved 2026-09-04 when this
+// file crossed a thousand lines with the ten-widths wave; folder = one module,
+// decision 12).
+
+/// Record a node's type through the channel's one writer door.
+///
+/// A CONSTANT EXPRESSION (`40 + 2`) a position adapts is the literal's case one
+/// level up (D489): when the walk already typed it, its provisional `int`
+/// gives way to the position's type through the channel's one sanctioned door
+/// (`retype_constant`); unrecorded, the position's type is its first answer.
+fn Checker mut @record(n Node, t TyId) -> () {
+    if n.kind_of() != NodeKind.Lit && is_const_int_expr(n) && is_ty(@chan.type_if_known(n.id_of())) {
+        @chan.retype_constant(n.id_of(), t, @ctx.prims.int_id)
+        return
+    }
+    @chan.record_type(n.id_of(), t)
+}
+
+/// A field's declared type `ft` as seen through `owner`: under the owner's
+/// type arguments when the owner is an application -- `@data` of `Vec[Pt]` is
+/// `*mut Pt`, not `*mut T` (274.11 E.10 step 4c) -- as declared otherwise: a
+/// plain record's field mentions no parameter.
+fn Checker mut @field_under(owner TyId, ft TyId) -> TyId {
+    if !is_ty(ft) || @ctx.tys.kind_of(owner) != TypeKind.TkApp { return ft }
+    mut args = []TyId.new()
+    for i in 0..@ctx.tys.arg_count(owner) {
+        args.push(@ctx.tys.arg(owner, i))
+    }
+    @ctx.tys.subst(ft, args)
+}
+
+/// The term a type's fields are REGISTERED on: the declaration's own for an
+/// application (`Vec[Pt]` reads the fields `Vec` declares, 274.11 E.10 step
+/// 4c), the type itself otherwise.
+fn Checker @field_owner(owner TyId) -> TyId {
+    if !is_ty(owner) || @ctx.tys.kind_of(owner) != TypeKind.TkApp { return owner }
+    decl_of_ty(@ctx, owner).ty_id
+}
+
+/// May THIS body read field `name` of `owner`? A public field, yes; a field its
+/// module keeps private (`FieldTable @add_private`), only from inside that
+/// module -- the file's own module, or the module of the handed body being
+/// instantiated (274.11 E.10 step 4c-2: `Vec[T] @len` reads `@len`). A
+/// private field is answered "unknown" outside, as the oracle answers it.
+fn Checker @field_visible(owner TyId, name str) -> bool {
+    ro home = match @fres.field_private_to(@ctx.fields, @field_owner(owner), name) {
+        None => return true
+        Some(m) => m
+    }
+    if raw_row(@inst_row) >= 0 && !@ctx.fns.compiles_body(@inst_row) {
+        // A handed body: its module, or -- for a file-private field (`#<tree>`)
+        // -- its very declaration tree.
+        return home == @ctx.fns.rows[raw_row(@inst_row)].handed_from ||
+            home == "#${@ctx.handed.tree_of(@inst_row)}"
+    } else {
+        // The file's own body: its module, in the C shape `Ctx.module_c` keeps;
+        // a file-private field of a handed file is never the file's, and
+        // neither is one whose module reads "" -- std's `#prelude` files --
+        // even when the file has no module line either (D281, #1521).
+        return home != "" && home.replace(".", "_") == @ctx.module_c
+    }
+}

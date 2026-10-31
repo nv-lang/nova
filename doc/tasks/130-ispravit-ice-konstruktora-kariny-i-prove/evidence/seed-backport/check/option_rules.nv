@@ -1,0 +1,339 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/option_rules.nv -- constructing a variant of a GENERIC sum:
+// `Some(x)` names an instance inferred from its payload, a bare `None` names
+// the instance the position EXPECTS.
+//
+// Donor: rustc's inference of an enum's type arguments at a variant
+//        construction (`Some(3)` : `Option<i32>` from the argument; a bare
+//        `None` from the expected type, `ExpectHasType`) -- taken for the two
+//        directions and their order; NOT taken: unification variables that
+//        flow across statements (`let x = None; x = Some(3)` is E2-b3).
+// Role: check (layer 7) -- the variant-construction door of the expression
+//       walk: one place decides what a variant call and a bare variant value
+//       ARE, for file sums and handed sums, non-generic and generic alike.
+// Used by: exprs.nv (the Call arm and the Name arm hand every variant here);
+//          the emitter reads the recorded instance and substitution.
+// Guarded by: pipeline/option_test.nv, fixtures option_ctor/ through the
+//             differential, check-novac-file-size.py (exprs.nv stood at 986
+//             lines when this door was written).
+//
+// WHY THIS FILE EXISTS (wave W4 of 274.7, 2026-09-06). The collector skipped
+// the variants of generic handed sums, so `Some(3)` was refused as "this name
+// is not a callable novac knows" -- the wrong cause -- and `None` as an
+// unknown name; novac's own source writes the two 264 and 182 times. The
+// if-let door knew them by builtins names alone. Now the collector registers
+// them with the payload as the sum's parameter TERM, and this door turns a
+// construction into an INSTANCE: the argument fixes the parameter, the
+// expectation fixes a payload-less variant, and a name nobody can type is
+// refused with its cause.
+
+module novac.check
+
+import ../lex.{Token}
+import ../tree.{Node, NodeKind}
+import ../names.{DeclId}
+import ../types.{TyId, no_ty, is_ty}
+import ../builtins.{TypeKind, RESULT_SUM}
+import ../sem.{CalleeTarget, VariantRow, raw_vrow, decl_of_ty, decl_index_of_ty, identity_slots, ArgSpec}
+import ../sem.{FnRow, raw_row, bind_slots, call_arg_at, expr_leaf_name, is_arg_node, c_struct}
+import ../sem.{variant_sum_count, branch_children, call_callee_text, arg_expr_of}
+
+/// A bare variant of a generic sum with nothing around it to say which
+/// instance it is.
+const BARE_GENERIC_VARIANT_MSG = "a bare `None` here has no type to take: it stands for an Option only where a return type says which one (`-> Option[int]`, as a tail or a `return` operand) -- a typed binding or a later assignment is not compiled yet (E2-b3)"
+
+/// A payload the walk could not type, so the sum's parameter stays unknown.
+const GENERIC_PAYLOAD_UNTYPED_MSG = "outside the subset: the type argument of this sum cannot be inferred from the payload -- its type is not decided here (E2-b3)"
+
+/// An anonymous record construction in a GENERIC payload slot the position
+/// does not name: the construction takes its type from its position, and a
+/// bare type parameter names no record -- inferring an anonymous record type
+/// is the form the subset does not compile (registry №TBD). Said by name
+/// where the lattice's ask was the ice.
+const ANON_CTOR_GENERIC_MSG = "outside the subset: an anonymous record constructor takes the type of its position -- a declared parameter, a written return, a field; this generic payload slot names none, and inferring an anonymous record type is not compiled yet (E2-b)"
+
+/// When a `Result` instance the shell lacks arrives (`no_shell_instance_msg`).
+const RESULT_ARRIVES = "novac emits no `Result` instance of its own yet (E2-b3)"
+
+/// A variant called with the wrong number of payload values.
+const VARIANT_ARITY_MSG = "this variant takes a different number of payload values than the call gives"
+
+/// Is the sum this variant belongs to GENERIC -- a family (`Option[T]`) whose
+/// construction names an instance?
+fn Checker @variant_sum_is_generic(v VariantRow) -> bool {
+    ro vd = @ctx.variant_rows[raw_vrow(v)]
+    decl_of_ty(@ctx, vd.sum_id).tparam_cnt > 0
+}
+
+/// `V(x, ...)` for a variant `v` resolved by name: type the arguments (the
+/// tail's expectation stops at the call; each PAYLOAD argument meets its own
+/// slot's declared type, D55), then record the decision. A non-generic sum's
+/// constructor is the row itself; a generic sum's constructor is the instance
+/// its payload fixes.
+fn Checker mut @type_variant_call(e Node, kids []Node, v VariantRow) -> () {
+    // SILENT-OK: the door just refused by the payload type's name, and the walk stops.
+    if @refused_lost_payload(kids, v) { return }
+    ro vbefore = @out.len()
+    // The tail's expectation does not reach INTO a call: `f(None)` in a tail
+    // is not the fn's own return.
+    ro saved = @value_expect
+    @value_expect = no_ty()
+    ro vd = @ctx.variant_rows[raw_vrow(v)]
+    mut pslot = 0
+    for c in kids {
+        // The ARGUMENT door, not the expression one: a tuple payload
+        // (`Some((a, b))`) is an argument and no expression kind.
+        if !is_arg_node(c) { continue }
+        // The PAYLOAD's own type is the argument's expectation (D55/D491, the
+        // same rule the free-call walk applies through `@param_expect`): an
+        // anonymous record constructor in the position (`Sv.Rec({ n: 1 })`,
+        // registry №TBD) is judged against it and recorded, instead of
+        // reaching `typed_args` below unsettled -- the lattice's ice on the
+        // №1484/№1705 class. A GENERIC payload slot (`Ok(..)` of `Result[T,
+        // E]`, the polaris carrier `Ok({ lower: ... })` of nova-http) names
+        // no record of its own: it takes the one the POSITION expects, the
+        // same binding the instance door below makes later (a `-> Result[Rec,
+        // E]` return names `T = Rec`), so the construction is judged as the
+        // record the instance fixes -- and with no expectation naming the
+        // slot, nothing is decided here: the instance door refuses by name.
+        ro pwant = if pslot < vd.payload_cnt {
+            ro pt = @ctx.payload_types[vd.payload_off + pslot]
+            if is_ty(pt) && @ctx.tys.is_concrete(pt) {
+                pt
+            } else if is_ty(pt) && @ctx.tys.kind_of(pt) == TypeKind.TkParam && is_ty(saved) &&
+                @ctx.tys.kind_of(saved) == TypeKind.TkApp &&
+                decl_index_of_ty(@ctx, saved) == decl_index_of_ty(@ctx, vd.sum_id) {
+                ro bound = @ctx.tys.arg(saved, @ctx.tys.param_slot_of(pt))
+                if is_ty(bound) && @ctx.tys.is_concrete(bound) { bound } else { no_ty() }
+            } else {
+                no_ty()
+            }
+        } else {
+            // More arguments than the payload takes: the arity door below
+            // says so, by name, once.
+            no_ty()
+        }
+        pslot += 1
+        ro amark = @out.len()
+        @value_expect = pwant
+        @type_expr(c)
+        @value_expect = no_ty()
+        // A GENERIC slot the position does not name, given an ANONYMOUS
+        // construction (`Ok({ n: 1 })` with no written return): no record
+        // will ever be read for it -- the instance door below infers the
+        // slot from the payload, and an anonymous record is exactly the form
+        // the subset cannot infer. Refused by name HERE, where the lattice's
+        // `typed_args` ask below would ice on the unsettled node (№TBD).
+        ro ax = arg_expr_of(c)
+        if pslot <= vd.payload_cnt && !is_ty(pwant) && @out.len() == amark &&
+            ax.kind_of() == NodeKind.RecordCtor {
+            ro akids = branch_children(ax)
+            if akids.len() > 0 && akids[0].kind_of() != NodeKind.Name && !is_ty(@chan.type_if_known(ax.id_of())) {
+                @report_first_leaf_of(branch_children(c), ANON_CTOR_GENERIC_MSG)
+            } else {
+                // A named construction, or one already settled: not this door.
+            }
+        } else {
+            // A typed slot, or an argument that already spoke for itself.
+        }
+    }
+    @value_expect = saved
+    if @out.len() > vbefore { return }
+    ro args = typed_args(kids, 1, @ctx, @scope, @chan, @fres)
+    if args.len() != vd.payload_cnt {
+        @report_first_leaf_of(kids, VARIANT_ARITY_MSG)
+        return
+    }
+    if !@variant_sum_is_generic(v) {
+        // THE PAYLOAD IS A POSITION WITH A WRITTEN TYPE (D55, D491): a literal
+        // takes it, a number of another type does not -- `Sv.Int(x)` with `x
+        // u8` -- and no other type stands there either. Until 2026-10-02 the
+        // payload of a non-generic variant was not compared at all.
+        // The same walk `typed_args` takes: child zero is the variant's name.
+        mut k = 0
+        for i in 1..kids.len() {
+            if !is_arg_node(kids[i]) || k >= vd.payload_cnt { continue }
+            @judge_value_in(arg_expr_of(kids[i]), @ctx.payload_types[vd.payload_off + k], "as this variant's payload")
+            k += 1
+        }
+        if @out.len() > vbefore { return }
+        // A variant's payload is positional by construction -- no names to
+        // bind by, no defaults to omit -- so its binding is the identity, and
+        // the decision is this record.
+        @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), []TyId.new(), identity_slots(args.len()))
+    } else {
+        @type_generic_variant_call(e, kids, v, args)
+    }
+}
+
+/// THE INSTANCE FROM THE PAYLOAD: the k-th payload slot that IS the j-th type
+/// parameter fixes argument j to the k-th argument's type (rustc's inference at
+/// the construction, in one step because the payload is the only place the
+/// parameter occurs). Records the instance on the node and the callee with its
+/// substitution, or refuses by name when a slot stays unknown.
+fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, args []ArgSpec) -> () {
+    ro vd = @ctx.variant_rows[raw_vrow(v)]
+    ro td = decl_of_ty(@ctx, vd.sum_id)
+    mut subst = []TyId.new()
+    for i in 0..td.tparam_cnt {
+        subst.push(no_ty())
+    }
+    mut k = 0
+    for a in args {
+        ro pt = @ctx.payload_types[vd.payload_off + k]
+        if @ctx.tys.kind_of(pt) == TypeKind.TkParam {
+            if !is_ty(a.type_id) && args_read_poisoned(kids, 1, @scope) && @expects_sum(vd.sum_id) {
+                // SILENT-OK: the payload reads a name an earlier refusal bound
+                // with no type -- that refusal is the cause (part 5 of
+                // p274-carina-k1: `Some(row)` after a refused `row` in sem.nv).
+                // The POSITION names the instance, as for a bare `None`, so
+                // the readers of this node's type find one.
+                @record(e, @value_expect)
+                return
+            }
+            if !is_ty(a.type_id) {
+                @report_first_leaf_of(kids, GENERIC_PAYLOAD_UNTYPED_MSG)
+                return
+            }
+            subst[@ctx.tys.param_slot_of(pt)] = a.type_id
+        } else {
+            // A concrete payload slot (none in Option): nothing to infer from it.
+        }
+        k += 1
+    }
+    // A parameter NO payload slot names (`E` of `Ok(x)`, `T` of `Err(e)`) is
+    // the POSITION's: the declared return at a tail or a `return` operand
+    // names the instance, as it does for a bare `None` (registry 1632 --
+    // `Ok(..)` / `Err(..)` of a `Result` were refused everywhere, std's
+    // `[]u8 @to_str` among them). A payload-fixed slot keeps the payload's
+    // type: if the two differ, the return's own door says so.
+    if @expects_sum(vd.sum_id) {
+        for i in 0..subst.len() {
+            if !is_ty(subst[i]) {
+                subst[i] = @ctx.tys.arg(@value_expect, i)
+            } else {
+                // Fixed by a payload slot.
+            }
+        }
+    } else {
+        // No instance named by the position: the payload alone decides.
+    }
+    for s in subst {
+        if !is_ty(s) {
+            @report_first_leaf_of(kids, GENERIC_PAYLOAD_UNTYPED_MSG)
+            return
+        }
+    }
+    ro inst = @ctx.tys.app(DeclId(decl_index_of_ty(@ctx, vd.sum_id)), subst)
+    // A `Result` instance is the SHELL's struct (`NovaRes_<T>_<E>`, interop --
+    // emit_applied_sum.nv): novac emits none of its own, so an instance the
+    // shell does not carry is refused by its name here, never printed as a
+    // type nothing declares (`Ok("x")` for a `Result[str, int]`).
+    if td.name == RESULT_SUM && !@ctx.interop.has_body(c_struct(@ctx, inst)) {
+        ro inst_c = c_struct(@ctx, inst)
+        @report_first_leaf_of(kids, no_shell_instance_msg(RESULT_SUM, "`${inst_c}`", RESULT_ARRIVES))
+        return
+    } else {
+        // Option (novac spells its instances) or a Result the shell carries.
+    }
+    @record(e, inst)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), subst, identity_slots(args.len()))
+}
+
+/// Does the position expect an instance of THIS generic sum (`-> Option[int]`
+/// for a `Some(..)`)? The question a bare `None` asks, and a poisoned payload.
+fn Checker @expects_sum(sum_id TyId) -> bool {
+    ro ex = @value_expect
+    is_ty(ex) && @ctx.tys.kind_of(ex) == TypeKind.TkApp &&
+        decl_index_of_ty(@ctx, ex) == decl_index_of_ty(@ctx, sum_id)
+}
+
+/// A payload-less variant as a bare VALUE (`Dot`, `None`): a non-generic sum's
+/// value is the sum; a generic sum's value is the instance the position
+/// EXPECTS -- the declared return at a tail or a `return` operand -- and with
+/// no expectation the form is refused by its cause, not typed by a guess.
+fn Checker mut @type_bare_variant_value(e Node, t Token, v VariantRow) -> () {
+    ro vd = @ctx.variant_rows[raw_vrow(v)]
+    if vd.payload_cnt != 0 {
+        @refuse(t, VARIANT_VALUE_NEEDS_ARGS_MSG)
+        return
+    }
+    if !@variant_sum_is_generic(v) {
+        @record(e, vd.sum_id)
+        @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), []TyId.new(), identity_slots(0))
+        return
+    }
+    ro ex = @value_expect
+    if !@expects_sum(vd.sum_id) {
+        @refuse(t, BARE_GENERIC_VARIANT_MSG)
+        return
+    }
+    mut subst = []TyId.new()
+    for i in 0..@ctx.tys.arg_count(ex) {
+        subst.push(@ctx.tys.arg(ex, i))
+    }
+    @record(e, ex)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeVariant(v), subst, identity_slots(0))
+}
+
+/// Is this argument a BARE payload-less variant of a GENERIC sum (`None`) that
+/// no local binding shadows? Such an argument has no type of its own: the
+/// PARAMETER it lands in names the instance (registry 1565). The argument walk
+/// leaves it untyped -- the key then holds an unknown slot, which the lookup
+/// matches by every other position -- and `@type_deferred_args` types it once
+/// the callee is decided.
+///
+/// A variant name SEVERAL sums declare is deferred the same way, bare or called
+/// (`take(Ok(3))` beside a file sum with an `Ok`): D478 rule 2 resolves it by
+/// the expected type, and an argument's expected type is its parameter's
+/// (registry 1647).
+fn Checker @is_deferred_variant(c Node) -> bool {
+    if c.kind_of() == NodeKind.Call {
+        ro cn = call_callee_text(branch_children(c))
+        if @scope.is_bound(cn) || @ctx.defs.declared_by_file(cn) { return false }
+        return variant_sum_count(@ctx, cn) > 1
+    } else {
+        // A bare name, or no variant at all: below.
+    }
+    if c.kind_of() != NodeKind.Name { return false }
+    ro nm = expr_leaf_name(c)
+    if @scope.is_bound(nm) { return false }
+    if variant_sum_count(@ctx, nm) > 1 { return true }
+    ro (v, n) = @variants_named_here(nm)
+    if n != 1 { return false }
+    @ctx.variant_rows[raw_vrow(v)].payload_cnt == 0 && @variant_sum_is_generic(v)
+}
+
+/// An argument typed AFTER the lookup, with its parameter's type as the
+/// expectation: a bare generic variant (`None`, 1565). An `if`/`match` whose
+/// value tails are numeric literals (1697, D489) was deferred here too until the
+/// k1/cast merge; part 7 of p274-carina-k1 types an argument WITH its parameter's
+/// expectation before the lookup when one row fits (`@type_arg_expecting`), which
+/// covers 1697, while deferring it hid the argument from a type parameter's
+/// deduction (`idf(if b { 5 } else { 0 })`: "no argument fixes this type parameter").
+fn Checker @is_deferred_arg(c Node) -> bool {
+    ro k = c.kind_of()
+    @is_deferred_variant(c)
+}
+
+/// Type the deferred arguments of a call whose callee is DECIDED (`row`): each
+/// takes its parameter's type as the expectation, the same door a tail's bare
+/// `None` takes the declared return through. `from` is where the written
+/// arguments begin (1 free, 3 method); `recv` says key slot 0 is the receiver,
+/// so written argument `i` is key row `i + 1`. A generic parameter offers no
+/// instance -- the expectation stays empty and the value door refuses by cause.
+fn Checker mut @type_deferred_args(kids []Node, from int, recv bool, row FnRow, key []ArgSpec) -> () {
+    ro fd = @ctx.fns.rows[raw_row(row)]
+    ro slots = bind_slots(@ctx.fns.params, fd.param_off, fd.param_cnt, key)
+    ro saved = @value_expect
+    for s in 0..slots.len() {
+        ro at = slots[s].arg_row
+        if at < 0 || (recv && at == 0) { continue }
+        ro c = call_arg_at(kids, from, if recv { at - 1 } else { at })
+        if !@is_deferred_arg(c) { continue }
+        ro pt = @ctx.fns.params[fd.param_off + s].type_id
+        @value_expect = if is_ty(pt) && @ctx.tys.is_concrete(pt) { pt } else { no_ty() }
+        @type_expr(c)
+    }
+    @value_expect = saved
+}

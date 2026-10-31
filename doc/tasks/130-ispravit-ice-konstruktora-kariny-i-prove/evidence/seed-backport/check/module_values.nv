@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go `types2` `initOrder` -- package-level variables typed in
+// dependency order, a read of an untyped one typing it first, a cycle
+// reported with its path; NOT taken: Go's separate dependency graph pass (the
+// order falls out of the typing walk itself and the channel records it).
+// Role: typing of MODULE VALUES (274.5 section 6, D200): each initializer once,
+//   after what it reads, the order recorded for `nova_consts_init()`, a cycle
+//   refused as E_MODULE_INIT_CYCLE (D184 amendment 2026-09-30).
+// Used by: typing.nv `@type_file` (every module value of the file) and the
+//   name typing of a read (`@settle_module_value`, `@report_module_cycle`).
+// Guarded by: nova test novac/src/pipeline/module_value_test.nv,
+//   check-novac-file-size.py (this file exists because typing.nv crossed 1000
+//   lines, 2026-10-01).
+
+module novac.check
+
+import ../tree.{Node}
+import ../diag.{ice_at}
+import ../sem.{raw_crow, branch_children, const_full_name, ConstRow}
+import ../types.{no_ty, is_ty}
+
+/// The CONSTANT `name` denotes FROM THIS BODY'S MODULE, or None (registry 221.1
+/// #1521) -- the one door of this checker to a constant by name.
+///
+/// The table holds every constant of every module under its home (`DefTable`
+/// rows chained by name); which one a body means is its own module's question:
+/// a constant of its module shadows the rest (D125), else one it may see --
+/// imported, or std's prelude (D29), never another module's private one
+/// (D281). An instance of `hp.geo`'s `Vec[T] @scaled` reads `hp.geo`'s `SCALE`;
+/// until #1521 it read the caller's, because the registry was flat and the
+/// caller's put came last.
+fn Checker @const_seen(name str) -> Option[ConstRow] {
+    mut seen = 0 - 1
+    mut d = @ctx.defs.first_def(name)
+    while d >= 0 {
+        ro i = d
+        d = @ctx.defs.prev_def(i)
+        ro row = match @ctx.defs.def_at(i).target {
+            DefConst(r) => r
+            DefType(_) => continue
+            DefFn(_) => continue
+        }
+        ro own = @ctx.defs.is_own(i)
+        ro home = @ctx.defs.home_at(i)
+        if @res.decl_is_home(own, home) { return Some(row) }
+        if seen < 0 && @res.sees_decl(own, home, seen_by_name(name)) {
+            seen = i
+        } else {
+            // Not visible, or a visible one is already kept: the first wins.
+        }
+    }
+    if seen < 0 { return None }
+    match @ctx.defs.def_at(seen).target {
+        DefConst(r) => Some(r)
+        DefType(_) => None
+        DefFn(_) => None
+    }
+}
+
+/// The name a constant is SEEN by (D281, D29): a type-scoped `Type.NAME` (D200
+/// amend #66) is visible where its TYPE is -- an import names `Kind`, never
+/// `Kind.ALL` -- and a bare one by itself. Until part 6 of p274-carina-k1 every
+/// type-scoped constant or value of another program module was invisible, and
+/// its read fell to the variant judge ("this type is not a sum").
+fn seen_by_name(name str) -> str {
+    ro b = name.bytes()
+    for i in 0..b.len() {
+        if b[i] == DOT_IN_NAME { return name[..i] }
+    }
+    name
+}
+
+/// The byte that joins a type-scoped constant's two names (`Kind.ALL`).
+const DOT_IN_NAME u8 = 0x2E
+
+/// The constant-table row of the module value these children declare, -1
+/// when the registry does not hold it (a name the collector skipped).
+fn Checker @module_value_row(kids []Node) -> int {
+    ro n = const_full_name(kids) ?? ""
+    match @const_seen(n) {
+        None => 0 - 1
+        Some(r) => raw_crow(r)
+    }
+}
+
+/// Type ONE module value's initializer, after whatever it reads (274.5 S6):
+/// a read of a value not typed yet types it first (`@settle_module_value`),
+/// so this finishes after its dependencies, and the channel records the
+/// order -- D200's topological `nova_consts_init()`. The expectation of the
+/// read that got here is saved: this may start mid-expression.
+fn Checker mut @type_module_value_at(row int) -> () {
+    ro cd = @ctx.consts.rows[row]
+    @mv_state[row] = 1
+    @mv_stack.push(row)
+    ro saved_expect = @value_expect
+    // The WRITTEN type is the initializer's expectation (D478's "a binding
+    // with a declared type", the position a typed local holds in binds.nv):
+    // `const StatusCode.OK StatusCode = { code: 200 }` types its anonymous
+    // construction as the written record, judged and recorded by the settle
+    // door. Until this line the expectation was CLEARED here, and an
+    // anonymous construction in the initializer reached the lattice
+    // unsettled -- the №TBD ice "anonymous constructor without a spread"
+    // (the polaris carriers of task 129's measurement, http/status.nv's
+    // constants among them). A declaration that writes no type keeps the
+    // old silence.
+    @value_expect = @written_const_type(cd.decl)
+    if cd.init.len() > 0 {
+        @type_module_value(cd.init[0])
+    } else {
+        // No initializer: the parser's own refusal named it.
+    }
+    @value_expect = saved_expect
+    ro _ = @mv_stack.pop()
+    @mv_state[row] = 2
+    @chan.record_module_value(row)
+}
+
+/// A read of `name` from a module value's initializer or a function body:
+/// true when it closes a CYCLE (the value is being typed right now, so no
+/// order computes it); a value not typed yet is typed here first. Only the
+/// FILE's checker walks this -- an instance checker types no initializer.
+fn Checker mut @settle_module_value(name str) -> bool {
+    if @mv_state.len() == 0 { return false }
+    ro row = match @const_seen(name) {
+        None => return false
+        Some(r) => raw_crow(r)
+    }
+    if !@ctx.consts.rows[row].once { return false }
+    // A HANDED module value has no initializer here: its owner's unit computes
+    // it and orders it (sem/harvest.nv `harvest_module_value`). Nothing to settle.
+    if @ctx.consts.rows[row].init.len() == 0 { return false }
+    if @mv_state[row] == 1 { return true }
+    if @mv_state[row] == 0 {
+        @type_module_value_at(row)
+    } else {
+        // Typed already.
+    }
+    false
+}
+
+/// `a -> b -> a` -- the path a cycle diagnostic names.
+fn arrow_path(names []str) -> str {
+    consume out = StringBuilder.new()
+    mut first = true
+    for n in names {
+        out.append(if first { "" } else { " -> " })
+        out.append(n)
+        first = false
+    }
+    out
+}
+
+/// A read of module value `name` closed a CYCLE: refuse it as the language
+/// does (D184 amendment 2026-09-30, E_MODULE_INIT_CYCLE) -- on the
+/// declaration whose read closes the cycle, the value being typed right now,
+/// with the path from `name` round to itself.
+fn Checker mut @report_module_cycle(name str) -> () {
+    ro row = raw_crow(@const_seen(name) ?? ice_at(
+        "novac/src/check/module_values.nv:148",
+        "check: a module value in a cycle lost its row"))
+    mut from = 0 - 1
+    for i in 0..@mv_stack.len() {
+        if from < 0 && @mv_stack[i] == row {
+            from = i
+        } else {
+            // Not the first occurrence of the row the read names.
+        }
+    }
+    assert(from >= 0, "check: a module value in a cycle is not on the typing stack")
+    mut names = []str.new()
+    for i in from..@mv_stack.len() {
+        names.push(@ctx.consts.rows[@mv_stack[i]].name)
+    }
+    names.push(name)
+    ro msg = module_init_cycle_msg(arrow_path(names))
+    ro closing = @mv_stack[@mv_stack.len() - 1]
+    for i in 0..@mv_decl_rows.len() {
+        if @mv_decl_rows[i] == closing {
+            @reject_first_leaf_of(branch_children(@mv_decl_nodes[i]), msg)
+            return
+        } else {
+            // Another module value's declaration.
+        }
+    }
+    ice_at("novac/src/check/module_values.nv:175", "check: a module value in a cycle without its declaration")
+}
+
+/// A module value's initializer, typed ONCE into the file's channel
+/// (274.5 section 6). Its OWN type is recorded too, not only what its
+/// parts record: the emitter declares the cell and its initializer
+/// function by it, and a call records its callee but not always its value
+/// (`ro K = add(3, 4)` -- measured). The binding door's shape
+/// (`binds.nv`): what the channel holds wins, else the lattice's answer;
+/// nothing is recorded over a refusal.
+fn Checker mut @type_module_value(init Node) -> () {
+    ro mark = @out.len()
+    @type_expr(init)
+    // SILENT-OK: the initializer was refused just now; its refusal is the
+    // one cause, and its reads stay silent (`@is_poisoned_module_value`).
+    if @out.len() != mark { return }
+    // SILENT-OK: typing already recorded the value's type -- nothing to add.
+    if is_ty(@chan.type_if_known(init.id_of())) { return }
+    ro t = @tail_type_of(init)
+    if is_ty(t) {
+        @record(init, t)
+    } else {
+        // SILENT-OK: no type and no refusal is the lattice's own hole; the
+        // emitter asks the channel and names it, so nothing is lost here.
+        return
+    }
+}
