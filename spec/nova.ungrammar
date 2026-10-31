@@ -146,7 +146,11 @@ Block =
 // 'protocol' в 2026-08-23; EffectOp — уже своё правило ниже, просто не было
 // на кого сослаться.
 TypeDecl =
-  'type' 'ident' Generics? 'value'? 'consume'? ('priv' BalancedRun?)?
+  // поправка 2026-10-31 (задача 134, слово интегратора того же дня): порядок
+  // маркеров приведён к нормативному D241 (spec/decisions/03-syntax.md:11665
+  // -- только `consume value priv`; здесь стояло value -> consume). D241
+  // нормативен, этот файл ниже по приоритету (AGENTS.md, order of precedence).
+  'type' 'ident' Generics? 'consume'? 'value'? ('priv' BalancedRun?)?
   (
       'protocol' ('{' ProtoMethod* '}')?
     | 'effect' ('{' EffectOp* '}')?
@@ -156,7 +160,8 @@ TypeDecl =
   )?
 
 SumDecl =
-  'type' 'ident' Generics? 'value'? 'consume'? ('priv' BalancedRun?)?
+  // та же поправка 2026-10-31: маркеры по D241 (consume -> value -> priv).
+  'type' 'ident' Generics? 'consume'? 'value'? ('priv' BalancedRun?)?
   ('enum' Variant* | Variant+)
 
 Variant =

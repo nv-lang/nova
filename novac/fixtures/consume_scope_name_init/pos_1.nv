@@ -1,0 +1,24 @@
+module consume_scope_name_init.pos_1
+
+// The D188 scope block with a NAME initializer: `consume f = file { BODY }`.
+// The brace after a value name is the scope body, never a record
+// constructor -- the oracle's looks_like_record_lit discipline (verified:
+// the oracle accepts both this and the ctor-headed `Flag { n: 7 } { .. }`).
+// Until the 134-hunt fix the initializer read through plain `@expr()`, which
+// glued `file {` into a record constructor before the scope door saw the
+// brace (finding consume-scope-init-glue); the ctor-headed sibling form
+// stays pinned by consume_scope_block/pos_1.nv.
+type Flag consume { n int }
+
+fn Flag consume @cleanup(_outcome ScopeOutcome) -> () {
+}
+
+fn Flag @get() -> int => @n
+
+fn main() {
+    consume file = Flag { n: 7 }
+    consume f = file {
+        println(f.get())
+    }
+    println("after")
+}

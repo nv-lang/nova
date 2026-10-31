@@ -1,0 +1,23 @@
+module ctor_tail_forms.pos_1
+
+// Anonymous record constructors in TAIL position whose FIRST entry is the
+// receiver punning `@x` (D52 rule 1) or the spread `...base` (D60): the
+// brace opens a constructor, not a bare block. Until the 134-hunt fix the
+// statement door's enumeration named neither form, so both fell into a
+// bare Block (finding anon-ctor-door-forms); the named-field sibling shape
+// (`{ data: ... }`, std's Vec.new) was pinned from the start.
+type PVal { x int }
+
+fn PVal @selfcopy() -> PVal {
+    { @x }
+}
+
+fn reinit(base PVal) -> PVal {
+    { ...base }
+}
+
+fn main() {
+    ro p = PVal { x: 21 }
+    println(p.selfcopy().x)
+    println(reinit(p).x)
+}

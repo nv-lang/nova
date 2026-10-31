@@ -61,11 +61,11 @@ const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 lev
 
 /// The `defer` refusal (D90; task 134, 2026-10-31). The keyword is lexed and
 /// the form is parsed whole, so the refusal names what is missing: running
-/// the body at scope exit is not implemented yet (D90; the E2 effects/consume
-/// horizon's debt). What is NOT said here is the
+/// the body at scope exit awaits the E2 effects/consume horizon (D90). What
+/// is NOT said here is the
 /// old lie -- `defer { ... }` falling apart into a record constructor
 /// because the word lexed as a name (the keyword-parity class, registry
-/// #1089; the 118-corpus sweep's consume_tour).
+/// reg 1089; the 118-corpus sweep's consume_tour).
 const DEFER_MSG = "outside the subset: `defer` is not compiled yet -- running the body at scope exit, LIFO, on every way out (D90) is the effects/consume horizon's debt (E2)"
 
 /// A parameter TYPED by a function type in a compiled declaration (task 134,
@@ -74,6 +74,15 @@ const DEFER_MSG = "outside the subset: `defer` is not compiled yet -- running th
 /// type is compiled while closure literals are refused, so the declaration
 /// is refused by name rather than emitted into an ice on the C layout.
 const FN_PARAM_MSG = "outside the subset: a parameter of function type `fn(...) -> ...` is not compiled yet -- closure values arrive with the handler-value wave (E4; the type form is D43's)"
+
+/// The fn-typed FIELD of an own record (task 134 hunt, finding
+/// fn-field-no-door). The type reads since that day -- and an own record's
+/// every field is printed through `c_type` (emit_decls.nv), which has no
+/// layout for a function type: without this door the declaration ices in
+/// mangling, no fn VALUE needed. Alias/newtype over a fn type is refused
+/// earlier by the composite-representation door (reg 1514). Same class and
+/// stage as the parameter above.
+const FN_FIELD_MSG = "outside the subset: a field of function type `fn(...) -> ...` is not compiled yet -- closure values arrive with the handler-value wave (E4; the type form is D43's)"
 
 const DUP_DECL_MSG = "this top-level name is declared twice in one file -- one namespace, so the second declaration collides (E_DUP_DEFINITION, D29); the oracle drops the second body in silence (#811)"
 

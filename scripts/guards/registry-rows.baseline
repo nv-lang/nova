@@ -1883,9 +1883,11 @@
 # 2026-10-31, task 134 candidate: rows 1841->1845 (this branch's own 1935-1938),
 #   max 1932->1938; 1932 has its row here and leaves gaps=; 1933-1934 stay (reserved
 #   for branch 130, integrator's word 2026-10-31) until its merge brings their rows.
-rows=1845
-max=1938
-max=1938
+# 2026-10-31, task 134 candidate, second merge: rows 1939-1942 added (the check x K6
+#   hunt over the task's own territory; numbers from the integrator); rows 1845->1849,
+#   max 1938->1942.
+rows=1849
+max=1942
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

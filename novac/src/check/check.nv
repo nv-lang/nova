@@ -296,8 +296,19 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @loop_depth += 1
                 }
                 Field => {
-                    @report_if_missing_type(past_field_ro(past_field_visibility(children)),
+                    ro fk = past_field_ro(past_field_visibility(children))
+                    @report_if_missing_type(fk,
                         "outside the E1 subset: field must declare a type")
+                    // A FN-TYPED field (task 134, the parameter door's own
+                    // class): the type READS (D43) as a flat leaf run whose
+                    // first leaf is KwFn, and an own record's every field is
+                    // printed through `c_type`, which ices on a function type
+                    // (mangle.nv). Refused by name here, where the
+                    // declaration is judged, so the ice path stays unarmed.
+                    if fk.len() >= 2 && fk[1].kind_of() == NodeKind.LeafNode &&
+                        leaf_kind(fk[1]) == TokenKind.KwFn {
+                        @report_first_leaf_of(fk, FN_FIELD_MSG)
+                    }
                 }
                 RetType => {
                     // The return type is a type reference too, and it was
