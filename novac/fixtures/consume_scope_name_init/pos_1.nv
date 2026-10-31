@@ -13,8 +13,8 @@ module consume_scope_name_init.pos_1
 // disarm covers only the `consume X { }` re-consume form, so the outer
 // armed binding fires @cleanup a second time at scope exit --
 // D188-on-exit-double-invocation; registry 221.1 #1942), while novac
-// settles once; and a parameter carrier is outside novac's subset (274.7
-// B13: moving a must-consume value out of a view is not tracked). The
+// settles once; and a parameter carrier is outside novac's subset
+// (274.7 B13 refuses a must-consume move out of a view there). The
 // plain carrier keeps the same parse door with identical run behaviour
 // on both compilers (measured 2026-10-31: both print "7\nafter", rc=0).
 type Box { n int }
