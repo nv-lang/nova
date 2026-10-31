@@ -1,26 +1,14 @@
 == tree ready (1117 .nv files)
-== emit rc=0 bytes=13262003
-C_SHA 435829615550f96de68e9766a6ae9bbc371f0745034e74f8a8f3633e12eeebde
+== emit rc=0 bytes=13261434
+C_SHA 6336dcff756d097e0d79895572c95845d4b43f4cf3d27a254995d95bff9f30f6
 nova: libuv not built, building (one-time, ~30 sec)...
 nova: libuv.lib built (37 files)
 == compiled
-EXE_SHA fb692833b864857243cc44b16e10e310fc15b623b3b122c5d6958e4a0681b1e5
+EXE_SHA 210861f97b5cc9e13425c4035cdf485f666828556cc11e1a7e3e2e7359446235
 repro p1484_match_arm rc=0
 repro m2_call_arg_record rc=0
 repro p1705_newtype rc=0
 repro po1_option_payload rc=0
 repro po2_option_bare rc=1
 == repro complete
-ZIP_SHA=9292b8b367ac502ee60579a673b25b20d9fe705753b5545fdd3699467bfa747b
-EXE_SHA=fb692833b864857243cc44b16e10e310fc15b623b3b122c5d6958e4a0681b1e5
-== descriptor:
-{
-  "asset_name": "nova-carina-0.2.2-130fix-windows-x86_64.zip",
-  "asset_url": "https://github.com/nv-lang/nova/releases/download/carina-v0.2.2-130fix/nova-carina-0.2.2-130fix-windows-x86_64.zip",
-  "sha256": "9292b8b367ac502ee60579a673b25b20d9fe705753b5545fdd3699467bfa747b",
-  "platform": "windows-x86_64",
-  "source_revision": "3729abcce42ec2d94efc898ec6eafe91ff6210d5+task130-anon-ctor",
-  "compiler_provenance": "carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5+task130-anon-ctor; B1 + class fix, no Oracle in stage B",
-  "stage": "carina-b"
-}
-done
+rc=0

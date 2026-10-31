@@ -1,4 +1,4 @@
-GREEN (round-2 canonical binary; C sha256 43582961…, exe sha256 fb692833…; spread forms included):
+GREEN (FINAL-CHAIN binary, rebuilt from the committed seed-backport of main 5e494fd86: C sha256 6336dcff756d097e0d79895572c95845d4b43f4cf3d27a254995d95bff9f30f6, exe sha256 210861f97b5cc9e13425c4035cdf485f666828556cc11e1a7e3e2e7359446235, zip sha256 40c67141167c972300f37c9605da024ff1c183b382cc713020f824e600f41aee; the earlier 43582961/fb692833 figures belonged to the pre-guard-fix backport of commit 2fb949e91 -- superseded):
 
 == sp1_bind_spread :: rc=0 (C) :: /* nova-effect-count: 11 */
 == sp2_arg_spread :: rc=0 (C) :: /* nova-effect-count: 11 */
