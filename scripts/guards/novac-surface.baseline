@@ -1275,7 +1275,13 @@ resolve 27
 # D99 target-predicate evaluator used by pipeline filtering and FnDef metadata;
 # `FnDef @target_state` is the one row-mask rule shared by FnIndex and harvest's
 # own/handed duplicate boundary. CheckOut carries the resolver's selected rows.
-sem 401
+#   2026-10-31 (task 131, registry 1932, D282), sem 401 -> 404: `extern_abi_at` / `is_extern_c`
+#   -- the ONE door over an extern declaration's ABI leaf, asked by the checker's gate
+#   (check/extern_rules.nv) and by BOTH declaration readers (sem/collect.nv, sem/harvest.nv)
+#   that mark the row; `FnTable @extern_c` -- the row's own fact (the declaration node does
+#   not survive collect), read by the emitter (literal call name, prototype walk) and the
+#   program pipeline (no wanted name). Out because three layers ask it, not one module.
+sem 404
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

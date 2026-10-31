@@ -618,6 +618,25 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
     // `FnIndex @free_view`). A copy of the file's OWN module (the self-build
     // hands the unit back) still adds nothing, and so does a name the table
     // holds as a type or a constant.
+    // A FREE `extern "nova" fn` of a handed module takes NO row: std's whole
+    // intrinsic surface (assert, panic, the effect ops) is DECLARED that way,
+    // and their calls are read by SPECIAL doors (check/assert_call.nv et al),
+    // not by the free-call path. Until task 131 these declarations registered
+    // nothing -- the old name heuristic read kids[1], which is the ABI STRING
+    // here, and answered "" -- and that accident was LOAD-BEARING: teaching
+    // the reader the real name (decl_name_at) made the rows appear, the name
+    // table answered with them, and every `assert` call landed on the shell
+    // question the shell cannot answer. The `extern "C"` half DOES take its
+    // row: that is the package FFI layer's form (D282, task 131), and its
+    // calls are ordinary free calls by the literal name.
+    if is_free && !is_extern_c(kids) {
+        match extern_abi_at(kids) {
+            Some(_) => { return HarvestKey { name: mname, on: no_ty(), free: true } }
+            None => {}
+        }
+    } else {
+        // Not an extern free declaration of another ABI: register below.
+    }
     mut row_only = false
     if is_free {
         match defs.def_of(mname) {
@@ -651,6 +670,15 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
                 ret_ro: ret_is_ro(ret_kids), ret_self: returns_receiver(kids),
                 target_mask: target_mask, target_unknown_mask: target_unknown_mask)
     }
+    // An `extern "C" fn` of a HANDED module (a program module's FFI layer, or
+    // std's own): the row's one fact, the same mark the file's own collector
+    // sets (D282, task 131). `extern "nova"` rows take no mark: their symbol
+    // is the registry's spelling, and the shell question answers them as before.
+    if is_free && is_extern_c(kids) {
+        fns.mark_extern_c()
+    } else {
+        // A bodied declaration, or an extern of another ABI: no FFI mark.
+    }
     fns.mark_linear(linear)
     if is_free && !row_only {
         defs.add(mname, DefTarget.DefFn(FnRow(fns.rows.len() - 1)))
@@ -662,14 +690,20 @@ fn harvest_fn(kids []Node, handed_from str, own_module str, types []TypeDef, mut
 }
 
 /// The name of a free function declaration: the first identifier leaf after
-/// the `fn` keyword (index 1, as the collector reads it); "" when the
-/// declaration is too broken to carry one.
+/// the `fn` keyword -- read by the DOOR (slots.nv `decl_name_at`), not at index
+/// one: an `extern "C" fn` declaration puts its ABI STRING there, and this
+/// reader registered the FFI row of another module under the literal `"C"`
+/// (D282, task 131). "" when the declaration is too broken to carry one.
 fn free_fn_name(kids []Node) -> str {
-    if kids.len() < 2 { return "" }
-    ro n = kids[1]
-    if n.kind_of() != NodeKind.LeafNode { return "" }
-    if leaf_kind(n) != TokenKind.Ident { return "" }
-    leaf_text(n)
+    match decl_name_at(kids) {
+        Some(at) => {
+            ro n = kids[at]
+            if n.kind_of() != NodeKind.LeafNode { return "" }
+            if leaf_kind(n) != TokenKind.Ident { return "" }
+            leaf_text(n)
+        }
+        None => ""
+    }
 }
 
 /// The type-parameter NAMES a receiver group binds, in SLOT order: the

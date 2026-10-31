@@ -148,15 +148,20 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         for r in 0..ctx.fns.rows.len() {
             ro row = FnRow(r)
             if !reach.has(row) || ctx.fns.compiles_body(row) || !ctx.in_program(row) { continue }
+            // An `extern "C" fn` row of a program module names a symbol the
+            // LIBRARY owns: no unit of the program defines it, so it takes no
+            // wanted name and owes no body -- the calling unit prints the
+            // prototype from the row and the literal call (D282, task 131).
+            if ctx.fns.extern_c(row) { continue }
             ro owner = index_of(mods, ctx.fns.rows[r].handed_from)
             // The unit's OWN module handed back to it (its file among the
             // program's declarations): its own row answers the call.
             if owner == k { continue }
             ro nm = c_callable(ctx, row, []TyId.new())
             if owner < 0 || state[owner] != 2 {
-                ice_at("novac/src/pipeline/program.nv:157", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
+                ice_at("novac/src/pipeline/program.nv:162", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
             } else if wanted.add(nm) && done[owner] {
-                ice_at("novac/src/pipeline/program.nv:159", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
+                ice_at("novac/src/pipeline/program.nv:164", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
             } else {
                 // Recorded for its owner, which is still to come.
             }
@@ -222,7 +227,7 @@ fn visit_unit(k int, efrom []int, eto []int, mut state []int, mut topo []int) ->
         if state[t] == 0 {
             visit_unit(t, efrom, eto, state, topo)
         } else if state[t] == 1 {
-            ice_at("novac/src/pipeline/program.nv:225", "pipeline: an import cycle between the program's modules")
+            ice_at("novac/src/pipeline/program.nv:230", "pipeline: an import cycle between the program's modules")
         } else {
             // Already placed: an import of a module reached before.
         }

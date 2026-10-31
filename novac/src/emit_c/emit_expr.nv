@@ -694,13 +694,14 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 } else {
                     // An ordinary callable: its C name opens below.
                 }
-                // NAMED BY WHOEVER HAS THE BODY (wave W6): a free function of a
-                // handed module is std's, the shell carries it under the oracle's
-                // spelling, and the checker admitted the call against the lifted
-                // surface; our own spelling is for the rows we compile.
-                // An instance this unit makes from a handed body (274.11 E.10
-                // step 4c-2: `alloc_buf[Pt]`) is ours too (`Ctx @body_ours`).
-                if !@ctx.body_ours(row, @out.callee_subst_of(e.id_of())) {
+                // THE NAME BY WHOSE BODY IT IS (wave W6) -- with one owner
+                // fewer: an extern-C row's body is the LIBRARY's (D282 rule
+                // 3, task 131) -- a LITERAL C symbol, prototype by
+                // `emit_extern_c_protos`; handed rows spell by the shell,
+                // ours by `c_callable` (instances: `body_ours`).
+                if @ctx.fns.extern_c(row) {
+                    @body.append("${extern_c_symbol(@ctx, row)}(")
+                } else if !@ctx.body_ours(row, @out.callee_subst_of(e.id_of())) {
                     @body.append("${c_free_symbol(@ctx, row)}(")
                 } else {
                     @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
@@ -756,7 +757,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         ro kids = branch_children(e)
         if kids.len() < 3 {
             ice_at(
-                "novac/src/emit_c/emit_expr.nv:758",
+                "novac/src/emit_c/emit_expr.nv:759",
                 "emit: an index with fewer than a receiver, `[` and an operand reached emission")
         } else {
             // The three children the checker judged.
@@ -768,7 +769,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             ro rt = @out.type_if_known(kids[0].id_of())
             if !is_ty(rt) {
                 ice_at(
-                    "novac/src/emit_c/emit_expr.nv:770",
+                    "novac/src/emit_c/emit_expr.nv:771",
                     "emit: an index whose receiver type the checker did not record reached emission")
             } else {
                 // The receiver's type decides the symbol, below.
@@ -821,7 +822,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         if neg_int && !@arith_row(carrier).signed {
             ice_at(
-                "novac/src/emit_c/emit_expr.nv:823",
+                "novac/src/emit_c/emit_expr.nv:824",
                 "emit_c: unary minus on an unsigned operand passed the checker -- spec/conversions.md defines it for signed types only")
         }
         if neg_int {
@@ -947,7 +948,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
             @body.append(")")
         }
     } else {
-        ice_at("novac/src/emit_c/emit_expr.nv:950", "emit: expression kind outside the subset")
+        ice_at("novac/src/emit_c/emit_expr.nv:951", "emit: expression kind outside the subset")
     }
 }
 
@@ -973,7 +974,7 @@ fn Emitter mut @emit_call_stmt(call Node) -> () {
         // of step 3b. A dead printer that restores retired behaviour is worse than none -- it
         // turns a hole into a silent divergence.
         ice_at(
-            "novac/src/emit_c/emit_expr.nv:975",
+            "novac/src/emit_c/emit_expr.nv:976",
             "emit_c: a println reached the call-statement door -- it is lowered, not printed (M3a)")
     } else {
         // An ordinary call: the lines below own it.

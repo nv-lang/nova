@@ -259,6 +259,66 @@ export fn decl_name_at(kids []Node) -> Option[int] {
     None
 }
 
+/// The ABI string of an `extern "ABI" fn` declaration (D282), quotes off:
+/// `Some("C")` for `extern "C" fn`, `Some("nova")` for `extern "nova" fn`.
+/// `Some("")` answers an `extern` whose ABI string the tree does not carry
+/// (recovery debris -- check names it); `None` answers a declaration without
+/// the keyword -- every plain `fn`.
+///
+/// ONE door for the question every reader of the form asks (check's refusal,
+/// the collector's row mark, the emitter's literal name), so the three can
+/// never disagree about which declaration is FFI. The leads are leaves of the
+/// FnDecl itself (parse/decls.nv `@extern_decl`): the keyword, then the ABI
+/// string, then the optional `unsafe` -- never a wrapper node.
+export fn extern_abi_at(kids []Node) -> Option[str] {
+    mut saw_extern = false
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { continue }
+        ro k = leaf_kind(c)
+        if !saw_extern {
+            if k == TokenKind.KwExtern {
+                saw_extern = true
+            } else {
+                // A lead of some other form (`fn`, `export`, a mode): the walk
+                // has not met the keyword yet.
+            }
+            continue
+        } else {
+            // Past the keyword: the ABI string is the FIRST string leaf, and
+            // `Some("")` names its absence rather than guessing an ABI.
+            if k == TokenKind.StrLit { return Some(unquote_abi(leaf_text(c))) }
+            if k == TokenKind.KwFn { return Some("") }
+        }
+    }
+    if saw_extern { Some("") } else { None }
+}
+
+/// The quotes off an ABI string leaf: the lexer keeps the literal's source
+/// bytes (`"C"` is three of them), and an ABI compared WITH quotes answers a
+/// question nobody asked.
+fn unquote_abi(text str) -> str {
+    ro b = text.bytes()
+    if b.len() >= 2 && b[0] == QUOTE_BYTE && b[b.len() - 1] == QUOTE_BYTE {
+        b[1..b.len() - 1].to_str() ?? ""
+    } else {
+        text
+    }
+}
+
+/// The byte a double quote is.
+const QUOTE_BYTE u8 = 0x22 // "
+
+/// Does this declaration carry `extern "C" fn`'s lead -- the ABI the emitter
+/// calls by the declaration's LITERAL name (D282 rule 3)? Asked of a row's
+/// registration (collect, harvest) so every later reader -- the call site's
+/// spelling, the prototype walk -- holds ONE fact, not three readings.
+export fn is_extern_c(kids []Node) -> bool {
+    match extern_abi_at(kids) {
+        Some(a) => a == "C"
+        None => false
+    }
+}
+
 /// The parameter MODES, and the set is measured rather than assumed
 /// (2026-08-17, after the owner asked why only `consume` was skipped):
 ///
@@ -443,7 +503,7 @@ fn type_slot_after(pk []Node, n int) -> Option[int] {
 /// docs/plans/274.12-novac-divergences.md), so the signature has to say it.
 export fn branch_children(n Node) -> ro []Node {
     match n {
-        Leaf(_) => ice_at("novac/src/sem/slots.nv:446", "sem: expected a branch node")
+        Leaf(_) => ice_at("novac/src/sem/slots.nv:506", "sem: expected a branch node")
         Branch { children, .. } => children
     }
 }
@@ -452,7 +512,7 @@ export fn branch_children(n Node) -> ro []Node {
 export fn leaf_text(n Node) -> str {
     match n {
         Leaf(t) => t.text
-        Branch { .. } => ice_at("novac/src/sem/slots.nv:455", "sem: leaf_text on a branch node")
+        Branch { .. } => ice_at("novac/src/sem/slots.nv:515", "sem: leaf_text on a branch node")
     }
 }
 
@@ -460,7 +520,7 @@ export fn leaf_text(n Node) -> str {
 export fn leaf_kind(n Node) -> TokenKind {
     match n {
         Leaf(t) => t.kind
-        Branch { .. } => ice_at("novac/src/sem/slots.nv:463", "sem: leaf_kind on a branch node")
+        Branch { .. } => ice_at("novac/src/sem/slots.nv:523", "sem: leaf_kind on a branch node")
     }
 }
 
@@ -483,7 +543,7 @@ export fn literal_prim_of(lk TokenKind, ctx Ctx) -> TyId {
         FloatLit => ctx.prims.f64_id
         IntLit => ctx.prims.int_id
         CharLit => ctx.prims.char_id
-        _ => ice_at("novac/src/sem/slots.nv:486", "sem: literal token kind without a type rule (#652 class)")
+        _ => ice_at("novac/src/sem/slots.nv:546", "sem: literal token kind without a type rule (#652 class)")
     }
 }
 

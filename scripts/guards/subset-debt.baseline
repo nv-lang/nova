@@ -459,13 +459,18 @@ undated=53
 #   reason -- a program type named like a struct the interop shell defines gets the D381
 #   module-qualified C base (sem `type_base`), every shape, and a file with no module the
 #   empty-modpath formula `Nova__<Name>`. refusals 137 -> 136, the guard's count on the tree.
-# 2026-10-31, task 130 (registry 221.1 reg 1933, the settle wave): refusals 136 -> 137, the
+# 2026-10-31, task 131 (registry 1932, D282): the ONE blanket extern refusal
+#   ("an extern declaration is read, but novac emits no FFI call yet") became SIX
+#   named, dated refusals in check/extern_rules.nv (per-ABI, unsafe, receiver,
+#   generic, body, non-C-ABI signature) when the minimal extern-C class became
+#   compiled: 136 - 1 + 6 = 141. Same debt, better said; undated counts move not.
+# 2026-10-31, task 130 (registry 221.1 reg 1933, the settle wave): refusals 141 -> 142, the
 #   integrator's decision (10:35, question qmvw364mwggmz, 274 1.3a): ONE new DATED (E2-b)
 #   refusal, ANON_CTOR_BIND_NO_TYPE_MSG -- a bare binding of a sourceless anonymous record
 #   (`ro r = { x: 9 }`) names no type, and inferring an anonymous record type is the removal
 #   condition of the debt. The wave replaces ICEs, not refusals, so nothing to retire came
 #   with it; no other line touched.
-refusals=137
+refusals=142
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

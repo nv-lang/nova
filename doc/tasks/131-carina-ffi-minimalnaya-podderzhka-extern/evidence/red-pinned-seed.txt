@@ -1,0 +1,18 @@
+RED (pinned seed 0.2.1, b1_sha256=824bf597..., the driver's own invocation
+shape: `novac emit probe.nv`, NOVA_STD_PATH=<repo>/std/src):
+
+  $ python run_seed.py <repo> <seed_home> probe_ffi.nv red
+  exit=1 stdout_bytes=315 stderr_bytes=0
+  red.stdout.txt:
+  {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"<scratch>\\probe_ffi.nv","start":99,"end":105},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+probe_ffi.nv (the minimal measured class: ABI "C", free fn, scalar sig):
+
+  module ffi_probe
+  extern "C" fn abs(v i32) -> i32
+  fn main() {
+      println(abs(0 - 5))
+  }
+
+This is the task's named blocker, reproduced verbatim through the pinned
+seed -- the "минимальный репро FFI через pinned сид" criterion, RED half.

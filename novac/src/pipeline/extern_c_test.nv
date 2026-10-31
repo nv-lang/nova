@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Role: the D282 minimal-class checks (task 131) -- an `extern "C" fn`
+//   declaration is admitted in the measured class, named by its LITERAL C
+//   symbol at the call, prototyped for the C compiler from the row's own
+//   types, and every form outside the class is refused BY NAME; the same
+//   across two units of one program, the shape the package FFI layers use
+//   (nova-duckdb's `ffi` module beside its wrapper module).
+// Used by: check-novac-module-tests.
+
+module novac.pipeline
+
+import ../tree.{Node}
+import ../sem.{InteropTable, EmbedTable}
+import ../check.{check}
+
+/// The prototype line the emitter wrote for a literal FFI symbol, or "".
+fn extern_proto_line(c str, name str) -> str {
+    for line in c.lines() {
+        if line.starts_with("extern ") && line.contains(" ${name}(") { return line }
+    }
+    ""
+}
+
+/// Does the C define a function of this name -- a definition, not a
+/// prototype (ends in `;`) and not a call site?
+fn has_c_definition(c str, name str) -> bool {
+    for line in c.lines() {
+        if line.contains(" ${name}(") && line.ends_with("{") { return true }
+    }
+    false
+}
+
+test "an extern C fn is admitted, prototyped and called by its literal name (D282, task 131)" {
+    ro text = "module extern_c.pos\nextern \"C\" fn abs(v i32) -> i32\nfn main() -> i32 { abs(0 - 5) }"
+    ro fr = front(text, []Node.new(), InteropTable.new(), EmbedTable.new())
+    ro (diags, _) = check(fr.tree, fr.src, fr.ctx)
+    assert(diags.len() == 0, messages(diags))
+    ro (ediags, c) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
+                                              "extern_c_test.nv", EmbedTable.new())
+    assert(ediags.len() == 0, messages(ediags))
+    // The prototype the C compiler reads: literal name, signature from the row.
+    ro proto = extern_proto_line(c, "abs")
+    assert(proto != "", c)
+    assert(proto.contains("int32_t"), proto)
+    assert(proto.ends_with(";"), proto)
+    // The symbol is NOBODY's to define: no mangled definition of it exists.
+    assert(!has_c_definition(c, "abs"), c)
+    assert(!c.contains("novac_user_abs"), c)
+    assert(!c.contains("nova_fn_abs"), c)
+    // And the call itself names the literal symbol.
+    assert(c.contains("abs("), c)
+}
+
+test "an extern C fn returning unit is declared void (D282 rule 5)" {
+    ro text = "module extern_c.unit\nextern \"C\" fn noop(v int) -> ()\nfn main() { noop(3) }"
+    ro (ediags, c) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
+                                              "extern_c_test.nv", EmbedTable.new())
+    assert(ediags.len() == 0, messages(ediags))
+    ro proto = extern_proto_line(c, "noop")
+    assert(proto != "", c)
+    assert(proto.contains("void noop("), proto)
+    assert(!has_c_definition(c, "noop"), c)
+}
+
+test "an extern C fn over a handle newtype crosses by its representation (D364)" {
+    ro text = "module extern_c.handle\ntype CHandle int\nextern \"C\" fn make() -> CHandle\nextern \"C\" fn len_of(h CHandle) -> i64\nfn main() -> i64 { len_of(make()) }"
+    ro (ediags, c) = compile_to_c_with_embeds(text, []Node.new(), InteropTable.new(),
+                                              "extern_c_test.nv", EmbedTable.new())
+    assert(ediags.len() == 0, messages(ediags))
+    assert(extern_proto_line(c, "make") != "", c)
+    assert(extern_proto_line(c, "len_of") != "", c)
+}
+
+test "an extern declaration outside the class is refused by name, once per form (D282, task 131)" {
+    ro nova_abi = "module extern_c.neg1\nextern \"nova\" fn rt_read() -> int\nfn main() { }"
+    ro d1 = front(nova_abi, []Node.new(), InteropTable.new(), EmbedTable.new())
+    ro (nova_diags, _) = check(d1.tree, d1.src, d1.ctx)
+    assert(nova_diags.len() == 1, messages(nova_diags))
+    assert(messages(nova_diags).contains("only the C ABI is compiled yet"), messages(nova_diags))
+
+    ro unsafe_lead = "module extern_c.neg2\nextern \"C\" unsafe fn raw(p *u8) -> int\nfn main() { }"
+    ro d2 = front(unsafe_lead, []Node.new(), InteropTable.new(), EmbedTable.new())
+    ro (unsafe_diags, _) = check(d2.tree, d2.src, d2.ctx)
+    assert(unsafe_diags.len() == 1, messages(unsafe_diags))
+    assert(messages(unsafe_diags).contains("no unsafe-call door yet"), messages(unsafe_diags))
+
+    ro with_body = "module extern_c.neg3\nextern \"C\" fn two() -> int { 2 }\nfn main() { }"
+    ro d3 = front(with_body, []Node.new(), InteropTable.new(), EmbedTable.new())
+    ro (body_diags, _) = check(d3.tree, d3.src, d3.ctx)
+    assert(body_diags.len() == 1, messages(body_diags))
+    assert(messages(body_diags).contains("with a body"), messages(body_diags))
+
+    ro non_c_abi = "module extern_c.neg4\ntype Box { x int }\nextern \"C\" fn size(v Box) -> int\nfn main() { }"
+    ro d4 = front(non_c_abi, []Node.new(), InteropTable.new(), EmbedTable.new())
+    ro (abi_diags, _) = check(d4.tree, d4.src, d4.ctx)
+    assert(messages(abi_diags).contains("whose C ABI novac does not emit yet"), messages(abi_diags))
+}
+
+test "an extern C fn of another module of the program is called by its literal name (274.11 E.10, task 131)" {
+    ro ffi_text = "module prog.ffi\nexport extern \"C\" fn abs(v i32) -> i32\n"
+    ro main_text = "module prog.main\nimport ./ffi.{abs}\nfn main() -> i32 { abs(0 - 5) }"
+    ro ffi_unit = unit_of([]str.of("ffi/ffi.nv"), []str.of(ffi_text))
+    ro main_unit = unit_of([]str.of("main.nv"), []str.of(main_text))
+    mut us = []Unit.new()
+    us.push(ffi_unit)
+    us.push(main_unit)
+    // The program's own declarations, the way `novac emit` hands them
+    // (main.nv: parsed, marked on the link surface, then handed to the
+    // pipeline) -- without them the entry's unit never sees `prog.ffi`.
+    ro decls = parse_decls([]str.of(ffi_text))
+    mut interop = InteropTable.new()
+    mark_program(interop, decls)
+    ro (diags, c) = compile_program_to_c(us, 1, decls, interop, EmbedTable.new())
+    assert(diags.len() == 0, messages(diags))
+    assert(extern_proto_line(c, "abs") != "", c)
+    assert(!has_c_definition(c, "abs"), c)
+    assert(c.contains("abs("), c)
+}

@@ -679,7 +679,15 @@ export fn collect_types_with(file Node, decls []Node, target_os str = "") -> Ctx
             ro ret = ret_ty_of_decl(fk, tps, param_rows, types, defs, tys)
             // A file function is a callable with no receiver (plan 273):
             // same row shape as a read method signature, same table.
-            ro fname = leaf_text(fk[1])
+            // The name by the DOOR (slots.nv), never by index one: an
+            // `extern "C" fn` declaration puts its ABI STRING there, and a
+            // collector that read index one registered the FFI row under the
+            // literal `"C"` -- a name nobody calls and the library's symbol
+            // is not (D282, task 131).
+            ro fname = match decl_name_at(fk) {
+                Some(at) => leaf_text(fk[at])
+                None => ""
+            }
             mut param_ids = []ParamDef.new()
             for pn in fk {
                 if pn.kind_of() != NodeKind.Param { continue }
@@ -718,6 +726,13 @@ export fn collect_types_with(file Node, decls []Node, target_os str = "") -> Ctx
             fns.add(fname, ret, false, param_ids, tps, generic_bounds(fk),
                     ret_ro: decl_ret_is_ro(fk), target_mask: target_mask,
                     target_unknown_mask: target_unknown_mask)
+            // An `extern "C" fn` of THIS file: the row is the FFI declaration's,
+            // and the mark is the one fact every later reader asks (D282, task 131).
+            if is_extern_c(fk) {
+                fns.mark_extern_c()
+            } else {
+                // A bodied declaration, or an extern of another ABI: no mark.
+            }
             fns.mark_linear(generic_linear(fk))
             ro frow = FnRow(fns.rows.len() - 1)
             defs.add(fname, DefTarget.DefFn(frow))

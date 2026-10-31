@@ -1,0 +1,30 @@
+SEED-UPDATE PATH BLOCKER (the criterion's "при отсутствии Carina-only пути
+обновления сида — явный блокер"; the path itself is task 130's to prove).
+
+Attempt: rebuild novac from THIS tree's sources with the pinned seed only
+(`NOVAC_SELF_PATH=novac/src NOVA_STD_PATH=std/src <seed> emit
+novac/src/main.nv`), i.e. double-build's stage B without any Oracle.
+
+  With task 131's changes applied:
+    emit rc=1, single diagnostic:
+    {"id":"d0", ... "file":"std/src/os/os.nv" ... "message":"in the instance of `host_os`: outside the subset: `os_host_os` is not a callable novac knows in an expression ..."}
+
+  BASELINE (HEAD, the nine files this task touches restored to HEAD text in
+  a scratch copy -- baseline_head_seed.py):
+    baseline HEAD emit rc=1, the SAME single d0 in std/src/os/os.nv.
+
+Conclusion: the pinned seed 0.2.1 (source 3729abcc) does not accept the
+CURRENT std at all -- the refusal predates this task's changes and is
+outside them (std drift since the seed's source era). Therefore:
+
+  * a Carina-only rebuild of novac (and so a seed carrying task 131's fix)
+    from the current tree is IMPOSSIBLE today;
+  * the штатный seed-update path is task 130's open work; per the task's
+    open question this is an EXPLICIT BLOCKER here, not worked around;
+  * consequently the 6 package inputs (duckdb x3, postgres x3) and the
+    118-example corpus were NOT re-run with the fix (no binary exists that
+    carries it) -- no fictitious PASS is claimed.
+
+What IS proven locally with the fix (module tests via `nova test`, the
+project's regular runner): admission, named refusals, prototype + literal
+call emission, `-> ()` = void, handle newtype, cross-unit program shape.

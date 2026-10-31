@@ -32,7 +32,6 @@ import ../sem.{is_arg_node, is_collection_head}
 import ../sem.{ret_is_unit, param_default_slot, interp_slices}
 import ../types.{TyId, no_ty, is_ty}
 
-
 /// [name, type-ident, ...] — the second child must be an Ident leaf. Whether
 /// that identifier NAMES a type novac knows is judged in the typing walk, not
 /// here: this pass also runs over recovered junk, and `fn main junk here ()`
@@ -649,38 +648,6 @@ fn Checker mut @report_if_generic_decl(kids []Node) -> () {
     }
 }
 
-/// An `extern "ABI" fn` declaration: READ by the parser since 2026-08-20,
-/// refused here by name.
-///
-/// The form is the language's (D282, plan 91.12 F.-1) and std's whole FFI layer
-/// is written in it. What novac does not have is the EMISSION: an extern
-/// declaration says "the body is a C or runtime symbol", and nothing in the
-/// subset emits a call to one. Refusing the DECLARATION rather than its calls
-/// is deliberate -- the declaration is where the reader wrote the form, and one
-/// diagnostic at the form beats one per call site.
-///
-/// Answers `true` when it reported, so the caller can skip the rules that judge
-/// PARTS of a declaration novac will not compile at all: a second diagnostic
-/// about a part of a refused form is the cascade the no-cascade guard forbids.
-fn Checker mut @report_if_extern_decl(kids []Node) -> bool {
-    for c in kids {
-        match c {
-            Leaf(t) => {
-                if t.kind == TokenKind.KwExtern {
-                    @refuse(t,
-                        "outside the subset: an `extern` declaration is read, but novac emits no FFI call yet")
-                    return true
-                } else {
-                    // Another leaf of the same declaration: `fn`, the name,
-                    // the ABI string. Only the keyword marks the form.
-                }
-            }
-            Branch { .. } => {}
-        }
-    }
-    false
-}
-
 /// Every fn except main must declare `-> T` in the subset.
 fn Checker mut @report_if_return_type_undeclared(kids []Node) -> () {
     if kids.len() < 2 { return }
@@ -745,7 +712,6 @@ fn Checker mut @report_first_leaf_kind(children []Node, msg str, kind DiagKind) 
     }
 }
 
-
 /// Two arguments that BOTH call something are two side effects whose order
 /// the emitter does not fix: it prints the call straight into C, and C
 /// leaves argument evaluation order unspecified at any calling convention.
@@ -773,9 +739,6 @@ fn Checker mut @report_if_ordered_args(kids []Node) -> () {
     // see `@hoist_ordered_args` in the lowering.
     if effectful < 2 { return }
 }
-
-
-
 
 /// MethodCall kids: [recv, '.', name, '(', args..., ')'] — the name leaf is
 /// judged against the ONE subset table. An unknown method is an honest
