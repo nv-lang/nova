@@ -1,5 +1,6 @@
 nova build program: 3 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar\target/carina-build\main.67072.src
-carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
 nova: Carina B1 emit failed (exit 2): {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/pipeline/program.nv:157 (novac bug, not yours): pipeline: `novac_fn_ownpkg_build_min_helper_greet__nova_str__to_nova_str` belongs to module `ownpkg_build_min.helper`, which the entry's imports do not reach","poisoned_by":null}
 carina-ownpkg FAIL: driver build failed (exit 1) -- with the pre-132 staging this is the E_NOVAC_ICE program.nv:157 red (own-package qualified import, registry 1924)
-carina-ownpkg: driver=C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mvvmvfqrzu5cgrg3de\132\nova-prefix.exe sha256=e88f8f965ace0bc3e022d803229d5cd7479a3168c28c8baa7750d25de86353ac
+carina-ownpkg: driver=%USERPROFILE%\AppData\Local\Temp\opencode\ses_<session>\132\nova-prefix.exe sha256=e88f8f965ace0bc3e022d803229d5cd7479a3168c28c8baa7750d25de86353ac

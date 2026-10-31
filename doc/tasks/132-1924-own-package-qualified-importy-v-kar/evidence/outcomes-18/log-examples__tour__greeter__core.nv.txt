@@ -1,9 +1,13 @@
-carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
 nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar\target/carina-build\core.54000.src
 nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar argv=["emit", "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-132-1924-own-package-qualified-importy-v-kar\\target/carina-build\\core.54000.src\\tour/greeter/core.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=dc61ea153ee122030983c4494962458c143a8a4fe59114e2cb4918b44c79633c
 nova build native inputs: toolchain=clang mode=Dev runtime_archive=D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar\target\rt-archive-cache\7ee717c56f250720\libnova_rt.lib runtime_sha256=e2bdf18c4433cee50853fef241e31183fe4b7c721051c37e300dc7b78ed4d8da
 nova: Carina-generated C compile/link failed: compiler error:
-lld-link: error: undefined symbol: nova_fn_main_impl
->>> referenced by D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar\target\carina-build\core.54000.carina.c:26306
->>>               C:\Users\B7E3~1\AppData\Local\Temp\core-1014a1.o:(_nova_main_fiber_entry)
+lld-link: error: undefined symbol: nova_fn_main_impl
+
+>>> referenced by D:\Sources\nv-lang\worktrees\nova-opencode-132-1924-own-package-qualified-importy-v-kar\target\carina-build\core.54000.carina.c:26306
+
+>>>               %USERPROFILE%\AppData\Local\Temp\core-1014a1.o:(_nova_main_fiber_entry)
+
 clang: error: linker command failed with exit code 1 (use -v to see invocation)
