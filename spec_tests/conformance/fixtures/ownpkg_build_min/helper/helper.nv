@@ -1,0 +1,7 @@
+// Folder-module of the ownpkg_build_min fixture (task 132): the carrier
+// shape of registry 1924 — a directory-module of the program's own package
+// imported by its package-qualified path. Markerless like the entry: see
+// main.nv's header comment.
+module ownpkg_build_min.helper
+
+export fn greet(name str) -> str => "Hello, ${name}!"

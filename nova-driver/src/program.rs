@@ -40,13 +40,23 @@
 //! is exactly what the seed's import visibility matches on (274.11 E.10's
 //! named simplification).
 //!
+//! OWN-PACKAGE qualified imports (registry №1924, task 132) get the same
+//! treatment: `import mypkg.helper.{greet}` names a staged OWN module, and
+//! the seed builds the entry-to-module edge only for a relative import, so
+//! the staged copy carries `./helper` instead (a cross-unit edge; a module
+//! in the importing file's own directory needs no edge — its peers already
+//! share the unit's namespace — and keeps today's text). Both forms resolve
+//! to the same module per D78 rev-4: a qualified import is a path from the
+//! package root, a relative one a path from the importing file, and the
+//! rewrite trades one spelling for the other without moving any module.
+//!
 //! Known boundaries of the shallow scan (all failures are loud at the seed,
 //! never silent): import paths split across lines are not seen; `embed`
-//! (D412) assets beside the sources are not staged; package-qualified
-//! imports of the OWN package are staged but the pinned B1 links only
-//! relative-import edges between units (registry caveat of №1889); spans in
-//! the seed's diagnostics name the staged copies, and a rewritten import
-//! line shifts the byte offsets behind it within that copy.
+//! (D412) assets beside the sources are not staged; a package-qualified
+//! import of the package ROOT itself (`import mypkg.{x}`) has no last
+//! segment to name and keeps its text; spans in the seed's diagnostics name
+//! the staged copies, and a rewritten import line shifts the byte offsets
+//! behind it within that copy.
 
 use anyhow::{Context, Result};
 use nova_driver_support::manifest::{DepSource, Manifest};
@@ -132,8 +142,11 @@ pub(crate) struct ProgramFile {
 
 /// The result of the program walk: the files to stage (the entry NOT among
 /// them) and, per importing file, the import tokens that name a staged
-/// dependency module and must be rewritten to that module's relative staged
-/// path (`token as written` -> `module dotted name`).
+/// module the seed can only reach through a relative import — a dependency
+/// module or an own-package module — with the token that must be rewritten
+/// mapped to that module's staged location (`token as written` -> staged
+/// module path: `_deps/<module path>` for dependencies, the package-relative
+/// location for own modules).
 pub(crate) struct Discovery {
     pub files: Vec<ProgramFile>,
     pub rewrites: HashMap<PathBuf, Vec<(String, String)>>,
@@ -200,10 +213,20 @@ pub(crate) fn discover_program_files(
                     rewrites
                         .entry(normalize_path(&file))
                         .or_default()
-                        .push((import, dep_module));
+                        .push((import, dep_staged_dir(&dep_module)));
                 }
                 continue;
             }
+            // An own-package qualified import (registry №1924): the module
+            // is staged below, and its staged copy must name it relatively
+            // for the seed to build the edge. Same-unit targets (the
+            // importing file's own directory) and the package root keep
+            // their text — see `own_staged_module_loc`.
+            let own_loc = if own_qualified(&import, manifest) {
+                own_staged_module_loc(&import, manifest, &staged_dir_of(&file, manifest))
+            } else {
+                None
+            };
             for candidate in resolve_import(&import, file_dir, manifest) {
                 for member in module_files(&candidate) {
                     let member = normalize_path(&member);
@@ -212,6 +235,12 @@ pub(crate) fn discover_program_files(
                         queue.push(member);
                     }
                 }
+            }
+            if let Some(loc) = own_loc {
+                rewrites
+                    .entry(normalize_path(&file))
+                    .or_default()
+                    .push((import, loc));
             }
         }
     }
@@ -378,9 +407,12 @@ fn rewrite_import_line(body: &str, staged_dir: &str, pairs: &[(String, String)])
         .sum();
     let token_raw = &body[token_start..token_start + token_len];
     let token = token_raw.trim_end_matches('.');
-    for (written, module) in pairs {
+    for (written, staged_module) in pairs {
         if written == token {
-            if let Some(rel) = rel_module_dir(staged_dir, &dep_staged_dir(module)) {
+            // The pair names the module's staged location (a `_deps/…`
+            // directory for a dependency, a package-relative path for an
+            // own module); spell it relative to this copy's directory.
+            if let Some(rel) = rel_module_dir(staged_dir, staged_module) {
                 // `token.len()`, not `token_raw.len()`: a trailing dot before
                 // the brace list stays in place.
                 return format!(
@@ -437,6 +469,73 @@ fn rel_module_dir(from_dir: &str, to_dir: &str) -> Option<String> {
     }
     out.push_str(&down.join("/"));
     Some(out)
+}
+
+/// Is this import token a package-qualified import of the package's OWN
+/// modules — `mypkg.helper` where `mypkg` is `[package].name`? Relative
+/// (`./`, `../`), `std.*` and dependency tokens are not: the first two
+/// already spell what the seed reads, the last two belong to
+/// `resolve_dep_import`.
+fn own_qualified(token: &str, manifest: &Manifest) -> bool {
+    if token.starts_with("./") || token.starts_with("../") {
+        return false;
+    }
+    token
+        .split(['.', '/'])
+        .next()
+        .unwrap_or("")
+        == manifest.package_name
+}
+
+/// The staged location of the own-package module a qualified import names:
+/// the package-relative path, extension-less for a single-file module, so
+/// both a folder-module (`helper/`) and a file-module (`helper.nv`) end in
+/// the module's last segment — what the seed's import visibility matches on
+/// (274.11 E.10).
+///
+/// `None` — keep today's text — when the token names the package root
+/// itself (no last segment to spell) or a module in the importing file's
+/// OWN staged directory (the seed groups a directory into one unit, so the
+/// peers already share the namespace and no edge is needed), or when no
+/// such module exists on disk (the seed refuses the import by name, as it
+/// does today).
+fn own_staged_module_loc(
+    token: &str,
+    manifest: &Manifest,
+    importer_staged_dir: &str,
+) -> Option<String> {
+    let rest = token
+        .strip_prefix(manifest.package_name.as_str())
+        .unwrap_or("")
+        .trim_start_matches(['.', '/']);
+    if rest.is_empty() {
+        return None;
+    }
+    let mut target = manifest.source_root.clone();
+    for segment in rest.split(['.', '/', '\\']) {
+        if !segment.is_empty() {
+            target.push(segment);
+        }
+    }
+    let candidates = [target.clone(), target.with_extension("nv")];
+    for candidate in &candidates {
+        if candidate.is_dir() {
+            let loc = relative_to_base(candidate, &manifest.source_root);
+            return (!loc.is_empty() && loc != importer_staged_dir).then_some(loc);
+        }
+        if candidate.is_file() {
+            let rel = relative_to_base(candidate, &manifest.source_root);
+            let loc = rel.strip_suffix(".nv").unwrap_or(&rel);
+            return (parent_dir_of(loc) != importer_staged_dir).then_some(loc.to_owned());
+        }
+    }
+    None
+}
+
+/// The staged directory of one program file: the directory part of its
+/// package-relative staged path (the stage root itself for a root file).
+fn staged_dir_of(file: &Path, manifest: &Manifest) -> String {
+    parent_dir_of(&staged_own(file, manifest))
 }
 
 /// Resolve an import token against the dependency roots. `Some((module,
@@ -1058,10 +1157,123 @@ mod tests {
                     import std.fs.{read}\r\n\
                     // import dep.types.{T} in a comment stays\r\n\
                     fn main() {}\r\n";
-        let pairs = vec![("dep.types".to_owned(), "dep.types".to_owned())];
+        let pairs = vec![("dep.types".to_owned(), "_deps/dep/types".to_owned())];
         let rewritten = rewrite_imports(text, "", &pairs);
         assert!(rewritten.contains("import ./_deps/dep/types.{T}\r\n"));
         assert!(rewritten.contains("import std.fs.{read}\r\n"));
         assert!(rewritten.contains("// import dep.types.{T} in a comment stays\r\n"));
+    }
+
+    #[test]
+    fn own_qualified_imports_are_rewritten_in_the_staged_copies_only() {
+        // Registry №1924 carrier shape: the entry imports its own package's
+        // modules by package-qualified path; the staged copy must carry the
+        // relative spelling, the user's sources stay byte for byte.
+        let dir = test_dir();
+        write(
+            &dir.join("nova.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n[lib]\nsrc = \".\"\n",
+        );
+        let manifest =
+            nova_driver_support::manifest::parse_manifest(&dir.join("nova.toml"), &dir).unwrap();
+        let entry = dir.join("main.nv");
+        write(
+            &entry,
+            "module probe.main\n\
+             import probe.helper.{greet}\n\
+             import probe.sub.util.{triple}\n\
+             fn main() { println(greet()) }\n",
+        );
+        // A folder-module (the carrier of №1924) and a single-file module in
+        // a subdirectory (cross-unit too).
+        write(
+            &dir.join("helper/helper.nv"),
+            "module probe.helper\nexport fn greet() -> str => \"hi\"\n",
+        );
+        write(
+            &dir.join("sub/util.nv"),
+            "module probe.sub.util\nexport fn triple(x int) -> int => x * 3\n",
+        );
+        let found = discover_program_files(&entry, &manifest, &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        let staged_entry = stage_program(&stage, &dir, &entry, &found).unwrap();
+        let staged_entry_text = std::fs::read_to_string(&staged_entry).unwrap();
+        assert!(
+            staged_entry_text.contains("import ./helper.{greet}"),
+            "staged entry: {staged_entry_text}"
+        );
+        assert!(
+            staged_entry_text.contains("import ./sub/util.{triple}"),
+            "staged entry: {staged_entry_text}"
+        );
+        // The user's sources keep their qualified spelling byte for byte.
+        assert!(std::fs::read_to_string(&entry)
+            .unwrap()
+            .contains("import probe.helper.{greet}"));
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn own_qualified_import_from_a_nested_directory_spells_upward() {
+        let dir = test_dir();
+        write(
+            &dir.join("nova.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n[lib]\nsrc = \".\"\n",
+        );
+        let manifest =
+            nova_driver_support::manifest::parse_manifest(&dir.join("nova.toml"), &dir).unwrap();
+        let entry = dir.join("deep/inside/main.nv");
+        write(
+            &entry,
+            "module probe.deep.inside\nimport probe.helper.{greet}\nfn main() {}\n",
+        );
+        write(
+            &dir.join("helper/helper.nv"),
+            "module probe.helper\nexport fn greet() -> str => \"hi\"\n",
+        );
+        let found = discover_program_files(&entry, &manifest, &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        let staged_entry = stage_program(&stage, &dir, &entry, &found).unwrap();
+        let staged_entry_text = std::fs::read_to_string(&staged_entry).unwrap();
+        // Up two levels, ending on the module's last segment (274.11 E.10).
+        assert!(
+            staged_entry_text.contains("import ../../helper.{greet}"),
+            "staged entry: {staged_entry_text}"
+        );
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn same_unit_and_root_own_imports_are_not_rewritten() {
+        // A module in the importing file's own directory shares the unit's
+        // namespace (the seed groups one directory into one unit): no edge,
+        // no rewrite. A qualified import of the package root has no last
+        // segment to spell and keeps its text too (documented boundary).
+        let dir = test_dir();
+        write(
+            &dir.join("nova.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n[lib]\nsrc = \".\"\n",
+        );
+        let manifest =
+            nova_driver_support::manifest::parse_manifest(&dir.join("nova.toml"), &dir).unwrap();
+        let entry = dir.join("main.nv");
+        write(
+            &entry,
+            "module probe.main\n\
+             import probe.peer.{same}\n\
+             import probe.{root}\n\
+             fn main() {}\n",
+        );
+        write(
+            &dir.join("peer.nv"),
+            "module probe.peer\nexport fn same() -> int => 1\n",
+        );
+        let found = discover_program_files(&entry, &manifest, &no_deps()).unwrap();
+        assert!(
+            found.rewrites.is_empty(),
+            "no rewrite expected, got {:?}",
+            found.rewrites
+        );
+        remove_dir(&dir);
     }
 }

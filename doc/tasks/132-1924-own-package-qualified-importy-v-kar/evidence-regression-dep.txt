@@ -1,0 +1,3 @@
+carina-dep: driver=$WT\nova-driver\target\release\nova.exe sha256=8ded804dec70739f5d09b4d1121a4e4adaf20aab9e6cf2426f460b346174922f
+carina-dep PASS: dep_build_min exit=0 stdout=1 lines binary_sha256=9afeaaca4ef625c01e8ab60daeab4e5607b85c7e7bc95a3fc84eecf1ddb8594a
+carina-dep PASS: the dependency fixture built through the pinned Carina B1 seed and matched its full expected stdout

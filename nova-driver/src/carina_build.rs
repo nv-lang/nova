@@ -99,7 +99,10 @@ pub(crate) fn build(
     // Dependency modules join the same staged tree (task 129): without them
     // the seed never sees a dependency's declarations and refuses every
     // consumer with `E_NOVAC_SUBSET` ("no such method in the declarations
-    // handed to novac", measured by tasks 122/128).
+    // handed to novac", measured by tasks 122/128). Own-package qualified
+    // imports join the same rewrite (task 132, registry №1924): the seed
+    // builds an entry-to-module edge only for a relative import, so their
+    // staged copies carry the relative spelling instead.
     let dep_roots = crate::program::collect_dep_roots(&manifest);
     let discovery = crate::program::discover_program_files(&entry, &manifest, &dep_roots)?;
 
