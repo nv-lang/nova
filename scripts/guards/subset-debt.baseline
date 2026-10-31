@@ -490,7 +490,18 @@ undated=52
 #   same replacement one position over). The field text must be its own const:
 #   reusing the parameter text for a field would be the one-message-for-two-forms
 #   class (reg 1170). undated_by_door unchanged (the refusal is dated, E4).
-refusals=144
+# 2026-10-31, task 130 (registry 221.1 reg 1933, the settle wave): refusals 141 -> 142, the
+#   integrator's decision (10:35, question qmvw364mwggmz, 274 1.3a): ONE new DATED (E2-b)
+#   refusal, ANON_CTOR_BIND_NO_TYPE_MSG -- a bare binding of a sourceless anonymous record
+#   (`ro r = { x: 9 }`) names no type, and inferring an anonymous record type is the removal
+#   condition of the debt. The wave replaces ICEs, not refusals, so nothing to retire came
+#   with it; no other line touched.
+refusals=142
+# 2026-10-31, task 134 candidate, merge of origin/main 5e494fd86 (task 130 landed
+#   ANON_CTOR_BIND_NO_TYPE_MSG, +1 dated): union by numbers, re-measured on the
+#   merged tree by the guard: 141 (main after 131) + 3 (134: DEFER_MSG, FN_PARAM_MSG,
+#   FN_FIELD_MSG) + 1 (130) = 145. undated and undated_by_door unchanged by both.
+refusals=145
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

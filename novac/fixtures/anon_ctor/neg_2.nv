@@ -1,0 +1,17 @@
+module anon_ctor.neg_2
+
+// ONE seeded cause: an anonymous construction in an argument position names
+// a field the expected record does not declare. Until the settle door
+// existed this was the same ice as №1484/№1705 -- the argument was typed
+// with an expectation nobody consumed, and the call key's lattice ask was
+// the crash. Now the construction is judged against the parameter's
+// record, and the field's own door refuses it by name, once.
+//
+// NOVAC_EXPECT this record construction names a field the type does not declare
+type Bag { n int }
+
+fn take(b Bag) -> int => b.n
+
+fn main() {
+    println(take({ wrong: 1 }))
+}
