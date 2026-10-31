@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"h9_newtype_wrong_record.nv","start":81,"end":82},"message":"this record construction names a field the type does not declare (#812)","poisoned_by":null}

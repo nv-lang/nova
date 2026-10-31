@@ -1,0 +1,7 @@
+type StatusCode { code int }
+
+const StatusCode.OK StatusCode = { code: "s" }
+
+fn main() {
+    println("no")
+}

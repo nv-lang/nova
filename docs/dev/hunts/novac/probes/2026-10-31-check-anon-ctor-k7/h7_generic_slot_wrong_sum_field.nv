@@ -1,0 +1,9 @@
+type A { x int }
+type B { y int }
+type Mk[T] enum Ok(T) | No
+
+fn f() -> Mk[A] => Ok({ y: 1 })
+
+fn main() {
+    println("ok")
+}

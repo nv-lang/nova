@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"h1_wrong_field_type.nv","start":84,"end":87},"message":"a value of type `str` stands in this field, which is `int` -- no implicit conversion between named types (E7301, D405)","poisoned_by":null}

@@ -1,0 +1,6 @@
+type Bag { n int }
+
+fn main() {
+    ro q = { ...q, n: 1 }
+    println("${q.n}")
+}

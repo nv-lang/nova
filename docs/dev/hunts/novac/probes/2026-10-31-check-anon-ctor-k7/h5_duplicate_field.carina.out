@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"h5_duplicate_field.nv","start":79,"end":80},"message":"this record construction names a field twice, so another declared field is missing (#812)","poisoned_by":null}
