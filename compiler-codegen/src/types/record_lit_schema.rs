@@ -131,8 +131,15 @@ impl<'a> TypeCheckCtx<'a> {
                 return Some((s, true));
             }
         }
-        if self.types_get_here_contains(last) {
-            return self.record_schema_of_type(last, &[], 0).map(|s| (s, false));
+        // Item 30 (pg_polaris_message): the type door is taken only when the
+        // named type has a RECORD-literal reading (`record_schema_of_type`
+        // already returns None for a sum). A name that is ALSO a non-record
+        // type (a sum: Polaris's `Message` beside the driver's
+        // `DecodeOutcome.Message`) falls through to the owner search -- a sum
+        // cannot be record-built, so the variant schema is the only valid
+        // reading.
+        if let Some(s) = self.record_schema_of_type(last, &[], 0) {
+            return Some((s, false));
         }
         // A bare record variant: the ONE sum declaring it (the owner search
         // `f1_expr_inner` and `infer_expr_type` already do for this shape).

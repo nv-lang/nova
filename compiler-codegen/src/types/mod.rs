@@ -8948,7 +8948,16 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 if let Some(tn) = type_name {
                     if let Some(last) = tn.last() {
-                        if let Some(td) = self.types_get_here(last) {
+                        // Item 48 (user_type_vs_driver_variant): these bare-name
+                        // checks judge a PLAIN record literal (`T { … }`, one
+                        // segment). A two-segment path `Sum.Variant { … }` is a
+                        // variant of the OWNER sum -- `check_named_record_lit`'s
+                        // variant door later in this arm owns its completeness;
+                        // judging it by the bare last segment let an unrelated
+                        // RECORD of the same name decide the fields (the
+                        // machines' `Row` beside the driver's `PgEvent.Row`).
+                        if tn.len() == 1 {
+                            if let Some(td) = self.types_get_here(last) {
                             for f in fields {
                                 if f.is_spread { continue; }
                                 if td.assoc_consts.iter().any(|ac| ac.name == f.name) {
@@ -9091,6 +9100,7 @@ impl<'a> TypeCheckCtx<'a> {
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -10952,16 +10962,32 @@ impl<'a> TypeCheckCtx<'a> {
             );
         }
         // RecordLit: тип литерала = сам объявленный тип. Гейт: только NON-generic
-        // объявленный тип (generic-инстанс требует mono-подстановку — 172.1.2).
+        // объявленный тип (generic-инстанс требует mono-подстановку — 172.1.2),
+        // ИМЕЮЩИЙ record-чтение: имя-сумма не строится `Name { … }`, литерал
+        // тогда — bare record-вариант, и его тип — сумма-владелец (item 30,
+        // pg_polaris_message; класс №599 «имя решает раньше объявления»).
+        // Item 48 (user_type_vs_driver_variant): ОДНОСЕГМЕНТНЫЙ путь. Два
+        // сегмента — `Sum.Variant { … }`: имя-рекорд в ПОСЛЕДНЕМ сегменте не
+        // делает литерал этим рекордом, тип — сумма-владелец (см. ниже).
         if let ExprKind::RecordLit { type_name: Some(rl_name), .. } = &e.kind {
             if let Some(rl_last) = rl_name.last() {
-                if e.id.is_set()
-                    && self.types_get_here(rl_last.as_str()).map_or(false, |td| td.generics.is_empty())
-                {
-                    self.resolved_types_buf.borrow_mut().insert(
-                        e.id,
-                        ResolvedType::Named { name: rl_last.clone(), module: vec![], args: vec![] },
-                    );
+                if e.id.is_set() && rl_name.len() == 1 {
+                    let named_non_generic = self
+                        .types_get_here(rl_last.as_str())
+                        .map_or(false, |td| td.generics.is_empty());
+                    if named_non_generic {
+                        if self.record_lit_reading(rl_last.as_str()) {
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named { name: rl_last.clone(), module: vec![], args: vec![] },
+                            );
+                        } else if let Some(owner) = self.bare_record_variant_owner(rl_last.as_str()) {
+                            self.resolved_types_buf.borrow_mut().insert(
+                                e.id,
+                                ResolvedType::Named { name: owner, module: vec![], args: vec![] },
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -11093,9 +11119,35 @@ impl<'a> TypeCheckCtx<'a> {
                     // verified atom, not this slice). Shared single-source const (emit_c.rs,
                     // introduced 83ad5c46) — §0, no duplicate list.
                     if !crate::codegen::emit_c::RUNTIME_DEFINED_TYPES.contains(&last.as_str()) {
+                        // Item 48 (user_type_vs_driver_variant): a two-segment path
+                        // `Sum.Variant { … }` is a variant of the OWNER sum -- the
+                        // bare last segment must not decide the channel (the
+                        // machines' `Row` record beside the driver's `PgEvent.Row`
+                        // stamped `Named{"Row"}` into it, so codegen lowered the
+                        // variant as the unrelated record). The owner sum's own
+                        // name is the complete annotation for a non-generic sum.
+                        if name.len() == 2 && e.id.is_set() {
+                            let owner = &name[0];
+                            if let Some(td2) = self.types_get_here(owner) {
+                                if td2.generics.is_empty() {
+                                    if let TypeDeclKind::Sum(vs) = &td2.kind {
+                                        if vs.iter().any(|v| v.name == *last
+                                            && matches!(v.kind, SumVariantKind::Record(_)))
+                                        {
+                                            self.resolved_types_buf.borrow_mut().insert(
+                                                e.id,
+                                                ResolvedType::Named {
+                                                    name: owner.clone(), module: vec![], args: vec![],
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         // 172.1.2 (Self-литерал, 2026-07-04): `Self{...}` в методе —
                         // тип = ресивер; гейт: non-generic recv (self.types).
-                        if last == "Self" && e.id.is_set() {
+                        if name.len() == 1 && last == "Self" && e.id.is_set() {
                             if let Some(recv) = self.current_recv_type.borrow().clone() {
                                 // ТОЛЬКО non-generic recv: generic Self{...} в mono
                                 // требует инстанс-имени (bare сломал бы mono —
@@ -11115,7 +11167,7 @@ impl<'a> TypeCheckCtx<'a> {
                         // 172.1.2 (record-вариант sum'а, 2026-07-03): `Cons{...}` —
                         // имя ВАРИАНТА (не в self.types) → тип литерала = содержащий
                         // sum; гейт: единственный non-generic sum с record-вариантом.
-                        if !self.types_get_here_contains(last.as_str()) && e.id.is_set() {
+                        if name.len() == 1 && !self.types_get_here_contains(last.as_str()) && e.id.is_set() {
                             let mut owner: Option<&String> = None;
                             let mut ambiguous = false;
                             for (tn, td2) in self.types.iter() {
@@ -11138,6 +11190,7 @@ impl<'a> TypeCheckCtx<'a> {
                                 );
                             }
                         }
+                        if name.len() == 1 {
                         if let Some(td) = self.types_get_here(last) {
                             if let TypeDeclKind::Record(field_decls) = &td.kind {
                                 // Generic args: для каждого generic-параметра тип-аргумент =
@@ -11186,6 +11239,7 @@ impl<'a> TypeCheckCtx<'a> {
                                         last, td.generics.len(), e.span);
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -24895,39 +24949,55 @@ impl<'a> TypeCheckCtx<'a> {
                 // real top-level type, look for the ONE non-generic sum type
                 // whose variant list has a Record-kind variant of that name.
                 let last = name.last()?;
-                if self.types_get_here_contains(last.as_str()) {
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment path is a
+                // variant of the OWNER sum (`PgEvent.Row { … }` beside a plain
+                // record `Row`): its type is the owner, never the bare last
+                // segment -- record_lit_reading on `Row` would hand back the
+                // unrelated record.
+                if name.len() == 2 {
+                    let owner = &name[0];
+                    if let Some(td) = self.types_get_here(owner) {
+                        if td.generics.is_empty() {
+                            if let TypeDeclKind::Sum(vs) = &td.kind {
+                                if vs.iter().any(|v| v.name == *last
+                                    && matches!(v.kind, SumVariantKind::Record(_)))
+                                {
+                                    return Some(TypeRef::Named {
+                                        path: vec![owner.clone()],
+                                        generics: Vec::new(),
+                                        span: expr.span,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    return None;
+                }
+                // Item 30 (pg_polaris_message, класс №599 "имя решает раньше
+                // объявления"): the verbatim type-name return above is only
+                // valid when the named type has a RECORD-literal reading. A
+                // non-record type of the same name (a sum: Polaris's `Message`
+                // beside the driver's `DecodeOutcome.Message`) cannot be BUILT
+                // as `Name { … }` — the literal is then the bare record
+                // variant, and its type is the OWNER sum below (the same
+                // single-unambiguous-owner search as before).
+                if self.record_lit_reading(last.as_str()) {
                     return Some(TypeRef::Named {
                         path: name.clone(),
                         generics: Vec::new(),
                         span: expr.span,
                     });
                 }
-                let mut owner: Option<&String> = None;
-                let mut ambiguous = false;
-                for (tn, td) in self.types.iter() {
-                    if let TypeDeclKind::Sum(vs) = &td.kind {
-                        if td.generics.is_empty()
-                            && vs.iter().any(|v| {
-                                &v.name == last && matches!(v.kind, SumVariantKind::Record(_))
-                            })
-                        {
-                            if owner.is_some() {
-                                ambiguous = true;
-                                break;
-                            }
-                            owner = Some(tn);
-                        }
-                    }
-                }
-                match (owner, ambiguous) {
-                    (Some(tn), false) => Some(TypeRef::Named {
-                        path: vec![tn.clone()],
+                let owner = self.bare_record_variant_owner(last.as_str());
+                match owner {
+                    Some(tn) => Some(TypeRef::Named {
+                        path: vec![tn],
                         generics: Vec::new(),
                         span: expr.span,
                     }),
                     // Ambiguous or unresolved: honest None (rather than guessing
                     // — same discipline the source snippet mirrors).
-                    _ => None,
+                    None => None,
                 }
             }
             ExprKind::As(_, ty) => Some(ty.clone()),
@@ -28543,6 +28613,55 @@ impl<'a> TypeCheckCtx<'a> {
             TypeDeclKind::Record(ref fields) => Some(fields),
             _ => None,
         }
+    }
+
+    /// A RECORD-literal reading of the named type: a plain record, or an alias
+    /// chain landing on one (mirrors `record_lit_schema::record_schema_of_type`).
+    /// Item 30 (pg_polaris_message): `Name { … }` is a record literal only when
+    /// this holds; a name that is a SUM type has no record reading, so the
+    /// literal can only be the bare record variant (see
+    /// `bare_record_variant_owner`).
+    fn record_lit_reading(&self, name: &str) -> bool {
+        let mut seen = self.types_get_here(name);
+        for _ in 0..8 {
+            match seen {
+                None => return false,
+                Some(td) => match &td.kind {
+                    TypeDeclKind::Record(_) => return true,
+                    TypeDeclKind::Alias(TypeRef::Named { path, .. }) if td.generics.is_empty() => {
+                        seen = path.last().and_then(|p| self.types_get_here(p.as_str()));
+                    }
+                    _ => return false,
+                },
+            }
+        }
+        false
+    }
+
+    /// The ONE non-generic sum declaring a RECORD variant named `name` -- the
+    /// bare record-variant owner search (172.1.2, №599). `None` when zero or
+    /// ambiguous. Item 30 (pg_polaris_message): in a program where another
+    /// package's SUM type shares the variant's name (Polaris's `Message` beside
+    /// the driver's `DecodeOutcome.Message`), `Name { … }` is still the variant
+    /// -- a sum cannot be record-built, so the unrelated type must not decide
+    /// the literal's reading.
+    fn bare_record_variant_owner(&self, name: &str) -> Option<String> {
+        let mut owner: Option<&String> = None;
+        for (tn, td) in self.types.iter() {
+            if let TypeDeclKind::Sum(vs) = &td.kind {
+                if td.generics.is_empty()
+                    && vs
+                        .iter()
+                        .any(|v| v.name == name && matches!(v.kind, SumVariantKind::Record(_)))
+                {
+                    if owner.is_some() {
+                        return None;
+                    }
+                    owner = Some(tn);
+                }
+            }
+        }
+        owner.cloned()
     }
 
     /// Returns `true` if `expr` is an access path that goes through a readonly field,
