@@ -1,0 +1,10 @@
+{
+  "nova-driver/src/embed_stage.rs": "fb3e0cd0bd0dd5c25e33f3ab31ce42812c961ed3dca29765da33c722bf3eb7d9",
+  "nova-driver/src/program.rs": "5f317429f76625ec5bbf75910e77644f651e3be8d59b6b2b2a7638f5dacd6d55",
+  "nova-driver/src/main.rs": "cfd36d0707a3e8f83db86a935094417ccc32f92c11c143a0c7648bbc2c212521",
+  "scripts/tools/carina-build-embed.py": "2fac29700d21e7de8ad5b3b679b7a8a3eab41edcfe3fec76ebea4534573d9028",
+  "spec_tests/conformance/fixtures/embed_stage_probe/main.nv": "a3bb5b5a86a3ccf6013e78ff453c7ff5e4b985e98ce3ad5bf1351a60dd6d98c0",
+  "spec_tests/conformance/fixtures/embed_stage_probe/helper/helper.nv": "aa060dfd5625b09409e74c1f137c95ace03e7b3ecf4ec8d5c361109648ff890e",
+  "spec_tests/conformance/fixtures/embed_stage_probe/dep/assetdep.nv": "89c071e1a155c1ca95547bad11f114aa4e9d0f63663bb2690685b57cababe4a9",
+  "$SCRATCH/cargo-target/debug/nova.exe": "c47999d01a55894f9059bb24008f4c30f06f6da312d1addf2940a3a68fd92c82"
+}

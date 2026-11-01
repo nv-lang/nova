@@ -1,0 +1,9 @@
+module embed_stage_probe.main
+import assetdep.{shell, cert}
+import embed_stage_probe.helper.{marker}
+
+fn main() {
+    println(shell().to_str() ?? "?")
+    println(cert().to_str() ?? "?")
+    println(marker())
+}

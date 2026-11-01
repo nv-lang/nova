@@ -1,0 +1,42 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling windows-link v0.2.1
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling once_cell_polyfill v1.70.2
+   Compiling utf8parse v0.2.2
+   Compiling anstyle v1.0.14
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anyhow v1.0.104
+   Compiling clap_lex v1.1.1
+   Compiling strsim v0.11.1
+   Compiling heck v0.5.0
+   Compiling windows-sys v0.61.2
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle-wincon v3.0.11
+   Compiling anstream v1.0.0
+   Compiling clap_builder v4.6.7
+   Compiling nova-driver-support v0.1.0 ($WT\nova-driver-support)
+   Compiling syn v3.0.9
+   Compiling clap_derive v4.6.7
+   Compiling clap v4.6.7
+   Compiling nova-driver v0.1.0 ($WT\nova-driver)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.08s
+     Running unittests src\main.rs (C:\Users\Евгений\AppData\Local/Temp/opencode/ses_mvxsg6da38widh1var/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
+
+running 1 test
+
+thread 'program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories' (50160) panicked at src\program.rs:994:68:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "Не удается найти указанный файл." }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories ... FAILED
+
+failures:
+
+failures:
+    program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--bin nova`

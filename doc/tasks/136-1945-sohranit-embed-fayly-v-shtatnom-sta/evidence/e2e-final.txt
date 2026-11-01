@@ -1,0 +1,40 @@
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-final\installation\target/carina-build\main.69564.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$SCRATCH\e2e-final\installation argv=["emit", "$SCRATCH\\e2e-final\\installation\\target/carina-build\\main.69564.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=09f5fedb6c18330a8891b349ccbedf26491fdffec4a5eebf18d57cb7f6eca88c
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$SCRATCH\e2e-final\installation\target\rt-archive-cache\b91f585b7aab747c\libnova_rt.lib runtime_sha256=2c82b7b3349c37fdf7df0d61b36505f532187a3f84ebae7ba36a32ff870a69a4
+nova build: $SCRATCH\e2e-final\embed-probe.exe binary_sha256=e47e3430d8722f667b3afd1d5a8282b1d8dbc7a8b5055c3f624e3127252ade30
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: libuv not built, building (one-time, ~30 sec)...
+nova: libuv.lib built (37 files)
+nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...
+nova: libnova_rt.lib built (14 files)
+nova: libnova_rt archive built ($SCRATCH\e2e-final\installation\target\rt-archive-cache\b91f585b7aab747c\libnova_rt.lib)
+carina-embed PASS: real driver build=0 run=0 stdout=shell-136,cert-136,own; sources unchanged
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-final\installation\target/carina-build\main.65812.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$SCRATCH\e2e-final\installation argv=["emit", "$SCRATCH\\e2e-final\\installation\\target/carina-build\\main.65812.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=09f5fedb6c18330a8891b349ccbedf26491fdffec4a5eebf18d57cb7f6eca88c
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$SCRATCH\e2e-final\installation\target\rt-archive-cache\b91f585b7aab747c\libnova_rt.lib runtime_sha256=2c82b7b3349c37fdf7df0d61b36505f532187a3f84ebae7ba36a32ff870a69a4
+nova build: $SCRATCH\e2e-final\embed-probe.exe binary_sha256=6af971a12b448919debee4f4ae4c79089481fe68cccd6c59479998a1787b8692
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+carina-embed PASS: relative parent resource outside source-root preserves bytes
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-final\installation\target/carina-build\main.62836.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$SCRATCH\e2e-final\installation argv=["emit", "$SCRATCH\\e2e-final\\installation\\target/carina-build\\main.62836.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=09f5fedb6c18330a8891b349ccbedf26491fdffec4a5eebf18d57cb7f6eca88c
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$SCRATCH\e2e-final\installation\target\rt-archive-cache\b91f585b7aab747c\libnova_rt.lib runtime_sha256=2c82b7b3349c37fdf7df0d61b36505f532187a3f84ebae7ba36a32ff870a69a4
+nova build: $SCRATCH\e2e-final\embed-probe.exe binary_sha256=e2501f6ae7ef478cbeb956b2d18850e6fae87427cb6ecd66c8566ceb58f98531
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+carina-embed PASS: .nv bytes outside source-root but inside package-root survive as data
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-final\installation\target/carina-build\main.53212.src
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$SCRATCH\\e2e-final\\installation\\target/carina-build\\main.53212.src/_deps/assetdep/assetdep.nv","start":45,"end":50},"message":"embedded file not found: `$SCRATCH/e2e-final/installation/target/carina-build/main.53212.src/_deps/assetdep/__nova_missing_embed_assetdep.nv_51.bin` (E_EMBED_NOT_FOUND, D412)","poisoned_by":null}
+carina-embed PASS: missing resource rejected with E_EMBED_NOT_FOUND
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: cannot stage embed outside package root: \\?\$SCRATCH\e2e-final\project\outside.bin (source $SCRATCH\e2e-final\project\dep\src\assetdep.nv)
+carina-embed PASS: package escape rejected before resource copy
+warning: in the working copy of 'dep/nova.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dep/src/assetdep.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'helper/helper.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'main.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'nova.toml', LF will be replaced by CRLF the next time Git touches it
