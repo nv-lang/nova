@@ -1,0 +1,43 @@
+// №TBD regression pin (item 48 of the crew-harness spike index
+// `spikes/env/README.md` -- `user_type_vs_driver_variant`; the QUALIFIED
+// sibling of the bare-name item 30 / registry 221.1 №599 class).
+//
+// `Sum.Variant { … }` -- a record variant written with the OWNER sum spelled
+// out -- checked and typed by the LAST segment alone: a plain RECORD type of
+// the same name elsewhere in the program (the machines' state-table `Row`
+// beside the driver's `PgEvent.Row`) decided the literal's schema and type.
+// The field checks ran against the unrelated record (E_MISSING_FIELD_IN_LITERAL
+// "does not initialise fields: n, name") and the type read `Named{"Row"}`.
+//
+// A two-segment literal path is a VARIANT of the owner sum: the schema comes
+// from the owner's variant list, and the literal's type is the OWNER sum.
+// EXPECT_STDOUT ITEM48_QUALIFIED_VARIANT_OK:7
+
+module standalone.qualified_record_variant_vs_record_name
+
+// A plain RECORD named like the variant below (the machines' state-table row).
+type Row { n int, name str }
+
+// The driver's sum: a RECORD variant named like the record above.
+type PgEvent enum
+    | Row { values str }
+    | Done
+
+fn take_row(r Row) -> int {
+    r.n
+}
+
+fn make_event(flush bool) -> PgEvent {
+    if flush { PgEvent.Done } else { PgEvent.Row { values: "v" } }
+}
+
+fn main() {
+    // The qualified variant literal must NOT be checked against the record.
+    ro ev = make_event(false)
+    match ev {
+        PgEvent.Row { values } => println("ITEM48_QUALIFIED_VARIANT_OK:${7}")
+        PgEvent.Done => println("WRONG")
+    }
+    // The record with the colliding name still works normally.
+    println("row_n:${take_row(Row { n: 7, name: "x" })}")
+}

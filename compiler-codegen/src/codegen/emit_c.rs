@@ -4383,6 +4383,29 @@ impl CEmitter {
         s.strip_prefix("Nova_").unwrap_or(s)
     }
 
+    /// Item 48 (user_type_vs_driver_variant): does the SCRUTINEE's own sum
+    /// type declare a record variant named `variant`? A bare record-variant
+    /// pattern (`Row { values }`) beside a plain RECORD of the same name (the
+    /// machines' `Row`) used to be decided by `record_schemas` alone -- the
+    /// unrelated record turned the arm into a plain-record read (no tag
+    /// check, fields read off the sum struct, `nova_int` binders). The
+    /// scrutinee decides first (the №279 discipline); a record scrutinee
+    /// never matches here, so plain-record patterns are unaffected.
+    fn scr_sum_has_record_variant(&self, scr_ty: &str, variant: &str) -> bool {
+        let base = scr_ty.trim_end_matches('*').trim();
+        let stripped = Self::debt_strip_nova_prefix(base).trim();
+        let value_form = base.strip_prefix("NovaValue_").unwrap_or("");
+        [stripped, value_form].into_iter().filter(|k| !k.is_empty()).any(|k| {
+            self.sum_schemas
+                .get(k)
+                .map_or(false, |vs| vs.contains_key(variant))
+                || self
+                    .sum_schema_registry
+                    .lookup_sum_schema(k)
+                    .map_or(false, |e| e.variants.iter().any(|v| v.variant_name == variant))
+        })
+    }
+
     /// Strip a single leading `Nova_` prefix, or `""` if absent (base-name
     /// extraction where a non-`Nova_` input is treated as "no match" upstream).
     fn debt_strip_nova_prefix_or_empty(s: &str) -> &str {
@@ -51554,7 +51577,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .as_ref()
                     .and_then(|p| p.last().cloned())
                     .unwrap_or_else(|| scr_base.clone());
-                if this.record_schemas.contains_key(&type_name_from_path) {
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment type_path
+                // (`PgEvent.Row`) is a variant of the OWNER sum -- never a plain
+                // record by the bare last segment; and for a BARE pattern the
+                // scrutinee's own sum wins over an unrelated record of the same
+                // name (see scr_sum_has_record_variant; the sum-variant half
+                // below resolves the sum from the scrutinee).
+                if type_path.as_ref().map_or(true, |p| p.len() != 2)
+                    && !this.scr_sum_has_record_variant(scr_ty, &type_name_from_path)
+                    && this.record_schemas.contains_key(&type_name_from_path)
+                {
                     let field_types = this.record_schemas.get(&type_name_from_path).cloned().unwrap_or_default();
                     for f in fields {
                         let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
@@ -54178,11 +54210,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Pattern::Record { type_path, fields, .. } => {
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 let type_name_from_path = type_path.as_ref().and_then(|p| p.last().cloned()).unwrap_or_default();
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment path
+                // (`PgEvent.Row`) is a variant of the OWNER sum -- the bare last
+                // segment must not decide (record_schemas["Row"] turned this arm
+                // into a plain-record pattern: no tag check, fields read straight
+                // off the sum struct). Owner-based resolution mirrors D109/D381.
+                let (owner_seg, variant_name) = match type_path.as_ref() {
+                    Some(p) if p.len() == 2 => (Some(p[0].clone()), p[1].clone()),
+                    _ => (None, type_name_from_path.clone()),
+                };
                 // Determine if this is a plain record or a sum-type record variant.
                 // Plan 62.A.bis Ф.2.1: registry-driven lookup для sum-variant test.
-                let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
+                // Item 48, bare-pattern face: the SCRUTINEE's own sum wins over
+                // an unrelated record of the same name (see scr_sum_has_record_variant).
+                let is_plain_record = owner_seg.is_none()
+                    && !self.scr_sum_has_record_variant(&scr_ty, &variant_name)
+                    && self.record_schemas.contains_key(&variant_name);
+                let owner_sum_base = owner_seg.as_ref().map(|o| self.ref_type_base(o, &[]));
                 let is_sum_variant = !is_plain_record
-                    && self.sum_schema_registry.find_variant_compat(&type_name_from_path).is_some();
+                    && match &owner_sum_base {
+                        Some(base) => self.sum_schemas.contains_key(base)
+                            || self.sum_schema_registry.lookup_sum_schema(base).is_some(),
+                        None => self.sum_schema_registry
+                            .find_variant_compat(&variant_name).is_some(),
+                    };
                 if is_plain_record {
                     // Plain record match: always succeeds; check literal fields
                     let mut conds = Vec::new();
@@ -54200,9 +54251,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else if is_sum_variant {
                     // Sum-type record variant: check tag + literal fields.
                     // Plan 62.A.bis Ф.2.1: registry lookup для sum-type name.
-                    let (sum_type_name, _) = self.sum_schema_registry
-                        .find_variant_compat(&type_name_from_path).unwrap();
-                    let variant_name = type_name_from_path.clone();
+                    let sum_type_name = match &owner_sum_base {
+                        Some(base) => base.clone(),
+                        None => {
+                            // Scrutinee-first (item 48). The tag constant form
+                            // follows the DECLARED name: a mono'd generic sum's
+                            // tag carries the full C name
+                            // (`NOVA_TAG_Nova_Slot____…`), a plain user sum's
+                            // carries the bare name (`NOVA_TAG_Event2_…`) --
+                            // mono is told by the `____` type-arg separator.
+                            let as_is = scr_ty.trim_end_matches('*').trim().to_string();
+                            let stripped = Self::debt_strip_nova_prefix(&as_is).trim().to_string();
+                            if as_is.contains("____") {
+                                as_is
+                            } else if self.sum_schemas.contains_key(&stripped)
+                                || self
+                                    .sum_schema_registry
+                                    .lookup_sum_schema(&stripped)
+                                    .is_some()
+                            {
+                                stripped
+                            } else {
+                                self.sum_schema_registry
+                                    .find_variant_compat(&type_name_from_path)
+                                    .unwrap()
+                                    .0
+                            }
+                        }
+                    };
                     let mut conds = vec![format!("({}->tag == NOVA_TAG_{}_{})", scr, sum_type_name, variant_name)];
                     for field in fields {
                         if let Some(Pattern::Literal(lit, _)) = &field.pattern {
@@ -54705,7 +54781,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             Self::debt_strip_nova_prefix_or_empty(base).to_string()
                         }
                     });
-                let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment type_path
+                // (`PgEvent.Row` beside a plain record `Row`) is a variant of the
+                // OWNER sum -- never a plain record by the bare last segment; and
+                // for a BARE pattern the scrutinee's own sum wins over an
+                // unrelated record of the same name (see scr_sum_has_record_variant).
+                // The sum-variant half below resolves the sum from the scrutinee.
+                let is_plain_record = type_path.as_ref().map_or(true, |p| p.len() != 2)
+                    && !self.scr_sum_has_record_variant(&scr_ty, &type_name_from_path)
+                    && self.record_schemas.contains_key(&type_name_from_path);
                 let accessor = if Self::is_value_type(&scr_ty) { "." } else { "->" };
                 if is_plain_record {
                     // Plain record: bind fields directly from scr->field or scr.field
