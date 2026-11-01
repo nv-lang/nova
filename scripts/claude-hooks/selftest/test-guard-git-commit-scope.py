@@ -10,16 +10,26 @@
 # в отслеживаемом скрипте это класс №698 (см. check-no-machine-paths).
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "guard-git.py")
 R = "/d/Sources/nv-lang/nova"  # дерево без слияния в процессе
+# Обе ловящие клетки («область не названа») зависят от того, что в -C-дереве
+# НЕТ слияния: при слиянии правило области коммит разрешает (законно), и
+# клетка краснела бы при каждом прогоне гейта во время чужого слияния.
+# Прежний обход — выбрать «другую» репу (nova вместо nova-opencode) —
+# допущение, а не гарантия; гейт 2026-11-01 покраснел на той же гонке в
+# соседнем test-guard-git-add.py. Ловящие клетки зовут одноразовый каталог
+# вне git, состояние живых деревьев тест больше не читает.
+TMP = tempfile.mkdtemp(prefix="nova_guard_git_commit_scope_selftest_").replace("\\", "/")
 
 cases = [
     # ловим: область не названа — берётся весь индекс
-    ('git -C %s commit -s -m "fix: one thing"' % R, 2, "commit bez oblasti"),
-    ('git -C %s add a.md && git -C %s commit -s -F /tmp/m.txt' % (R, R), 2,
+    ('git -C %s commit -s -m "fix: one thing"' % TMP, 2, "commit bez oblasti"),
+    ('git -C %s add a.md && git -C %s commit -s -F /tmp/m.txt' % (TMP, TMP), 2,
      "add + commit v odnoy tsepochke"),
     # пропускаем: область названа
     ('git -C %s commit -s --only -- a.md' % R, 0, "--only -- path"),
@@ -54,4 +64,5 @@ for cmd, want, label in cases:
     print("  %-7s %-28s want=%d got=%d" % ("ok" if ok else "PROVAL", label, want, got))
 
 print("PROVALOV: %d" % bad)
+shutil.rmtree(TMP, ignore_errors=True)
 sys.exit(1 if bad else 0)
