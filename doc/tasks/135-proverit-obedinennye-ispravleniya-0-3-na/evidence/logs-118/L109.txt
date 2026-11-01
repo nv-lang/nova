@@ -5,5 +5,5 @@ carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=c727288f301b4b8849b
 nova: Carina-generated C compile/link failed: compiler error:
 lld-link: error: undefined symbol: nova_fn_main_impl
 >>> referenced by $WT\scratch-opencode\task135\install135\target\carina-build\core.33600.carina.c:26306
->>>               C:\Users\B7E3~1\AppData\Local\Temp\core-9b1f48.o:(_nova_main_fiber_entry)
+>>>               %USERPROFILE%\AppData\Local\Temp\core-9b1f48.o:(_nova_main_fiber_entry)
 clang: error: linker command failed with exit code 1 (use -v to see invocation)

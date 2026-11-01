@@ -214,7 +214,9 @@
 #   №711 (лишний return) и №714 (отсутствующий): здесь возврат ЕСТЬ, а тип
 #   у него чужой.
 # №721 (`use` как второй ввоз имён) — К2, в блокеры не идёт.
-no_route=0
+# Task 135: measured no_route=1, new OPEN K1 entry 1945 (embed sidecars).
+# No repair task is assigned yet; do not claim CHINITSYA before routing.
+no_route=1
 # 2026-08-19, №445 — no_caveat 37 -> 36. Запись закрыта: все три её пункта
 #   выполнены. (а) шаг гейта `conformance-full` гонит `--full` и сверяет
 #   МНОЖЕСТВО упавших со списком; (б) храповик роста SKIP стоял с №453(б);
