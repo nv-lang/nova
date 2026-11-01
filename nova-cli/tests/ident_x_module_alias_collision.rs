@@ -113,6 +113,11 @@ fn nova_build_does_not_false_positive_e7401_on_module_named_x() {
         .arg(&main_nv)
         .arg("-o")
         .arg(&out_bin)
+        // The fixture lives in the OS temp dir, outside any Nova workspace;
+        // the Carina build driver resolves the workspace root (seed/runtime
+        // layout) via NOVA_WORKSPACE_ROOT when marker walking from the entry
+        // file cannot find one.
+        .env("NOVA_WORKSPACE_ROOT", &repo)
         .current_dir(&repo)
         .output()
         .expect("failed to spawn `nova build`");
@@ -179,6 +184,9 @@ fn nova_build_control_non_x_module_name_always_works() {
         .arg(&main_nv)
         .arg("-o")
         .arg(&out_bin)
+        // Same as the `x` test above: temp-dir fixture needs the explicit
+        // workspace root for the Carina build driver.
+        .env("NOVA_WORKSPACE_ROOT", &repo)
         .current_dir(&repo)
         .output()
         .expect("failed to spawn `nova build`");
