@@ -144,8 +144,14 @@ fn package_root(source: &Path) -> Result<PathBuf> {
         .context("cannot resolve embed package root")
 }
 
-/// Each destination belongs to exactly one original file. This also reserves
-/// source destinations: an asset must never overwrite an import-rewritten .nv.
+/// Each destination has one original-file owner (one value per map key).
+/// [INV-PROPERTY] An asset must never overwrite an import-rewritten .nv:
+/// `stage_embeds` remaps every .nv destination to .bin before its only copy
+/// site, separating data and source destinations by construction. Other
+/// destination collisions are rejected by `stage_embeds`' owner-map lookup.
+/// Coverage in program.rs::tests:
+/// `staging_preserves_explicit_embed_assets_without_sweeping_directories` and
+/// `staging_embed_rejects_dependency_destination_collisions`.
 pub(crate) type Destinations = HashMap<PathBuf, PathBuf>;
 
 pub(crate) fn destination_key(path: &Path) -> PathBuf {
