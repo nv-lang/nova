@@ -23,7 +23,7 @@
    Compiling clap v4.6.7
    Compiling nova-driver v0.1.0 ($WT\nova-driver)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 14.08s
-     Running unittests src\main.rs (C:\Users\Евгений\AppData\Local/Temp/opencode/ses_mvxsg6da38widh1var/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
+     Running unittests src\main.rs ($SCRATCH/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
 
 running 1 test
 

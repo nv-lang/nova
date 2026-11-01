@@ -1,6 +1,6 @@
    Compiling nova-driver v0.1.0 ($WT\nova-driver)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.81s
-     Running unittests src\main.rs (C:\Users\Евгений\AppData\Local/Temp/opencode/ses_mvxsg6da38widh1var/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
+     Running unittests src\main.rs ($SCRATCH/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
 
 running 34 tests
 test carina_build::tests::absent_capture_variable_keeps_default_path_side_effect_free ... ok
