@@ -1,0 +1,7 @@
+probe mode=green driver=$WT\scratch-opencode\task135\drv\target\release\nova.exe
+anon_ctor_pos_1 (task 130): BUILD rc=0 (37.4s) RUN rc=0 stdout='9' -> GREEN
+anon_ctor_pos_3 (task 130): BUILD rc=0 (6.0s) RUN rc=0 stdout='ok' -> GREEN
+extern_decl_pos_1 (task 131): BUILD rc=0 (6.5s) RUN rc=0 stdout='5' -> GREEN
+marker_order_pos_1 (task 134): BUILD rc=0 (6.0s) RUN rc=0 stdout='7\r\nclosed' -> GREEN
+bare_block_pos_1 (task 134): BUILD rc=0 (6.6s) RUN rc=0 stdout='42' -> GREEN
+for_inclusive_pos_1 (task 134): BUILD rc=0 (6.0s) RUN rc=0 stdout='10' -> GREEN
