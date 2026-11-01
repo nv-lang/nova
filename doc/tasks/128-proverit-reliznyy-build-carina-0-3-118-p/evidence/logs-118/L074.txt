@@ -1,0 +1,57 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1016,"end":1017},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1021,"end":1022},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1068,"end":1069},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1093,"end":1094},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1095,"end":1096},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1116,"end":1117},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1135,"end":1136},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1142,"end":1143},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1153,"end":1154},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1154,"end":1155},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1164,"end":1165},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1165,"end":1166},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1166,"end":1167},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d13","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1172,"end":1173},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d14","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1173,"end":1174},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d15","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1192,"end":1194},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d16","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1197,"end":1198},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d17","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1201,"end":1202},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d18","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1210,"end":1211},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d19","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1217,"end":1218},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d20","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1220,"end":1221},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d21","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1229,"end":1230},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d22","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1230,"end":1231},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d23","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1232,"end":1233},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d24","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1240,"end":1241},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d25","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1245,"end":1246},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d26","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\spawn_capture_value_struct.nv","start":1278,"end":1371},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}

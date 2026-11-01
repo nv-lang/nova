@@ -3817,6 +3817,9 @@ pinned edition — они видят фиксированный snapshot.
 
 ## D125. Prelude shadow warning lint
 
+> **Conditional functions:** D495 determines which function rows participate
+> before this user-wins prelude-shadow rule; ordinary active declarations are unchanged.
+
 ### Что
 
 `W_PRELUDE_SHADOW` — structured lint warning эмитимый когда

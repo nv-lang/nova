@@ -1,0 +1,68 @@
+// EXPECT_STDOUT target-coerce-class-ok
+// D495 / reg 1910: run this fixture with the real Carina semantic peers.
+// The pair table retains declarations; lookup must select applicable rows.
+module standalone.target_os_coerce_class_1910
+
+import ../../../novac/src/tree.{Node}
+import ../../../novac/src/lex.{lex}
+import ../../../novac/src/parse.{parse}
+import ../../../novac/src/sem.{InteropTable, EmbedTable, collect, coerce_row, raw_row, no_row}
+import ../../../novac/src/pipeline.{compile_to_c_with_embeds}
+
+fn coerce_declaration(target str, name str) -> str =>
+    "#cfg(target_os = \"${target}\")\n#coerce\nfn Meter @${name}() -> int => @n\n"
+
+fn pair_case(label str, own str, handed str, target str, expected str, count int) Io -> () {
+    println("COERCE_ENTER ${label}")
+    mut decls = []Node.new()
+    if handed != "" { decls.push(parse(lex(handed))) }
+    ro ctx = collect(parse(lex(own)), decls, InteropTable.new(), target_os: target)
+    assert(ctx.coerces.len() == count)
+    ro pair = ctx.coerces[0]
+    ro found = coerce_row(ctx, pair.from_id, pair.to_id)
+    if expected == "" {
+        assert(found.is_none())
+    } else {
+        ro row = found ?? no_row()
+        assert(raw_row(row) >= 0)
+        ro fd = ctx.fns.rows[raw_row(row)]
+        assert(fd.name == expected)
+    }
+    assert(coerce_row(ctx, pair.to_id, pair.from_id).is_none())
+    println("COERCE_OK ${label}")
+}
+
+fn position_case(label str, body str) Io -> () {
+    println("COERCE_ENTER ${label}")
+    ro source = "type Meter { n int }\n${coerce_declaration("windows", "as_int")}${body}\nfn main() {}"
+    ro (active, code) = compile_to_c_with_embeds(source, []Node.new(), InteropTable.new(),
+                                                "coerce-position.nv", EmbedTable.new(), target_os: "windows")
+    assert(active.len() == 0)
+    assert(code.byte_len() > 0)
+    ro (inactive, _) = compile_to_c_with_embeds(source, []Node.new(), InteropTable.new(),
+                                               "coerce-position.nv", EmbedTable.new(), target_os: "linux")
+    assert(inactive.len() > 0)
+    println("COERCE_OK ${label}")
+}
+
+fn main() Io -> () {
+    ro base = "type Meter { n int }\n"
+    ro win = coerce_declaration("windows", "as_windows")
+    ro lin = coerce_declaration("linux", "as_linux")
+    ro unknown = "#cfg(feature = \"missing\")\n#coerce\nfn Meter @as_unknown() -> int => @n\n"
+    pair_case("own-inactive", "${base}${win}", "", "linux", "", 1)
+    pair_case("own-unknown", "${base}${unknown}", "", "linux", "", 1)
+    pair_case("active-after-inactive", "${base}${win}${lin}", "", "linux", "as_linux", 2)
+    pair_case("active-after-unknown", "${base}${unknown}${lin}", "", "linux", "as_linux", 2)
+    pair_case("active-before-inactive", "${base}${lin}${win}", "", "linux", "as_linux", 2)
+    pair_case("windows-active", "${base}${win}${lin}", "", "windows", "as_windows", 2)
+    pair_case("no-macos-pair", "${base}${win}${lin}", "", "macos", "", 2)
+    pair_case("target-agnostic", "${base}${win}${lin}", "", "", "as_windows", 2)
+    pair_case("handed-inactive", base, "${win}", "linux", "", 1)
+    pair_case("handed-active-tail", base, "${win}${lin}", "linux", "as_linux", 2)
+    pair_case("own-inactive-handed-active", "${base}${win}", lin, "linux", "as_linux", 2)
+    position_case("return-position", "fn converted(x Meter) -> int => x")
+    position_case("argument-position", "fn take(n int) -> int => n\nfn converted(x Meter) -> int => take(x)")
+    position_case("field-position", "type Box { n int }\nfn converted(x Meter) -> Box => Box { n: x }")
+    println("target-coerce-class-ok")
+}

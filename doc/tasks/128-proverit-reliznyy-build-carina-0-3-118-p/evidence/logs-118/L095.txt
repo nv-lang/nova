@@ -1,0 +1,9 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\net\\echo_server.nv","start":1155,"end":1165},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\net\\echo_server.nv","start":1260,"end":1266},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\net\\echo_server.nv","start":1376,"end":1385},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}

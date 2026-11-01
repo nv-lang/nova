@@ -1,0 +1,13 @@
+module extern_decl.pos_1
+
+// The minimal FFI class the measured package inputs use (task 131, D282):
+// ABI "C", a free function, a scalar signature. `abs` is the C library's own
+// symbol -- present wherever the fixtures link -- so the emission is
+// OBSERVABLE: the program prints 5, and the C novac writes declares
+// `extern int32_t abs(int32_t v);` and calls `abs(...)` by the literal name,
+// with no definition of the symbol anywhere in the file.
+extern "C" fn abs(v i32) -> i32
+
+fn main() {
+    println(abs(0 - 5))
+}

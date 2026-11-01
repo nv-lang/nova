@@ -91,6 +91,14 @@ export type NodeKind enum
     /// this door -- the contextual-keyword class, measured and accepted
     /// for the carrier (see the parser arm's comment).
     | SpawnStmt
+    /// A `defer { body }` statement (D90; task 134, 2026-10-31). `defer` IS a
+    /// lexer keyword -- unlexed, the word read as a name and `defer {` fell
+    /// apart into a record constructor (the keyword-parity doctrine: a word
+    /// the lexer does not know does not stay silent, it lies). COMPILING the
+    /// form -- run the body at scope exit, LIFO, on every way out -- is the
+    /// E2 effects/consume horizon's debt; check refuses the node by name, so
+    /// no later pass ever meets it.
+    | DeferStmt
     | MethodCall
     | FieldAccess
     | TypeDecl
@@ -239,6 +247,11 @@ export fn bin_op(k TokenKind) -> Option[BinOp] {
         Shl => Some(BinOp.ShiftLeft)
         Shr => Some(BinOp.ShiftRight)
         DotDot => Some(BinOp.Range)
+        // The INCLUSIVE range (03-syntax: `a..=b` is one of the five Range
+        // forms; precedence level 2, non-associative -- the same row of the
+        // spec's table). The leaf keeps its own token kind, so the lowering
+        // still sees WHICH range it is lowering.
+        DotDotEq => Some(BinOp.Range)
         // `_ => None` here is NOT the swallowing default P21 forbids: the
         // RETURN TYPE already declares this map partial, and "this token is
         // not a binary operator" is the answer for forty-three of the sixty-two
@@ -258,7 +271,7 @@ export fn is_binop(k TokenKind) -> bool => bin_op(k).is_some()
 /// invariant break, because the caller asked `is_binop` first.
 export fn bin_op_of(k TokenKind) -> BinOp =>
     bin_op(k) ?? ice_at(
-        "novac/src/tree/tree.nv:260",
+        "novac/src/tree/tree.nv:273",
         "tree: bin_op_of asked about a token that is not a binary operator")
 
 /// WHICH assignment an `AssignStmt` performs -- the same decision shape once
@@ -293,7 +306,7 @@ export fn is_assign_op(k TokenKind) -> bool => assign_op(k).is_some()
 /// The decision; asking about a non-assignment is an invariant break.
 export fn assign_op_of(k TokenKind) -> AssignOp =>
     assign_op(k) ?? ice_at(
-        "novac/src/tree/tree.nv:295",
+        "novac/src/tree/tree.nv:308",
         "tree: assign_op_of asked about a token that is not an assignment")
 
 /// WHICH unary operator a `Unary` node applies. Same reason as `BinOp`: the
@@ -323,7 +336,7 @@ export fn is_unop(k TokenKind) -> bool => un_op(k).is_some()
 
 /// The decision; asking about a non-operator is an invariant break.
 export fn un_op_of(k TokenKind) -> UnOp =>
-    un_op(k) ?? ice_at("novac/src/tree/tree.nv:326", "tree: un_op_of asked about a token that is not a unary operator")
+    un_op(k) ?? ice_at("novac/src/tree/tree.nv:339", "tree: un_op_of asked about a token that is not a unary operator")
 
 /// THE identity of a tree node -- the key every side table of the checker's
 /// channel is indexed by, and a space of its own since wave B3 (2026-08-22).

@@ -1,0 +1,7 @@
+// The dependency package of the dep_build_min fixture (task 129): a module
+// deliberately INSIDE the pinned B1 seed's subset, so the only possible
+// failure cause is the handoff (or non-handoff) of the dependency's sources
+// to the seed. Markerless like the entry: see main.nv's header comment.
+module mathdep
+
+export fn triple(x int) -> int => x * 3

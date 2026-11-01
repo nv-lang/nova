@@ -1,0 +1,5 @@
+[32mok:[0m .\hello_duckdb.nv
+
+===== SUMMARY =====
+[32mPASS[0m: 1  FAIL: 0
+rc=0

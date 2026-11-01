@@ -1,0 +1,20 @@
+python : nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-
+multi-module-carina-build\target/carina-build\main.3140.src
+строка:2 знак:241
++ ... \nova.exe'; python scripts/tools/carina-build-crossmod.py *> doc/task ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (nova build prog...d\main.3140.src:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766
+e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A buil
+t by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:\\Sour
+ces\\nv-lang\\worktrees\\nova-opencode-120-fix-reg-1889-multi-module-carina-build\\target/carina-build\\main.3140.src\\
+main.nv","start":434,"end":439},"message":"outside the subset: `greet` is not a callable novac knows in an expression -
+- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)","po
+isoned_by":null}
+carina-crossmod FAIL: crossmod_build_min: driver build failed (exit 1) -- with the pre-1889 call contract this is the E
+_NOVAC_SUBSET red
+carina-crossmod: driver=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\nova-driver\target\release\nova.exe sha256=81f9b0052d92c7679d8193ae4cdf3f5dfb7449dd548c206c44b9fdb46497fd66

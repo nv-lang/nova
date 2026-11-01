@@ -588,13 +588,16 @@ fn Emitter mut @emit_decl_kind(t int, fwd_only bool) -> () {
         TkPtr => ice_at(
             "novac/src/emit_c/emit_decls.nv:588",
             "emit_c: declaration of a POINTER type — a pointer is a structural term, nothing declares one")
-        TkEffect => ice_at(
+        TkFn => ice_at(
             "novac/src/emit_c/emit_decls.nv:591",
+            "emit_c: declaration of a FUNCTION type — a fn type is a structural term, nothing declares one (task 134)")
+        TkEffect => ice_at(
+            "novac/src/emit_c/emit_decls.nv:594",
             "emit_c: declaration of an EFFECT type — an effect owns operations, not a C layout; with-doors refuse non-handler values (E4 wave)")
             // A tuple is a structural TERM: nothing ever declares one, so a
             // registry row with this kind is a harvest bug, not a decl to emit.
         TkTuple => ice_at(
-            "novac/src/emit_c/emit_decls.nv:596",
+            "novac/src/emit_c/emit_decls.nv:599",
             "emit_c: a structural term among declarations — a structural term declares nothing")
     }
 }

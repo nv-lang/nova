@@ -1,0 +1,7 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\errorkind_variant_arity_collision\\errorkind_variant_arity_collision.nv","start":1204,"end":1211},"message":"this variant name is declared by more than one sum in scope -- qualify it as `Type.Variant` so the sum is named (D406; registry #964)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\errorkind_variant_arity_collision\\errorkind_variant_arity_collision.nv","start":1239,"end":1241},"message":"outside the subset: the shell novac links into carries no `Result` instance for `NovaRes_NovaOpt_Nova_M187KindB_p_nova_str` -- the interop surface is the probe program (novac/probe/shell_probe.nv, E2-b); novac emits no `Result` instance of its own yet (E2-b3)","poisoned_by":null}

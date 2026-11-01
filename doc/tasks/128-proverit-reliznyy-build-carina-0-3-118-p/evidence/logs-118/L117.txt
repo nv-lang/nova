@@ -1,0 +1,17 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":946,"end":952},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":1071,"end":1077},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":1214,"end":1220},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":1317,"end":1323},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":1744,"end":1750},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":2113,"end":2119},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":2443,"end":2449},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}

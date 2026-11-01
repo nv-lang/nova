@@ -172,7 +172,13 @@
 #   empty-modpath formula `Nova__<Name>`. undated 55 -> 54, the guard's count on the tree.
 # 2026-10-06, task #18, merge of origin/main f2b6517c7: both moves above were made on 55 independently and
 #   each took a DIFFERENT refusal away, so together 54 -> 53 -- the guard's count on the merged tree.
-undated=53
+# 2026-10-31, integrate/t134 candidate build: undated 53 -> 52, EARNED by task 131's
+#   extern split (registry 1932, D282), taken late: its six named refusals are all dated,
+#   so the undated blanket it replaced was the last of its count -- origin/main alone
+#   measures 52 (the guard's own pattern home, counted per literal); the "move not"
+#   note above understated by one. Task 134's share: zero -- its two new refusals
+#   are dated, its own tree measures 53.
+undated=52
 
 # ВТОРОЕ ЧИСЛО — ОБЩЕЕ, храповик ВНИЗ с целью НОЛЬ (274 §1.3а п. «г»). Заведено
 # 2026-09-13 окном 274; предписано оно было ещё 2026-09-05 планом 274.7 §И («страж
@@ -459,7 +465,43 @@ undated=53
 #   reason -- a program type named like a struct the interop shell defines gets the D381
 #   module-qualified C base (sem `type_base`), every shape, and a file with no module the
 #   empty-modpath formula `Nova__<Name>`. refusals 137 -> 136, the guard's count on the tree.
-refusals=136
+# 2026-10-31, task 131 (registry 1932, D282): the ONE blanket extern refusal
+#   ("an extern declaration is read, but novac emits no FFI call yet") became SIX
+#   named, dated refusals in check/extern_rules.nv (per-ABI, unsafe, receiver,
+#   generic, body, non-C-ABI signature) when the minimal extern-C class became
+#   compiled: 136 - 1 + 6 = 141. Same debt, better said; undated counts move not.
+# 2026-10-31, task 134 (classes A2/B3 of the 118 corpus; registry 221.1 rows are this
+#   merge's): refusals 141 -> 143 on the merged tree (136 -> 138 on the branch),
+#   undated per door UNCHANGED (67). Two new refusals are
+#   DATED and replace a LIE, not coverage: `defer { .. }` (D90) used to fall apart into
+#   "record constructor only as a binding initializer" (the keyword-parity class, reg 1089);
+#   it now parses whole and is refused by name (DEFER_MSG) with its stage (E2) -- defer
+#   itself stays the E2 horizon's debt (owner's word 2026-10-31). A fn-typed parameter
+#   (D43) used to drop the signature from the harvest ("no such method in the declarations
+#   handed to novac"); it now reads, and in a COMPILED declaration is refused by name
+#   (FN_PARAM_MSG) with its stage (E4, the handler-value wave, D474).
+# 2026-10-31, task 134 candidate, second merge (the check x K6 hunt's
+#   fn-field-no-door, registry reg 1940): FN_FIELD_MSG joins -- 143 -> 144 on the
+#   merged tree (main's 141 + the branch's three dated refusals). A REPLACEMENT,
+#   not an addition: before the 134 diff the fn-typed field's form was turned away
+#   wholesale by the type-form door (KwFn stood in the form lists, TYPE_FORM_MSG
+#   blamed the SHAPE); now the type reads (D43) and the refusal names the real debt
+#   at the real position -- the parameter door's own class (FN_PARAM_MSG was the
+#   same replacement one position over). The field text must be its own const:
+#   reusing the parameter text for a field would be the one-message-for-two-forms
+#   class (reg 1170). undated_by_door unchanged (the refusal is dated, E4).
+# 2026-10-31, task 130 (registry 221.1 reg 1933, the settle wave): refusals 141 -> 142, the
+#   integrator's decision (10:35, question qmvw364mwggmz, 274 1.3a): ONE new DATED (E2-b)
+#   refusal, ANON_CTOR_BIND_NO_TYPE_MSG -- a bare binding of a sourceless anonymous record
+#   (`ro r = { x: 9 }`) names no type, and inferring an anonymous record type is the removal
+#   condition of the debt. The wave replaces ICEs, not refusals, so nothing to retire came
+#   with it; no other line touched.
+refusals=142
+# 2026-10-31, task 134 candidate, merge of origin/main 5e494fd86 (task 130 landed
+#   ANON_CTOR_BIND_NO_TYPE_MSG, +1 dated): union by numbers, re-measured on the
+#   merged tree by the guard: 141 (main after 131) + 3 (134: DEFER_MSG, FN_PARAM_MSG,
+#   FN_FIELD_MSG) + 1 (130) = 145. undated and undated_by_door unchanged by both.
+refusals=145
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

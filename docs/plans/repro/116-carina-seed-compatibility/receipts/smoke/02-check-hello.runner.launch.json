@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "C:\\Python314\\python.exe",
+    "C:\\Users\\\u0415\u0432\u0433\u0435\u043d\u0438\u0439\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\preflight\\run-captured-tree-safe.py",
+    "--timeout",
+    "60",
+    "--prefix",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello",
+    "--cwd",
+    "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+    "--set",
+    "NOVA_STD_PATH=D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src",
+    "--",
+    "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+    "check",
+    "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\spec_tests\\conformance\\standalone\\stdout_hello.nv"
+  ],
+  "cwd": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility",
+  "timeout_seconds": 60,
+  "helper_wait_limit_seconds": 150,
+  "helper_return_status": 0,
+  "termination": "returned",
+  "environment_overrides": {
+    "NOVA_STD_PATH": "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\std\\src"
+  },
+  "retry": false
+}

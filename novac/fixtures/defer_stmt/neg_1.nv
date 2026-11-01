@@ -1,0 +1,12 @@
+module defer_stmt.neg_1
+
+// NOVAC_EXPECT `defer` is not compiled yet
+// ONE seeded cause: `defer { ... }` (D90). The word is lexed and the form
+// parses whole since 2026-10-31 (task 134), so the refusal names the honest
+// debt -- running the body at scope exit is the E2 horizon's -- instead of
+// the old lie, where `defer` lexed as a NAME and the brace read as a record
+// constructor (the keyword-parity class, registry #1089).
+fn main() {
+    defer { println("later") }
+    println("now")
+}

@@ -422,8 +422,20 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // An if-let is a branch of the lowered body testing `IsSome` of the
         // local its Option landed in (274.8 M2b-1b, emit_flow.nv).
         @lower_if_let(st, None)
+    } else if k == NodeKind.Block {
+        // A BARE BLOCK statement (task 134, class B1): lowered through the
+        // SAME statements door a fn body takes, with no tail duty -- no
+        // statement of a nested block is a returned value. The door's own
+        // end runs the cleanups of what the block bound (D432), so a
+        // `consume` binding inside it is discharged exactly where the scope
+        // closes -- and a D188 scope block, whose tree IS a Block whose
+        // first statement is the binding, takes this same arm for free.
+        // Until this arm the chain fell into the ICE below, and a nested
+        // scope in statement position died as "statement kind outside the
+        // subset".
+        @lower_block_stmts_fn(st, false)
     } else {
-        ice_at("novac/src/lower/lowering.nv:426", "emit: statement kind outside the subset")
+        ice_at("novac/src/lower/lowering.nv:438", "emit: statement kind outside the subset")
     }
 }
 
@@ -572,7 +584,7 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
         // the IR already had that block -- the outer else.
         @lower_if_let(tail, Some(c))
     } else {
-        ice_at("novac/src/lower/lowering.nv:575", "emit: the else branch is neither a block nor a chained if / if-let")
+        ice_at("novac/src/lower/lowering.nv:587", "emit: the else branch is neither a block nor a chained if / if-let")
     }
 }
 
@@ -865,7 +877,7 @@ fn Lowerer mut @lower_println(call Node) -> () {
                     // position (#870), so a branch here is a broken invariant rather than
                     // a shape to skip -- the silent fallout this arm replaces printed `ab`
                     // for `a20b`.
-                    ice_at("novac/src/lower/lowering.nv:868", "emit_c: an argument form the checker let through (#870)")
+                    ice_at("novac/src/lower/lowering.nv:880", "emit_c: an argument form the checker let through (#870)")
                 }
             }
         }

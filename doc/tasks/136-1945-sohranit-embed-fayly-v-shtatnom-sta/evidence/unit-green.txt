@@ -1,0 +1,21 @@
+   Compiling nova-driver v0.1.0 ($WT\nova-driver)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.40s
+     Running unittests src\main.rs ($SCRATCH/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
+
+running 14 tests
+test program::tests::module_line_reads_the_first_declaration ... ok
+test program::tests::discovery_includes_same_module_peers_of_the_entry ... ok
+test program::tests::discovery_walks_folder_modules_and_skips_tests_and_aliens ... ok
+test program::tests::dependency_modules_are_staged_one_directory_per_module_with_rewritten_imports ... ok
+test program::tests::own_qualified_import_from_a_nested_directory_spells_upward ... ok
+test program::tests::peer_suffix_filter_matches_the_oracle_matrix ... ok
+test program::tests::own_qualified_imports_are_rewritten_in_the_staged_copies_only ... ok
+test program::tests::rewrite_keeps_the_module_last_segment_for_ancestor_targets ... ok
+test program::tests::rewrite_touches_only_the_listed_tokens_and_keeps_line_endings ... ok
+test program::tests::scan_finds_relative_qualified_and_export_imports ... ok
+test program::tests::same_unit_and_root_own_imports_are_not_rewritten ... ok
+test program::tests::staging_mirrors_the_package_relative_layout ... ok
+test program::tests::staging_preserves_the_bom_of_rewritten_and_plain_copies ... ok
+test program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.17s

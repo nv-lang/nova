@@ -1,0 +1,24 @@
+{
+  "verdict": "GO_DIRECT_DIAGNOSTIC_ONLY",
+  "head": "86af6bb82963148784868edb6e02e20aee6330de",
+  "planned_manifest_sha256": "51ff574a8a59ba457fe3fffc99749a684bc5b6e315ad2e68dd1f1275187d057e",
+  "helper_sha256": "9bf559c6215bca7e3b0c4b75aaf6a28edf1faead3871507fc7b1d0ba2e099e93",
+  "authorized": "ONE invocation of exact_seed_child_runner_argv from the pinned manifest through machine queue, as a direct baseline diagnostic of unchanged novac/src/main.nv",
+  "not_authorized": [
+    "exact_driver_runner_argv or any follow-up source/compiler/native launch",
+    "product edits before measured class and named file edit set",
+    "reuse or execution of generated C/exe from any prior attempt",
+    "claims of driver child capture, native build proof, B1/B2 success, or task acceptance"
+  ],
+  "conditions": [
+    "Before launch fail closed if HEAD, all 565 source/driver file hashes, seed asset/exe/SOURCE-SHA, helper, cwd, argv or relevant environment differ from the inspected package",
+    "Ensure seed-child.stdout.bin, seed-child.stderr.bin, seed-child.status and seed-child.launch.json are absent; preserve all newly captured artifacts without overwrite",
+    "Use the declared 540-second timeout and machine queue; record the watch command and result",
+    "On timeout preserve both streams and report timeout explicitly; if process-tree termination fails, stop and report, do not retry or launch the driver",
+    "After this one probe preserve status and hashes, compare source/driver/seed inputs again, and return raw artifact paths for independent inspection",
+    "Do not call the direct probe equivalent driver execution: the declared direct overrides lack runtime/include/clang overrides present in the driver environment",
+    "The stamp is the driver stamp, not a seed executable property; keep that distinction in reporting",
+    "Native runtime/cache provenance and full native input inventory remain unverified; 092 STOP remains unchanged"
+  ],
+  "basis": "package-verification.json contains 26 independent integrity checks; graph independently observed without compiler dependency; raw build is a queued Cargo freshness check, not a claim of fresh compilation"
+}

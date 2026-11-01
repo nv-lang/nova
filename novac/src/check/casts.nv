@@ -114,7 +114,7 @@ fn Checker @representation_of_or_self(t TyId) -> TyId {
     match @ctx.tys.kind_of(t) {
         TkNewtype => representation_of(@ctx, t)
         // TkEffect: an effect is not a newtype -- nothing to unwrap, itself.
-        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr => t
+        TkPrim | TkRecord | TkSum | TkApp | TkParam | TkInfer | TkTuple | TkEffect | TkPtr | TkFn => t
     }
 }
 

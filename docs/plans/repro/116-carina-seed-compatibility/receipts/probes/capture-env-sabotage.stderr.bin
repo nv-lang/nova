@@ -1,0 +1,8 @@
+   Compiling nova-driver v0.1.0 (D:\Sources\nv-lang\worktrees\nova-opencode-116-carina-seed-compatibility\nova-driver)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.96s
+     Running unittests src\main.rs (nova-driver\target\debug\deps\nova-622074f0a56f45c9.exe)
+
+thread 'carina_build::tests::capture_control_is_removed_from_the_seed_child_environment' (45500) panicked at src\carina_build.rs:778:9:
+capture control leaked into seed child: stdout=[], stderr=[]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--bin nova`

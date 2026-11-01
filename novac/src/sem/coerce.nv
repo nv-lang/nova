@@ -44,7 +44,9 @@ export type CoercePair value {
     via_row FnRow /// the declaring callable's row -- the inserted call names IT (D429 R7). `FnRow`, not `int`: this IS a row of `Ctx.fns` (`fns.rows[via_row]` two doors down), so the pair carried an untyped index into a typed space until 2026-08-21
 }
 
-/// The row that converts `from` into `to`, or None when no pair is declared.
+/// The applicable row converting `from` into `to`, or None when none applies.
+/// Retained inactive/unknown declarations must not insert an implicit call.
+/// Ask the same FnDef.target_state door as FnIndex; never reevaluate cfg here.
 ///
 /// A linear walk over a handful of pairs (std declares three), asked only when
 /// an exact match has already failed -- which is R5 in its own shape: the exact
@@ -72,7 +74,10 @@ export type CoercePair value {
 /// indexed by the SOURCE type, exactly like `fn_decl_rows` by node.
 export fn coerce_row(ctx Ctx, from TyId, to TyId) -> Option[FnRow] {
     for p in ctx.coerces {
-        if p.from_id == from && p.to_id == to { return Some(p.via_row) }
+        if p.from_id != from || p.to_id != to { continue }
+        ro fd = ctx.fns.rows[raw_row(p.via_row)]
+        if ctx.target_os != "" && fd.target_state(ctx.target_os) != 1 { continue }
+        return Some(p.via_row)
     }
     None
 }

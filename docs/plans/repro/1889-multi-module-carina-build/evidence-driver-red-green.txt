@@ -1,0 +1,37 @@
+=== PHASE 1: GREEN on the task tip == main 3b13fd3c5 (source tree identical) ===
+driver sha256=cedf1df8291e89fa9cc27fe3299838d75bffa784a864d3500de910f2de64582d
+$ D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\nova-driver\target\release\nova.exe build D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.nv
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target/carina-build\main.82316.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build argv=["emit", "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-120-fix-reg-1889-multi-module-carina-build\\target/carina-build\\main.82316.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=0303cf5050d0f985629d242b3af91fdfc65439cdf8dbafbd1ac9ed119cb0ac7d
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\rt-archive-cache\b72aed7d1fe542d0\libnova_rt.lib runtime_sha256=65b0afca4af98c4cfbdbd297b122baac3d4ed9d68f075710cb62ce661dea5b1c
+nova build: D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.exe binary_sha256=fae5850bda2769d7113d589383e14c4e10e2914a0d2cdfa2dbfa6d0e736dd0c1
+[exit=0]
+[build exit=0]
+built exe sha256=fae5850bda2769d7113d589383e14c4e10e2914a0d2cdfa2dbfa6d0e736dd0c1
+$ D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.exe
+Hello, Nova!
+[exit=0]
+=== PHASE 2: RED, sabotage = seed gets the pre-1889 root <repo>/novac/src ===
+(temporary edit in nova-driver/src/carina_build.rs: (staged, repo.join("novac/src")) instead of (staged, stage_dir.clone()); driver rebuilt, NOT committed)
+driver sha256=8806d762890105c676fedbfcd952938720a16935f930575d94940895ef8b7869
+$ D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\nova-driver\target\release\nova.exe build D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.nv
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target/carina-build\main.71948.src
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"D:\\Sources\\nv-lang\\worktrees\\nova-opencode-120-fix-reg-1889-multi-module-carina-build\\target/carina-build\\main.71948.src\\main.nv","start":69,"end":74},"message":"outside the subset: `greet` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)","poisoned_by":null}
+[exit=1]
+[build exit=1 -- expected 1 with E_NOVAC_SUBSET]
+=== PHASE 3: GREEN after restore (git checkout -- nova-driver/src/carina_build.rs, rebuilt) ===
+driver sha256=931719d067b560c09e19df9540e74a25756980c2ea6b48fef21fe5174d4fa0a3
+$ D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\nova-driver\target\release\nova.exe build D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.nv
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target/carina-build\main.69952.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build argv=["emit", "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-120-fix-reg-1889-multi-module-carina-build\\target/carina-build\\main.69952.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=0303cf5050d0f985629d242b3af91fdfc65439cdf8dbafbd1ac9ed119cb0ac7d
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\rt-archive-cache\b72aed7d1fe542d0\libnova_rt.lib runtime_sha256=65b0afca4af98c4cfbdbd297b122baac3d4ed9d68f075710cb62ce661dea5b1c
+nova build: D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.exe binary_sha256=46e9bda41642f9b49ae555422c5c836ca12d60b46bb8ecd25093510c3d5beb59
+[exit=0]
+[build exit=0]
+built exe sha256=46e9bda41642f9b49ae555422c5c836ca12d60b46bb8ecd25093510c3d5beb59
+$ D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target\repro120\twopkg\main.exe
+Hello, Nova!
+[exit=0]

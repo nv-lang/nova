@@ -1,0 +1,375 @@
+﻿{
+    "kind":  "baseline of existing cache files; do not delete, reuse status not assumed fresh",
+    "receipt":  "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_mvkc0sjaqomgtdbffv\\task116\\stage-116-driver\\post-driver-build-receipt.json",
+    "receipt_sha256":  "c44fc40694b5e4221b3e87ee45f72d0f32c57cc97affc55419dbb94c6e630780",
+    "files":  [
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.carina.c",
+                      "size":  13250302,
+                      "sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+                      "receipt_sha256":  "25c5404f1e8e175652f19c9ca6cb03d29de82cee70a7cd9f4258c6724115c8a0",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.exe",
+                      "size":  4389888,
+                      "sha256":  "f4d15ec068c544eba6310be45eee3b1fa1dd5969334843aea5a023ec3dc807ed",
+                      "receipt_sha256":  "f4d15ec068c544eba6310be45eee3b1fa1dd5969334843aea5a023ec3dc807ed",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.lib",
+                      "size":  59594,
+                      "sha256":  "8809a8d5eaf158f41867c18d00c3fb9cdf5fb2bfad03c8b89bffba84ffc1a13f",
+                      "receipt_sha256":  "8809a8d5eaf158f41867c18d00c3fb9cdf5fb2bfad03c8b89bffba84ffc1a13f",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\carina-build\\main.50108.tmp.pdb",
+                      "size":  11780096,
+                      "sha256":  "87d1a46ceeb533bd30a5890c4d3c6addc16d51bc5b664c239fcfb196d70b67ac",
+                      "receipt_sha256":  "87d1a46ceeb533bd30a5890c4d3c6addc16d51bc5b664c239fcfb196d70b67ac",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\.nova-build.lock",
+                      "size":  0,
+                      "sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                      "receipt_sha256":  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\compile.rsp",
+                      "size":  5099,
+                      "sha256":  "5d544f900b59cfe3ea2f3e53e4ed1faa4ab53fc396cb72ff19703f808055d0f3",
+                      "receipt_sha256":  "5d544f900b59cfe3ea2f3e53e4ed1faa4ab53fc396cb72ff19703f808055d0f3",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\lib.rsp",
+                      "size":  4835,
+                      "sha256":  "1e421d58ed3542ea0ad0dbd7c7885837b7cf672e1a2fd8a66d3413796cb4d3fb",
+                      "receipt_sha256":  "1e421d58ed3542ea0ad0dbd7c7885837b7cf672e1a2fd8a66d3413796cb4d3fb",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\libuv.lib",
+                      "size":  1044256,
+                      "sha256":  "17fe23dfffa20b1dc968b08ec5e0098b3809e7681731e9751926ff2287318420",
+                      "receipt_sha256":  "17fe23dfffa20b1dc968b08ec5e0098b3809e7681731e9751926ff2287318420",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\async.obj",
+                      "size":  7433,
+                      "sha256":  "bac84cb4d0756c07afa64813e0a44587246f74897829b4228fb87fa7f2b15ec5",
+                      "receipt_sha256":  "bac84cb4d0756c07afa64813e0a44587246f74897829b4228fb87fa7f2b15ec5",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\core.obj",
+                      "size":  28734,
+                      "sha256":  "8f979f34215fce7a777ee5cbe7d8ecbd142306b823a6d8ea7fbc07797b6b5658",
+                      "receipt_sha256":  "8f979f34215fce7a777ee5cbe7d8ecbd142306b823a6d8ea7fbc07797b6b5658",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\detect-wakeup.obj",
+                      "size":  2288,
+                      "sha256":  "4b800a96c16eed1b5cc3a23508a7d72c1f3b93209ff9486f454f9535daacb9f5",
+                      "receipt_sha256":  "4b800a96c16eed1b5cc3a23508a7d72c1f3b93209ff9486f454f9535daacb9f5",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\dl.obj",
+                      "size":  6085,
+                      "sha256":  "665067680ec8245df3e1c4bd73558da31ee12ce231471bdd892ea4713d37f0b9",
+                      "receipt_sha256":  "665067680ec8245df3e1c4bd73558da31ee12ce231471bdd892ea4713d37f0b9",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\error.obj",
+                      "size":  6465,
+                      "sha256":  "fa10b3a6baac5c65cd001e2bfe33194c9fe1c945dc471c05f651d4e243d20ced",
+                      "receipt_sha256":  "fa10b3a6baac5c65cd001e2bfe33194c9fe1c945dc471c05f651d4e243d20ced",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\fs-event.obj",
+                      "size":  20480,
+                      "sha256":  "1a0ed94dbc8eef407c537d7004f3d28ae6fedf3b34a36320c519fef62a93d135",
+                      "receipt_sha256":  "1a0ed94dbc8eef407c537d7004f3d28ae6fedf3b34a36320c519fef62a93d135",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\fs-poll.obj",
+                      "size":  11400,
+                      "sha256":  "2cc446b308d8844c876178748cbf62ae951530ff73bdba91b74756419fde6061",
+                      "receipt_sha256":  "2cc446b308d8844c876178748cbf62ae951530ff73bdba91b74756419fde6061",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\fs.obj",
+                      "size":  132256,
+                      "sha256":  "588a1e9d2c676afd3d2cadcc05accbf89c6fe356ce97cc8e248f500b038a2493",
+                      "receipt_sha256":  "588a1e9d2c676afd3d2cadcc05accbf89c6fe356ce97cc8e248f500b038a2493",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\getaddrinfo.obj",
+                      "size":  14731,
+                      "sha256":  "12b928dc1fe368732d1616cc888869359b41dae0e7d7f2a6f2aae1d5a7d9215b",
+                      "receipt_sha256":  "12b928dc1fe368732d1616cc888869359b41dae0e7d7f2a6f2aae1d5a7d9215b",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\getnameinfo.obj",
+                      "size":  5065,
+                      "sha256":  "5f852751fef63e50a93dfeca6863c43b14f7f4103e4ec78cb8e6611c704f17b2",
+                      "receipt_sha256":  "5f852751fef63e50a93dfeca6863c43b14f7f4103e4ec78cb8e6611c704f17b2",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\handle.obj",
+                      "size":  10422,
+                      "sha256":  "9e318c22c628a15a78241526580b7e10d8523cd421b0be9b243457a458e82e12",
+                      "receipt_sha256":  "9e318c22c628a15a78241526580b7e10d8523cd421b0be9b243457a458e82e12",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\idna.obj",
+                      "size":  11766,
+                      "sha256":  "1eb5648472ad39526dc4029e21f5c5af45e77cf8a9bb06b8f38521cd6cd0cbfc",
+                      "receipt_sha256":  "1eb5648472ad39526dc4029e21f5c5af45e77cf8a9bb06b8f38521cd6cd0cbfc",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\inet.obj",
+                      "size":  8518,
+                      "sha256":  "6443970b75633687c06303099134d3c67f30c28416c0b2f0d20715295743a3bc",
+                      "receipt_sha256":  "6443970b75633687c06303099134d3c67f30c28416c0b2f0d20715295743a3bc",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\loop-watcher.obj",
+                      "size":  9019,
+                      "sha256":  "9e277b14882c288ed917441e045dfa5cc1660bb972075642a8f1259c3abfc517",
+                      "receipt_sha256":  "9e277b14882c288ed917441e045dfa5cc1660bb972075642a8f1259c3abfc517",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\pipe.obj",
+                      "size":  101157,
+                      "sha256":  "e9c2f9f1e596b10cf3a1ded98156a8f6493b18c6df8a5fe8ad0d4a84c56deb3e",
+                      "receipt_sha256":  "e9c2f9f1e596b10cf3a1ded98156a8f6493b18c6df8a5fe8ad0d4a84c56deb3e",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\poll.obj",
+                      "size":  28298,
+                      "sha256":  "d6c6e71a84bfc133fe75f05268f72630db87a83455ce38751fba538548979799",
+                      "receipt_sha256":  "d6c6e71a84bfc133fe75f05268f72630db87a83455ce38751fba538548979799",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\process-stdio.obj",
+                      "size":  11549,
+                      "sha256":  "178953bebd0181dfdb9d739a2ba1f5717d07017c07feb1e32c3c31a9122b0bc4",
+                      "receipt_sha256":  "178953bebd0181dfdb9d739a2ba1f5717d07017c07feb1e32c3c31a9122b0bc4",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\process.obj",
+                      "size":  45686,
+                      "sha256":  "713ba35d34d0f4c80c0cb26e38c9de13428922db671c21782a2d5f3129ebe769",
+                      "receipt_sha256":  "713ba35d34d0f4c80c0cb26e38c9de13428922db671c21782a2d5f3129ebe769",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\random.obj",
+                      "size":  3619,
+                      "sha256":  "9c042d61d9b1c3626d335b34684e9dcc590a3e012eeb06f7e8d94ea3fe2203d3",
+                      "receipt_sha256":  "9c042d61d9b1c3626d335b34684e9dcc590a3e012eeb06f7e8d94ea3fe2203d3",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\signal.obj",
+                      "size":  15310,
+                      "sha256":  "d5c1af7650746942d89e22360e2db94c4b0c12676cddf1d45bae3878b230d5eb",
+                      "receipt_sha256":  "d5c1af7650746942d89e22360e2db94c4b0c12676cddf1d45bae3878b230d5eb",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\snprintf.obj",
+                      "size":  585,
+                      "sha256":  "72c57f70a0deee398b97a8832e8c17e13afb528967c4046378549bcb571eb17c",
+                      "receipt_sha256":  "72c57f70a0deee398b97a8832e8c17e13afb528967c4046378549bcb571eb17c",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\stream.obj",
+                      "size":  12958,
+                      "sha256":  "142f24196153b8959c08ae5835a280a6bb7b9f4f969d69e478390ffdd8eb9825",
+                      "receipt_sha256":  "142f24196153b8959c08ae5835a280a6bb7b9f4f969d69e478390ffdd8eb9825",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\strscpy.obj",
+                      "size":  783,
+                      "sha256":  "cfc17978aaba4c1fefe3c2a2b875efb53e4b38f6492f3cc9b821d45443b641b9",
+                      "receipt_sha256":  "cfc17978aaba4c1fefe3c2a2b875efb53e4b38f6492f3cc9b821d45443b641b9",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\strtok.obj",
+                      "size":  1126,
+                      "sha256":  "ee8fcb86d40cf11a3d5064a1cc2f7df72ee33ff31edd2c471ae3f2d1789c2777",
+                      "receipt_sha256":  "ee8fcb86d40cf11a3d5064a1cc2f7df72ee33ff31edd2c471ae3f2d1789c2777",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\tcp.obj",
+                      "size":  56835,
+                      "sha256":  "3b1d9c43d2a3184012b376924bf0dcc197e7468f17bab7291929049a21e63ccd",
+                      "receipt_sha256":  "3b1d9c43d2a3184012b376924bf0dcc197e7468f17bab7291929049a21e63ccd",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\thread-common.obj",
+                      "size":  6045,
+                      "sha256":  "d090ca0c7c929dbdd5e77d9c1231b46bb9293db9ffae0f7a7441fa6abbcad482",
+                      "receipt_sha256":  "d090ca0c7c929dbdd5e77d9c1231b46bb9293db9ffae0f7a7441fa6abbcad482",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\thread.obj",
+                      "size":  26422,
+                      "sha256":  "81b355b71f490a80fd8359fa4040828b1d743af3915e5ba56aa3e60f00d55440",
+                      "receipt_sha256":  "81b355b71f490a80fd8359fa4040828b1d743af3915e5ba56aa3e60f00d55440",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\threadpool.obj",
+                      "size":  17617,
+                      "sha256":  "67446ba87a429055a67e04f0ca4dacff717ec8be31ab3888b80537f48bb60e8a",
+                      "receipt_sha256":  "67446ba87a429055a67e04f0ca4dacff717ec8be31ab3888b80537f48bb60e8a",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\timer.obj",
+                      "size":  8175,
+                      "sha256":  "46a2fcc750a43ca4cbc0d4335da81a81ae5edca1facd8606965bb5e8e1b67377",
+                      "receipt_sha256":  "46a2fcc750a43ca4cbc0d4335da81a81ae5edca1facd8606965bb5e8e1b67377",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\tty.obj",
+                      "size":  92534,
+                      "sha256":  "5ce37db6bd99dc65a510a442675fe276ad2a43866d3e959f1e43d4d2aa3c4738",
+                      "receipt_sha256":  "5ce37db6bd99dc65a510a442675fe276ad2a43866d3e959f1e43d4d2aa3c4738",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\udp.obj",
+                      "size":  37491,
+                      "sha256":  "6630cf92cd301c6d690703016452d884777989f806aca1bffc7173e64a4df477",
+                      "receipt_sha256":  "6630cf92cd301c6d690703016452d884777989f806aca1bffc7173e64a4df477",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\util.obj",
+                      "size":  68199,
+                      "sha256":  "675e53cc8aae16c70e4f48f350f9cff2224dec66e3df6bd64647dcabac9f9eec",
+                      "receipt_sha256":  "675e53cc8aae16c70e4f48f350f9cff2224dec66e3df6bd64647dcabac9f9eec",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\uv-common.obj",
+                      "size":  100561,
+                      "sha256":  "bb217ccb7679a4640046e7ea6d055ea28365093cbab8a2241fd7a774ab388079",
+                      "receipt_sha256":  "bb217ccb7679a4640046e7ea6d055ea28365093cbab8a2241fd7a774ab388079",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\uv-data-getter-setters.obj",
+                      "size":  8817,
+                      "sha256":  "2d20eb4dde144c57c0552264ca179e97005abe25a42eb1d0bc35d2919a3879d0",
+                      "receipt_sha256":  "2d20eb4dde144c57c0552264ca179e97005abe25a42eb1d0bc35d2919a3879d0",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\version.obj",
+                      "size":  1023,
+                      "sha256":  "780974b04c98dd5b1e47fc9d67310bb06b27cd2fc52a89bade8d7cc02e8cde31",
+                      "receipt_sha256":  "780974b04c98dd5b1e47fc9d67310bb06b27cd2fc52a89bade8d7cc02e8cde31",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\winapi.obj",
+                      "size":  7111,
+                      "sha256":  "3ffae0671eedc7a4d29c0cf7a4e9dc46841dd2baf4f339d6063e3972401ca28e",
+                      "receipt_sha256":  "3ffae0671eedc7a4d29c0cf7a4e9dc46841dd2baf4f339d6063e3972401ca28e",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\libuv-cache\\d28184508b18249e\\obj\\winsock.obj",
+                      "size":  14425,
+                      "sha256":  "35c064bc85f4e2682972714570e8522ffa74ec2b9c2d096ecaa6aee6d5474561",
+                      "receipt_sha256":  "35c064bc85f4e2682972714570e8522ffa74ec2b9c2d096ecaa6aee6d5474561",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  },
+                  {
+                      "path":  "D:\\Sources\\nv-lang\\worktrees\\nova-opencode-116-carina-seed-compatibility\\target\\rt-archive-cache\\47038da5de52ddc6\\libnova_rt.lib",
+                      "size":  1995772,
+                      "sha256":  "6101c8772529020d975ef82afc5503a16c074155b4bc2cb3a05f21b58a2d4376",
+                      "receipt_sha256":  "6101c8772529020d975ef82afc5503a16c074155b4bc2cb3a05f21b58a2d4376",
+                      "matches_receipt":  true,
+                      "provenance":  "pre-existing output from failed single authorized build; not fresh for candidate attempt"
+                  }
+              ]
+}

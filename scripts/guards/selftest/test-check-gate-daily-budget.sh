@@ -6,6 +6,10 @@
 
 set -u
 export LC_ALL=C
+# Герметичность: переменная обхода может унаследоваться из экспорта гейта
+# (прогон с NOVA_GATE_DAILY_OVERRIDE краснел на случае 2 — враппер гейта
+# экспортирует её на весь прогон). Случай 4 ставит её сам.
+unset NOVA_GATE_DAILY_OVERRIDE
 
 G="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-gate-daily-budget.py"
 TMP="${TMPDIR:-/tmp}/selftest_gdb_$$"

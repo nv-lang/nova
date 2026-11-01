@@ -1,0 +1,7 @@
+// EXPECT_COMPILE_ERROR E_NOVAC_SUBSET
+module cfg_refusals.neg_1
+
+// NOVAC_EXPECT outside the subset: an effect attribute is read but not compiled yet
+// nova:expect E_NOVAC_SUBSET -- Carina currently refuses the unsupported target_arch predicate
+#cfg(target_arch = "x86_64")
+fn main() -> () {}

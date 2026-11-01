@@ -38,6 +38,7 @@ fn Emitter mut @collect_spawns(file Node) -> () {
         match decl_fn_row(c, @ctx) {
             None => continue
             Some(row) => {
+                if !@has_selected_fn(row) { continue }
                 if !@reach.has(row) { continue }
                 collect_spawn_nodes(c, @spawns)
             }
@@ -63,7 +64,7 @@ fn Emitter @spawn_number(id NodeId) -> int {
     for i in 0..@spawns.len() {
         if @spawns[i].id_of() == id { return i }
     }
-    ice_at("novac/src/emit_c/emit_spawn.nv:66", "emit: a spawn outside the reached functions reached the emitter")
+    ice_at("novac/src/emit_c/emit_spawn.nv:67", "emit: a spawn outside the reached functions reached the emitter")
 }
 
 /// For each spawn: its context type and the prototypes of its body and entry

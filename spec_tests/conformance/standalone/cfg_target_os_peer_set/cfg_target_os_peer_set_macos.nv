@@ -1,0 +1,3 @@
+module standalone.cfg_target_os_peer_set
+
+fn selected_peer() -> str => "cfg-peer:macos"

@@ -1,0 +1,4 @@
+carina-crossmod: driver=D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\nova-driver\target\release\nova.exe sha256=cedf1df8291e89fa9cc27fe3299838d75bffa784a864d3500de910f2de64582d
+carina-crossmod PASS: crossmod_build_min exit=0 stdout=1 lines binary_sha256=f9a2fced9467a99fb557e55a9bc0386a34fcbed3769f039bc2bf6e780e9f50fe
+carina-crossmod PASS: crossmod_build_program exit=0 stdout=15 lines binary_sha256=d74af4d173acab4713e6d3399d5ade072ba1bd3db8d167d6d33a7431eaad8544
+carina-crossmod PASS: all 2 multi-module fixtures built through the pinned Carina B1 seed and matched their full expected stdout

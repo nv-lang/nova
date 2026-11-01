@@ -114,7 +114,13 @@ def lexer_keywords(root: Path):
     if not p.is_file():
         return None
     text = p.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
-    m = re.search(r"fn keyword_kind\(t str\) -> TokenKind => match t \{(.*?)\n\}", text, re.S)
+    # ДВЕ ЗАКОННЫЕ ФОРМЫ ДВЕРИ (задача 134, 2026-10-31): хвостовая
+    # `=> match t { ... }`, и БЛОЧНАЯ `{ if t == CONST { return ... } match t { ... } }` --
+    # рука с константой вместо литерала в match по `str` type-checks, но miscompiles
+    # (измерено и записано у самой таблицы в lex.nv), поэтому слово из реестра имён (П5)
+    # приходит сравнением ДО таблицы, а таблица остаётся литеральной. В обеих формах
+    # закрывающая таблицу скобка стоит в колонке 0 (у блокной формы это скобка fn).
+    m = re.search(r"fn keyword_kind\(t str\) -> TokenKind.*?match t \{(.*?)\n\}", text, re.S)
     if not m:
         return None
     return set(re.findall(r'^\s*"([a-z_]+)" =>', m.group(1), re.M))

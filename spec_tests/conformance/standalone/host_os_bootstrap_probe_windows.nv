@@ -1,0 +1,11 @@
+// EXPECT_STDOUT host-os-windows
+// Native-Windows/default-target conformance envelope; bootstrap uses a separate pinned root novac source.
+#cfg(target_os = "windows")
+module standalone.host_os_bootstrap_probe_windows
+
+import std.os.{host_os}
+
+fn main() Io -> () {
+    assert(host_os() == "windows")
+    println("host-os-windows")
+}

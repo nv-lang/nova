@@ -119,6 +119,9 @@ folder-модуля и `_test.nv` сохраняют white-box доступ к �
 
 ## D29. Модули и импорты
 
+> **Target-conditional function names:** D495 filters inactive function rows before
+> D29 name shadowing; all other import and namespace rules remain unchanged.
+
 > **2026-05-12 (rev-2):** modulу разрешено быть **multi-file**
 > (folder = module, Go-style peers). Все файлы в папке объявляют
 > один и тот же `module X` и share namespace. Single-file модули
@@ -2086,6 +2089,11 @@ nova_tests/
 
 ## D99. Conditional compilation: filename suffix + `#cfg`
 
+> **Function item applicability:** specified in [D495](#d495); D99's other
+> conditional-compilation rules remain unchanged.
+
+> **Function item applicability:** см. [D495](#d495); прочие формы и scope D99 остаются без изменений.
+
 ### Что
 
 Два механизма platform/feature-conditional кода:
@@ -2134,17 +2142,34 @@ nova_tests/
 
 ### Семантика
 
+**Амендмент 2026-10-16 — выбор target OS для Carina emit (решение владельца).**
+Для `novac emit` target OS выбирается в следующем порядке:
+
+1. `novac emit --target-os <windows|linux|macos>` — явный выбор эмиссии;
+2. `NOVA_TARGET_OS=<windows|linux|macos>`;
+3. ОС host-компилятора.
+
+Явный флаг имеет приоритет над переменной окружения. Неподдерживаемое,
+пустое или повторно заданное значение — ошибка с ненулевым выходом; компилятор
+не откатывается к следующему источнику выбора. Выбранная ОС управляет только
+условной компиляцией (`#cfg(target_os)` и OS filename suffix): флаг не выбирает
+и не запускает C toolchain. `--target` зарезервирован для отдельной будущей
+интеграции C toolchain.
+
 | Mechanism | Scope | Detection |
 |---|---|---|
 | Filename suffix | peer-file / standalone test | filename stem suffix |
 | `#cfg(feature)` | **перед** module / **перед** item | `NOVA_FEATURES` env / `--features` CLI |
-| `#cfg(target_os)` | **перед** module / **перед** item | `NOVA_TARGET_OS` env / host OS default |
+| `#cfg(target_os)` | **перед** module / **перед** item | `novac emit --target-os` / `NOVA_TARGET_OS` env / host OS default |
 | `#cfg(... || && !)` | то же — operator predicate | рекурсивный eval |
 
 **Item-level `#cfg`** (Plan 42.14 Ф.2): `#cfg(...)` перед top-level
-item (Fn/Type/Const). Inactive predicate → item полностью парсится но
-дропается (`parse_item → None`). `module`-декларация — разделитель:
-атрибуты до неё = file-level, после (перед item) = item-level.
+item (Fn/Type/Const). `module`-декларация — разделитель: атрибуты до неё =
+file-level, после (перед item) = item-level.
+
+> Function item applicability is specified in [D495](#d495).
+> This function-only refinement does not change the existing Type/Const,
+> module, or peer rules below.
 
 **AND semantic** для multiple `#cfg` атрибутов: peer/item active iff
 **все** cfg атрибуты match. Внутри одного атрибута — операторы
@@ -2156,8 +2181,9 @@ register peer_file, не recurse imports).
 - `#cfg` в expression position (`if #cfg(target_os = ...) { ... }`).
 - `#cfg(target_arch = ...)` — на ARM/x86 differences. Future, если
   понадобится.
-- Cross-compile toolchain integration — `--target=linux` на Windows-
-  host требует cross C-toolchain (separate plan).
+- Cross-compile toolchain integration — `--target-os` выбирает только
+  OS-ветви Nova и не является настройкой C toolchain. `--target` зарезервирован
+  для отдельного плана интеграции C toolchain.
 
 ### Почему
 
@@ -2180,6 +2206,44 @@ production кейсы при меньшей complexity чем полный Rust.
 - [Plan 42.12](../../docs/plans/42.12-cfg-conditional-compilation.md) — реализация.
 - [Plan 18](../../docs/plans/18-stdlib-roadmap.md) P0 — unblock'aется D99.
 
+## D495. Function item applicability for target OS (2026-10-22) {#d495}
+
+### Что
+
+Уточнить function-only поведение item-level `#cfg` из D99: платформенная
+применимость функции определяется predicates для выбранной compilation
+target и предшествует регистрации кандидатов и разрешению вызовов. Это не
+общее расширение `#cfg`, feature support или dead-code elimination.
+
+### Правило
+
+* Все function AST nodes и их identity сохраняются; неактивная функция не
+  удаляется до collect/check. Её тело не проходит semantic checking, а её
+  callable row не участвует в duplicate/coherence judgments, shadowing,
+  overload resolution или emission для выбранной target.
+* Applicability — фильтр кандидатов, не новая overload-specificity axis. Если
+  одинаковые сигнатуры одновременно активны для выбранной target, действует
+  существующая duplicate-definition ошибка D84.
+* Единый порядок действует для free, instance и static functions, включая
+  own и handed/imported rows. Неактивная own row не shadow'ит активную
+  imported row.
+* Синтаксис и валидность объявлений сохраняются. Правило не меняет семантику
+  Type/Const, module или peer items D99 и не задаёт глобальную reachability/DCE.
+
+### Почему
+
+Функциональная применимость должна быть частью одного разрешения кандидатов:
+удаление Fn до collect теряет AST identity и source attributes, а отдельный
+выбор в emitter/mono способен разойтись с выбранной строкой вызова. Фильтр по
+target до name shadowing и duplicate judgment сохраняет D84 для одновременно
+активных определений и не вводит новую ось перегрузки.
+
+### Что заменено
+
+* Function-only уточнение D99 item-level applicability и D84 declaration /
+  resolution order; при расхождении этих старых формулировок действует D495.
+* Связанные D267/D29/D125/D371 носят указатели на этот function-only порядок;
+  их обычные правила, включая full-shadow типа в D371, не меняются.
 
 ---
 
@@ -2286,6 +2350,9 @@ syntax не вводится (bootstrap simplicity).
 ---
 
 ## D371. Prelude control attributes — `#no_prelude`, `#prelude(...)`, `#allow(shadow)`
+
+> **Conditional functions:** D495 filters function candidates by target only;
+> D371's type full-shadow and other prelude rules are unchanged.
 
 > **AMEND (2026-07-11, [panic-assert-intrinsic]) — `panic`/`assert`/
 > `debug_assert` opt out of this whole mechanism.** These three are

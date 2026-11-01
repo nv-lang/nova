@@ -1,0 +1,11 @@
+
+running 1 test
+test carina_build::tests::capture_control_is_removed_from_the_seed_child_environment ... FAILED
+
+failures:
+
+failures:
+    carina_build::tests::capture_control_is_removed_from_the_seed_child_environment
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.04s
+

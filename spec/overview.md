@@ -62,6 +62,19 @@ language explicitly optimized for the pair "LLM writes, human reviews".
    [`docs/dev/read-project.md`](../docs/dev/read-project.md)).
    Code is tested and shipped only through C-codegen too — there is no
    separate "interpreted" path with different semantics.
+   Platform implementations are selected at compile time through `#cfg`
+   and OS filename suffixes ([D99](decisions/07-modules.md#d99-conditional-compilation-filename-suffix--cfg)).
+   In Carina, `novac emit --target-os <windows|linux|macos>` selects the
+   emission OS; when the flag is absent, `NOVA_TARGET_OS` is used, then the
+   host OS. The explicit flag takes precedence over the environment variable.
+    Empty, unsupported, or repeated values are errors with a nonzero exit;
+    selection does not fall back to the next source. This selection controls
+    source inclusion only and does not select or invoke a C toolchain; `--target`
+    is reserved for a separate C-toolchain integration.
+    For function items, target applicability precedes duplicate checks and
+    resolution ([D495](decisions/07-modules.md#d495)): inactive functions retain
+    their AST identity but their bodies are not semantically checked. This is not
+    a new overload axis and does not change the `Type`/`Const` or module/peer rules.
 2. **Memory: managed by default (current: Boehm conservative GC; v1.0+:
    concurrent GC), regions opt-in for real-time.** The programmer writes code
    without memory prefixes — allocations are freed automatically. **Current

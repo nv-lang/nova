@@ -1,0 +1,24 @@
+{
+  "verdict": "PASS_INDEPENDENT_GC_VOLUME_RED_GREEN",
+  "results": {
+    "gc-red": {
+      "status": 1,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "abe303952cb85ca6363cba30146e970c71ffc174f8d2c12b243918f6a6bdcefd"
+    },
+    "volume-red": {
+      "status": 1,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "ae5f16249868952459c60237c83ba07e503e22a4d25aad518a4e36970e43c989"
+    },
+    "restored": {
+      "status": 0,
+      "stdout_sha256": "a91bccb5fd2e1fd7183d70099acdf9a9d9e75e9a2ef0a90fb0c1a2457e322d84",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "plan_sha256": "0a07a0df3fef173a4864605ed22d7ed913e0e89afb604d4da668e483e365ea74",
+  "verifier_sha256": "cd1dd6f18ba514bb7b1419d9dfe5f302b7152e700d4ef63cf74bb66c60f3caf6",
+  "volume_probe_verifier_sha256": "58a8e1c4dd78cc00f324cc11c5419cc6fba40ebca3e3f499a8bfe8af3f78c817",
+  "volume_probe_note": "Changed all destination paths in a separate plan copy to an actual C: parent; adjusted only the expected-plan digest in a separate verifier copy to reach the UNCHANGED actual-volume guard. No source/compiler/native launches. Actual plan and verifier unchanged."
+}

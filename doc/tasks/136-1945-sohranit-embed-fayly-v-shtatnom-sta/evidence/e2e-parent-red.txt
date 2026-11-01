@@ -1,0 +1,29 @@
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-parent-red\installation\target/carina-build\main.14316.src
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$SCRATCH\e2e-parent-red\installation argv=["emit", "$SCRATCH\\e2e-parent-red\\installation\\target/carina-build\\main.14316.src\\main.nv"] seed=carina-b asset_sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb b1_sha256=824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=09f5fedb6c18330a8891b349ccbedf26491fdffec4a5eebf18d57cb7f6eca88c
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$SCRATCH\e2e-parent-red\installation\target\rt-archive-cache\cd0e2365d857ef99\libnova_rt.lib runtime_sha256=a1aa7b3762869ee2b79cfb23da26a85c715cb572bc276b6af7bb3b5939ebb5bc
+nova build: $SCRATCH\e2e-parent-red\embed-probe.exe binary_sha256=83fd0f4b4a69129897cd62a4f920fcd71a5e02c41160f490100a53bcbaab87eb
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: libuv not built, building (one-time, ~30 sec)...
+nova: libuv.lib built (37 files)
+nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...
+nova: libnova_rt.lib built (14 files)
+nova: libnova_rt archive built ($SCRATCH\e2e-parent-red\installation\target\rt-archive-cache\cd0e2365d857ef99\libnova_rt.lib)
+carina-embed PASS: real driver build=0 run=0 stdout=shell-136,cert-136,own; sources unchanged
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-parent-red\installation\target/carina-build\main.70788.src
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$SCRATCH\\e2e-parent-red\\installation\\target/carina-build\\main.70788.src/_deps/assetdep/assetdep.nv","start":45,"end":50},"message":"embedded file `$SCRATCH/e2e-parent-red/installation/target/carina-build/main.70788.src/_deps/assets/data.bin` escapes the package root -- paths above the package tree are forbidden (E_EMBED_OUTSIDE_PROJECT, D412)","poisoned_by":null}
+warning: in the working copy of 'dep/nova.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dep/src/assetdep.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'helper/helper.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'main.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'nova.toml', LF will be replaced by CRLF the next time Git touches it
+Traceback (most recent call last):
+  File "$WT\scripts\tools\carina-build-embed.py", line 129, in <module>
+    main()
+    ~~~~^^
+  File "$WT\scripts\tools\carina-build-embed.py", line 105, in main
+    assert parent_data.returncode == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

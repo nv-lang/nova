@@ -1,0 +1,6 @@
+nova build program: 3 source file(s) staged under $WT\target/carina-build\modules_tour.27540.src
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 2): {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":0,"end":0},"message":"internal compiler error at novac/src/pipeline/program.nv:157 (novac bug, not yours): pipeline: `novac_fn_tour_greeter_greet__nova_str__to_Greeting` belongs to module `tour.greeter`, which the entry's imports do not reach","poisoned_by":null}

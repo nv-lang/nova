@@ -1,3 +1,79 @@
+# 2026-10-30, task 127: blockers 117 -> 116 — reg 1922 (the driver dropping
+#   the seed's stdout JSONL diagnostics on a failed Carina emit) is CLOSED by
+#   the class fix in nova-driver (emit_failure_detail assembles BOTH child
+#   streams; proven red/green with sabotage). Closure on the task branch,
+#   pending acceptance; the scanner was re-run on the edited registry.
+#   no_route/no_caveat unchanged.
+# 221.1 package integration, 2026-10-27 (integrator): merge with main bb7a12c25.
+#   Union: main 115 + package-unique net +2 (1915/1916/1917 and 1922 added OPEN,
+#   1899/1910 closed bounded by the 092 acceptance) = blockers 117.
+# Task 123 integration with main 75c8dc31d: scanner count 115 OPEN blockers.
+# Row 1927 adds one to main's 114; no verdict or status is weakened.
+# 2026-10-26, task 123: blockers 111 -> 112: reg 1927 (pooled selftest limit
+# 300s for test-check-novac-module-tests.sh constructively tight: the limit
+# measured the SOLO cost while the gate judges the BATCH; killed the full
+# gate on a quiet machine without a verdict) is registered OPEN and
+# tag-blocking: a full GATE_EXIT=0 on the exact SHA is a tag condition
+# (owner, 2026-10-26) and this rubric reddened it falsely. Same
+# guard-sanctioned chronicle mechanism as reg 1910/1899 above; the fix
+# (named line BUDGET=300; FLOOR=450 in run-guard-selftest.sh with the
+# batch measurement in the comment) is on task 123's branch pending
+# acceptance. no_route/no_caveat unchanged.
+# 221.1 package integration, 2026-10-26 (integrator): merge with main 75c8dc31d.
+#   Union: main 114 + package-unique net +2 (1915/1916/1917 and 1922 added OPEN,
+#   1899/1910 closed bounded by the 092 acceptance; the package's 1926 is main's
+#   already) = blockers 116. Re-measured on the merged registry.
+# Task 122 integration: re-measured at merge with main 66222e5d2.
+# Registry union keeps OPEN blockers 1925/1926 from main and 1928 from task 122.
+# Direct scanner count is recorded below; no row closed or verdict weakened.
+# 2026-10-26, task 122, integrator letter 02:10:
+# blockers 111 -> 112: reg 1928 (array literal in an enum payload position
+# reinterpreted as []u8 instead of converted element-wise -- the open
+# reg-1015 class through a door that entry does not name) is registered
+# OPEN and explicitly tag-blocking by the integrator's verdict, per the
+# 2026-08-16 owner policy on silent miscompilation. Same chronicle
+# mechanism as reg 1910/1899 below; not a waiver, closure or threshold
+# weakening. no_route/no_caveat unchanged (route: oracle, nearest hunting
+# pack; carrier caveat present).
+# 2026-10-26, task 121 merge of main 09c317de2: two tag-blocking rows
+# meet -- 1925 (this branch, CHASTICHNO ZAKRYTO, the carrier fixed, the
+# class open) and 1926 (main, task 124's walls). Re-measured on the
+# merged registry; 1925 keeps its DA verdict until the class closes.
+# 2026-10-26, task 124 round 2, orchestrator's decision + integrator's
+# letters 14:14: blockers 111 -> 112 — reg 1926 (the night CI wall cascade:
+# the 600s novac-check-cache wall killed on slowed runners, no verdict) is
+# registered OPEN and explicitly tag-blocking with the route "fixed by
+# task 124". Not a waiver, closure or threshold weakening.
+# no_route/no_caveat unchanged.
+# 2026-10-25, task 121, integrator letter:
+# blockers 111 -> 112: reg 1925 (the A-E2 guard killed by the deadline
+# printing a false "ok: 88/88" post-mortem; a trap that destroys state
+# and RETURNS, kin of reg 475) is ЧАСТИЧНО ЗАКРЫТО -- the carrier is
+# fixed, the class (34 same-pattern trap sites) is open -- and is
+# explicitly tag-blocking by the integrator's verdict ("a false ok in
+# the gate undermines trust in the full gate", condition 0.3). The
+# growth is the chronicle-sanctioned kind: the defect became visible,
+# not new. no_route/no_caveat unchanged (the row is K2 with the class
+# and the carrier caveat present).
+# 2026-10-25, integrator post-092 batch (orchestrator probes 11:49):
+# blockers 111 -> 114: reg 1915 (loose protocol-param compare in fn types,
+# silent null), reg 1916 (forbid bypassed via fn-value call, no D63 runtime
+# barrier), reg 1917 (--strict-effects blind spots) — all OPEN, К1,
+# tag-blocking, each with a one-window-per-class route. Guard-sanctioned
+# chronicle growth; not a waiver. no_route/no_caveat unchanged.
+# 2026-10-25, task 092, integrator letter 04:57:
+# blockers 110 -> 111: reg 1910 (inactive-target #coerce pair returned by
+# coerce_row from the unfiltered registry, bypassing the D495
+# applicability filter) is registered OPEN/pending and explicitly
+# tag-blocking until the final independent acceptance of task 092.
+# Same guard-sanctioned chronicle mechanism as reg 1899 (109 -> 110
+# below); not a waiver, closure or threshold weakening.
+# no_route/no_caveat unchanged.
+# 2026-10-25, task 092, owner bookkeeping scope 00:47:
+# blockers 109 -> 110: reg 1899 now explicitly says tag-blocking while the
+# final independent review is pending. This records the already-known K1,
+# not a waiver or closure. Reg 1909 is OPEN/P2 fixture-adaptation debt.
+# no_route/no_caveat unchanged; guard logic and all former rows preserved.
 # 2026-09-18 (integrator, okno nova-ff): blockers 73 -> 72 -- zakryt No1157
 #   (tihaya polovina No762): imya modulnoy konstanty v pozitsii obraztsa
 #   otvergaetsya diagnostikoy E_MATCH_CONST_PATTERN. Baza opuskaetsya TOY ZHE
@@ -138,7 +214,9 @@
 #   №711 (лишний return) и №714 (отсутствующий): здесь возврат ЕСТЬ, а тип
 #   у него чужой.
 # №721 (`use` как второй ввоз имён) — К2, в блокеры не идёт.
-no_route=0
+# Task 135: measured no_route=1, new OPEN K1 entry 1945 (embed sidecars).
+# No repair task is assigned yet; do not claim CHINITSYA before routing.
+no_route=1
 # 2026-08-19, №445 — no_caveat 37 -> 36. Запись закрыта: все три её пункта
 #   выполнены. (а) шаг гейта `conformance-full` гонит `--full` и сверяет
 #   МНОЖЕСТВО упавших со списком; (б) храповик роста SKIP стоял с №453(б);
@@ -1554,7 +1632,21 @@ no_caveat=0
 # 2026-10-11, task #63: blockers 110 -> 109. Row 1878 closed after the #62
 #   fix was merged and its exact Windows artifact workflow passed, meeting
 #   the owner-approved lifecycle condition; no registry count or gap rewritten.
-blockers=109
+# 2026-10-25, integrator (221.1 package, integrate/2211-post92-batch): 114 -> 112, rows 1899 and 1910
+# closed bounded in the final acceptance of task 092 (acceptor acts verdict.md + owner-disposition.md,
+# owner exception 2026-10-25 16:50): within the verdict matrices; payload/ABI/Linux native stay outside
+# the closure and would be new rows if seen there. Measured on this branch's registry.
+# 2026-10-25, integrator (task 119 rows into the 221.1 package): 112 -> 113, row 1922
+# filed OPEN, BLOKIRUET TEG: DA (the driver hides the seed diagnostics that S5 needs
+# for classifying every corpus refusal). Row 1923 is retracted, not a blocker.
+# 2026-10-26, integrator: 113 -> 114, row 1926 filed OPEN, BLOKIRUET TEG: DA (the marginal
+# novac-check-cache wall makes the push tier fail on the slowed runner; the tag needs green CI
+# on the exact SHA).
+# 2026-10-30, task 128 (integrator's order 19:03): 116 -> 117, row 1929 filed
+# OPEN, BLOKIRUET TEG: DA (pinned B1 rejects three Oracle-era regression
+# examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
+# mandatory release corpus, not a verdict on which side is right).
+blockers=117
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

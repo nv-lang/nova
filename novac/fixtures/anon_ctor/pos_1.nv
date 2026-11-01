@@ -1,0 +1,22 @@
+module anon_ctor.pos_1
+
+// An anonymous record constructor as the BODY of a match arm (registry
+// №1484): the arm's position names the record -- the fn's declared return
+// -- and until the settle door existed the expectation never reached the
+// construction, whose only remaining door was the lattice's ice ("anonymous
+// constructor without a spread", check/type_of.nv). The arm now types as
+// its position's record, and the program prints the arm's own field.
+//
+// The oracle builds and runs this file byte-for-byte the same (prints 9).
+type Rec { x int }
+
+fn pick(k int) -> Rec {
+    match k {
+        0 => { x: 9 }
+        _ => { x: 0 }
+    }
+}
+
+fn main() {
+    println(pick(0).x)
+}

@@ -248,10 +248,21 @@ jobs:
       # реестр №1828). Вход `tier` (№765) читал только gate.sh: ручной прогон
       # «full» шёл здесь ярусом push, корпус и самосборка Карины в нём не
       # судились, и проверить ночной фикс Карины можно было опять раз в сутки.
+      - name: Interrupted pool diagnostic selftest (no compiler)
+        run: python scripts/guards/selftest/test-gate-novac-par-partial.py "$RUNNER_TEMP"
+
       - name: novac conventions gate (scripts/gate-novac.sh)
         env:
           NOVAC_TIER: ${{ (github.event_name == 'schedule' || inputs.tier == 'full') && 'full' || 'push' }}
         run: NOVAC_SMOKE_EXE_CACHE="$HOME/.cache/novac-oracle-exe" bash scripts/gate-novac.sh "$(pwd)"
+
+      - name: Save interrupted novac pool diagnostics (not a verdict)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: novac-partial-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/novac-partial/
+          if-no-files-found: ignore
 
       # Carina-first infrastructure selftest uses temporary fixture descriptors;
       # it does not consume or create the separately owner-authorized live seed manifest.

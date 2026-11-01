@@ -1,0 +1,14 @@
+nova.exe : carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd
+5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff621
+0d5; A built by published Oracle 0.1.0
+строка:2 знак:1
++ & .\nova-driver\target\release\nova.exe build target/repro120/pkgq2/m ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (carina-gate ver...ed Oracle 0.1.0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+nova build program: 2 source file(s) staged under D:\Sources\nv-lang\worktrees\nova-opencode-120-fix-reg-1889-multi-module-carina-build\target/carina-build\main.17392.src
+nova: Carina B1 emit failed (exit 2): {"id":"ice","code":"E_NOVAC_ICE","severity":"error","primary":{"file":"","start":
+0,"end":0},"message":"internal compiler error at novac/src/pipeline/program.nv:157 (novac bug, not yours): pipeline: `n
+ovac_fn_pkgq2_helper_greet__nova_str__to_nova_str` belongs to module `pkgq2.helper`, which the entry's imports do not r
+each","poisoned_by":null}

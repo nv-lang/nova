@@ -34,12 +34,14 @@ fn Checker @is_heap_type(t TyId) -> bool {
 
 /// Is `t` a VALUE type -- a primitive, a sum, a newtype, a `value` record or
 /// a structural pair -- whose `mut` parameter is the caller's own storage (R3)?
-/// A type parameter, a pointer, an effect or an untyped slot is neither: no
-/// verdict here, the subset's own refusal stands.
+/// A type parameter, a pointer, an effect, a function type (task 134: its
+/// values are not compiled while closures are refused) or an untyped slot is
+/// neither: no verdict here, the subset's own refusal stands.
 fn Checker @is_value_type(t TyId) -> bool {
     if !is_ty(t) { return false }
     ro k = @ctx.tys.kind_of(t)
-    if k == TypeKind.TkParam || k == TypeKind.TkInfer || k == TypeKind.TkEffect || k == TypeKind.TkPtr {
+    if k == TypeKind.TkParam || k == TypeKind.TkInfer || k == TypeKind.TkEffect || k == TypeKind.TkPtr ||
+        k == TypeKind.TkFn {
         return false
     }
     !@is_heap_type(t)

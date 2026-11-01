@@ -1,0 +1,118 @@
+examples/basics/arithmetic.nv	PASS	0	19.5	0	b6670281be1d9870		5! = 120	patched-scratch-driver-v1
+examples/basics/array_lit_positions.nv	PASS	0	11.5	0	302fbd5591b893c2		3	patched-scratch-driver-v1
+examples/basics/assign_door.nv	PASS	0	11.5	0	b19a8a1db8400324		2	patched-scratch-driver-v1
+examples/basics/char_literal.nv	PASS	0	12.4	0	ad27f23cd19db65e		1	patched-scratch-driver-v1
+examples/basics/char_non_ascii.nv	PASS	0	11.3	0	7656e306c5569cb9		2	patched-scratch-driver-v1
+examples/basics/coalesce.nv	PASS	0	11.0	0	10d1f3083071a460		20	patched-scratch-driver-v1
+examples/basics/ctor_nested_effect_once.nv	PASS	0	11.4	0	26d6c44d745c12b4		t2	patched-scratch-driver-v1
+examples/basics/demo.nv	FAIL	1	8.6			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\basics\\demo.nv","start":578,"end":579},"message":"outside the s		patched-scratch-driver-v1
+examples/basics/destructure_record.nv	PASS	0	12.2	0	446879cfb2f11204		99	patched-scratch-driver-v1
+examples/basics/enum_value.nv	PASS	0	11.9	0	bab5ec7f0a441aef		1	patched-scratch-driver-v1
+examples/basics/for_call_effect_once.nv	PASS	0	12.4	0	c6c76ccad0645d80		100	patched-scratch-driver-v1
+examples/basics/for_call_head.nv	PASS	0	11.9	0	51050f6ffdd5a3d7		3	patched-scratch-driver-v1
+examples/basics/for_name_head.nv	PASS	0	12.0	0	02d06ac65c9dfefb		4	patched-scratch-driver-v1
+examples/basics/forward_type_ref.nv	PASS	0	11.5	0	d846ffc273dbc065		9	patched-scratch-driver-v1
+examples/basics/handed_free_fn.nv	PASS	0	11.6	0	5298861adba40759		true	patched-scratch-driver-v1
+examples/basics/hello.nv	PASS	0	11.5	0	a58deef81513122c		Hello, Nova!	patched-scratch-driver-v1
+examples/basics/hex_bytes.nv	PASS	0	12.4	0	4a6301ad1fcf0467		255	patched-scratch-driver-v1
+examples/basics/if_let_some.nv	PASS	0	11.8	0	c83262ea4b3c6126		9	patched-scratch-driver-v1
+examples/basics/iflet_else.nv	PASS	0	11.3	0	04d71bf676b3bd7d		9	patched-scratch-driver-v1
+examples/basics/interp_display.nv	PASS	0	11.0	0	e72a6e1d62d67f53		p Pt end	patched-scratch-driver-v1
+examples/basics/interp_expr.nv	PASS	0	11.4	0	068d184c269abba0		m=10 tw=8 fld=5 sum=5 lim=9	patched-scratch-driver-v1
+examples/basics/interp_families.nv	PASS	0	11.4	0	8cc8e9fb13709eaa		int 42 f64 2.5 bool true char z str str	patched-scratch-driver-v1
+examples/basics/interp_name.nv	PASS	0	12.4	0	c69aa7066e590329		hi world, n=42!	patched-scratch-driver-v1
+examples/basics/leading_zero_literal.nv	PASS	0	11.4	0	cbcb93f29b8814e5		123	patched-scratch-driver-v1
+examples/basics/match_block_arm.nv	PASS	0	12.5	0	59deda3cf4a18a78		1	patched-scratch-driver-v1
+examples/basics/match_demo.nv	PASS	0	12.1	0	9ed712e137c6cd60		circle area = 12.56	patched-scratch-driver-v1
+examples/basics/match_disj_alternative_path.nv	PASS	0	11.7	0	7e4be87c5cf9b011		1	patched-scratch-driver-v1
+examples/basics/match_disj_payload.nv	PASS	0	11.5	0	3901a95f4ecbb270		1	patched-scratch-driver-v1
+examples/basics/match_stmt.nv	PASS	0	11.2	0	f9a437d9d5ef9406		something	patched-scratch-driver-v1
+examples/basics/method_overload_pick.nv	PASS	0	11.9	0	08bcadce00eb8c5f		15	patched-scratch-driver-v1
+examples/basics/module_const.nv	PASS	0	11.6	0	db6dee686e5dbd72		7	patched-scratch-driver-v1
+examples/basics/named_tuple.nv	PASS	0	11.8	0	4f38580f9a4d70c7		1	patched-scratch-driver-v1
+examples/basics/neg_overflow_panics.nv	PASS	0	11.6	101	6f69fca6474edbfc			patched-scratch-driver-v1
+examples/basics/newtype_compound_carrier.nv	PASS	0	11.5	0	6149ed3f57fb7401		3.75	patched-scratch-driver-v1
+examples/basics/option_ctor.nv	PASS	0	11.0	0	083eec3c4f03c642		3	patched-scratch-driver-v1
+examples/basics/prims_widths.nv	PASS	0	11.5	0	10a368a5eeee64e7		i8 3	patched-scratch-driver-v1
+examples/basics/println_arg_effect_order.nv	PASS	0	14.2	0	6a53c6a6c3722576		tick	patched-scratch-driver-v1
+examples/basics/priv_type.nv	PASS	0	12.4	0	4026ce8539733afa		42	patched-scratch-driver-v1
+examples/basics/realtime_attr.nv	PASS	0	11.1	0	5c4c43422a72a262		42	patched-scratch-driver-v1
+examples/basics/record_slice_field.nv	PASS	0	12.0	0	f89761c0d996cf44		bag	patched-scratch-driver-v1
+examples/basics/records.nv	PASS	0	11.4	0	69d48d57307a1e0f		p.x = 1, p.y = 2	patched-scratch-driver-v1
+examples/basics/requires_gate.nv	PASS	0	11.4	0	f130218671cf476d		4	patched-scratch-driver-v1
+examples/basics/requires_string_guard.nv	PASS	0	12.2	0	f6526380fa1d8ff8		1	patched-scratch-driver-v1
+examples/basics/requires_violation_names_line.nv	PASS	0	11.9	101	360d12a04d1927fa			patched-scratch-driver-v1
+examples/basics/self_match.nv	PASS	0	11.7	0	147006315b80e92a		warning	patched-scratch-driver-v1
+examples/basics/shared_variant.nv	PASS	0	11.7	0	4339a535bad85e73		color-red	patched-scratch-driver-v1
+examples/basics/str_eq.nv	PASS	0	11.7	0	c9aebb89af3f6bfe		true	patched-scratch-driver-v1
+examples/basics/string_literals.nv	FAIL	1	7.1			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\basics\\string_literals.nv","start":1352,"end":1353},"message":"		patched-scratch-driver-v1
+examples/basics/strings.nv	PASS	0	11.6	0	57d46818480f27ad		len = 12	patched-scratch-driver-v1
+examples/basics/tail_call.nv	PASS	0	12.0	0	d661effb9c545626		42	patched-scratch-driver-v1
+examples/basics/target_row.nv	PASS	0	11.1	0	3e9600b9830528fc		3.5	patched-scratch-driver-v1
+examples/basics/tuple_ctor_effect_order.nv	PASS	0	12.3	0	762f6504ff88d12c		101	patched-scratch-driver-v1
+examples/basics/tuple_destructure_call.nv	PASS	0	12.7	0	ef7a7a71f764fbc7		7	patched-scratch-driver-v1
+examples/basics/tuple_forward_component.nv	PASS	0	13.5	0	371a619f72bf4a57		2	patched-scratch-driver-v1
+examples/basics/tuple_mixed_pair_typedef.nv	PASS	0	11.6	0	e3633217f4fa813a		1.5	patched-scratch-driver-v1
+examples/basics/tuple_pair_projection.nv	PASS	0	13.3	0	5e2ef0e802af3888		1	patched-scratch-driver-v1
+examples/basics/tuple_return_projection.nv	PASS	0	11.0	0	9858121a560cd73a		1	patched-scratch-driver-v1
+examples/basics/tuple_stmt_dropped.nv	PASS	0	11.0	0	955a59671bcb43d0		1	patched-scratch-driver-v1
+examples/basics/variant_qualified_ctor.nv	PASS	0	11.5	0	64ac8c33a7c119a5		7	patched-scratch-driver-v1
+examples/basics/vec_cap.nv	PASS	0	11.3	0	4d0ce779d13988ea		2	patched-scratch-driver-v1
+examples/basics/vec_len.nv	PASS	0	11.3	0	8306adaa35c02c23		3	patched-scratch-driver-v1
+examples/effects/effects.nv	FAIL	1	7.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\effects\\effects.nv","start":102,"end":108},"message":"outside t		patched-scratch-driver-v1
+examples/effects/effects_d61.nv	FAIL	1	7.5			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\effects\\effects_d61.nv","start":524,"end":530},"message":"outsi		patched-scratch-driver-v1
+examples/effects/serde_fs_build.nv	FAIL	1	7.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\effects\\serde_fs_build.nv","start":1384,"end":1384},"message":"		patched-scratch-driver-v1
+examples/effects/spawn_demo.nv	FAIL	1	7.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\effects\\spawn_demo.nv","start":2264,"end":2272},"message":"unkn		patched-scratch-driver-v1
+examples/ffi/ptr_basics.nv	FAIL	1	7.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\ptr_basics.nv","start":343,"end":345},"message":"outside th		patched-scratch-driver-v1
+examples/ffi/sqlite_mini.nv	FAIL	1	7.9			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":614,"end":616},"message":"outside t		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/const_receiver_generic_ext_ice/const_receiver_generic_ext_ice.nv	FAIL	1	7.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\const_receiver_generic_ext_ice\		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/errorkind_variant_arity_collision/errorkind_variant_arity_collision.nv	FAIL	1	7.8			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\errorkind_variant_arity_collisi		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/interp_to_str_fallback_valuerecord_recv/interp_to_str_fallback_valuerecord_recv.nv	FAIL	1	7.1			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\interp_to_str_fallback_valuer		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/monotonic_now_bare_binding/monotonic_now_bare_binding.nv	FAIL	1	7.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\monotonic_now_bare_binding\\mon		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/nested_spawn_scope_var/nested_spawn_scope_var.nv	FAIL	1	11.3			nova: Carina-generated C compile/link failed: compiler error: lld-link: undefined symbol: nova_fn_main_impl		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/serde_encode_pointer_op/serde_encode_pointer_op.nv	FAIL	1	8.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\serde_encode_pointer_op\\serd		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/spawn_capture_value_struct/spawn_capture_value_struct.nv	FAIL	1	7.0			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_capture_value_struct\\s		patched-scratch-driver-v1
+examples/flagship/aggregator/regressions/spawn_throw_multifield_payload/spawn_throw_multifield_payload.nv	FAIL	1	7.0			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\regressions\\spawn_throw_multifield_payloa		patched-scratch-driver-v1
+examples/flagship/aggregator/src/api/report_json.nv	FAIL	1	6.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\report_json.19572.src		patched-scratch-driver-v1
+examples/flagship/aggregator/src/api/report_json_test.nv	FAIL	1	6.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\report_json_test.3938		patched-scratch-driver-v1
+examples/flagship/aggregator/src/app/aggregate.nv	FAIL	1	6.6			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\aggregate.37652.src/f		patched-scratch-driver-v1
+examples/flagship/aggregator/src/app/aggregate_test.nv	FAIL	1	6.5			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\aggregate_test.29384.		patched-scratch-driver-v1
+examples/flagship/aggregator/src/app/emit.nv	FAIL	1	6.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\emit.21212.src/flagsh		patched-scratch-driver-v1
+examples/flagship/aggregator/src/app/live.nv	FAIL	1	6.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\live.23760.src/flagsh		patched-scratch-driver-v1
+examples/flagship/aggregator/src/app/live_test.nv	FAIL	1	6.6			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\live_test.43460.src/f		patched-scratch-driver-v1
+examples/flagship/aggregator/src/app/scenarios.nv	FAIL	1	6.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\scenarios.30316.src/f		patched-scratch-driver-v1
+examples/flagship/aggregator/src/domain/domain.nv	FAIL	1	6.8			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\flagship\\aggregator\\src\\domain\\domain.nv","start":1353,"end"		patched-scratch-driver-v1
+examples/flagship/aggregator/src/main.nv	FAIL	1	8.8			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\main.20704.src/flagsh		patched-scratch-driver-v1
+examples/flagship/http_proxy_chain/src/config.nv	FAIL	1	6.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\config.56692.src/flag		patched-scratch-driver-v1
+examples/flagship/http_proxy_chain/src/http.nv	FAIL	1	6.1			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\http.50096.src/flagsh		patched-scratch-driver-v1
+examples/flagship/http_proxy_chain/src/main.nv	FAIL	1	6.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\main.61852.src/flagsh		patched-scratch-driver-v1
+examples/flagship/http_proxy_chain/src/relay.nv	FAIL	1	6.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\relay.50824.src/flags		patched-scratch-driver-v1
+examples/flagship/http_proxy_chain/src/upstream.nv	FAIL	1	6.5			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\upstream.70712.src/fl		patched-scratch-driver-v1
+examples/flagship/http_proxy_chain/src/upstream_socks5.nv	FAIL	1	6.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\upstream_socks5.53168		patched-scratch-driver-v1
+examples/getting_started.nv	FAIL	1	7.6			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\getting_started.nv","start":2758,"end":2764},"message":"outside		patched-scratch-driver-v1
+examples/mini_aggregator.nv	FAIL	1	7.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\mini_aggregator.nv","start":2053,"end":2054},"message":"novac di		patched-scratch-driver-v1
+examples/net/echo_client.nv	FAIL	1	6.9			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\net\\echo_client.nv","start":734,"end":743},"message":"outside t		patched-scratch-driver-v1
+examples/net/echo_server.nv	FAIL	1	8.3			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\net\\echo_server.nv","start":951,"end":962},"message":"outside t		patched-scratch-driver-v1
+examples/os/agent_runner.nv	FAIL	1	7.7			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\os\\agent_runner.nv","start":1826,"end":1831},"message":"`break` a		patched-scratch-driver-v1
+examples/os/pty_session.nv	FAIL	1	7.5			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\os\\pty_session.nv","start":1759,"end":1764},"message":"`break` an		patched-scratch-driver-v1
+examples/plan110/ffi_sqlite_consumable.nv	FAIL	1	7.7			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\plan110\\ffi_sqlite_consumable.nv","start":2265,"end":2265},"mes		patched-scratch-driver-v1
+examples/real_world/orm_decorators.nv	FAIL	1	7.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":3402,"end":3408},"message		patched-scratch-driver-v1
+examples/real_world/orm_demo.nv	FAIL	1	7.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_demo.nv","start":3192,"end":3193},"message":"out		patched-scratch-driver-v1
+examples/tls/echo_client.nv	FAIL	1	6.0			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\echo_client.55612.src/t		patched-scratch-driver-v1
+examples/tls/echo_server.nv	FAIL	1	6.2			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\target/carina-build\\echo_server.71064.src/t		patched-scratch-driver-v1
+examples/tour/collections_tour.nv	FAIL	1	7.5			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\collections_tour.nv","start":469,"end":470},"message":"nov		patched-scratch-driver-v1
+examples/tour/concurrency.nv	FAIL	1	6.9			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\concurrency.nv","start":965,"end":966},"message":"novac di		patched-scratch-driver-v1
+examples/tour/consume_tour.nv	FAIL	1	7.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\tour\\consume_tour.nv","start":946,"end":951},"message":"outside t		patched-scratch-driver-v1
+examples/tour/effects_tour.nv	FAIL	1	7.8			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\effects_tour.nv","start":346,"end":352},"message":"outside		patched-scratch-driver-v1
+examples/tour/errors.nv	FAIL	1	7.7			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\errors.nv","start":204,"end":207},"message":"outside the s		patched-scratch-driver-v1
+examples/tour/ffi_tour.nv	FAIL	1	7.7			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\ffi_tour.nv","start":429,"end":431},"message":"outside the		patched-scratch-driver-v1
+examples/tour/greeter/core.nv	FAIL	1	11.7			nova: Carina-generated C compile/link failed: compiler error: lld-link: undefined symbol: nova_fn_main_impl		patched-scratch-driver-v1
+examples/tour/greeter/loud.nv	FAIL	1	11.0			nova: Carina-generated C compile/link failed: compiler error: lld-link: undefined symbol: nova_fn_main_impl		patched-scratch-driver-v1
+examples/tour/hello.nv	PASS	0	12.6	0	412d32d2d2d32aa0		Hello, Nova! count=1, add(2,3)=5	patched-scratch-driver-v1
+examples/tour/methods.nv	PASS	0	13.4	0	96d36c9a61da4c65		counter after two inc = 2	patched-scratch-driver-v1
+examples/tour/modules_tour.nv	FAIL	1	6.6			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT/scratch-opencode/task135/install135\\std/src/unicode/case.nv","start":4140,"end		patched-scratch-driver-v1
+examples/tour/patterns.nv	FAIL	1	7.9			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\patterns.nv","start":763,"end":767},"message":"a bare `Non		patched-scratch-driver-v1
+examples/tour/strings_tour.nv	FAIL	1	7.6			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\strings_tour.nv","start":509,"end":518},"message":"outside		patched-scratch-driver-v1
+examples/tour/types.nv	PASS	0	11.7	0	e2530769cb868680		p = (1, 2)	patched-scratch-driver-v1
+examples/typed_pointers/basic_pointer.nv	FAIL	1	7.4			nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\typed_pointers\\basic_pointer.nv","start":946,"end":952},"messag		patched-scratch-driver-v1
+examples/typed_pointers/unsafe_fn_keyword.nv	FAIL	1	11.9			nova: Carina-generated C compile/link failed: compiler error: lld-link: undefined symbol: nova_fn_main_impl		patched-scratch-driver-v1

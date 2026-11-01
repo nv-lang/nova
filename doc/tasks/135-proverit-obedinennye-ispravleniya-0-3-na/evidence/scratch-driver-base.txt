@@ -1,0 +1,3 @@
+Base commit: 01b960b3a312b76d3f096c95deea17eea3ebad76
+Patch: git apply evidence/scratch-driver.patch at repository root.
+Only scratch copies are patched; official source files remain unchanged.

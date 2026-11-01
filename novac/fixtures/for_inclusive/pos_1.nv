@@ -1,0 +1,14 @@
+module for_inclusive.pos_1
+
+// The INCLUSIVE range in a for head (D144: `a..=b` is one of 03-syntax's
+// five Range forms; task 134, class B3): 0..=4 walks 0,1,2,3,4, so the sum
+// 10 proves the upper bound RAN -- an exclusive miscompile prints 6. Until
+// 2026-10-31 `..=` was absent from the lexer, and the head derailed into a
+// record constructor (`0` .. `=4` ...) instead of a range.
+fn main() {
+    mut s = 0
+    for i in 0..=4 {
+        s += i
+    }
+    println(s)
+}

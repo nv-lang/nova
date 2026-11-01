@@ -162,3 +162,5 @@ scripts/githooks/*      text eol=lf
 # Plan 280 E7: emission baselines are compared byte-for-byte against fresh
 # compiler output (LF). EOL translation would break every future comparison.
 *.expected.c -text
+# Task 116 raw child/parent receipts are SHA-pinned and compared byte-for-byte.
+docs/plans/repro/116-carina-seed-compatibility/receipts/** -text

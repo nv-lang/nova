@@ -1,0 +1,8 @@
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$WT/scratch-opencode/task135/install135 argv=["emit", "$WT\\examples\\typed_pointers\\unsafe_fn_keyword.nv"] seed=carina-b asset_sha256=c727288f301b4b8849bffe4d6e75b7bc9f55589472cfec97029d70521d16fb69 b1_sha256=63ef8c6cc0996264ae41a964abaa41fb3d4d6b2a82a788a1fec2f9344c981327 source_sha=3729abcce42ec2d94efc898ec6eafe91ff6210d5+task135-combined-130-131-134 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=c6f143c6ce1bf9418fcdb27c30aca3e3cad05d2e267a20ee4fe3548f5c09aacc
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$WT/scratch-opencode/task135/install135\target\rt-archive-cache\9ee10a20607c418a\libnova_rt.lib runtime_sha256=1f69851b493aaba4bc8cb91eee471a3641453e3e3af642943653b634e5d23427
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=c727288f301b4b8849bffe4d6e75b7bc9f55589472cfec97029d70521d16fb69 source=3729abcce42ec2d94efc898ec6eafe91ff6210d5+task135-combined-130-131-134 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5+task135-combined-130-131-134; B1 + accepted fixes 130/131/134, LOCAL undeliverable candidate, no Oracle in stage B
+nova: Carina-generated C compile/link failed: compiler error:
+lld-link: error: undefined symbol: nova_fn_main_impl
+>>> referenced by $WT\scratch-opencode\task135\install135\target\carina-build\unsafe_fn_keyword.32248.carina.c:26301
+>>>               %USERPROFILE%\AppData\Local\Temp\unsafe_fn_keyword-5ab18a.o:(_nova_main_fiber_entry)
+clang: error: linker command failed with exit code 1 (use -v to see invocation)

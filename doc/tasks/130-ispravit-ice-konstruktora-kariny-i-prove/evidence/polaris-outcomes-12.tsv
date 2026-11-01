@@ -1,0 +1,13 @@
+input	result	staged	diags	first_diagnostic
+01-hello	FAIL-rc1	1	953	ovac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the
+02-routing	FAIL-rc1	1	960	n declares a return type but its body ends without a value"
+03-json-api	FAIL-rc1	1	970	utside the subset: `#impl` of this protocol is derived only for `Display`, `Equal` and `Serialize` -- the derived methods of the
+04-middleware	FAIL-rc1	1	973	n declares a return type but its body ends without a value"
+05-auth	FAIL-rc1	1	966	utside the subset: an effect attribute is read but not compiled yet"
+06-static-site	FAIL-rc1	1	961	ovac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the
+07-sse-stream	FAIL-rc1	1	955	n declares a return type but its body ends without a value"
+08-websocket-echo	FAIL-rc1	1	957	n declares a return type but its body ends without a value"
+09-graceful	FAIL-rc1	1	961	n declares a return type but its body ends without a value"
+10-mini-service	FAIL-rc1	1	981	utside the subset: `#impl` of this protocol is derived only for `Display`, `Equal` and `Serialize` -- the derived methods of the
+11-json-logs	FAIL-rc1	1	843	utside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = ef
+12-https	FAIL-rc1	1	951	ovac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the

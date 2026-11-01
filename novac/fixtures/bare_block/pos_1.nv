@@ -1,0 +1,17 @@
+module bare_block.pos_1
+
+// A BARE BLOCK as a statement (D49; task 134, class B1): a nested scope
+// standing in statement position. The binding inside is scoped to the block,
+// and the write through the outer `mut` proves the block RAN -- 42 is
+// printed only if the body executed with `y` bound. Until 2026-10-31 the
+// form fell through the statement walk, the brace read as a record
+// constructor, and check refused it as "a record constructor is compiled
+// only as ...".
+fn main() {
+    mut x = 0
+    {
+        ro y = 41
+        x = y + 1
+    }
+    println(x)
+}

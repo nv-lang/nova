@@ -21,6 +21,8 @@ static-функций на типе.
 
 ## D84. Перегрузка функций и методов: четыре оси, резолв по самому специфичному матчу
 
+> **Applicability filter:** see [D495](07-modules.md#d495); it is not a fifth overload axis.
+
 ### Что
 Имя функции или метода может быть **перегружено** — одно имя описывает
 несколько сигнатур, и компилятор выбирает нужную по контексту вызова.
@@ -41,6 +43,9 @@ static-функций на типе.
 Программист пишет несколько определений с одним именем. Сигнатуры должны
 **различаться** хотя бы по одной из осей — иначе compile error
 «duplicate definition».
+
+> Function applicability precedes declaration/coherence judgments and overload
+> resolution as specified by [D495](07-modules.md#d495).
 
 ```nova
 // По типам аргументов
@@ -63,6 +68,8 @@ fn Celsius @into() -> Kelvin     => ...
 #### Резолв на call-site
 
 Компилятор резолвит вызов в **четыре фильтра**, применяемые по порядку:
+
+Порядок function applicability для выбранной target задаёт [D495](07-modules.md#d495).
 
 **Фильтр 1 — арность.** Отбрасываются кандидаты с числом параметров,
 не совпадающим с числом аргументов на call-site. Variadic-кандидат
@@ -472,6 +479,9 @@ Variadic — это «catch-all» на произвольную арность; 
 ---
 
 ## D267. Method coherence: extension — да, override чужого метода — `E_METHOD_REDEFINITION`
+
+> **Conditional methods:** applicability precedes D267 coherence as specified
+> by [D495](07-modules.md#d495); active overrides retain this rule.
 
 > **Статус:** принято и реализовано ([Plan 154.0](../../docs/plans/154.0-method-override-coherence.md),
 > umbrella [154](../../docs/plans/154-no-silent-dispatch.md), 2026-06-13). Закрывает

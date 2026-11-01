@@ -1,0 +1,178 @@
+{
+  "kind": "post-smoke raw and immutable-input audit; all planned CLI checks matched; not D-conformance/B2/task acceptance",
+  "smoke_plan_sha256": "544d7f61cd388f29e97cc8e79b4611e7f90e740d8055695dd90e6c1001367eaf",
+  "verifier_sha256": "323752795527693598340d774d71ace67399a7b8e055481a90b18df8ad2493bf",
+  "executor_sha256": "5d98df7492f7a5c80cfd64a9be982e5ac5c5e985d405dad36428c4df3f2c0bad",
+  "helper_sha256": "65108c43821180733fdeed654fac35a668101cad2db207e1fd5f709089383ef9",
+  "native_exe": {
+    "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\novac.exe",
+    "size": 4389888,
+    "sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+    "before_sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+    "after_matches_before": true,
+    "PE_machine": "AMD64",
+    "native_exe_executed": true,
+    "confirmed_process_starts": 3
+  },
+  "queue_watch": {
+    "id": "1792745064276-yk5abt",
+    "exit": 0
+  },
+  "verifier_status": 0,
+  "step_invocations": 3,
+  "native_launch_attempts": 3,
+  "retry_count": 0,
+  "state": "confirmed-start",
+  "all_three_expected_matches": true,
+  "steps": [
+    {
+      "id": "01-no-args",
+      "stdout": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stdout.bin",
+        "size": 56,
+        "sha256": "84b0c0b9c01cef17152dcd4feb7e5205980ef891303f38bec70c5e62f89ece4d"
+      },
+      "stderr": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.stderr.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "status": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.status",
+        "size": 2,
+        "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+      },
+      "launch": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\01-no-args.launch.json",
+        "size": 710,
+        "sha256": "5eb1d1c1f8230e68ea93110bfdc3ed0139768ad0e20e2bc59ad652e3f5a63d66"
+      },
+      "exit_status": 2,
+      "stdout_raw_hex": "75736167653a206e6f76616320636865636b203c66696c652e6e763e2e2e2e207c206e6f76616320656d6974203c66696c652e6e763e0d0a",
+      "stderr_raw_hex": "",
+      "exact_expected_match": true
+    },
+    {
+      "id": "02-check-hello",
+      "stdout": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stdout.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.stderr.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "status": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.status",
+        "size": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "launch": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\02-check-hello.launch.json",
+        "size": 860,
+        "sha256": "d5f4831ed95920ee04fd29274c40b9972b1dd6c621eff0f0bdd5801e43bf8027"
+      },
+      "exit_status": 0,
+      "stdout_raw_hex": "",
+      "stderr_raw_hex": "",
+      "exact_expected_match": true
+    },
+    {
+      "id": "03-check-missing-absolute",
+      "stdout": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stdout.bin",
+        "size": 245,
+        "sha256": "1eb1b637f6c81008f8e1daaed843659433bf9ae6e153ccb2962b10abc5cb38dd"
+      },
+      "stderr": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.stderr.bin",
+        "size": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "status": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.status",
+        "size": 2,
+        "sha256": "53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3"
+      },
+      "launch": {
+        "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\03-check-missing-absolute.launch.json",
+        "size": 966,
+        "sha256": "aad0185304f397cc8414e350f636e91f024ea790b8a454830fbbf435dc33ce23"
+      },
+      "exit_status": 2,
+      "stdout_raw_hex": "6e6f7661633a2063616e6e6f74207265616420443a5c536f75726365735c2e6f70656e636f64652d646174615c6f70656e636f64655c736372617463687061645c7365735f6d766b6330736a61716f6d677464626666765c7461736b3131362d7365636f6e642d617474656d70742d7072657061726174696f6e5c63616e6469646174652d6f7574707574732d6e6f742d617574686f72697a65645c6e61746976652d736d6f6b652d63616e6469646174652d6e6f742d617574686f72697a65645c6d697373696e672d696e7075745c696e74656e74696f6e616c6c792d616273656e742d736d6f6b652d696e7075742e6e760d0a",
+      "stderr_raw_hex": "",
+      "exact_expected_match": true
+    }
+  ],
+  "input_hash_comparison": {
+    "fixture_before": "f6f156f5203b06cd294fb2d3db652ede9fc35ee819334e6cd8346f677d167afe",
+    "fixture_after": "f6f156f5203b06cd294fb2d3db652ede9fc35ee819334e6cd8346f677d167afe",
+    "fixture_unchanged": true,
+    "current_smoke_source_inputs": [
+      {
+        "path": "novac/src/main.nv",
+        "size": 34408,
+        "sha256": "3104bbe6b6deea8995d49dc78a7f36fe9096bb6437eeb937b41426d247e19da8"
+      },
+      {
+        "path": "spec_tests/conformance/standalone/stdout_hello.nv",
+        "size": 423,
+        "sha256": "f6f156f5203b06cd294fb2d3db652ede9fc35ee819334e6cd8346f677d167afe"
+      },
+      {
+        "path": "spec/decisions/09-tooling.md",
+        "size": 251436,
+        "sha256": "e5a3a6eae931ca5a394b20131a6bf4ef1f5233c77bd30b9bf7d650eb83ce9822"
+      },
+      {
+        "path": "doc/tasks/116-carina-seed-compatibility/log.md",
+        "size": 5681,
+        "sha256": "3046f2248871ac6ad0efe4848620f654e42820b32f0ea963416db918f090053f"
+      }
+    ],
+    "source_inventory_count": 565,
+    "source_inventory_unchanged": true,
+    "native_runtime_count": 58,
+    "native_runtime_unchanged": true,
+    "libuv_count": 469,
+    "libuv_unchanged": true,
+    "project_and_external_inputs_unchanged": true,
+    "driver_unchanged": true,
+    "task_log_frozen_during_smoke": true,
+    "independent_post_build_092_audit": {
+      "receipt": "C:\\Users\\Евгений\\AppData\\Local\\Temp\\opencode\\ses_efdd2dc2effePXj0L8WPrxkIJN\\preflight116-observe\\post-same-volume-build-audit.json",
+      "sha256": "b20ddc9266f631d246a3fd4c83d797ffd63b1d7bb930ca702d240dbc739b7b4f",
+      "pinned_count": 1551,
+      "missing": [],
+      "changed": [],
+      "scope": "pinned source/header/manifest/verifier inputs only; not all dirty-worktree bytes"
+    }
+  },
+  "raw_summary": {
+    "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-summary.json",
+    "size": 15132,
+    "sha256": "4a6fab61f2639e9a998bd9342677c2095fa455e3812432254eb9d6ffbd26a1f1"
+  },
+  "raw_verifier": {
+    "stdout": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.stdout.bin",
+      "size": 187,
+      "sha256": "a6d534fa3163bc0590ed9cbe25cff8af5b1b436b841dc0e78b863657727b5963"
+    },
+    "stderr": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.stderr.bin",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "status": {
+      "path": "D:\\Sources\\.opencode-data\\opencode\\scratchpad\\ses_mvkc0sjaqomgtdbffv\\task116-second-attempt-preparation\\candidate-outputs-not-authorized\\native-smoke-candidate-not-authorized\\raw\\smoke-verifier.status",
+      "size": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  },
+  "native_smoke_scope": "bounded CLI behavior only; not D-conformance, B2, fixed-point, release, or task acceptance",
+  "no_more_executions_authorized": true
+}

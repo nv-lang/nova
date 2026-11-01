@@ -77,6 +77,21 @@ else
     bad "payload покраснел: $(cat "$T/err")"
 fi
 
+# --- 4б. `_mask` — битовая маска над названным пространством (D495) -------
+mk g4b <<'EOF'
+module novac.sem
+
+/// One row.
+export type FnDef value {
+    target_mask int /// target OS bitmask (windows/linux/macos)
+}
+EOF
+if run "$T/g4b"; then
+    grep -q "полей-ссылок int в реестрах: 1" "$T/out" && ok "маска с суффиксом _mask — зелёный" || bad "маска прошла, но счёт не тот [$(cat "$T/out")]"
+else
+    bad "поле-маска покраснело: $(cat "$T/err")"
+fi
+
 # --- 5. не-int поля не судятся -------------------------------------------
 mk g5 <<'EOF'
 module novac.sem

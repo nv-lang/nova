@@ -1,0 +1,19 @@
+nova build program: 3 source file(s) staged under $SCRATCH\e2e-red-4\installation\target/carina-build\main.67924.src
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$SCRATCH\\e2e-red-4\\installation\\target/carina-build\\main.67924.src/_deps/assetdep/assetdep.nv","start":45,"end":50},"message":"embedded file not found: `$SCRATCH/e2e-red-4/installation/target/carina-build/main.67924.src/_deps/assetdep/shell.tpl.c` (E_EMBED_NOT_FOUND, D412)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$SCRATCH\\e2e-red-4\\installation\\target/carina-build\\main.67924.src/_deps/assetdep/assetdep.nv","start":94,"end":99},"message":"embedded file not found: `$SCRATCH/e2e-red-4/installation/target/carina-build/main.67924.src/_deps/assetdep/certs/localhost_cert.pem` (E_EMBED_NOT_FOUND, D412)","poisoned_by":null}
+warning: in the working copy of 'dep/nova.toml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'dep/src/assetdep.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'helper/helper.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'main.nv', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'nova.toml', LF will be replaced by CRLF the next time Git touches it
+Traceback (most recent call last):
+  File "$WT\scripts\tools\carina-build-embed.py", line 129, in <module>
+    main()
+    ~~~~^^
+  File "$WT\scripts\tools\carina-build-embed.py", line 85, in main
+    assert result.returncode == 0, f"carina-embed RED: build exit={result.returncode}"
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: carina-embed RED: build exit=1

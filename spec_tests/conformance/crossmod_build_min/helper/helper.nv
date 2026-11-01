@@ -1,0 +1,3 @@
+module crossmod_build_min.helper
+
+export fn greet(name str) -> str => "Hello, ${name}!"

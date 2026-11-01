@@ -1,0 +1,3 @@
+== B1 emit of fixed tree -> fixed.c (04:20:09)
+== emit rc=0 (04:20:22), bytes=13256956
+rc=0

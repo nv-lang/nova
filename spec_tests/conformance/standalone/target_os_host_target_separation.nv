@@ -1,0 +1,22 @@
+// EXPECT_STDOUT host=
+// Target selection controls cfg; host_os() continues to describe the running process.
+module standalone.target_os_host_target_separation
+
+import std.os.{host_os}
+
+#cfg(target_os = "windows")
+fn selected_target() -> str => "windows"
+
+#cfg(target_os = "linux")
+fn selected_target() -> str => "linux"
+
+#cfg(target_os = "macos")
+fn selected_target() -> str => "macos"
+
+fn main() Io -> () {
+    ro host = host_os()
+    ro selected = selected_target()
+    assert(host == "windows" || host == "linux" || host == "macos")
+    assert(selected == "windows" || selected == "linux" || selected == "macos")
+    println("host=${host} target=${selected}")
+}

@@ -1,0 +1,6 @@
+// EXPECT_COMPILE_ERROR unknown #cfg key
+module neg.cfg_unknown_target_key_neg
+
+// nova:expect unknown #cfg key -- target_arch is outside D99 and is rejected by the language parser
+#cfg(target_arch = "x86_64")
+fn main() -> () {}

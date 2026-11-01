@@ -997,3 +997,4 @@ test "`is` on a value of a statically known non-sum type is E_IS_NON_ANY (D54)" 
     assert(diagnose(sum_ok) == 0, diagnose_first_msg(sum_ok))
 }
 
+

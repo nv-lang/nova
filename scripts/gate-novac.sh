@@ -159,7 +159,12 @@ rm -f "$NOVAC_DONE"
 NOVAC_REACHED_VERDICT=0
 _novac_write_verdict() {
     _rc=$?
+    # Snapshot before releasing the lock; never replace the original exit code.
+    if [ "$_rc" -ne 0 ] || [ "$NOVAC_REACHED_VERDICT" != "1" ]; then
+        if declare -F par_snapshot >/dev/null; then par_snapshot || :; fi
+    fi
     _tail=""
+    [ "$NOVAC_REACHED_VERDICT" = "1" ] || _tail=" INTERRUPTED=1"
     if [ "$_rc" -eq 0 ] && [ "$NOVAC_REACHED_VERDICT" != "1" ]; then
         _rc=125
         _tail=" INTERRUPTED=1"
@@ -175,6 +180,8 @@ _novac_write_verdict() {
     return $_rc
 }
 trap _novac_write_verdict EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 SEAMS=""
 [ "${NOVAC_CORPUS:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_CORPUS=0"
@@ -302,6 +309,35 @@ guard() {
 # читался бы как разные прогоны.
 PAR_DIR="${TMPDIR:-/tmp}/novac-gate-par.$$"
 PAR_N=0
+par_snapshot() {
+    # Only the active pool's allowlisted files: no environment or arbitrary tree.
+    [ -d "${PAR_DIR:-}" ] || return 0
+    local dest="$ROOT/target/novac-partial/$(basename "$PAR_DIR")" i now start elapsed state rc suffix
+    mkdir -p "$dest" || return 0
+    now=$(date +%s)
+    echo "novac-par partial snapshot (not a verdict)"
+    for ((i=1; i<=PAR_N; i++)); do
+        state=queued; elapsed=0; rc=unknown
+        if [ -f "$PAR_DIR/$i.start" ]; then
+            state=started
+            read -r start < "$PAR_DIR/$i.start"
+            elapsed=$((now - start))
+        fi
+        if [ -f "$PAR_DIR/$i.rc" ]; then
+            state=completed
+            read -r rc < "$PAR_DIR/$i.rc"
+        fi
+        [ ! -f "$PAR_DIR/$i.sec" ] || read -r elapsed < "$PAR_DIR/$i.sec"
+        for suffix in cmd out rc sec start; do
+            [ ! -f "$PAR_DIR/$i.$suffix" ] || cp "$PAR_DIR/$i.$suffix" "$dest/$i.$suffix" 2>/dev/null || :
+        done
+        printf 'status=%s elapsed_sec=%s rc=%s\n' "$state" "$elapsed" "$rc" > "$dest/$i.status"
+        printf 'guard=%s ' "$i"
+        cat "$dest/$i.status"
+        [ ! -f "$dest/$i.cmd" ] || cat "$dest/$i.cmd"
+        [ ! -f "$dest/$i.out" ] || cat "$dest/$i.out"
+    done
+}
 par_reset() { rm -rf "$PAR_DIR"; mkdir -p "$PAR_DIR"; PAR_N=0; }
 par_add() {
     # Страж, ПОДМЕНЯЮЩИЙ файлы стражей в дереве, в параллельный блок не
@@ -353,6 +389,7 @@ par_run() {
         # внутри свой бюджет времени (фаззер), тот обязан уложиться в предел,
         # а не узнавать о нём по сигналу (реестр №1372, ci-green-0930).
         ( _t0=$(date +%s)
+          printf '%s\n' "$_t0" > "$PAR_DIR/$_i.start"
           NOVAC_STEP_DEADLINE="$_pdl" bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
               > "$PAR_DIR/$_i.out" 2>&1
           rc=$?
@@ -633,7 +670,14 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     # делает зелёным — записи нет, страж зовёт novac сам.
     NOVAC_CHECK_CACHE=$(mktemp -d "${TMPDIR:-/tmp}/novac-check-cache.XXXXXX")
     export NOVAC_CHECK_CACHE
-    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 600 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
+    # Стена 1067: замер на CI-VM 2026-10-26 (задача 124, круг 2) — 760с, 840с,
+    # 847с на трёх плацдарм-раннерах и 853с в четвёртом полном прогоне
+    # (финальный CI 40333870507, VM ...046040; засчитан замерным словом
+    # интегратора 17:38); убитый на 625с прогон 40312847975 — нижняя граница,
+    # в выборку не входит. 1067 = ceil(max(853) x 1.25). Разброс VM до 1.65x
+    # против быстрой (516с) — локальный замер его не видит. Летопись —
+    # scripts/guards/gate-budget.baseline (2026-10-26, круг 2).
+    bash "$ROOT/scripts/tools/with-deadline.sh" $(( 1067 * CAL )) sh "$ROOT/scripts/tools/novac-check-cache.sh" "$ROOT" "$NOVAC_CHECK_CACHE" \
         || echo "novac-check-cache: прогон не завершён — стражи досчитают недостающее сами"
     par_add "$ROOT/scripts/guards/check-novac-grammar-fixture-coverage.sh" "форма грамматики без наблюдающих фикстур (К7)"
     par_add "$ROOT/scripts/guards/check-novac-differential.sh" "дифф-гейт красный: расхождение поведения вне реестра ЛИБО счётчик spec-queue -- причину называет строка стража выше"
@@ -647,7 +691,14 @@ if [ "$NOVAC_TIER" != "loop" ]; then
     guard --deadline 300 "$ROOT/scripts/guards/check-novac-emission-size.sh" "$ROOT" || fail "объём эмиссии novac разошёлся с базой (274.2 §1б.2)"
     # 19с на пятнадцати фикстурах (замер 2026-08-23): пятнадцать запусков
     # процесса, а не медленная проверка. Поэтому ярус push, не loop.
-    guard --deadline 300 "$ROOT/scripts/guards/check-novac-emitted-unique.py" "$ROOT" || fail "одно C-имя определено дважды в юните (274 §9.1д п.4)"
+    # Стена 542: замер на CI-VM 2026-10-26 (задача 124, круг 2) — 380с, 423с,
+    # 430с на трёх плацдарм-раннерах и 433с в четвёртом полном прогоне
+    # (финальный CI 40333870507; засчитан замерным словом интегратора 17:38);
+    # убитый на 300с прогон 40312847975 — нижняя граница, в выборку не входит.
+    # 542 = ceil(max(433) x 1.25). Зелёный ~257с (2026-10-06) и убийства в
+    # каскаде реестра reg 1926 — тот же класс «предел впритык». Летопись —
+    # scripts/guards/gate-budget.baseline (2026-10-26, круг 2).
+    guard --deadline 542 "$ROOT/scripts/guards/check-novac-emitted-unique.py" "$ROOT" || fail "одно C-имя определено дважды в юните (274 §9.1д п.4)"
     # Храповик меры 0.2 (реестр №1665): ОДИН процесс `novac check` по всему
     # novac/src, множество отвергнутых сверено с базой в обе стороны. Один
     # процесс — секунды (замер в REPORT-p1665.md), поэтому не в par-блоке:

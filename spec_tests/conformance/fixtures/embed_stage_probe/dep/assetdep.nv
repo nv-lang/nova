@@ -1,0 +1,3 @@
+module assetdep
+export fn shell() -> []u8 => embed("shell.tpl.c")
+export fn cert() -> []u8 => embed("certs/localhost_cert.pem")

@@ -1,0 +1,20 @@
+// Registry entry 1924 (task 132): the stock `nova build` through the pinned
+// Carina B1 must build the entry-to-module edge for a package-qualified
+// import of the program's OWN package (here `ownpkg_build_min.helper` and
+// `ownpkg_build_min.math`); with the qualified spelling left in the staged
+// copy the seed builds no edge and dies with
+// E_NOVAC_ICE "pipeline/program.nv:157 ... which the entry's imports do not
+// reach". No EXPECT_* marker on purpose: the guard script
+// scripts/tools/carina-build-ownpkg.py (driver + pinned B1) is the judge.
+// The fixture lives under conformance/fixtures/ — the corpus walker skips
+// any directory named `fixtures` recursively (D376), so an Oracle run never
+// sees these files.
+module ownpkg_build_min.main
+
+import ownpkg_build_min.helper.{greet}
+import ownpkg_build_min.math.{triple}
+
+fn main() Io -> () {
+    println(greet("Nova"))
+    println("triple(7) = ${triple(7)}")
+}

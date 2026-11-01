@@ -128,7 +128,16 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
             ro h = @lo.ir.decl_of(r.hi).name
             @body.append("    for (nova_int ${v} = ")
             @emit_expr(r.lo)
-            @body.append("; ${v} < ${h}; ${v}++) {\n")
+            // The bound's comparison IS the operator the source spelled: `..`
+            // excludes its upper bound, `..=` runs through it (D144; task
+            // 134, class B3). The bound itself is evaluated once either way
+            // (the local the lowering placed it into), so only the sign
+            // differs here.
+            if r.incl {
+                @body.append("; ${v} <= ${h}; ${v}++) {\n")
+            } else {
+                @body.append("; ${v} < ${h}; ${v}++) {\n")
+            }
         }
         Each(e) => {
             ro vd = @lo.ir.decl_of(e.vec)
@@ -211,7 +220,7 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
         // and its carrier share a representation, so the C would swallow an unwrapped one
         // too -- and there that stayed silent until 2026-09-05 (registry #894/#921).
         if bi < 0 || bi >= printed.len() {
-            ice_at("novac/src/emit_c/emit_flow.nv:214", "emit: the walk reached a block outside the body's table")
+            ice_at("novac/src/emit_c/emit_flow.nv:223", "emit: the walk reached a block outside the body's table")
         }
         if printed[bi] {
             // RE-ENTRY. Two cases, and both are a broken invariant rather than a shape of
@@ -219,7 +228,7 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
             // or the graph holds a cycle of `Goto`s. Without this check the first would
             // surface as doubled C and the second as a HANG -- a timeout, which the gate
             // cannot tell from a failed assertion.
-            ice_at("novac/src/emit_c/emit_flow.nv:222", "emit: the walk entered a block twice")
+            ice_at("novac/src/emit_c/emit_flow.nv:231", "emit: the walk entered a block twice")
         }
         printed[bi] = true
         ro b = f.blocks[bi]
@@ -328,7 +337,7 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
                 @body.append("    continue;\n")
                 return
             }
-            Unreached => ice_at("novac/src/emit_c/emit_flow.nv:331", "emit: an unsealed block reached the printer")
+            Unreached => ice_at("novac/src/emit_c/emit_flow.nv:340", "emit: an unsealed block reached the printer")
         }
     }
 }
@@ -359,10 +368,10 @@ fn Emitter mut @print_chain(f Fn, at BlockId, stop BlockId, head_continues bool,
 fn Emitter mut @print_block_stmts(f Fn, b BlockId, mut printed []bool) -> () {
     ro bi = raw_block(b)
     if bi < 0 || bi >= printed.len() {
-        ice_at("novac/src/emit_c/emit_flow.nv:362", "emit: an arm block outside the body's table")
+        ice_at("novac/src/emit_c/emit_flow.nv:371", "emit: an arm block outside the body's table")
     }
     if printed[bi] {
-        ice_at("novac/src/emit_c/emit_flow.nv:365", "emit: the walk entered a block twice (arm statements)")
+        ice_at("novac/src/emit_c/emit_flow.nv:374", "emit: the walk entered a block twice (arm statements)")
     }
     printed[bi] = true
     for s in f.blocks[bi].stmts {
@@ -427,24 +436,24 @@ fn Emitter mut @print_tested_arm(f Fn, first BlockId, heads []BlockId, uniq int,
                 b = gt.then
             }
             Return => ice_at(
-                "novac/src/emit_c/emit_flow.nv:429",
+                "novac/src/emit_c/emit_flow.nv:438",
                 "emit: a tested arm whose block returns instead of branching")
             Goto(_) => ice_at(
-                "novac/src/emit_c/emit_flow.nv:432",
+                "novac/src/emit_c/emit_flow.nv:441",
                 "emit: a tested arm whose block gotos instead of branching")
             Loop(_) => ice_at(
-                "novac/src/emit_c/emit_flow.nv:435",
+                "novac/src/emit_c/emit_flow.nv:444",
                 "emit: a tested arm whose block heads a loop instead of branching")
             Switch(_) => ice_at(
-                "novac/src/emit_c/emit_flow.nv:438",
+                "novac/src/emit_c/emit_flow.nv:447",
                 "emit: a tested arm whose block switches instead of branching")
             Break => ice_at(
-                "novac/src/emit_c/emit_flow.nv:441",
+                "novac/src/emit_c/emit_flow.nv:450",
                 "emit: a tested arm whose block breaks instead of branching")
             Continue => ice_at(
-                "novac/src/emit_c/emit_flow.nv:444",
+                "novac/src/emit_c/emit_flow.nv:453",
                 "emit: a tested arm whose block continues instead of branching")
-            Unreached => ice_at("novac/src/emit_c/emit_flow.nv:447", "emit: a tested arm whose block was never sealed")
+            Unreached => ice_at("novac/src/emit_c/emit_flow.nv:456", "emit: a tested arm whose block was never sealed")
         }
     }
     @print_chain(f, b, last_join, false, printed)

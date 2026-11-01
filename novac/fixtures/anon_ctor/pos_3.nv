@@ -1,0 +1,26 @@
+module anon_ctor.pos_3
+
+// A newtype's construction takes its REPRESENTATION (registry №1705):
+// `Wrap({ n: 1 })` types the anonymous construction as `Bag` -- the
+// newtype has no callable row of its own, so the argument met no
+// expectation at all and reached the lattice unsettled, the ice this wave
+// removes. The construction is judged against the representation and
+// recorded, and `@record_newtype_ctor` accepts it as exactly the
+// representation, as it does a named one.
+//
+// The program prints `ok`; observing the VALUE through the newtype
+// (`w.n`) is outside the ORACLE's own codegen today ("anonymous record
+// literal without spread not supported in codegen", measured 2026-10-31),
+// so byte-for-byte agreement with the oracle stops at the construction
+// itself -- which is what this fixture pins.
+//
+// The oracle builds and runs this file byte-for-byte the same (prints ok).
+type Bag { n int }
+type Wrap Bag
+
+fn mk() -> Wrap => Wrap({ n: 1 })
+
+fn main() {
+    ro w = mk()
+    println("ok")
+}

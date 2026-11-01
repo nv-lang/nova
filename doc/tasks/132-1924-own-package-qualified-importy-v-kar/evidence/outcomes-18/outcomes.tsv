@@ -1,0 +1,20 @@
+entry	staged	build_rc	run_rc	outcome	first_diagnostic	stdout_line1
+examples/flagship/aggregator/src/api/report_json.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: an effect attribute is read but not compiled yet	
+examples/flagship/aggregator/src/api/report_json_test.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: an effect attribute is read but not compiled yet	
+examples/flagship/aggregator/src/app/aggregate.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: no such method in the declarations handed to novac	
+examples/flagship/aggregator/src/app/aggregate_test.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: no such method in the declarations handed to novac	
+examples/flagship/aggregator/src/app/emit.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: no such method in the declarations handed to novac	
+examples/flagship/aggregator/src/app/live.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: no such method in the declarations handed to novac	
+examples/flagship/aggregator/src/app/live_test.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: no such method in the declarations handed to novac	
+examples/flagship/aggregator/src/app/scenarios.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: no such method in the declarations handed to novac	
+examples/flagship/aggregator/src/domain/domain.nv	0	1		FAIL	E_NOVAC_SUBSET outside the subset: an effect attribute is read but not compiled yet	
+examples/flagship/aggregator/src/main.nv	1	1		FAIL	E_NOVAC_ICE internal compiler error at novac/src/check/type_of.nv:632 (novac bug, not yours): check: anonymous constructor without a	
+examples/flagship/http_proxy_chain/src/config.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match	
+examples/flagship/http_proxy_chain/src/http.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match	
+examples/flagship/http_proxy_chain/src/main.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match	
+examples/flagship/http_proxy_chain/src/relay.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match	
+examples/flagship/http_proxy_chain/src/upstream.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match	
+examples/flagship/http_proxy_chain/src/upstream_socks5.nv	1	1		FAIL	E_NOVAC_SUBSET outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match	
+examples/tour/greeter/core.nv	1	1		FAIL	clang: error: linker command failed with exit code 1 (use -v to see invocation)	
+examples/tour/greeter/loud.nv	1	1		FAIL	clang: error: linker command failed with exit code 1 (use -v to see invocation)	
+examples/tour/modules_tour.nv	1	1		FAIL	E_NOVAC_SUBSET in the instance of `to_uppercase`: outside the subset: `[]T.new(...)` takes no arguments here -- a capacity (or the raw-	

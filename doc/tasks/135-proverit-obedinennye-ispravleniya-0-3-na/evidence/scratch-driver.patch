@@ -1,0 +1,75 @@
+--- a/nova-driver/src/program.rs
++++ b/nova-driver/src/program.rs
+@@ -326,6 +326,44 @@
+                 target.display()
+             )
+         })?;
++        // task 135, LOCAL scratch driver only: the seed compiler's own
++        // emit_c/shell.nv embeds shell.tpl.c (D412) and staging carried only
++        // .nv files, so building Carina itself met E_EMBED_NOT_FOUND. Stage
++        // the non-.nv siblings of every staged source too; the seed reads
++        // them only when a source embeds them. RECURSIVE (second pass, after
++        // the tls examples met the same gap one directory down: stream.nv
++        // embeds certs/localhost_cert.pem): descend into subdirectories,
++        // still non-.nv files only (a peer directory's .nv files are NOT the
++        // program's), never into build/VCS/dependency dirs.
++        fn stage_sidecars(src_dir: &Path, stage_dir: &Path) {
++            let Ok(rd) = std::fs::read_dir(src_dir) else { return };
++            for e in rd.flatten() {
++                let p = e.path();
++                if p.is_file() {
++                    if p.extension().is_some_and(|x| x == "nv") {
++                        continue;
++                    }
++                    let side = stage_dir.join(p.file_name().unwrap());
++                    if !side.exists() {
++                        std::fs::copy(&p, &side).ok();
++                    }
++                } else if p.is_dir() {
++                    let name = p.file_name().unwrap_or_default();
++                    if name == "target" || name == ".git" || name == "node_modules" {
++                        continue;
++                    }
++                    let sub = stage_dir.join(name);
++                    if std::fs::create_dir_all(&sub).is_ok() {
++                        stage_sidecars(&p, &sub);
++                    }
++                }
++            }
++        }
++        if let Some(src_dir) = source.parent() {
++            if let Some(stage_dir_of_file) = target.parent() {
++                stage_sidecars(src_dir, stage_dir_of_file);
++            }
++        }
+         if normalize_path(source) == normalize_path(entry) {
+             staged_entry = target;
+         }
+--- a/nova-driver/src/carina_build.rs
++++ b/nova-driver/src/carina_build.rs
+@@ -16,11 +16,11 @@
+ use std::process::{Command, Output};
+ use std::time::Duration;
+ 
+-const SEED_SOURCE: &str = "3729abcce42ec2d94efc898ec6eafe91ff6210d5";
+-const SEED_ZIP_SHA256: &str = "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb";
+-const SEED_EXE_SHA256: &str = "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4";
+-const SEED_ASSET: &str = "nova-carina-0.2.1-windows-x86_64.zip";
+-const SEED_URL: &str = "https://github.com/nv-lang/nova/releases/download/carina-v0.2.1/nova-carina-0.2.1-windows-x86_64.zip";
++const SEED_SOURCE: &str = "3729abcce42ec2d94efc898ec6eafe91ff6210d5+task135-combined-130-131-134";
++const SEED_ZIP_SHA256: &str = "c727288f301b4b8849bffe4d6e75b7bc9f55589472cfec97029d70521d16fb69";
++const SEED_EXE_SHA256: &str = "63ef8c6cc0996264ae41a964abaa41fb3d4d6b2a82a788a1fec2f9344c981327";
++const SEED_ASSET: &str = "nova-carina-0.2.2-135combined-windows-x86_64.zip";
++const SEED_URL: &str = "https://github.com/nv-lang/nova/releases/download/carina-v0.2.2-135combined/nova-carina-0.2.2-135combined-windows-x86_64.zip";
+ const DRIVER_STAMP: &str = "NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1";
+ 
+ #[allow(clippy::too_many_arguments)]
+@@ -589,7 +589,7 @@
+     }
+ 
+     let unpacked = cache.join("unpacked");
+-    let exe = unpacked.join("nova-carina-0.2.1-windows-x86_64/novac.exe");
++    let exe = unpacked.join("nova-carina-0.2.2-135combined-windows-x86_64/novac.exe");
+     if !exe.is_file() {
+         let command = format!(
+             "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",

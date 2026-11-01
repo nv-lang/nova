@@ -1,0 +1,7 @@
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+nova: libuv not built, building (one-time, ~30 sec)...
+nova: libuv.lib built (37 files)
+nova: libnova_rt archive not built for this config, building (one-time, ~5-7 sec)...
+nova: libnova_rt.lib built (14 files)
+nova: libnova_rt archive built (D:\Sources\nv-lang\worktrees\nova-opencode-116-carina-seed-compatibility\target\rt-archive-cache\47038da5de52ddc6\libnova_rt.lib)
+nova: cannot publish native executable C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mvkc0sjaqomgtdbffv\task116\stage-116-driver\novac.exe: Системе не удается переместить файл на другой диск. (os error 17)

@@ -71,7 +71,7 @@ export fn named_by_file(u Unit, d Diagnostic) -> Diagnostic {
 /// file then lists the units the other way round, a module after what it
 /// imports. The program is the entry and what its imports reach.
 export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop InteropTable,
-                               mut embeds EmbedTable) -> ([]Diagnostic, str) {
+                               mut embeds EmbedTable, target_os str = "") -> ([]Diagnostic, str) {
     mut dirs = []str.new()
     mut mods = []str.new()
     mut efrom = []int.new()
@@ -80,7 +80,7 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         dirs.push(unit_dir(units[k]))
     }
     for k in 0..units.len() {
-        ro tree = parse_unit(units[k].text)
+        ro tree = parse_unit(units[k].text, target_os: target_os)
         mods.push(module_dotted(tree))
         for d in import_dirs(tree, dirs[k]) {
             ro t = index_of(dirs, d)
@@ -120,7 +120,7 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         // A unit's `embed`s were read against its own directory (main.nv): it is
         // typed under that key, as `check_unit` types it.
         embeds.home = if u.files.len() > 0 { embed_dir_of(u.files[0].path) } else { "" }
-        ro fr = front(u.text, decls, interop, embeds)
+        ro fr = front(u.text, decls, interop, embeds, target_os: target_os)
         ro { src, tree, ctx, .. } = fr
         ro (cdiags, chan) = check(tree, src, ctx)
         done[k] = true
@@ -148,15 +148,20 @@ export fn compile_program_to_c(units []Unit, entry int, decls []Node, interop In
         for r in 0..ctx.fns.rows.len() {
             ro row = FnRow(r)
             if !reach.has(row) || ctx.fns.compiles_body(row) || !ctx.in_program(row) { continue }
+            // An `extern "C" fn` row of a program module names a symbol the
+            // LIBRARY owns: no unit of the program defines it, so it takes no
+            // wanted name and owes no body -- the calling unit prints the
+            // prototype from the row and the literal call (D282, task 131).
+            if ctx.fns.extern_c(row) { continue }
             ro owner = index_of(mods, ctx.fns.rows[r].handed_from)
             // The unit's OWN module handed back to it (its file among the
             // program's declarations): its own row answers the call.
             if owner == k { continue }
             ro nm = c_callable(ctx, row, []TyId.new())
             if owner < 0 || state[owner] != 2 {
-                ice_at("novac/src/pipeline/program.nv:157", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
+                ice_at("novac/src/pipeline/program.nv:162", "pipeline: `${nm}` belongs to module `${ctx.fns.rows[r].handed_from}`, which the entry's imports do not reach")
             } else if wanted.add(nm) && done[owner] {
-                ice_at("novac/src/pipeline/program.nv:159", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
+                ice_at("novac/src/pipeline/program.nv:164", "pipeline: `${nm}` of module `${mods[owner]}` is called from `${mods[k]}`, which comes after it in the import order -- a call the imports do not cover")
             } else {
                 // Recorded for its owner, which is still to come.
             }
@@ -205,7 +210,10 @@ type Checked {
 }
 
 /// The tree of a unit's text, for its module line and its imports.
-fn parse_unit(text str) -> Node => parse(tokens_of(text))
+fn parse_unit(text str, target_os str = "") -> Node {
+    ro parsed = parse(tokens_of(text))
+    if target_os == "" { parsed } else { filter_cfg(parsed, target_os) }
+}
 
 /// Depth first from `k` over the import edges: a unit goes into `topo` after
 /// every unit it imports. The graph of a program is acyclic (the language
@@ -219,7 +227,7 @@ fn visit_unit(k int, efrom []int, eto []int, mut state []int, mut topo []int) ->
         if state[t] == 0 {
             visit_unit(t, efrom, eto, state, topo)
         } else if state[t] == 1 {
-            ice_at("novac/src/pipeline/program.nv:222", "pipeline: an import cycle between the program's modules")
+            ice_at("novac/src/pipeline/program.nv:230", "pipeline: an import cycle between the program's modules")
         } else {
             // Already placed: an import of a module reached before.
         }

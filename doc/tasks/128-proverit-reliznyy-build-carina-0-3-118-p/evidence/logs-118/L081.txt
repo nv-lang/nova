@@ -1,0 +1,118 @@
+nova build program: 5 source file(s) staged under $WT\target/carina-build\live.68856.src
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":2810,"end":2817},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":2796,"end":2803},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":2818,"end":2819},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":2893,"end":2900},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":2901,"end":2902},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":4685,"end":4687},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":4334,"end":4335},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":4339,"end":4340},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":4365,"end":4366},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":4732,"end":4740},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":4986,"end":5236},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":5476,"end":5477},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":5831,"end":5833},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d13","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":5834,"end":5835},"message":"outside the subset: a range is a `for` head here, not a value (E2-b)","poisoned_by":null}
+
+{"id":"d14","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/aggregate.nv","start":5851,"end":5852},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d15","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/emit.nv","start":810,"end":811},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d16","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/emit.nv","start":851,"end":857},"message":"outside the subset: effect `Emit` has no runtime pieces in the shell novac links into -- its operation table, thread slot and dispatchers are the shell's, carried for the std effects its probe uses; an effect a file declares is not emitted yet (E5, effect declarations)","poisoned_by":null}
+
+{"id":"d17","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/emit.nv","start":1892,"end":1893},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d18","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/emit.nv","start":1957,"end":1963},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d19","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":1134,"end":1135},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d20","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":1395,"end":1396},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d21","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":2456,"end":2463},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d22","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":4386,"end":4393},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d23","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":4529,"end":4536},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d24","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":6635,"end":6637},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+
+{"id":"d25","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":6286,"end":6287},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d26","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":6291,"end":6292},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d27","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":6317,"end":6318},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d28","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":6682,"end":6690},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d29","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":6878,"end":7126},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d30","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":8090,"end":8092},"message":"fn declares a return type but its body ends without a value","poisoned_by":null}
+
+{"id":"d31","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":7729,"end":7730},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d32","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":7734,"end":7735},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d33","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":7760,"end":7761},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d34","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":8137,"end":8145},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d35","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":8333,"end":8569},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d36","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":8881,"end":8882},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d37","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9142,"end":9144},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d38","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9145,"end":9146},"message":"outside the subset: a range is a `for` head here, not a value (E2-b)","poisoned_by":null}
+
+{"id":"d39","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9160,"end":9161},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d40","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9546,"end":9547},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d41","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9811,"end":9813},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d42","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9814,"end":9815},"message":"outside the subset: a range is a `for` head here, not a value (E2-b)","poisoned_by":null}
+
+{"id":"d43","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":9830,"end":9831},"message":"outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)","poisoned_by":null}
+
+{"id":"d44","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":10494,"end":10495},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d45","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/live.nv","start":10768,"end":10769},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d46","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/scenarios.nv","start":870,"end":871},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d47","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/scenarios.nv","start":1370,"end":1371},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d48","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/scenarios.nv","start":1729,"end":1730},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d49","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/scenarios.nv","start":2214,"end":2215},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d50","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/app/scenarios.nv","start":2691,"end":2692},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d51","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/domain/domain.nv","start":1353,"end":1354},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d52","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/domain/domain.nv","start":2242,"end":2243},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d53","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/domain/domain.nv","start":3289,"end":3290},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d54","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/domain/domain.nv","start":3438,"end":3439},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d55","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/domain/domain.nv","start":3589,"end":3590},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}
+
+{"id":"d56","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\target/carina-build\\live.68856.src/flagship/aggregator/src/domain/domain.nv","start":4440,"end":4441},"message":"outside the subset: an effect attribute is read but not compiled yet","poisoned_by":null}

@@ -1,0 +1,185 @@
+# 136 — №1945: адресная доставка embed-файлов в штатном staging драйвера
+
+**Локальный результат: plain literal byte-embed staging исправлен и проверен; полный D412 не заявлен.** Независимые приёмка, CI и вливание ещё не выполнены.
+
+## Критерии приёмки (дословно)
+
+> Дословный RED до фикса и GREEN после на существующем embed-потребителе/минимальном сквозном примере; отрицательные тесты и сохранность исходников; отсутствие регрессии импортов 129/132; нормативное обоснование правил копирования; честный отчёт без заявления готовности релиза.
+
+## РЕПРО
+
+На базе `878952579d395d1afa62fb27b44f7ce369a76ac8` новая unit-фикстура вызывает настоящий `stage_program`, затем проверяет точные байты sibling `shell.tpl.c`, вложенного `certs/localhost_cert.pem` и ресурса с расширением `.nv`.
+До изменения функции первый `read` staged shell-файла вернул `NotFound`:
+
+```text
+test program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.02s
+```
+
+После первого изменения адресной доставки:
+
+```text
+test program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.17s
+```
+
+После четырёх дополнительных unit-проверок:
+
+```text
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+```
+
+Команда: `cargo test --manifest-path nova-driver/Cargo.toml -- --nocapture`.
+Все тяжёлые проверки — через `crew_watch` с `machine: true`, CARGO_TARGET_DIR и NOVA_TEST_TMPDIR в scratchpad сессии.
+
+Дополнительные unit абсолютного ресурса внутри пакета и escape через symlink/junction после исправления setup-пути в Windows:
+
+```text
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+```
+
+Финальный прогон после служебной границы stage и дополнительного теста встраивания `nova.toml`:
+
+```text
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+```
+
+После него пересобран тот же штатный driver и повторён весь сквозной тест — exit=0.
+`python scripts/guards/check-nova-driver-no-codegen.py .` — `check-nova-driver-no-codegen ok: production graph clean`.
+`git diff --check` — exit=0.
+
+## ТОЧКА / НОРМА
+
+- Только штатный `nova-driver`, без compiler dependency, без Oracle, без изменений сида и D412.
+- `read-spec` выполнен агентом spec-reader; лично сверена цитата `spec/decisions/03-syntax.md:12649–12667`: путь относительно вызывающего `.nv`, граница — package-root вызова; нельзя выходить наружу.
+- Source-root `[lib] src` не заменяет package-root (D78, `07-modules.md:1212–1231`).
+- Встроенные байты не преобразуются: `03-syntax.md:12690–12695`.
+- Расхождение `novac/src/main.nv:312–332` (workspace/верхний manifest) и D412 учтено отдельной находкой №1949 (номер назначен интегратором) в `docs/plans/221.1-bug-sweep.md`. Сид не исправлялся. Решение владельца через дежурного/интегратора 2026-11-01 — разделить дефекты, ограничиться driver-only доставкой.
+
+## ФИКС
+
+`nova-driver/src/embed_stage.rs` находит только plain literal `embed("path")` с токенными границами. Комментарии, обычные строки и member-call не являются поводом читать файлы.
+Каждый ресурс разрешается от исходного вызывающего `.nv`, проверяется лексически и канонически по ближайшему пакету **до чтения байтов**, затем копируется адресно. Нет рекурсивного обхода checkout, sibling-каталогов, target или зависимостей ради поиска ресурсов; ошибки копирования не подавляются.
+
+Обычная относительная геометрия сохраняется и для перемещённых в `_deps` модулей. Когда буквальный путь покинул бы stage, либо исходный путь абсолютный, либо данные имеют расширение `.nv`, ресурс помещается рядом со staged-исходником под приватным `.bin`-именем, а литерал правится **только в staged-копии**. Последний случай необходим: сид рекурсивно читает `.nv` как исходники, данные нельзя случайно скомпилировать как модуль.
+
+Коллизии разных ресурсов/исходников не перетираются, а явно отвергаются. Отсутствующий ресурс оставляется для штатного `E_EMBED_NOT_FOUND` с отсутствующим приватным путём, чтобы чужой staged-файл не замаскировал ошибку. Для `embed` на каталог переносится только пустой каталог ради штатного `E_EMBED_IS_A_DIR`, содержимое не копируется.
+
+В корне виртуального stage находится служебный `nova.toml` с `[workspace]`: он обозначает для файловой двери сида границу **уже проверенного** дерева. Без него изолированный установленный драйвер оставлял бы каждый каталог без ancestor-manifest, и сид ошибочно сужал бы границу до самого каталога исходника, отказывая законным `../assets`. Сам ресурс предварительно проверяется против **исходного** пакета, а не этой виртуальной границы. Если программа встраивает собственный `nova.toml`, его байты получают отдельное имя, а служебный marker не перезаписывается.
+
+## ФИКСТУРЫ / КЛАСС
+
+- `program.rs` — точные байты ресурсов, вложенная папка, `.nv` как данные; сохранность исходников; отсутствие нерелевантных sidecar/target-файлов.
+- Геометрия `../assets` внутри пакета; ресурс зависимости за source-root, но внутри её package-root; выход из пакета при нахождении внутри общего workspace отвергается.
+- Сканер не копирует имена из комментариев, строк и `thing.embed`; настоящий missing не подменяется успехом; каталог не обходится.
+- Одинаковый staged-путь из разных dependency-модулей даёт отказ вместо перетирания.
+- Существующие unit-проверки 129/132 (external dependency и own-qualified import rewrite), BOM и line endings не ослаблялись и входят в целевой прогон.
+- `spec_tests/conformance/fixtures/embed_stage_probe` и `scripts/tools/carina-build-embed.py` — минимальный реальный consumer sibling shell-файла и вложенного cert-файла, только публичные синтетические байты. Ожидаемое полное stdout: `shell-136`, `cert-136`, `own` (три строки).
+- Контракт source/staging передан исполнителю 137; его выбранный носитель embed не использует.
+
+**Частичный фикс назван частичным:** `embed_str`, `embed_dir`, сложные литералы и все языковые формы D412 не заявлены поддержанными. Обход отсутствующих возможностей сида не добавлялся. Реальные спутники/TLS и self-build Карины не пересобирались: для доставки используются эквивалентные минимальные носители с теми же формами путей.
+
+## САБОТАЖ
+
+Выполнен сквозной прогон со временным отключением **своего** вызова `stage_embeds` и свежей сборкой драйвера; после пробы файл восстановлен в `finally`. Финальные исходники не содержат саботажной ветки.
+
+Первый успешный сквозной цикл саботажа/восстановления уже завершён: RED — `E_EMBED_NOT_FOUND` для обоих sidecar; после восстановления — следующие дословные строки:
+
+```text
+SABOTAGE RED: disabled delivery -> E_EMBED_NOT_FOUND
+carina-embed PASS: real driver build=0 run=0 stdout=shell-136,cert-136,own; sources unchanged
+carina-embed PASS: .nv bytes outside source-root but inside package-root survive as data
+carina-embed PASS: missing resource rejected with E_EMBED_NOT_FOUND
+carina-embed PASS: package escape rejected before resource copy
+RESTORED GREEN: real driver delivered embed bytes and rejected negatives
+```
+
+В последнем полном цикле и отдельной проверке финальных исходников также получено дословно:
+
+```text
+carina-embed PASS: relative parent resource outside source-root preserves bytes
+```
+
+Этот край сначала был намеренно добавлен к уже зелёному потребителю и дал RED `E_EMBED_OUTSIDE_PROJECT` внутри изолированной установки: файлы доставлены, но сид без ancestor-manifest считал корнем каталог модуля. Служебная граница stage сняла отказ **без изменения сида и без расширения исходной пакетной границы**; повтор — GREEN. Отдельная unit-фикстура утверждает, что встраивание пользовательского `nova.toml` не затирает marker.
+
+Это pinned B1 без изменения SHA: asset `7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb`, exe `824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4`, source `3729abcce42ec2d94efc898ec6eafe91ff6210d5`. Упоминание опубликованного Oracle A в provenance verifier — история изготовления B1, не запуск Oracle задачей.
+
+Первая попытка сквозного прогона остановилась до emit на `E_DEP_PATH_OUTSIDE_REPO`: synthetic path-dependency не была под git. Это ошибка тестового контура, не RED проверяемого класса. Контур исправлен `git init` и поимённым `git add` только внутри scratch-фикстуры; повтор выполняется в новом каталоге. Прежняя неуспешная попытка не выдаётся за доказательство staging-дефекта.
+
+Следующая native-попытка получила C, но остановилась на `gc/gc.h: No such file or directory`: в тестовом окружении был указан source include вместо prepared `target/gc-cache/include`. После исправления окружения получен приведённый GREEN. Setup junction unit первоначально передал CMD путь со смешанными разделителями; заменён на Windows-разделители, без ослабления теста.
+
+## std/src
+
+Не применимо: меняется compiler-free orchestration-драйвер, не компилятор и не std. Oracle как судья запрещён задачей. Полные `nova test`, mega-CU, gate.sh и gate-novac.sh не запускались.
+
+## КОНСТРУКЦИЯ НАЗНАЧЕНИЙ
+
+Метки в `embed_stage.rs` различают конструкцию и проверку. `[INV-PROPERTY]` относится к разнесению данных и `.nv`-исходников: перед единственным copy-сайтом **каждое `.nv`-назначение** переименовывается в приватное `.bin`. Поэтому для этой двери не требуется договорённость «помни не затереть исходник». `stage_program` также заранее резервирует назначения исходников; прочие коллизии разных владельцев отвергаются lookup-проверкой `stage_embeds`. Эта runtime-проверка сама по себе **не** объявлена свойством или scripts/guards-стражем. Конкретные регрессии названы рядом с меткой: `staging_preserves_explicit_embed_assets_without_sweeping_directories` и `staging_embed_rejects_dependency_destination_collisions` в `program.rs::tests`.
+
+Пакетная граница проверяется до чтения ресурса. Без этих механизмов перемещение dependency-модулей и пути `..` превращали бы копирование в чтение чужого пакета либо порчу staged-программы. Новая языковая диагностика E_*/W_* не вводилась.
+
+## ВЕТКА/КОММИТ / ПРИЁМКА
+
+Ветка `task/136-1945-sohranit-embed-fayly-v-shtatnom-sta`, исходная база `878952579d395d1afa62fb27b44f7ce369a76ac8`. Коммит — scoped DCO-коммит с этим отчётом; его полный SHA передаётся при `crew_task submit`, чтобы не создавать самоссылочный хеш внутри коммита.
+
+Язык не меняется — новый D-блок не применим. Приёмка глазами, потому что полноту нормативного разграничения частичного staging-ремонта и отдельного дефекта сида нельзя доказать одним исполняемым тестом.
+CI на кандидате, проверка proven-by-CI, merge lock и LANDED — последующая независимая приёмка; исполнитель main не двигал и зелёный CI/готовность релиза не заявляет.
+
+## ЧТО НЕ СДЕЛАНО
+
+Нет CI-кандидата и вливания; строку LANDED исполнитель не выдумывает. Не проверены все формы D412 (`embed_dir`, `embed_str` и сложные литералы), не исправлен прямой вызов сида с неверной границей `project_root_of`. Реальные спутники и self-build не гонялись, сид не пересобирался. Это не отчёт о готовности релиза.
+
+## УЛИКИ И ВОСПРОИЗВЕДЕНИЕ
+
+В [evidence/](evidence/) сохранены логи с заменой локальных префиксов на `$WT` и `$SCRATCH`; удалены только лишние пустые строки EOF ради `git diff --check`, строки результатов не менялись:
+
+- `unit-red.txt` / `unit-green.txt` — первоначальный RED/GREEN;
+- `unit-expanded.txt`, `unit-final-marker.txt` — промежуточные 31 и финальные 34 unit PASS;
+- `e2e-red-4.txt` / `e2e-green-4.txt` — полный сквозной саботаж/восстановление финальной логики;
+- `e2e-parent-red.txt` — RED дополнительного края относительного parent-path до stage-marker;
+- `e2e-final.txt` — отдельный GREEN после rustfmt, финальных unit и новой сборки драйвера;
+- `source-sha256.json` — точные байты рабочей копии, из которой собран проверенный driver, и SHA его exe. Это НЕ утверждение о Git blob/CRLF другой рабочей копии.
+
+Повтор (Windows, initialized runtime, clang/MSVC, prepared GC include/library): собрать `cargo build --manifest-path nova-driver/Cargo.toml --bin nova` в session scratch target; выполнить `python scripts/tools/carina-build-embed.py --driver <fresh-nova.exe> --scratch <new-directory-in-session-scratchpad>`. При необходимости задать `CARINA_EMBED_RUNTIME`, `NOVA_GC_LIB_DIR`, `NOVA_GC_INCLUDE_DIR`; тест создаёт только изолированную synthetic git-фикстуру и installation-root. Повтор саботажа: сохранить `program.rs`, заменить вызов `stage_embeds(...)` на `text.to_owned()`, пересобрать driver и запустить ту же пробу в новом scratch-каталоге — ожидается build exit=1 с двумя `E_EMBED_NOT_FOUND`; восстановить файл, пересобрать, повторить — exit=0 и все строки PASS выше.
+
+## Подготовка кандидата по поручению интегратора
+
+После сдачи локального ремонта интегратор назначил находке `project_root_of` №1949 и поручил подготовить `integrate/t136` в согласованных partial driver-only границах. `git fetch origin main` подтвердил `fb97763831319fe1f0eafb63d805d8360a3e801c`; этот main уже предок ветки задачи, поэтому дополнительное слияние не требуется.
+
+Изменена только своя новая строка и ссылки; формат поля `**Статус:** OPEN` и оговорка носителя приведены к машинному контракту. `registry-rows.baseline` обновлена по замеру: rows 1856 → 1857, max 1947 → 1949, дублей 0; №1948 — временная дыра, номер занят задачей 137 по письму интегратора. Остальные базовые долги не расширяются. В четырёх строках unit-логов исправлен пропущенный смешанный slash-префикс на `$SCRATCH`; значения и результаты тестов не менялись. Локальный file-URL в журнале приведён к `$WT`; журнал с отметкой заморозки включается один раз до кандидата.
+
+Исполняемая логика драйвера, фикстуры, сид и D412 после локального GREEN не менялись; исправление INV-комментария после первого CI описано ниже. Результат exact-SHA CI передаётся отдельным сообщением: последующие изменения только ради записи результата CI в log.md/этот отчёт не создают новый SHA кандидата. Main/пины/теги не двигаются до приёмки.
+
+Перед кандидатом все адресные guards завершились exit=0: rows-intact, entry-shape, single-verdict, routes, status-field, past-tense-status, closure-kept, ratchet-moves, baseline-newline, machine-paths, mojibake. Ключевые строки дословно:
+
+```text
+check-ratchet-moves ok: файлов с сдвигом храповика: 1, сдвигов без причины: 0
+check-baseline-newline ok: баз 84, все оканчиваются переводом строки
+check-no-mojibake: строк с подписью порчи 139 (база 139), с символом-заменой 418 (база 418)
+```
+
+Paths: рабочая копия и индекс по 1020, новых носителей/личных путей нет; на `origin/main` тем же предметом подсчитано также 1020. Поэтому снижение относительно старой базы 1026 не приписывается этой задаче и база paths не меняется. Mojibake остался 139/418 — его база также не меняется. Реестровые проверки: 1857 строк, max=1949, дублей=0, протухших gaps=0; статус №1949 виден машине, новых неоформленных строк нет.
+
+## Доработка после первого exact-SHA CI
+
+Кандидат `71b321c578bcce7ec353bc9ace0f53942d60c723` получил RED nova-gate (`loop` и `push [rest]`): `check-invariant-discipline` указал на прежний немаркированный комментарий `an asset must never overwrite an import-rewritten .nv`. Остальные восемь workflows завершились success. Этот SHA **не принят**, exact-SHA proof отказал; обход или изменение стража не применялись.
+
+По разрешению интегратора исправлен только комментарий: названа структурная причина `.nv` → `.bin`, отдельно указаны collision-check и две конкретные регрессии. Норма лично сверена в `docs/dev/conventions-governance.md:127–132,182–198,228–237`: runtime-check не выдаётся за PROPERTY; ссылка GUARD не выдумывается для unit-теста. Журнал заморозки не меняется. `source-sha256.json` сохраняет байтовую идентичность **первоначального native-прогона до этой правки комментария**, а не утверждает равенство нового source hash старому; новый коммит содержит прозрачный comment-only diff и отдельную проверку коллизий.
+
+Адресный invariant-discipline воспроизвёл исходный RED. Проверка исправляющего diff с документированным base=`HEAD` дала `check-invariant-discipline ok: новых инвариантов на честном слове нет`; после коммита проверяется также полный итоговый diff к `origin/main` (обычный вызов, без второго аргумента). До коммита обычный вызов конкатенирует старый committed diff и working-tree diff, поэтому ещё видит старую удаляемую строку; страж не менялся и не отключался.
+
+Collision-негатив: временно отключено условие `prior.canonicalize()? != full` только в своей проверке; тест обязан был отвергнуть два разных ресурса с одним staged-назначением. Получено дословно:
+
+```text
+test program::tests::staging_embed_rejects_dependency_destination_collisions ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.02s
+```
+
+Условие восстановлено байт-в-байт, тот же целевой тест и весь пакет прошли:
+
+```text
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.04s
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+```
+
+Свежий production-driver пересобран после INV-комментария. Полные обезличенные логи: `evidence/collision-sabotage-red.txt`, `evidence/collision-restored-green.txt`, `evidence/unit-after-inv.txt`. Это не изменение исполнения и не расширение partial scope.

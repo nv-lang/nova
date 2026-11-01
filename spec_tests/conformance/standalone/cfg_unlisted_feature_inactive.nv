@@ -1,0 +1,10 @@
+// EXPECT_STDOUT unlisted-feature-inactive
+// ENV NOVA_FEATURES=
+module standalone.cfg_unlisted_feature_inactive
+
+#cfg(feature = "fancy")
+fn cfg_feature_body() -> int => "this body is inactive while fancy is unlisted"
+
+fn main() Io -> () {
+    println("unlisted-feature-inactive")
+}

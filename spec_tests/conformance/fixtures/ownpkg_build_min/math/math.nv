@@ -1,0 +1,6 @@
+// Folder-module of the program's own package, one directory away from the
+// entry (cross-unit for the seed), imported by its package-qualified path.
+// Markerless like the entry: see main.nv's header comment.
+module ownpkg_build_min.math
+
+export fn triple(x int) -> int => x * 3

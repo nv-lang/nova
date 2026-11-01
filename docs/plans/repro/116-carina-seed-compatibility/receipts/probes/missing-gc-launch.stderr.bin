@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "C:\Users\Евгений\AppData\Local\Temp\opencode\ses_mvkc0sjaqomgtdbffv\task116\preflight\verify-driver-prelaunch.py", line 35, in <module>
+    assert set_values==plan['environment']['explicit'], f'launcher --set map differs from manifest: missing={sorted(set(plan["environment"]["explicit"])-set(set_values))} extra={sorted(set(set_values)-set(plan["environment"]["explicit"]))}'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: launcher --set map differs from manifest: missing=['NOVA_GC_LIB_DIR'] extra=[]

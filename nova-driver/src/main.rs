@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::Command;
 
 mod carina_build;
+mod embed_stage;
+mod program;
 
 #[derive(Parser)]
 #[command(name = "nova", version, about = "Nova language CLI")]

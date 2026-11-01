@@ -1,0 +1,67 @@
+{
+  "verdict": "PASS_BOUNDED_NATIVE_CLI_SMOKE_3_OF_3",
+  "checks": {
+    "receipt_pin": true,
+    "summary_pin": true,
+    "smoke_plan_pin": true,
+    "tool_pins": true,
+    "native_binary_unchanged": true,
+    "three_confirmed_starts_no_retries": true,
+    "01-no-args_raw_hashes": true,
+    "01-no-args_exact_result": true,
+    "01-no-args_actual_launch": true,
+    "01-no-args_wrapper": true,
+    "02-check-hello_raw_hashes": true,
+    "02-check-hello_exact_result": true,
+    "02-check-hello_actual_launch": true,
+    "02-check-hello_wrapper": true,
+    "03-check-missing-absolute_raw_hashes": true,
+    "03-check-missing-absolute_exact_result": true,
+    "03-check-missing-absolute_actual_launch": true,
+    "03-check-missing-absolute_wrapper": true,
+    "three_case_lists_exact": true,
+    "verifier_raw": true,
+    "fixture_and_smoke_sources": true,
+    "565_source_driver_post_hashes": true,
+    "native_project_external_post_hashes": true,
+    "driver_unchanged": true,
+    "49_existing_cache_outputs_unchanged": true,
+    "1551_092_pins_rehashed_after_smoke": true,
+    "queued_smoke_exit_zero": true
+  },
+  "results": [
+    {
+      "case": "01-no-args",
+      "exit": 2,
+      "stdout_bytes": 56,
+      "stderr_bytes": 0,
+      "text_EOL": "CRLF",
+      "stdout_sha256": "84b0c0b9c01cef17152dcd4feb7e5205980ef891303f38bec70c5e62f89ece4d"
+    },
+    {
+      "case": "02-check-hello",
+      "exit": 0,
+      "stdout_bytes": 0,
+      "stderr_bytes": 0,
+      "text_EOL": "empty",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "03-check-missing-absolute",
+      "exit": 2,
+      "stdout_bytes": 245,
+      "stderr_bytes": 0,
+      "text_EOL": "CRLF",
+      "stdout_sha256": "1eb1b637f6c81008f8e1daaed843659433bf9ae6e153ccb2962b10abc5cb38dd"
+    }
+  ],
+  "native_sha256": "8287b9dd0bfb69170a14bdd5fbe420e4124966375dbfc5ab2334aebe555f3d08",
+  "post_smoke_092": {
+    "count": 1551,
+    "missing": [],
+    "changed": [],
+    "scope": "pinned source/header/manifest/verifier only, not all dirty-worktree bytes"
+  },
+  "journal_note": "Task log appended after smoke, excluded from immutable compiler inputs; frozen snapshot retained in plan and raw preflight",
+  "limits": "CLI behavior smoke only, not full D-conformance/B2/fixed point/116 acceptance/release. No new native executions performed by this audit and no further launch authorized."
+}

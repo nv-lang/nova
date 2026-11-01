@@ -1,0 +1,10 @@
+Toolchain: clang, mode=Dev, jobs=16, paths=[D:\Sources\nv-lang\nova-duckdb\src]
+SKIP           src/sqltag  # no test blocks and no fn main() — nothing to link/run (compiled OK)
+RUN-FAIL       src/sqltag_test  #   FAIL: unsigned integers land in Value.UInt, the shape an unsigned column reads back as — sqltag_test.nv:32: assert failed: n == want
+
+===== SUMMARY =====
+RUN-FAIL       src/sqltag_test  #   FAIL: unsigned integers land in Value.UInt, the shape an unsigned column reads back as — sqltag_test.nv:32: assert failed: n == want
+
+PASS: 0  FAIL: 1  SKIP: 1 (skipped)
+[1m[31merror:[0m[0m 1 test(s) failed
+rc=1

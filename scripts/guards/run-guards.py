@@ -31,6 +31,7 @@ import pathlib
 import re
 import sys
 import traceback
+import time
 
 
 def winpath(s):
@@ -59,12 +60,24 @@ class Capture(io.StringIO):
     вызове — тем более: правило потока здесь и так LF.
     """
 
+    def __init__(self, out_file=None):
+        super().__init__()
+        self.partial = out_file.open("w", encoding="utf-8", newline="\n") if out_file else None
+
+    def write(self, text):
+        if self.partial:
+            self.partial.write(text)
+            self.partial.flush()
+        return super().write(text)
+
     def reconfigure(self, **_kw):
         return None
 
 
 def run_one(path, root, out_file, rc_file):
-    cap = Capture()
+    started = time.time()
+    out_file.with_suffix(".start").write_text(f"{int(started)}\n", encoding="utf-8")
+    cap = Capture(out_file)
     saved = sys.stdout, sys.stderr, sys.argv
     sys.stdout = sys.stderr = cap
     sys.argv = [str(path), str(root)]
@@ -82,8 +95,11 @@ def run_one(path, root, out_file, rc_file):
         rc = 1
     finally:
         sys.stdout, sys.stderr, sys.argv = saved
+        if cap.partial:
+            cap.partial.close()
     out_file.write_text(cap.getvalue(), encoding="utf-8", newline="\n")
     rc_file.write_text(f"{rc}\n", encoding="utf-8", newline="\n")
+    out_file.with_suffix(".sec").write_text(f"{int(time.time() - started)}\n", encoding="utf-8")
     return rc
 
 

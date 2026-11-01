@@ -11,9 +11,10 @@
 
 module novac.lower
 import ../tree.{Node}
+import ../lex.{TokenKind}
 import ../sem.{branch_children, for_head_elem}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
-import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload}
+import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload, leaf_kind}
 
 /// One `while`: the header block carries the loop, the body jumps back.
 fn Lowerer mut @lower_while(st Node) -> () {
@@ -102,7 +103,8 @@ fn Lowerer mut @lower_for_range(kids []Node) -> () {
     } else {
         @ir.temp(@ctx.prims.int_id)
     }
-    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: hi_l })
+    ro head = LoopHead.Range(RangeHead { var: lv, lo: range[0], hi: hi_l,
+        incl: leaf_kind(range[1]) == TokenKind.DotDotEq })
     ro c = @ir.begin_loop(head)
     @lower_block_stmts_fn(kids[4], false)
     @ir.end_loop(c)

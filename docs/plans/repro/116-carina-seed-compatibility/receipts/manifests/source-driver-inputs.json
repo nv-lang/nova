@@ -1,0 +1,2827 @@
+[
+  {
+    "path": "nova-driver-support/src/fs_lock.rs",
+    "size": 7041,
+    "sha256": "fe7eb72b16add987849914323ae099c80437ee40f47ceece4362ab0946a97053"
+  },
+  {
+    "path": "nova-driver-support/src/git_cache.rs",
+    "size": 40348,
+    "sha256": "687a3f47198093a8c58b927aa1335d331c188c9775b3a10075d0e109dd2d1973"
+  },
+  {
+    "path": "nova-driver-support/src/lib.rs",
+    "size": 26076,
+    "sha256": "64eadf004ed0e76393d407112aa321e8fc1d6a286ca7ff3d2707e53657b1ffba"
+  },
+  {
+    "path": "nova-driver-support/src/link_prep.rs",
+    "size": 28209,
+    "sha256": "0d685a22b97c77d9e23223ef3579c573637c69318c3c4d420071d26ef1335b02"
+  },
+  {
+    "path": "nova-driver-support/src/lockfile.rs",
+    "size": 60992,
+    "sha256": "b2e5c99de30e60efcd8fb4287b002a38146bbb475bf80c8474696653c5481163"
+  },
+  {
+    "path": "nova-driver-support/src/manifest.rs",
+    "size": 47730,
+    "sha256": "1421ae55e9e2ff4379ab2d7b59a2c91f4e376e0e0da45f260e2548fe11eac263"
+  },
+  {
+    "path": "nova-driver-support/src/native_build.rs",
+    "size": 55099,
+    "sha256": "f9cfc888d69668b01b1344ec62a22fec0180c6b1858f65a65de703938c0db203"
+  },
+  {
+    "path": "nova-driver-support/src/native_runtime.rs",
+    "size": 82851,
+    "sha256": "d37cdf85c07e411544fa5cb0a0f78f9e1fd1d79e80a024afae90061dfbd91a1d"
+  },
+  {
+    "path": "nova-driver-support/src/pkg_proxy.rs",
+    "size": 19075,
+    "sha256": "4c763f84478084b31b2ba670b565ebc0c62384da55d98c3a35b3e67d7cac3e09"
+  },
+  {
+    "path": "nova-driver-support/src/process.rs",
+    "size": 9333,
+    "sha256": "0cd0695a7707e694763298c1bb0639306735a4079acdff1d3a3805595d773ad0"
+  },
+  {
+    "path": "nova-driver-support/src/resolver.rs",
+    "size": 17734,
+    "sha256": "4e61971bbfd9bf01fa75a6a8bcd5f8fe74dc5e00cd1abd47ca535d2f425ef1bd"
+  },
+  {
+    "path": "nova-driver-support/src/semver.rs",
+    "size": 23055,
+    "sha256": "d6dbcc1bc7051ea520633a754ac79e5d9b774c0cfbe2ecab76c76a4965f0d5af"
+  },
+  {
+    "path": "nova-driver/src/carina_build.rs",
+    "size": 29054,
+    "sha256": "f697045464f74cdd4b507bf998777646cf287966b7ebb1119d26100763024695"
+  },
+  {
+    "path": "nova-driver/src/main.rs",
+    "size": 7369,
+    "sha256": "0cef0aab9393da56eb62d9714fbd9faba8ea640f5561d93065a25a2e7324777a"
+  },
+  {
+    "path": "novac/src/atomics/atomics.nv",
+    "size": 1031,
+    "sha256": "096b00cad6d5e293774a0156a8bd3b04feb6be215e484895aab28ec22ede050d"
+  },
+  {
+    "path": "novac/src/builtins/builtins.nv",
+    "size": 44548,
+    "sha256": "610bbee857cc08659200f270617fcdbc392d0891244cce95d808a427b962dbff"
+  },
+  {
+    "path": "novac/src/check/arg_expect.nv",
+    "size": 3552,
+    "sha256": "5e70509d30c1cf698e68339ee4b825856649d20ab0433623ac70feac1566a871"
+  },
+  {
+    "path": "novac/src/check/arm_fold.nv",
+    "size": 5434,
+    "sha256": "e92829aa27ab84ac9b7900d49d6ff4e83ffc2ebdbfbf0b352c9858e989d4711b"
+  },
+  {
+    "path": "novac/src/check/assert_call.nv",
+    "size": 6150,
+    "sha256": "6bda5ba10f37ceda8846377f4a286e1241ee8c356f30acd31d78c96a25cb97ae"
+  },
+  {
+    "path": "novac/src/check/assign_rules.nv",
+    "size": 12358,
+    "sha256": "ac5991b06196cae9992fb881ef579309acb062eb747e163cbfc7969788a40792"
+  },
+  {
+    "path": "novac/src/check/binds.nv",
+    "size": 46005,
+    "sha256": "e1c2f164bb15cf8029ec780f228ddd10bbae1c6e1b3f4142b5dfe5d087323144"
+  },
+  {
+    "path": "novac/src/check/bounds.nv",
+    "size": 2703,
+    "sha256": "3324b910046ade90a51d0ee3f77cf59945e4b7911ad01598df372a8739a5c400"
+  },
+  {
+    "path": "novac/src/check/calls.nv",
+    "size": 55467,
+    "sha256": "9f4d39644e15dca09355391056c27170fc8893a2ed1dbd1a3b3c18f8c3286a20"
+  },
+  {
+    "path": "novac/src/check/cast_pairs.nv",
+    "size": 11867,
+    "sha256": "a603ea75a2edd0a1c46620537ca8168ce463076c8631e39979241edd73a24c97"
+  },
+  {
+    "path": "novac/src/check/casts.nv",
+    "size": 7615,
+    "sha256": "db0c415994e4d516a211d664a800509482a751ae62754205dc3afcc537e66575"
+  },
+  {
+    "path": "novac/src/check/check.nv",
+    "size": 61983,
+    "sha256": "ceba3c5a9e299a427e34b077f511e0c21abeb3b0a2802bb9955980472590f630"
+  },
+  {
+    "path": "novac/src/check/check_test.nv",
+    "size": 70306,
+    "sha256": "af5819c017575482956c4c32c1df184b45840ef317bcae02dc9206f3aedf05fa"
+  },
+  {
+    "path": "novac/src/check/checker_type.nv",
+    "size": 9387,
+    "sha256": "a967a61a6e4c2f1a58abfb7aabdd113711576156da89cab53576a6629410dd86"
+  },
+  {
+    "path": "novac/src/check/cond_forms.nv",
+    "size": 12688,
+    "sha256": "74069f142a117d686d01a1b8af70ce5917b542cac1491f38d96ace0c73790003"
+  },
+  {
+    "path": "novac/src/check/const_types.nv",
+    "size": 7728,
+    "sha256": "4947175a085cadf2ff45391cc0be4d0aeb983860185ba4ec4991efb0c994b8eb"
+  },
+  {
+    "path": "novac/src/check/consume_flow.nv",
+    "size": 48457,
+    "sha256": "aec4045016e90c7a849ad696feecab2677f44257068a70b12cb922fc28dd9d29"
+  },
+  {
+    "path": "novac/src/check/consume_paths.nv",
+    "size": 26852,
+    "sha256": "d663e7ce976ecf98c9fdbdc7bc9bf4ceb52f80781241712e147eae13fe227f40"
+  },
+  {
+    "path": "novac/src/check/consume_shapes.nv",
+    "size": 27408,
+    "sha256": "4c7f94e616a8931a4eb6a82f5f4a2e67dc8a08539f5465850577776909324448"
+  },
+  {
+    "path": "novac/src/check/ctor_calls.nv",
+    "size": 8267,
+    "sha256": "4cad57a18839853576dcd4ac1094506bc1498bb810a84649a6dc2fe0f7dd26fb"
+  },
+  {
+    "path": "novac/src/check/decl_forms.nv",
+    "size": 7678,
+    "sha256": "df10465d0990e3e812814f8bc4960887b137a9997e2c8c351950eb5d4d41f698"
+  },
+  {
+    "path": "novac/src/check/derive_serde.nv",
+    "size": 18197,
+    "sha256": "97bfcc7b50adb5693716305a1ec166ad5d6bff1da52d5375f1ddfde7a7e385d5"
+  },
+  {
+    "path": "novac/src/check/destructure.nv",
+    "size": 6512,
+    "sha256": "b42e59a228d25b7bcdac9c4863b32d894659e4930d5a9edfcd8fbd4adf22a5d8"
+  },
+  {
+    "path": "novac/src/check/diagnostics.nv",
+    "size": 7017,
+    "sha256": "c729aadd647e981dee80f9c495f40c1a83ab5df9fec02573954e696223a4bb96"
+  },
+  {
+    "path": "novac/src/check/disj_pattern.nv",
+    "size": 8578,
+    "sha256": "47930970b5a8e91c20d674527f1a8f8374bf514c719773ed8bcde9191095b3e8"
+  },
+  {
+    "path": "novac/src/check/embed_call.nv",
+    "size": 7319,
+    "sha256": "3aa8479894e93919f5f270d894bbe3830c16e78ddd157dad742e1ad8c38a606a"
+  },
+  {
+    "path": "novac/src/check/exhaustive.nv",
+    "size": 9683,
+    "sha256": "a3e5d548d19d9909024d0fcb3688036524053296834817e32395f0156e792696"
+  },
+  {
+    "path": "novac/src/check/exprs.nv",
+    "size": 54562,
+    "sha256": "cd4af6328a2f5a563a6b282c174a9edc9fcf711dd3eca5014e1f046b9e05cd3c"
+  },
+  {
+    "path": "novac/src/check/for_iter.nv",
+    "size": 3303,
+    "sha256": "f056e2152789b49aa8175497417a25cdc967d7e921f31160983d9973558e49e5"
+  },
+  {
+    "path": "novac/src/check/handed_default.nv",
+    "size": 4791,
+    "sha256": "f489481e9f9786caa1402d37c148740b68a0e463aee83af249e7ee5a0673ad9f"
+  },
+  {
+    "path": "novac/src/check/handler.nv",
+    "size": 19376,
+    "sha256": "b53b5adb9b78984cf28d7ce0b61a1097009ea1875704fd81559e378c872c1506"
+  },
+  {
+    "path": "novac/src/check/index_key_test.nv",
+    "size": 1779,
+    "sha256": "6d37bf8bb10f43772fd1e52aa871659891c571f36fc25b6bde46963d6d321f22"
+  },
+  {
+    "path": "novac/src/check/index_typing.nv",
+    "size": 11222,
+    "sha256": "208239077bd8752ffd6ed7235f1c989c6caafad93325d6e7fd98285fc8aba87e"
+  },
+  {
+    "path": "novac/src/check/is_expr.nv",
+    "size": 5846,
+    "sha256": "8b0ccd4175490ee34f53a99564b32574914ef48ab71209bb0bf77a02186a8d42"
+  },
+  {
+    "path": "novac/src/check/literal_rules.nv",
+    "size": 32030,
+    "sha256": "dbef6374ba9450501fb89be5273fceaee2640789e4e711bd330bb0bebc58fef8"
+  },
+  {
+    "path": "novac/src/check/match_arms.nv",
+    "size": 48611,
+    "sha256": "dd0855099803a813749ec666259a5c908a9b5e84d3de46da577bc6056d723f74"
+  },
+  {
+    "path": "novac/src/check/match_position.nv",
+    "size": 2456,
+    "sha256": "92d6b2dae69c8e668b0c3db74e00a11f1f9884f84dd4f7e03517a52013b98c07"
+  },
+  {
+    "path": "novac/src/check/messages.nv",
+    "size": 49062,
+    "sha256": "91e21a2afd234c93e2813b4d0989e00bf3b7ff855d55bfbde366f52460fb8280"
+  },
+  {
+    "path": "novac/src/check/methods.nv",
+    "size": 43164,
+    "sha256": "7cda97e9dabc2df538197dfa759b43283abaf630839010f3d6d5e26f5e94e7c8"
+  },
+  {
+    "path": "novac/src/check/module_values.nv",
+    "size": 8336,
+    "sha256": "4f27e1b0a28a674bf6e194ace990a7e349d4d1fd1a17d713f0318f9f36db4f9c"
+  },
+  {
+    "path": "novac/src/check/mut_args.nv",
+    "size": 4223,
+    "sha256": "488d265d091be6edb69279d5d0a28af7dfde3a6f312362fea8e267ba269fdb9e"
+  },
+  {
+    "path": "novac/src/check/numeric_positions.nv",
+    "size": 5403,
+    "sha256": "4449bb891957aa5f8dbaa0cde1e388eed65bd01f4c3d455b28dac64917b83dee"
+  },
+  {
+    "path": "novac/src/check/operators.nv",
+    "size": 22233,
+    "sha256": "7fa873cc1db073710335b6e16e2c7280b33ae7b51e2f68b19279131a69350e11"
+  },
+  {
+    "path": "novac/src/check/option_rules.nv",
+    "size": 14157,
+    "sha256": "91088156775deec798037f67d33881b612b04649b5acd65e0c5a4c8f1134591a"
+  },
+  {
+    "path": "novac/src/check/params.nv",
+    "size": 9097,
+    "sha256": "329aca80b04e8cf9f5056eb373950690eb374761cdbc15beca2750bd75bdaf36"
+  },
+  {
+    "path": "novac/src/check/pattern_position.nv",
+    "size": 6081,
+    "sha256": "f3e90c0817175f630897a042e0f86fb1921db0de094bab8c90f19e0226b6ea41"
+  },
+  {
+    "path": "novac/src/check/record_variant.nv",
+    "size": 9278,
+    "sha256": "f71cf4af5f52d34aa1e4e04c3134981d52229331e75aff991b124fce0712194e"
+  },
+  {
+    "path": "novac/src/check/return_rules.nv",
+    "size": 21363,
+    "sha256": "cf4ce7e6b501de9ec41cf5c658d3358c43d9de5686952573b674ba8a538750bb"
+  },
+  {
+    "path": "novac/src/check/rules.nv",
+    "size": 46314,
+    "sha256": "d7ab5fbb0cbf5bfdceda47263bc31496f940e600d1f92e28b8c9dae1b20c8b76"
+  },
+  {
+    "path": "novac/src/check/run.nv",
+    "size": 16607,
+    "sha256": "78684818e919a6c5bbeb1e71bf8d4d383532a135e1018225cac737377627ae68"
+  },
+  {
+    "path": "novac/src/check/scope.nv",
+    "size": 8338,
+    "sha256": "0d000e4f28d3ebf4e08f502f64b80ae6e4e693d2603d9b57aa071fd860717d35"
+  },
+  {
+    "path": "novac/src/check/slice.nv",
+    "size": 5469,
+    "sha256": "e3744f79ffb067a2cf62aa577792d8e7106f43caac548cc543d8f3163a6aa331"
+  },
+  {
+    "path": "novac/src/check/static_call.nv",
+    "size": 17583,
+    "sha256": "14630a547432ec2bbd0abd577d0ede2323e577e945cee58cfef427b61f5d194d"
+  },
+  {
+    "path": "novac/src/check/strings.nv",
+    "size": 9090,
+    "sha256": "3e712568e1ef669b50c177608149aa3dfb4d4045ed0a77269115316dcf7322bc"
+  },
+  {
+    "path": "novac/src/check/tail_rules.nv",
+    "size": 33546,
+    "sha256": "c7cba2c2f3f09367752fab4bb01fe80cb49d3d07b4c505e5b7b7b03a4b980ff0"
+  },
+  {
+    "path": "novac/src/check/try_rules.nv",
+    "size": 11893,
+    "sha256": "1552d000e997bac40686db1019d1e7d00c7f07e182bf72600425fe4cbdbecdc6"
+  },
+  {
+    "path": "novac/src/check/type_args.nv",
+    "size": 2967,
+    "sha256": "1eafd58567c54513ee586cb3ce50ae3694fe822a32e37c753b118bf3ba6d4a49"
+  },
+  {
+    "path": "novac/src/check/type_of.nv",
+    "size": 51219,
+    "sha256": "a71a2bd99238e0925487a2829fedf963f3c170fa1fc5ca3ba9ca359181bd1e4e"
+  },
+  {
+    "path": "novac/src/check/typed_bind.nv",
+    "size": 3044,
+    "sha256": "6e675c12647b050fa81aec6a6290d808358ff4edd75cfa6a529d90cfd612bf51"
+  },
+  {
+    "path": "novac/src/check/typeref_rules.nv",
+    "size": 23544,
+    "sha256": "fa229d44212b9327f8471cef219aa3a3285c1daaaaf5f8c235eda4d47a236795"
+  },
+  {
+    "path": "novac/src/check/typing.nv",
+    "size": 48232,
+    "sha256": "ba4c59bb5c4ca6dab204fb5bc5529472b59a0c22d5a1df86f7c7a6b39d068aa9"
+  },
+  {
+    "path": "novac/src/check/unsafe.nv",
+    "size": 7221,
+    "sha256": "2fb320b0ef526ef92c17eeef33b07fb0335f1f448e1e4642a877cc800da9190a"
+  },
+  {
+    "path": "novac/src/check/variant_rules.nv",
+    "size": 20635,
+    "sha256": "dff41a04a99c081281485ebcb4e8c9763dc2e7edc81160a039f4f82e678d4aef"
+  },
+  {
+    "path": "novac/src/check/with_typing.nv",
+    "size": 11457,
+    "sha256": "4186f560d0300a69ae3229239af406b277eb6feb46d0f1b3fd015125b16d7e9f"
+  },
+  {
+    "path": "novac/src/diag/diag.nv",
+    "size": 7269,
+    "sha256": "fbbfb9983e02d380b680993f1d6040e79794852d06575992372e4836bbbaf810"
+  },
+  {
+    "path": "novac/src/diag/diag_test.nv",
+    "size": 3096,
+    "sha256": "a8b91cf2ecd8447375e861c1a70cca0bee76daaf24c4deeb73a2e229a4bbc632"
+  },
+  {
+    "path": "novac/src/emit_c/emit_applied_sum.nv",
+    "size": 4015,
+    "sha256": "df56673e7a7ae19c7992961a36728043e9839c2659e8288b1aa900226785f49b"
+  },
+  {
+    "path": "novac/src/emit_c/emit_args.nv",
+    "size": 5974,
+    "sha256": "527c409b1f6cd16c8e78c27fdb4098ecffd95d617ff53d2f3bf193581422fefb"
+  },
+  {
+    "path": "novac/src/emit_c/emit_assert.nv",
+    "size": 5457,
+    "sha256": "56e6d0063fdbd8b59f61bac71eb3a754a19e30b028537be540e3aa69991eb80e"
+  },
+  {
+    "path": "novac/src/emit_c/emit_c.nv",
+    "size": 46164,
+    "sha256": "ff046aa7bc5bdc2cea0ecb4283dd3fbec8e6947b7646406544a480136d01c386"
+  },
+  {
+    "path": "novac/src/emit_c/emit_cast.nv",
+    "size": 7027,
+    "sha256": "fe98fe50d34cf5d073d9e2a4aa7524e836b237f66bfe20320308beebdfca31ab"
+  },
+  {
+    "path": "novac/src/emit_c/emit_decls.nv",
+    "size": 33983,
+    "sha256": "ecebea024a03671c11671ba095863405bf220f23a39afc43bc5f6ab4720f8ea7"
+  },
+  {
+    "path": "novac/src/emit_c/emit_destructure.nv",
+    "size": 1624,
+    "sha256": "fc1d34ae41af6b6e53b7f0e961a822059e16435d9b24867877bd87514b3a6279"
+  },
+  {
+    "path": "novac/src/emit_c/emit_embed.nv",
+    "size": 2475,
+    "sha256": "829e97aface83a59bee9d8ba563bcb7d4a4de2737d650b3260f9eaf9407b4770"
+  },
+  {
+    "path": "novac/src/emit_c/emit_expr.nv",
+    "size": 52254,
+    "sha256": "067471b5982962d2a7062f6aa9d624a659e18726f442f79926923d47c18f3b47"
+  },
+  {
+    "path": "novac/src/emit_c/emit_flow.nv",
+    "size": 32031,
+    "sha256": "8445f24145a0bc6d9cf1c3d062e7091508a6046ef085c78c04f9df9a9e720388"
+  },
+  {
+    "path": "novac/src/emit_c/emit_handler.nv",
+    "size": 11742,
+    "sha256": "adc9067404f03953407e1b16dc0153fa1ff124ba4311ac9031eab644f5a364bb"
+  },
+  {
+    "path": "novac/src/emit_c/emit_instance_structs.nv",
+    "size": 5166,
+    "sha256": "249746d7c17e89ae94d2487de5d2563d0b37aa1fbf0abd694392e89088b1fbf6"
+  },
+  {
+    "path": "novac/src/emit_c/emit_interp.nv",
+    "size": 15593,
+    "sha256": "e570fed59f3b3e2f63733b7228efa952fe18952659f172b64d0d069bde1253bd"
+  },
+  {
+    "path": "novac/src/emit_c/emit_is.nv",
+    "size": 2440,
+    "sha256": "e63eee732eaaeb1792c96cc1fb8092e6df6ec5ee122ad5a44eb1e19d93dd8437"
+  },
+  {
+    "path": "novac/src/emit_c/emit_match.nv",
+    "size": 6555,
+    "sha256": "be124b3af14b2ba3a892960f9994734643276c844d3cc652124632d6556ccee3"
+  },
+  {
+    "path": "novac/src/emit_c/emit_module_values.nv",
+    "size": 4839,
+    "sha256": "9d1326a4897bf974e07b5929a0425d26a82be5b7b63c2f9cd51bd44fa2ceb387"
+  },
+  {
+    "path": "novac/src/emit_c/emit_never.nv",
+    "size": 5843,
+    "sha256": "db9e55d35658133fc0f76f528a94f455b1c453d77c6ee019b4d638baaffab257"
+  },
+  {
+    "path": "novac/src/emit_c/emit_option.nv",
+    "size": 4870,
+    "sha256": "835786fc76ae145aabcaa0dfb2a393cd2d15cda83f52e69e002b5af6e85796ab"
+  },
+  {
+    "path": "novac/src/emit_c/emit_place.nv",
+    "size": 29059,
+    "sha256": "6e6f972d6023e177d6ab428e6cf51d18353348f2ab9bb7451c1c0c7671095fe7"
+  },
+  {
+    "path": "novac/src/emit_c/emit_ptr.nv",
+    "size": 3383,
+    "sha256": "52e50ce38038952dc8e35518062a2da566687dd0ac2ab9f1eebd8d34dec9d682"
+  },
+  {
+    "path": "novac/src/emit_c/emit_requires.nv",
+    "size": 4431,
+    "sha256": "dab8a8defddfd06a24be48634b50967da84f53534a46020faf79eb97cd5c45b4"
+  },
+  {
+    "path": "novac/src/emit_c/emit_slice.nv",
+    "size": 3120,
+    "sha256": "e720527f0555f56950e9b37d35f8c7398bd896aa7908bb5c0f921e171cebf03f"
+  },
+  {
+    "path": "novac/src/emit_c/emit_spawn.nv",
+    "size": 11413,
+    "sha256": "1c0ee800f8355da224888bffd3d783f6418bcaae28cfe34b22b5b5031656f677"
+  },
+  {
+    "path": "novac/src/emit_c/shell.nv",
+    "size": 15319,
+    "sha256": "1988c76e1c2d2e53cb876445aeeb3778fb4da42a808d0ecfb361ce767dd3c146"
+  },
+  {
+    "path": "novac/src/emit_c/shell.tpl.c",
+    "size": 1545935,
+    "sha256": "27239b5221b4c68bab2c2fbba1ba657d5e4a508a8797e2db94d17b77a8b62469"
+  },
+  {
+    "path": "novac/src/lex/lex.nv",
+    "size": 49825,
+    "sha256": "1511af54e9ef08ab2adc90076c254dd8b41155abd5ede9589b9fd86906aa6ae7"
+  },
+  {
+    "path": "novac/src/lex/lex_test.nv",
+    "size": 15479,
+    "sha256": "d911c90a59e9ab14a5ec23e6c9cbef893809a9307be8687140786d54b1f8cfb1"
+  },
+  {
+    "path": "novac/src/lower/ir.nv",
+    "size": 53371,
+    "sha256": "bc0fa257293cc67f6d22e908388d5dda988bbc518128594ef3aface0a68fe75a"
+  },
+  {
+    "path": "novac/src/lower/ir_cleanup.nv",
+    "size": 7744,
+    "sha256": "34b09c357c384fe6525cc5a6cfe0dd956711d5052ea27d6242d28f79a4aa0898"
+  },
+  {
+    "path": "novac/src/lower/ir_match.nv",
+    "size": 4881,
+    "sha256": "d8c7d9bbd086a5b2ae029b90130ed52722e894d1beb4f4f6947652629787401a"
+  },
+  {
+    "path": "novac/src/lower/ir_with.nv",
+    "size": 6685,
+    "sha256": "b1a6e82bafb17bc07c494624643831cb467ff0a130f55599fa1bc6718152bad2"
+  },
+  {
+    "path": "novac/src/lower/lower_branch.nv",
+    "size": 1719,
+    "sha256": "b33fb62f2a0fdc4efcba6d5a15097a09a7d4d201f9c98be784c26700e4b1a33d"
+  },
+  {
+    "path": "novac/src/lower/lower_coalesce.nv",
+    "size": 8115,
+    "sha256": "835da7f72751631b5470d186dcb35d1388a93a6a01bdc9fc9a119317fc46c4e7"
+  },
+  {
+    "path": "novac/src/lower/lower_disj.nv",
+    "size": 12061,
+    "sha256": "dc41f093a6ddb9ee4993d4ed2272ec8e87735116a8668e9ecd22ddc14ac13223"
+  },
+  {
+    "path": "novac/src/lower/lower_hoist.nv",
+    "size": 19920,
+    "sha256": "09825db293a579c75492da967ee7943c6bade61db1530ad1c5e13dbbcb37c76b"
+  },
+  {
+    "path": "novac/src/lower/lower_loop.nv",
+    "size": 9372,
+    "sha256": "dac8ebdabcfad893d1a8275ba13a249501721d7c25ce6e5ce4cd43a3e199c77d"
+  },
+  {
+    "path": "novac/src/lower/lower_match.nv",
+    "size": 28032,
+    "sha256": "6f9d2b44706b9daabae14f861c8239dc95f4604bb9366a980cf888689140709b"
+  },
+  {
+    "path": "novac/src/lower/lower_test.nv",
+    "size": 23130,
+    "sha256": "3ad49c32f53a55b9c735ba9a7a3fecd517d969e235eaee94306fb27aca54ad41"
+  },
+  {
+    "path": "novac/src/lower/lower_unsafe.nv",
+    "size": 1222,
+    "sha256": "d985a58fe9c76aca31ba49b0003047ec5739464bde8324a1404ced9e96790b86"
+  },
+  {
+    "path": "novac/src/lower/lower_with.nv",
+    "size": 3486,
+    "sha256": "b6324f008f632438c63691f392160cb45b8c55329bc2d72d456cee7d657720fe"
+  },
+  {
+    "path": "novac/src/lower/lowering.nv",
+    "size": 52356,
+    "sha256": "750a1143dc0d6bcc39fb3d78977ca1dbf471d1acaee48f006685a37fcc0a6427"
+  },
+  {
+    "path": "novac/src/main.nv",
+    "size": 34408,
+    "sha256": "3104bbe6b6deea8995d49dc78a7f36fe9096bb6437eeb937b41426d247e19da8"
+  },
+  {
+    "path": "novac/src/mono/mono.nv",
+    "size": 22871,
+    "sha256": "ab3f515880bd4d35d92b8b705932c05e121de501fd05a6ec0ca113f35b405aad"
+  },
+  {
+    "path": "novac/src/names/names.nv",
+    "size": 5849,
+    "sha256": "54238c374a1322a9d0ac2cfabdbb75169bc8207ff4a277f3ce00c21ec42764fc"
+  },
+  {
+    "path": "novac/src/parse/cast_chain.nv",
+    "size": 2790,
+    "sha256": "48f54e398f641e82dc9d3e9a946b72319ba89734ab604bc6113abacff1166de8"
+  },
+  {
+    "path": "novac/src/parse/decls.nv",
+    "size": 14116,
+    "sha256": "103f8694cbe5a61dc733d828f2071f85421968e99c19ba58f4a74c3af42deeb8"
+  },
+  {
+    "path": "novac/src/parse/expect.nv",
+    "size": 7885,
+    "sha256": "dfc782ff56880e28181e179a3f56ae08f92ca0b07ccd279fca846ce548ebb301"
+  },
+  {
+    "path": "novac/src/parse/expr.nv",
+    "size": 43654,
+    "sha256": "567749e4eba8fc76b41731e262ba915b0a4aeb17668c50b6756436dcb1959bf0"
+  },
+  {
+    "path": "novac/src/parse/handler.nv",
+    "size": 6888,
+    "sha256": "b6b7b87f0df9cbbc99ee6565cc22e9d1ed7b0744a70bf74384781bb34a18cdd0"
+  },
+  {
+    "path": "novac/src/parse/parse.nv",
+    "size": 52495,
+    "sha256": "daa26adbb52fc47fdc94827c4ff70983cf5f62290c11fa16a08e76c0e962856b"
+  },
+  {
+    "path": "novac/src/parse/parse_test.nv",
+    "size": 31816,
+    "sha256": "c59b65ae108e811f56801f4d66fa069ac6a8aa2d5a48813c0afa2f7ffc54b195"
+  },
+  {
+    "path": "novac/src/parse/pattern.nv",
+    "size": 8943,
+    "sha256": "d28c85dc1bbbcc2bbd2f4c88c02426193b9635d670694c0afc4bd9747187cd41"
+  },
+  {
+    "path": "novac/src/parse/type_decl.nv",
+    "size": 26121,
+    "sha256": "cab7d4fc5a8aafe7b6dc8b57422b60c24be8dea2c260b967c2129b5a8bba568b"
+  },
+  {
+    "path": "novac/src/parse/type_ref.nv",
+    "size": 8068,
+    "sha256": "c5d38bbc2aa96952f09b8527fd5fd392c1827c73a31e92f8a9c50b7b94bdb23c"
+  },
+  {
+    "path": "novac/src/pipeline/arg_order_test.nv",
+    "size": 2380,
+    "sha256": "25c4ba346ad549adc9f8d936f6f043938d4f56067665cdf4a10d58303e4bc3b4"
+  },
+  {
+    "path": "novac/src/pipeline/assoc_import_test.nv",
+    "size": 1306,
+    "sha256": "91feb28ed140fe268550532fa627b96a506a9bb23c00bab366f6fef7182e4be6"
+  },
+  {
+    "path": "novac/src/pipeline/cast_test.nv",
+    "size": 9348,
+    "sha256": "51e7ed26159e576e20945b65d4f1e779c4533de3a62e4d08bb63cbc461b38672"
+  },
+  {
+    "path": "novac/src/pipeline/concurrency_test.nv",
+    "size": 8816,
+    "sha256": "5f0aaa719e9abfb386e4a182e999cc7f0c37aa3c6fb6ccc953955d8fe0c4617b"
+  },
+  {
+    "path": "novac/src/pipeline/const_expr_test.nv",
+    "size": 6828,
+    "sha256": "67946687847d199300926638472f6d43164e032dab83ed8bd6861e9caf7fef17"
+  },
+  {
+    "path": "novac/src/pipeline/decls_test.nv",
+    "size": 5329,
+    "sha256": "4579ffdd0bdeffb234ba7eca418db2762a9f5b12028529c4a353c709ab5916be"
+  },
+  {
+    "path": "novac/src/pipeline/derive_serde_test.nv",
+    "size": 4981,
+    "sha256": "9cc8e4e65d5b890ac7c846d6ca17460a29cb9c3c320f132ebf36ba87269b2c2a"
+  },
+  {
+    "path": "novac/src/pipeline/eq_door_test.nv",
+    "size": 2075,
+    "sha256": "48d58ce3819eaad8b0eccd20263d9f93f2f6265a23233002ba2cf66e2bfd8bc2"
+  },
+  {
+    "path": "novac/src/pipeline/fluent_self_test.nv",
+    "size": 7948,
+    "sha256": "2905c682f196f8025e8e6721ee0ce44ba8e23658fb0026e7bac08ce330ca1a4d"
+  },
+  {
+    "path": "novac/src/pipeline/for_iter_test.nv",
+    "size": 1262,
+    "sha256": "ad29a575b7883defcf0474f94d1d792410a603a6a4cdcac189b4c37cde777309"
+  },
+  {
+    "path": "novac/src/pipeline/generic_body_test.nv",
+    "size": 4090,
+    "sha256": "73a25741b87a38076c0a596ebbcebc58e4d5aa9f394201005dd3a0f785dd504a"
+  },
+  {
+    "path": "novac/src/pipeline/handed_default_test.nv",
+    "size": 1724,
+    "sha256": "84f57eb24a94c282deebf673a7396f3f4eeba52d44e7c535923f576ed712421e"
+  },
+  {
+    "path": "novac/src/pipeline/handed_fields_test.nv",
+    "size": 5337,
+    "sha256": "27ee615e50d76b287dbea342adda21b2e08bcbf36ba2df6fa49b7baa3f1ee05c"
+  },
+  {
+    "path": "novac/src/pipeline/handed_free_test.nv",
+    "size": 18709,
+    "sha256": "eadf3450f0f17e38368df901d08ae1cccc984901d895df5ec3a2da49bd67668e"
+  },
+  {
+    "path": "novac/src/pipeline/handed_plain_test.nv",
+    "size": 5795,
+    "sha256": "13926fb82ef3610620a3e33cd8243e8f5c8c369d51266df46368376e5af5bd85"
+  },
+  {
+    "path": "novac/src/pipeline/handed_self_test.nv",
+    "size": 4024,
+    "sha256": "d891203397fc4c95278eb3faa194a8841393793ec8f3a110dd9ae1a0c1ee96fa"
+  },
+  {
+    "path": "novac/src/pipeline/handed_sum_test.nv",
+    "size": 7320,
+    "sha256": "05f578a3895e6c5a5049249692889616a7450fd72749788ee955e2225cbc4d46"
+  },
+  {
+    "path": "novac/src/pipeline/handed_variant_test.nv",
+    "size": 1887,
+    "sha256": "6e56bcdc77d49780738f886a4c4e683d7538ffee612c4de34d4c40fc66547ef7"
+  },
+  {
+    "path": "novac/src/pipeline/if_value_test.nv",
+    "size": 4091,
+    "sha256": "e800bea341747cbb0ce0d08413ce9560626c00a17cb419d6bbf9cbbb7355635f"
+  },
+  {
+    "path": "novac/src/pipeline/iflet_test.nv",
+    "size": 6126,
+    "sha256": "66939bcb4511d2502501557f282a485a29b94665e31ea2b43e367f846bc463bf"
+  },
+  {
+    "path": "novac/src/pipeline/instance_scope_test.nv",
+    "size": 12327,
+    "sha256": "65777df935b70f5210504ed167f67fd84ac2a3e448395777989d14df23c895a6"
+  },
+  {
+    "path": "novac/src/pipeline/instance_value_test.nv",
+    "size": 2591,
+    "sha256": "d698c5af44fb58ddb79451fd2600c4fcc67fb685abfae98c2a25b74cb895cd00"
+  },
+  {
+    "path": "novac/src/pipeline/interp_test.nv",
+    "size": 6079,
+    "sha256": "165f25673d11dca58211f31471322925af3f21a12fd5ae5d05ae9bdd7f1f57e1"
+  },
+  {
+    "path": "novac/src/pipeline/match_applied_sum_test.nv",
+    "size": 9668,
+    "sha256": "c9d84a2cae0703a58281a44e95097aff2d9d362384bc3ced0aa8ff812b01169a"
+  },
+  {
+    "path": "novac/src/pipeline/match_value_test.nv",
+    "size": 1935,
+    "sha256": "b1f8963cdfe09e862dba94f71e14d23c63bb720547027576ad5a1ee416742223"
+  },
+  {
+    "path": "novac/src/pipeline/module_value_test.nv",
+    "size": 11722,
+    "sha256": "047f69b818c10538971c58987b2518e80c03d25039a1cb76d23fb6b716288280"
+  },
+  {
+    "path": "novac/src/pipeline/mut_receiver_test.nv",
+    "size": 2438,
+    "sha256": "ec89c18439ad2cd510b7f608fd242a6829d28a7b6a1ab83dfbc2bf9fdc0e49da"
+  },
+  {
+    "path": "novac/src/pipeline/numeric_test.nv",
+    "size": 4799,
+    "sha256": "d81141a7a62b6d662c34448a7b901e26e7d20b5c5116c8cff19effc65d61f271"
+  },
+  {
+    "path": "novac/src/pipeline/option_test.nv",
+    "size": 6864,
+    "sha256": "87e4c2d8922209db86c430e5d37f2a20c8f53ac7481ead3fe96d8c0b34563b50"
+  },
+  {
+    "path": "novac/src/pipeline/overload_test.nv",
+    "size": 11111,
+    "sha256": "cfdb1482f85bcf3c324c0fb57553eb6a87b4f47d6cb68f1772b123655309340e"
+  },
+  {
+    "path": "novac/src/pipeline/pipeline.nv",
+    "size": 40538,
+    "sha256": "30930920720ebf912a3b32535c05726e7ca689153c5aeee88d7da6e608fac491"
+  },
+  {
+    "path": "novac/src/pipeline/pipeline_test.nv",
+    "size": 50337,
+    "sha256": "01874b04aa1322c322ba44b54de9ea950bef50774f082b84c6443ec0e7acb323"
+  },
+  {
+    "path": "novac/src/pipeline/plain_overload_test.nv",
+    "size": 6746,
+    "sha256": "fc6bbe9ff98f4d8ef97d6c00bdb1d1ea6369086417c9f26ae01823f2f31e907b"
+  },
+  {
+    "path": "novac/src/pipeline/prims_test.nv",
+    "size": 7924,
+    "sha256": "9c571a49c333f025fd0d403261d11bbab1e22fce6bc9de9345a277cc28f026c0"
+  },
+  {
+    "path": "novac/src/pipeline/print_end_test.nv",
+    "size": 2095,
+    "sha256": "9b2f9aa7eb4908354e091067b108a56bc8b02421333be28bd35df0a11d86a660"
+  },
+  {
+    "path": "novac/src/pipeline/program.nv",
+    "size": 14570,
+    "sha256": "9b847b22e7f9941d7eb443735297bec96159486a22072368b9fb5667606eeb39"
+  },
+  {
+    "path": "novac/src/pipeline/ptr_narrow_test.nv",
+    "size": 1767,
+    "sha256": "024e4ed23984ff44b35e6f8f655a80078feae2dd3d55d97c397d514eabad74ae"
+  },
+  {
+    "path": "novac/src/pipeline/refusal_test.nv",
+    "size": 9408,
+    "sha256": "5a0a57cdb7d4455138810671b1c8e6637652fa77c00ce6ad2af25bc5c9a951ec"
+  },
+  {
+    "path": "novac/src/pipeline/return_pos_test.nv",
+    "size": 4913,
+    "sha256": "3f39cd27802da6a95c2eed23dea36a859d77761d5ae332971263ecce24efd723"
+  },
+  {
+    "path": "novac/src/pipeline/return_test.nv",
+    "size": 9833,
+    "sha256": "45701ef24d95f9c1ab24d58e2452153672d0ee8a2382f5c4a66076e24fe70cb2"
+  },
+  {
+    "path": "novac/src/pipeline/self_ctor_test.nv",
+    "size": 4522,
+    "sha256": "e2b5d8a3adc64620c6115ea38b6b16e37d77b1dd1334bfdc98597deb47430fd5"
+  },
+  {
+    "path": "novac/src/pipeline/shell_overload_test.nv",
+    "size": 5130,
+    "sha256": "8d3da615d67a9cf7aab306c1451cd9d20fac7ae14f56e2b6de4dc1599e9f63ca"
+  },
+  {
+    "path": "novac/src/pipeline/shell_stub_test.nv",
+    "size": 1972,
+    "sha256": "74513ce80284b0a4c2434f55727cce0af0d1168d42edc5ab52cef0272471b491"
+  },
+  {
+    "path": "novac/src/pipeline/slice_eq_test.nv",
+    "size": 2110,
+    "sha256": "d02db4309c2f002f956ecc021978ec64984af927af85a74e657644215cae43a2"
+  },
+  {
+    "path": "novac/src/pipeline/static_args_test.nv",
+    "size": 4604,
+    "sha256": "61b5afce65f51ec9ee4d2d1b2f677ba1af46f2289763089e87723a5d0b0b847d"
+  },
+  {
+    "path": "novac/src/pipeline/str_ordering_test.nv",
+    "size": 1210,
+    "sha256": "bffe6d970486c9782da6100275a490a56b1926e2b1b4df17f46194a68ea305ed"
+  },
+  {
+    "path": "novac/src/pipeline/subset_pattern_test.nv",
+    "size": 27384,
+    "sha256": "f815b8b9287af63cffa2b4d3eb4e521924ffc1a181562a48778886bab6212d8c"
+  },
+  {
+    "path": "novac/src/pipeline/subset_test.nv",
+    "size": 40099,
+    "sha256": "ac86876a7978adbf8300b8da2b89c9ed1f478898f0c8b8a0c96f4f163a0bcc8f"
+  },
+  {
+    "path": "novac/src/pipeline/target_row_test.nv",
+    "size": 4691,
+    "sha256": "90a7ee34a6f7da41b7c09ad16ef0b15f0ab15d02803b10db1a4491fbd2205f20"
+  },
+  {
+    "path": "novac/src/pipeline/try_test.nv",
+    "size": 5392,
+    "sha256": "c967456ad3e90bafdc6b00be73c64623515af21accacd802345022b6644f3019"
+  },
+  {
+    "path": "novac/src/pipeline/typeref_test.nv",
+    "size": 8029,
+    "sha256": "f4d376b4acc7a2ad28c51ca87b928c3e9e029795b23f532c4ab1e9a499ffd3c0"
+  },
+  {
+    "path": "novac/src/pipeline/unit_test.nv",
+    "size": 10850,
+    "sha256": "bac9fc72662e486fd810ccb643a4c10a016f92af1638d518b5c78f5358a3f3f1"
+  },
+  {
+    "path": "novac/src/pipeline/value_recv_test.nv",
+    "size": 6561,
+    "sha256": "eb67df24228989b3fb04c1cace66a2cee554baed2cc92ffea3023304e8160c0f"
+  },
+  {
+    "path": "novac/src/pipeline/variants_test.nv",
+    "size": 3735,
+    "sha256": "f8facee0acd6af5e2fedec7f19ba10907ea4f1187d86163eef3b2bb3cbad18ca"
+  },
+  {
+    "path": "novac/src/pipeline/with_test.nv",
+    "size": 33362,
+    "sha256": "996673c315cca971adec61358637a4ee7e4b61b45123fbc7f839a65d02932185"
+  },
+  {
+    "path": "novac/src/resolve/resolve.nv",
+    "size": 47680,
+    "sha256": "49a4f2c38342ba90b98bb19b3b2b080b7d986579a752c7bb33793cac73ab224c"
+  },
+  {
+    "path": "novac/src/resolve/resolve_test.nv",
+    "size": 10065,
+    "sha256": "306deed3ba552ee8c590187e1e786421486ed9f7f0b8e11e0857a8abe61644ff"
+  },
+  {
+    "path": "novac/src/sem/any_is.nv",
+    "size": 3545,
+    "sha256": "16e8bacc4e11299cfb62f82f3b86722796dbfef95249ecc7a1a43662b00363eb"
+  },
+  {
+    "path": "novac/src/sem/binding.nv",
+    "size": 26256,
+    "sha256": "47f7a4463b7ed3a0d11f30fc7acb098f9e16afa2353f46529e71a43ae7015407"
+  },
+  {
+    "path": "novac/src/sem/binding_test.nv",
+    "size": 9510,
+    "sha256": "e5970b7059a7135fa91e1f7a0fed482ac9c095685e0b866adfb344623ab61aac"
+  },
+  {
+    "path": "novac/src/sem/callables.nv",
+    "size": 35431,
+    "sha256": "bb92fbc00c904eb23859e127f1aa13ea59897374627867c3ef6e18dabf999a32"
+  },
+  {
+    "path": "novac/src/sem/channel.nv",
+    "size": 49666,
+    "sha256": "941b78e7b7f289f6ce98788eac4ce4238bd75355759043ec0304ef05d55a079e"
+  },
+  {
+    "path": "novac/src/sem/coerce.nv",
+    "size": 20797,
+    "sha256": "1c1ccb0e5e4872507e93fe2b39ccc82430ce83ee4ad37ef5ebbcbcd49c99975e"
+  },
+  {
+    "path": "novac/src/sem/collect.nv",
+    "size": 53020,
+    "sha256": "42790d53b72ee12849875b2dea7ad1e9b4d23103b50bdc1cbb3fec148c06b36b"
+  },
+  {
+    "path": "novac/src/sem/constexpr.nv",
+    "size": 13162,
+    "sha256": "f6038be4bbbc3f4c03b8ebf78c5723ae5cf151f1e9873c5dad50e86ad5d0ff10"
+  },
+  {
+    "path": "novac/src/sem/defs.nv",
+    "size": 17778,
+    "sha256": "ad56d220abbbd1f77186617f56285175511ff4b498892ca235b7917c7f6fbb08"
+  },
+  {
+    "path": "novac/src/sem/effects.nv",
+    "size": 9866,
+    "sha256": "f4ffd2e8f727a3b4c11f6daa03ac5d64edab5d3aaaec0ff017d4c30d39036f89"
+  },
+  {
+    "path": "novac/src/sem/embeds.nv",
+    "size": 8888,
+    "sha256": "fe84cd8201fd8c44bde3483822627e4270cb7275e731114e0f89896507a24f10"
+  },
+  {
+    "path": "novac/src/sem/file_shape.nv",
+    "size": 6393,
+    "sha256": "ba0b341c55e7a96d20331bd8ba458dd6f20fcf5cff15299e9e4cb0baa4b81e52"
+  },
+  {
+    "path": "novac/src/sem/handed_bodies.nv",
+    "size": 14454,
+    "sha256": "c46451d016c5f0d227275265f4b491501006b65c07c2b03275f8e49a849c5bb8"
+  },
+  {
+    "path": "novac/src/sem/handed_fields.nv",
+    "size": 7683,
+    "sha256": "d1a2a300bf9d248127437e60c2e41246cdd5cd1e6bd72c12160b5744e1827991"
+  },
+  {
+    "path": "novac/src/sem/harvest.nv",
+    "size": 48999,
+    "sha256": "ccee2f4c5c7b411c3c3c11d60aca4533cd3b3c73b95515bcc10e45b3c93436cf"
+  },
+  {
+    "path": "novac/src/sem/interop.nv",
+    "size": 11902,
+    "sha256": "923cab43be29f92127a6d457c83084758948838d3148231ee0618f5f31f7d8f8"
+  },
+  {
+    "path": "novac/src/sem/literal_spelling.nv",
+    "size": 13368,
+    "sha256": "ea131e9fa5a97b05819cb76dc09ca10758b23c0684a8a9f073acccd709a1bcd7"
+  },
+  {
+    "path": "novac/src/sem/litpool.nv",
+    "size": 2598,
+    "sha256": "db6e444aa12f9fb34dff848be871d269caaa4c5fa8048cd1c30f52a865d3000b"
+  },
+  {
+    "path": "novac/src/sem/mangle.nv",
+    "size": 48658,
+    "sha256": "95682b78c4f399aaac5cc2822a56209769e612aabef5e0a211b18440f80e9719"
+  },
+  {
+    "path": "novac/src/sem/mangle_home.nv",
+    "size": 7900,
+    "sha256": "e0584791397e67bb992bb07b7ca7d94dc0ade948556269f8b0cdadb3bb5140e7"
+  },
+  {
+    "path": "novac/src/sem/mangle_instance.nv",
+    "size": 23990,
+    "sha256": "9df925ba5e9dd8e8452aa05850c918a3c51868195aebca60ad6b75d4f89bfbad"
+  },
+  {
+    "path": "novac/src/sem/mangle_spelling.nv",
+    "size": 9450,
+    "sha256": "b4c604dbaeb0d2352366c0d2c89aeab9d203bf09b4a02454a87016e92cced092"
+  },
+  {
+    "path": "novac/src/sem/mangle_test.nv",
+    "size": 14116,
+    "sha256": "963500f09c43f7678b670e8c92a40748074e88f7c19cf313f5991ea7804f7ee1"
+  },
+  {
+    "path": "novac/src/sem/node_questions.nv",
+    "size": 13481,
+    "sha256": "d2bc6304f012f07a1b261e36271d3f3c1d7e63b71f7c0a99a96990acedef9705"
+  },
+  {
+    "path": "novac/src/sem/pattern.nv",
+    "size": 12599,
+    "sha256": "501924b1cb4cd26810d5999d5610f47d6ccdd32b503c25ec00bfe6c8a57adbeb"
+  },
+  {
+    "path": "novac/src/sem/protocols.nv",
+    "size": 10416,
+    "sha256": "9e6d62825af039cdac033db6b5f3aa03a3d79ed32d6cb262175363889f1496c9"
+  },
+  {
+    "path": "novac/src/sem/sem.nv",
+    "size": 40057,
+    "sha256": "17b79a403707c492a75eae3c343c42566b05d7b3c4067b358c291fde34448490"
+  },
+  {
+    "path": "novac/src/sem/slice.nv",
+    "size": 4024,
+    "sha256": "6926e17ee5b658a9776be4d054f3481a3229d0fdf50f3a1354b03f9228d564d7"
+  },
+  {
+    "path": "novac/src/sem/slots.nv",
+    "size": 27612,
+    "sha256": "f0ec7abf565a68610d6e676e08f007cd5e1f9be14b02ff8c43dcd7cd815bfebc"
+  },
+  {
+    "path": "novac/src/sem/slots_decl.nv",
+    "size": 24571,
+    "sha256": "0fd0538ff323122b9d90d0be24a84af8c8a6e8494cbeb5e0cf7b1b2d049c187d"
+  },
+  {
+    "path": "novac/src/sem/type_shape.nv",
+    "size": 15033,
+    "sha256": "ea5093c23a03993da6545addce340cddf55996c390646609052e4d43e805dee5"
+  },
+  {
+    "path": "novac/src/sem/typeref.nv",
+    "size": 30370,
+    "sha256": "581914449f8e40ee672b228da2a0ab9aa0be7a169d257bd0b6288be01ae3971d"
+  },
+  {
+    "path": "novac/src/sem/value_recv.nv",
+    "size": 10220,
+    "sha256": "ee5b845f9ac77210d07e29283ee7a04aaa679e87918519ca44b0bd583bf9b83a"
+  },
+  {
+    "path": "novac/src/source/source.nv",
+    "size": 3678,
+    "sha256": "8ea43424c37e1420a37874fa74c03ce384abae6dde914d1586c1eedacaf4fc87"
+  },
+  {
+    "path": "novac/src/source/source_test.nv",
+    "size": 1184,
+    "sha256": "f5e1d16372b91471e9f0fc486233e71934badcc4cea9a3ad13c72f026072ac5a"
+  },
+  {
+    "path": "novac/src/tree/tree.nv",
+    "size": 22241,
+    "sha256": "47ddb11c0de2a71365e2c3ea1fe5b41f916480f86f23c3995f81d86b248f659e"
+  },
+  {
+    "path": "novac/src/types/types.nv",
+    "size": 27537,
+    "sha256": "1cb9f04079ea937df136d1395b685841fcf2ac141b556e85c726f35d4e232764"
+  },
+  {
+    "path": "novac/src/types/types_test.nv",
+    "size": 6129,
+    "sha256": "a04f97fd6ace930ea238ab6c20d77139a107b12d2cd45bfd0a35a2e7473c7707"
+  },
+  {
+    "path": "std/src/STATUS.md",
+    "size": 23830,
+    "sha256": "75d3d9608ba2187f21e58e02c07ae34dac281db2402ecae8809bfbbfb2c31a15"
+  },
+  {
+    "path": "std/src/_experimental/STATUS.md",
+    "size": 18070,
+    "sha256": "ebf069a759ce3dd582f3586e56e11227138e432d978c7f6b8c614ee9e59e4d70"
+  },
+  {
+    "path": "std/src/_experimental/_fixture.toml",
+    "size": 173,
+    "sha256": "380cb2ebf218822ad23831bc50f95c02e413d2004742007f2df800992e0ca0bb"
+  },
+  {
+    "path": "std/src/_experimental/crypto/insecure_demo_kdf.nv",
+    "size": 15796,
+    "sha256": "27b1d86e46ded7253497455c149f25c211d4c76e66e37e038a0032e15c2d9483"
+  },
+  {
+    "path": "std/src/_experimental/crypto/insecure_demo_kdf_test.nv",
+    "size": 3278,
+    "sha256": "a90d2612befa0c212c7de101231ccb2be570c4fd6f586a5405d38e9c3063537d"
+  },
+  {
+    "path": "std/src/bench.nv",
+    "size": 5639,
+    "sha256": "06cecfcdda6598b5a1446552c3ba4b81c0932c35d8bed7e19a9198159793870e"
+  },
+  {
+    "path": "std/src/checksums/adler32.nv",
+    "size": 2796,
+    "sha256": "5e724209b9b18ba7d99ceb68b39125c9630e48ffb3d9ab2ea1b6d34eaee576d2"
+  },
+  {
+    "path": "std/src/checksums/adler32_test.nv",
+    "size": 1878,
+    "sha256": "e7144c8810371947db5c219759f708e042929ca30b105a2a3bd4e03c420d58c8"
+  },
+  {
+    "path": "std/src/checksums/crc32.nv",
+    "size": 4440,
+    "sha256": "04c6c3f24e950fe8ac7666ec99abe3b5071adf313a0b023d8565a8369b00c389"
+  },
+  {
+    "path": "std/src/checksums/crc32_test.nv",
+    "size": 2315,
+    "sha256": "18d13482d1cd50cccabc2fc021503cf2244d2e3a9b78c6428a754974159095e1"
+  },
+  {
+    "path": "std/src/checksums/fnv.nv",
+    "size": 3133,
+    "sha256": "058cc10f048857650ee7e2183297743e372a7807723c8d19169a9ea4b91ad3c8"
+  },
+  {
+    "path": "std/src/checksums/fnv_test.nv",
+    "size": 1916,
+    "sha256": "4243ccf6ab72b3af288fd13b1613fb011e8e296b8305244e565d45a26dd2a0d1"
+  },
+  {
+    "path": "std/src/collections/bloom_filter.nv",
+    "size": 6646,
+    "sha256": "e7a2d253494808858ef3bb23e959f083fdfc41837d23f8db34913fc366c20141"
+  },
+  {
+    "path": "std/src/collections/bloom_filter_test.nv",
+    "size": 1402,
+    "sha256": "8a89d2ead7465a4cc0597e43569eb4a8d3cf3a3cb4496ecc0263b4fc4ee5f31c"
+  },
+  {
+    "path": "std/src/collections/deque.nv",
+    "size": 3086,
+    "sha256": "39bb81d418d84c86065615e16cdcc31bfcc89376606f9e7e3fd111bce8744231"
+  },
+  {
+    "path": "std/src/collections/deque_test.nv",
+    "size": 1642,
+    "sha256": "2bc930f970f8fce3e26dff87ecfdc8854032bb4332cba762597ad85666e4ed47"
+  },
+  {
+    "path": "std/src/collections/hash_map/core.nv",
+    "size": 27566,
+    "sha256": "a1c01879151a1a5cbd73ae3b46f1f4c3bb8d507a2a998bfa6b56d2361390985a"
+  },
+  {
+    "path": "std/src/collections/hash_map/core_test.nv",
+    "size": 6083,
+    "sha256": "88670f5795ea754ca784cf87b61f408f500cd66765f2d53f2014c39583222455"
+  },
+  {
+    "path": "std/src/collections/index_map/core.nv",
+    "size": 13767,
+    "sha256": "2535fa3c5aaad2c347b701365fd5a1033920a8300c3c0aef385416f824f922ef"
+  },
+  {
+    "path": "std/src/collections/index_map/index_map_test.nv",
+    "size": 9164,
+    "sha256": "42c9f4148a046cac158708f2f096afa1bd01c1afa9ad839332bb80cef46d7312"
+  },
+  {
+    "path": "std/src/collections/linkedlist.nv",
+    "size": 8880,
+    "sha256": "1c4fab9e78d1e07e565262425b0a7edc475b7cdbede754b4431c36838e7529b2"
+  },
+  {
+    "path": "std/src/collections/linkedlist_test.nv",
+    "size": 3648,
+    "sha256": "10acf0585e81719e5f7da719fb5928a4b0652ebecac1fbdd075231e407f60c28"
+  },
+  {
+    "path": "std/src/collections/lru.nv",
+    "size": 3124,
+    "sha256": "ad244c3e0416e31d5c6916a7e303615da43e39fec412484cda13b98c572a6f6d"
+  },
+  {
+    "path": "std/src/collections/lru_test.nv",
+    "size": 1305,
+    "sha256": "c9842f3b58f9f187dc58d1560e14976c6b6470e5d34aaed51a266b640a7a87c1"
+  },
+  {
+    "path": "std/src/collections/priority_queue.nv",
+    "size": 3550,
+    "sha256": "7088a7b4127907304b754e0b9cdb6fb50039c06ff7153bd0d2cf9b154bfb3a7c"
+  },
+  {
+    "path": "std/src/collections/priority_queue_test.nv",
+    "size": 1364,
+    "sha256": "caadfc63b2434b696b236e8280190bdc50980aab562e45f579051c453ff36af6"
+  },
+  {
+    "path": "std/src/collections/queue.nv",
+    "size": 6179,
+    "sha256": "378c690a46bbdd15988b6d2efb6026a62c11dfe313186885fd14419e4f54a3f7"
+  },
+  {
+    "path": "std/src/collections/queue_test.nv",
+    "size": 1234,
+    "sha256": "c62a4f085ae3caf94eb29f317f82af9770a7bb1f21a1c9bbf2a469cc46920ae5"
+  },
+  {
+    "path": "std/src/collections/range/core.nv",
+    "size": 8868,
+    "sha256": "e8304b6bda716255b34e9d92e13f96fea64af3677c4e640d36a8e96e87e5588b"
+  },
+  {
+    "path": "std/src/collections/range/core_test.nv",
+    "size": 7144,
+    "sha256": "dae8d59f0d012d3a4efcb2f686168e815a3a15ce65bffb0fa8f68ff4f020c65c"
+  },
+  {
+    "path": "std/src/collections/set/core.nv",
+    "size": 8324,
+    "sha256": "ac16152a5aed80ea8072cd982ebc07e80fafba3853ddd1d2608fb0967a520cb4"
+  },
+  {
+    "path": "std/src/collections/set/core_test.nv",
+    "size": 2298,
+    "sha256": "38160d3055a2ccde7881d8bd618820ec287aa5708397cf8aab9cd8ca932b2b75"
+  },
+  {
+    "path": "std/src/collections/vec/_module.nv",
+    "size": 1193,
+    "sha256": "bc554fb934b57d9ebea76bfa05db7ef4efeed14746699672073db79643d2760b"
+  },
+  {
+    "path": "std/src/collections/vec/access.nv",
+    "size": 14246,
+    "sha256": "d441bb782255b777e7ec1e61820762406943c165618ecffccebc50204e93f1e3"
+  },
+  {
+    "path": "std/src/collections/vec/access_test.nv",
+    "size": 543,
+    "sha256": "ad05ebea4964ab74cbae067a340c656ca16ac727daec7f8cf8fc22dbaaba48da"
+  },
+  {
+    "path": "std/src/collections/vec/core.nv",
+    "size": 19016,
+    "sha256": "992fa26fae9ddf9c427487313eab5f178aa7dff2a996c5fe03a4b4439838c545"
+  },
+  {
+    "path": "std/src/collections/vec/core_test.nv",
+    "size": 1797,
+    "sha256": "2187cccdf615cd8bce60b3c469935432b2e331ba2910135f4f4c9cf6763841c2"
+  },
+  {
+    "path": "std/src/collections/vec/iter.nv",
+    "size": 2372,
+    "sha256": "fa3609da8646ece1276a751e18904c3a1f942ae52ac9535947aeb17fa20bad0e"
+  },
+  {
+    "path": "std/src/collections/vec/mutate.nv",
+    "size": 23973,
+    "sha256": "83f7d0bca55bfef1f2606bbf32595f2aee89b0ca12c7105cc1f1634fc2d3fb49"
+  },
+  {
+    "path": "std/src/collections/vec/mutate_test.nv",
+    "size": 2617,
+    "sha256": "ae2d78dd1c5d2f04992ac58631ee1c852d1ec74009bbfa6cdee513b4d8c4c578"
+  },
+  {
+    "path": "std/src/collections/vec/neg/vec_of_empty_panic.nv",
+    "size": 516,
+    "sha256": "f7228f87e374eead0a72c767967fe1da7a11d649a6060071da6ead75a40d1e02"
+  },
+  {
+    "path": "std/src/collections/vec/protocols.nv",
+    "size": 9249,
+    "sha256": "39fe8ffb157befe3a3120df0626cf8d5af51332f51111e7c479483b5c516b327"
+  },
+  {
+    "path": "std/src/collections/vec/protocols_test.nv",
+    "size": 2236,
+    "sha256": "0a21b611355ecab297f1a16b3c9477e55964de7a69dccb377e6435c2968f5e24"
+  },
+  {
+    "path": "std/src/collections/vec/restructure.nv",
+    "size": 11878,
+    "sha256": "69724bf6bce136c3043b6626da99ccfdd7be502c8e1828e5732ad48fc083eeea"
+  },
+  {
+    "path": "std/src/collections/vec/restructure_test.nv",
+    "size": 2543,
+    "sha256": "2e6dd292f140974312de049767d6b1436841b77aa10af4ba3fef31e5afcf6cad"
+  },
+  {
+    "path": "std/src/collections/vec/slice.nv",
+    "size": 3624,
+    "sha256": "d38d85090d146c7da17051e6974bf201dbb67eea8c6e436c340b9f73b70f20b0"
+  },
+  {
+    "path": "std/src/collections/vec/sort.nv",
+    "size": 15293,
+    "sha256": "fc776ec26eb98040ab73ff824e22cdca4ade82100fb8dadd2e5a745588692b55"
+  },
+  {
+    "path": "std/src/collections/vec/views.nv",
+    "size": 8631,
+    "sha256": "a5e16771e89801285fef8b6200c2f0b50e73569a26762c9fc688f8ace1d07618"
+  },
+  {
+    "path": "std/src/collections/vec/views_test.nv",
+    "size": 2607,
+    "sha256": "ec6235ffe1d64fe2a67f35ccfe6ac67f9870982fd0e3c7af3cfb366eceffa112"
+  },
+  {
+    "path": "std/src/collections/vec_iter/core.nv",
+    "size": 41141,
+    "sha256": "f922a92f387f23053a1b63c1a91fccfe9ad7ebd299fc70fe48068a3fc11928f4"
+  },
+  {
+    "path": "std/src/collections/vec_iter/core_test.nv",
+    "size": 15042,
+    "sha256": "19f51e3a667079edcd9c51566de2c5c75aed422edf694439dbdf26c1a20f6b6e"
+  },
+  {
+    "path": "std/src/collections/vec_lazy/core.nv",
+    "size": 25108,
+    "sha256": "76fd1e39cd0ae6cfbf0c4d2e21c4aa5344def4bb954a1b5cdaf928e4caae0036"
+  },
+  {
+    "path": "std/src/collections/vec_lazy/core_test.nv",
+    "size": 4726,
+    "sha256": "10096fc6f62bda2345745197e282fd2018cad246caaaf811ddb97d4230797710"
+  },
+  {
+    "path": "std/src/collections/vec_seq/core.nv",
+    "size": 4397,
+    "sha256": "e62cc9c97c033b45f930c4a3ab8f53825ac2c8f6d61bc4be10ee8bcf02084a97"
+  },
+  {
+    "path": "std/src/collections/vec_seq/core_test.nv",
+    "size": 2530,
+    "sha256": "a2baefd887099e582b00f5f7cf43bc80896cf2937a5d865244be2cd6392c69b3"
+  },
+  {
+    "path": "std/src/concurrency/cancellation.nv",
+    "size": 5458,
+    "sha256": "8197ff31b82cc00a8e9c8770102dc7d110bb507e1c4b292a027e2aba50909db1"
+  },
+  {
+    "path": "std/src/concurrency/nvchan.nv",
+    "size": 13521,
+    "sha256": "b6bfd6eb78d296923ae812627a1d11537855c9a7e767aad97266354e7e1b309b"
+  },
+  {
+    "path": "std/src/concurrency/nvchan_test.nv",
+    "size": 8684,
+    "sha256": "bf6710f45d92cc513b670b351ee39edde5edf42f80dbc484803d6bdae771c549"
+  },
+  {
+    "path": "std/src/concurrency/rate_limiter.nv",
+    "size": 4187,
+    "sha256": "4209896eda1097e4bd8832f56f7222379767968dd1a3acd2287cb78148f0ffdc"
+  },
+  {
+    "path": "std/src/concurrency/rate_limiter_test.nv",
+    "size": 3927,
+    "sha256": "c197f606ca3a9ed404b42e4769d9611d0914e94fe28dc49291b740695f692200"
+  },
+  {
+    "path": "std/src/concurrency/retry.nv",
+    "size": 7290,
+    "sha256": "18edcf403dfe76875b7313334018c6461b6b714ceadf6a6ef8175713c6795a18"
+  },
+  {
+    "path": "std/src/concurrency/retry_test.nv",
+    "size": 4368,
+    "sha256": "a9d78bbeb0f040a6a180b1251a553a90a72def8772935de6f8fafe3c692a3b43"
+  },
+  {
+    "path": "std/src/concurrency/supervised_cancel_direct_body_test.nv",
+    "size": 21916,
+    "sha256": "6930b844a6408c11cb269af7895d4678c03d7de644de1044a0068ad2fce629fd"
+  },
+  {
+    "path": "std/src/concurrency/supervised_cancel_outcome_test.nv",
+    "size": 5634,
+    "sha256": "8379651931272295770d5049fc17b62278e2730a6cfce740f920a6f9184f789b"
+  },
+  {
+    "path": "std/src/concurrency/supervised_deadline_test.nv",
+    "size": 9648,
+    "sha256": "8bb782983ddc3278ad8a631ea07e0ea978f229ae6efd5746b6a96d8a65f2d45d"
+  },
+  {
+    "path": "std/src/concurrency/supervised_on_timeout_test.nv",
+    "size": 4574,
+    "sha256": "0160d98967bc44e27e2b3212f5c4fb7297573a60f3ee7b4acfc2f02b20dfb248"
+  },
+  {
+    "path": "std/src/concurrency/supervised_timeout_nested_spawn_test.nv",
+    "size": 4099,
+    "sha256": "eef2aec09be78d3942cefb3dafc2c299a96000a5b71bac0976789cdf1c3cca4f"
+  },
+  {
+    "path": "std/src/concurrency/supervisor.nv",
+    "size": 2277,
+    "sha256": "53d7b4af7e8c63dc0eb174e057398947d4d9a99b381bf8f79f79cb2611bba090"
+  },
+  {
+    "path": "std/src/concurrency/supervisor_test.nv",
+    "size": 1966,
+    "sha256": "4fd1f03b126d0a772a800eb8292e29445b2aa8c605447795dc0118627416adbb"
+  },
+  {
+    "path": "std/src/concurrency/timer.nv",
+    "size": 5303,
+    "sha256": "9b9dfbb5c30f52226138d7a5ed9b0ccd400195a960474e67e00c56b26d8ed592"
+  },
+  {
+    "path": "std/src/crypto/hmac.nv",
+    "size": 4846,
+    "sha256": "8f0d072191d2bf7937bd70320fe3059b046423453102bab7d8b1255b6d39e5fe"
+  },
+  {
+    "path": "std/src/crypto/hmac_test.nv",
+    "size": 2899,
+    "sha256": "6b9f5eebacde29f3c1cb515ea8830f77c57c33e3698a1db79594a9c0299fddfc"
+  },
+  {
+    "path": "std/src/crypto/jwt.nv",
+    "size": 5849,
+    "sha256": "8b32c7d9cfb051093c4699bb707e094d424e05e2dac894a492afe4229ca43893"
+  },
+  {
+    "path": "std/src/crypto/jwt_test.nv",
+    "size": 3120,
+    "sha256": "9dc607ec170ff605799f0d6b755c959baa4f1f400ead663376e3c7f3144895b3"
+  },
+  {
+    "path": "std/src/crypto/md5.nv",
+    "size": 10479,
+    "sha256": "cd3d6712e88a6410b1f65ae253f536b78729c60c3c7a1e046f6cb6deaff4d723"
+  },
+  {
+    "path": "std/src/crypto/md5_test.nv",
+    "size": 1324,
+    "sha256": "de06cfc6796c131f467cf8ed3a44413423e258471d5e5cb9e563c05210cfbd00"
+  },
+  {
+    "path": "std/src/crypto/sha1.nv",
+    "size": 5229,
+    "sha256": "deddf31ad53fa5e3dc4e367ab3f31eaf7dcad7b712bf01762e3471c8a9e1a986"
+  },
+  {
+    "path": "std/src/crypto/sha1_test.nv",
+    "size": 601,
+    "sha256": "f1cde7c8d5ab84d6a19458e8bbec1d62ecf2d3f35debc3fd9d41ea04ffb04872"
+  },
+  {
+    "path": "std/src/crypto/sha256.nv",
+    "size": 9834,
+    "sha256": "78d6de68ee3eb4d0c9d3ff36d18ed293f14629fcc41f7b07127e8af244e91701"
+  },
+  {
+    "path": "std/src/crypto/sha256_test.nv",
+    "size": 1879,
+    "sha256": "8033313470d9fbbad916e889ccd133ab044515bcf5a6f3d1076fe9e37729cf33"
+  },
+  {
+    "path": "std/src/data/semver.nv",
+    "size": 18159,
+    "sha256": "587846e98283061665e96c4ca873b1d6358c7ee2ce947360b6dbc8232e674d49"
+  },
+  {
+    "path": "std/src/data/semver_range.nv",
+    "size": 5659,
+    "sha256": "7ca7613fba7a572b39997de674e678792413a321b11980d110fc0e7dbf6280cb"
+  },
+  {
+    "path": "std/src/data/semver_range_test.nv",
+    "size": 2139,
+    "sha256": "49a276dbe7ca91604f234f9050bb729120a2ccde5b543f15bf7c08ca22ed42df"
+  },
+  {
+    "path": "std/src/data/semver_test.nv",
+    "size": 7348,
+    "sha256": "659a200bb42a22bcba19c554db820f25a5016e6a8d94817c1a830cf7771b01d2"
+  },
+  {
+    "path": "std/src/data/sql.nv",
+    "size": 18797,
+    "sha256": "109d11540096f7f7b16d59d1de05b0a11731555203cbc4d2a6a4dd36a89ace03"
+  },
+  {
+    "path": "std/src/data/sql_test.nv",
+    "size": 9366,
+    "sha256": "d61d366bd187612810fe0a55d6ff2aafe2dbf69b550a5ecdb2b1258d5d3f1e74"
+  },
+  {
+    "path": "std/src/encoding/base64/core.nv",
+    "size": 12411,
+    "sha256": "45c7f4d5c17ee4810146c7687ee0a5b7216942ac0b8bae82f61d0882dd171c2d"
+  },
+  {
+    "path": "std/src/encoding/base64/core_test.nv",
+    "size": 4439,
+    "sha256": "d0d02322d9e2b22959fe53f5c060320f4abb668702c9a399533e253529e59145"
+  },
+  {
+    "path": "std/src/encoding/csv.nv",
+    "size": 5616,
+    "sha256": "556c1fb89e99e3da293844ed077efc426458ffd0a4437c7fd4fac43f91ff81b9"
+  },
+  {
+    "path": "std/src/encoding/csv_test.nv",
+    "size": 2133,
+    "sha256": "7e429f1e9dae83e93d1124b7f0a7e3da0673a315c2dea9e76e6bad98c4d6c12c"
+  },
+  {
+    "path": "std/src/encoding/hex.nv",
+    "size": 3657,
+    "sha256": "f0953ce7ccdf7e6c65c48a7bba985e73290a13f55613d44a27ad58d25aae1b03"
+  },
+  {
+    "path": "std/src/encoding/hex_test.nv",
+    "size": 2081,
+    "sha256": "8b32f7f2d4063dc237e66f4db9d6035f3d9ba563ffadaa8d6e363e6377f7773b"
+  },
+  {
+    "path": "std/src/encoding/ini.nv",
+    "size": 5803,
+    "sha256": "f0fa3d044894d9b3c42172cd0a697ef9a5ae6ac92a3612845b216d9d9558cd88"
+  },
+  {
+    "path": "std/src/encoding/ini_test.nv",
+    "size": 2149,
+    "sha256": "41d53f091367231fafea088dad2d6fd8b15584f3e46765b66868ae2650af76ad"
+  },
+  {
+    "path": "std/src/encoding/json.nv",
+    "size": 54573,
+    "sha256": "3c0a1e305cebccd124878c4a5a5b9a86b9970d1e6c3f11b45ab6bece0808ea68"
+  },
+  {
+    "path": "std/src/encoding/json_test.nv",
+    "size": 15201,
+    "sha256": "55ef629ff98b69c5b1b03250d0d011cba1afaaf115616e874609b14ccfd57928"
+  },
+  {
+    "path": "std/src/encoding/serde/decode_errors_test.nv",
+    "size": 2574,
+    "sha256": "6a39f9591e420c2c8c1a05009663c28e873be41797af56424aff0d69042879af"
+  },
+  {
+    "path": "std/src/encoding/serde/field_attrs_test.nv",
+    "size": 4290,
+    "sha256": "8bf35611402f8c9a968fe760c33c8e61f368c5af7e38fdb1c87e85db242b94d6"
+  },
+  {
+    "path": "std/src/encoding/serde/json.nv",
+    "size": 19138,
+    "sha256": "35f89df571fcec0cac50aa8ac58c901e2e8f586ba8745bef704780393813936f"
+  },
+  {
+    "path": "std/src/encoding/serde/manual_roundtrip_test.nv",
+    "size": 2778,
+    "sha256": "5c9dda9500c922adbf887ce2ca749c3875ecd72c25dd1cab89d752d3dcdcfa78"
+  },
+  {
+    "path": "std/src/encoding/serde/record_autoderive_ext_test.nv",
+    "size": 5211,
+    "sha256": "b8545cc770421a021275caa895b07eff2903f46ca669353504e71dfc109c2c82"
+  },
+  {
+    "path": "std/src/encoding/serde/record_autoderive_test.nv",
+    "size": 5371,
+    "sha256": "6e70aa05729bb9f332045d7fb03cc54be6b0fbcbfe007310de26d117504980a7"
+  },
+  {
+    "path": "std/src/encoding/serde/serde.nv",
+    "size": 19761,
+    "sha256": "bc47c9efe9d4c0d5c8936511b7c7d6e031a0a78b20eefc3422a7287c478a6fb0"
+  },
+  {
+    "path": "std/src/encoding/serde/sum_autoderive_test.nv",
+    "size": 2723,
+    "sha256": "044b97aeed6037890c53baf88349e501dfbd7c813ef713adb8783ca2d64a2d06"
+  },
+  {
+    "path": "std/src/encoding/serde/tagging_test.nv",
+    "size": 3526,
+    "sha256": "f8ead320a21a632ef551b71b18e0be84a6f225ffd22ee19b908f8830071cea50"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/attribute_misplaced_type_level.nv",
+    "size": 468,
+    "sha256": "9d5c241a53eca2b0e99c3f8882bfa666178e253bdab351014ba619137c17aeab"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/bad_attr.nv",
+    "size": 658,
+    "sha256": "33c56f96137283b9de98b6a9a65b59249483274108f255210acc694ddbdda0ce"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/conflict.nv",
+    "size": 358,
+    "sha256": "d885fa4b3260e760b416de80f779f25a990c62762133d73b00917fdbafdde6da"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/flatten_allow_unknown_gated.nv",
+    "size": 684,
+    "sha256": "4371dbc8144e0f41275cfac2f11b00a39ef8531f020e68ae0364c0c948daf966"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/flatten_deny_conflict.nv",
+    "size": 666,
+    "sha256": "87b01545930dd67bfec7143e02eb139094bb037286a3d7acf17f9393bf63a842"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/internal_tuple.nv",
+    "size": 376,
+    "sha256": "df1a4c86b17c1525988facb6d11286ead4c0df3514991a0aba264ca790996c4d"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/nonserializable.nv",
+    "size": 515,
+    "sha256": "57ec8d003d40248e5bcb4af15b52b0dce1f69639ac12175bc4bacc22b43a1a9b"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/on_record.nv",
+    "size": 344,
+    "sha256": "9ad859202a9c38c57943d11319a59c793a8eefbc9023e727dce7aa2093d86fa1"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/rename_all_on_sum.nv",
+    "size": 662,
+    "sha256": "9674f8c4c9e90b81df524e997b326287c55dcdd9666344013da7038360726986"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/skip_no_default.nv",
+    "size": 589,
+    "sha256": "90e1d864a26fe22341496e2ca1dac269d509815a4a8cf704d4aa995d0060006f"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/skip_rename_conflict.nv",
+    "size": 524,
+    "sha256": "8764afe30006776216b1b5ebe8879d48ff0b7631597961e3fa1305c99ec30f2b"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/unknown_field_policy_conflict.nv",
+    "size": 540,
+    "sha256": "baceb6290a95d4196f57fa5cd892b2d4186e5521d0c897464310f2e5b58f177a"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/unsupported_scalar.nv",
+    "size": 495,
+    "sha256": "c753d5de27a1548b328754510043fd3a78319f05633effb5fef9163497344cfe"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/untagged.nv",
+    "size": 499,
+    "sha256": "08a0528a52ea82aa038c1fc977d1d9594d025c80e01655c975f78b796508d89b"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/wire_name_collision_alias.nv",
+    "size": 483,
+    "sha256": "13d2243e51da4603b8fd5c7dd42f39d0731ab2d62cd0a1fd454bac48ffdc190f"
+  },
+  {
+    "path": "std/src/encoding/serde_neg/wire_name_collision_rename.nv",
+    "size": 547,
+    "sha256": "ee26632114a5bf0b77b34950aebd9e125a077792e28e782c5d83065be025b1c7"
+  },
+  {
+    "path": "std/src/encoding/toml.nv",
+    "size": 20029,
+    "sha256": "cdd56d0c131ed7d4c339458569f9f9c04e9daee0337551bd4c7ba2da2791bd8c"
+  },
+  {
+    "path": "std/src/encoding/toml_test.nv",
+    "size": 6813,
+    "sha256": "5f1a2a78388ee6de5382a95b2e9825de39d6fe26890ff1ff74bce4dcaba16ecf"
+  },
+  {
+    "path": "std/src/encoding/url.nv",
+    "size": 17502,
+    "sha256": "bbc615bbe42329ed3823fb06de7b3440fbcf9b941d3c6d57402a636099a6fef6"
+  },
+  {
+    "path": "std/src/encoding/url_test.nv",
+    "size": 3708,
+    "sha256": "05b2e49bb11f5126be1538a9f88c347f009622c4cf3fd1befe9b1e188073fa31"
+  },
+  {
+    "path": "std/src/encoding/utf16.nv",
+    "size": 5192,
+    "sha256": "2d0e7bb5634b25be17f4c28f7d45674baa2b8215fa3a5522704c42ea856792ce"
+  },
+  {
+    "path": "std/src/ffi/cstr.nv",
+    "size": 4019,
+    "sha256": "55dcc3c46fde7a3142477a871db49f4c7393fef31dff4650a6ec6db6f881e661"
+  },
+  {
+    "path": "std/src/fs/concurrent_stat_test.nv",
+    "size": 3431,
+    "sha256": "ee223135a8d566c985115be1444104c449ffd1d9f83026aae0344a8113e7fb37"
+  },
+  {
+    "path": "std/src/fs/d323_dir_ops_test.nv",
+    "size": 1436,
+    "sha256": "f35f6c9e9c6e4d47ee91b1f88523c817a0f69e25e381710c98e884d7b3828de9"
+  },
+  {
+    "path": "std/src/fs/d323_file_must_consume_test.nv",
+    "size": 1894,
+    "sha256": "8e53de3224165a7764658ec079a32cc409d55291447dae0cebcdb7066f4611b9"
+  },
+  {
+    "path": "std/src/fs/d323_mock_fs_rw_test.nv",
+    "size": 2992,
+    "sha256": "9921a7d174eb29d8345949db7b9532ee6f6083da46f9b0e92ca65df0ea63c139"
+  },
+  {
+    "path": "std/src/fs/d323_open_options_test.nv",
+    "size": 1476,
+    "sha256": "f4711852184e77205259f1bdbcddd8bb7f618d068750fbb1177333fa21cb6de0"
+  },
+  {
+    "path": "std/src/fs/d323_path_bytes_test.nv",
+    "size": 1517,
+    "sha256": "745778cfd4d4b7e4b525cb36d671e382e0d20c20eb56e9959ce678bc979a1610"
+  },
+  {
+    "path": "std/src/fs/d323_path_ops_test.nv",
+    "size": 4022,
+    "sha256": "ea25fb6c0aea9911c3295d30b984d859690eaeac649b619479eb1d32bf2c2db1"
+  },
+  {
+    "path": "std/src/fs/d323_real_fs_test.nv",
+    "size": 1919,
+    "sha256": "fc21e8e396c419e5d70f9592adb0ec8ad902c3d708d366a3f5fc97897cdb2569"
+  },
+  {
+    "path": "std/src/fs/d323_write_atomic_test.nv",
+    "size": 1825,
+    "sha256": "ddf6eef12d181b07e7fef8a39198ad81326e5ff6f176e05328a0c4e9526c60ec"
+  },
+  {
+    "path": "std/src/fs/effect.nv",
+    "size": 10278,
+    "sha256": "1d9a5e25877c048316924417da72394bc8783a38e1d74045d907c163972263fd"
+  },
+  {
+    "path": "std/src/fs/ffi.nv",
+    "size": 6353,
+    "sha256": "021838d0576cd3ec4dfe2e611d92aaa7a3b72a90078e05dc9ad2ec9ee9daec99"
+  },
+  {
+    "path": "std/src/fs/fs.nv",
+    "size": 30811,
+    "sha256": "73f6b0c2aad739f6858088e6efb59a5721a2b4d4fe0301970f30978c3113877c"
+  },
+  {
+    "path": "std/src/fs/mock.nv",
+    "size": 17205,
+    "sha256": "7ef02e303f0fde28c7629605dad9c7a06d44bfd172ff63045c5fa260191b6d2b"
+  },
+  {
+    "path": "std/src/fs/neg/d323_file_double_close_neg.nv",
+    "size": 423,
+    "sha256": "6fdd15ea3897eae38df4d9c2144de43a07655d62a310e2b3b3e83883bb79b283"
+  },
+  {
+    "path": "std/src/fs/neg/d323_file_not_consumed_neg.nv",
+    "size": 914,
+    "sha256": "e4b5c2ebdc028c3ba77d6b5bfaf283de69a1959fd9e496d9f999e222e0a55e26"
+  },
+  {
+    "path": "std/src/fs/neg/d323_file_use_after_close_neg.nv",
+    "size": 403,
+    "sha256": "2b98076481498789e23d940754650640441377c74e81bd1eb6fc50f19d8ffb80"
+  },
+  {
+    "path": "std/src/fs/path.nv",
+    "size": 15668,
+    "sha256": "cc750ba896c62982b615dd33d5165b2b19ec7d5c9dfd0b31ad27c5a69495d6b0"
+  },
+  {
+    "path": "std/src/fs/readfs.nv",
+    "size": 7457,
+    "sha256": "8c187448c4b294c893f2c1db34b43752a4609dc3bb687f1e2d946d6f69769457"
+  },
+  {
+    "path": "std/src/fs/readfs_test.nv",
+    "size": 6983,
+    "sha256": "c1b0ebab4cf6ed274bf12cd9bf2e2ea9d77440f0556c52ca1bf0b4ad97be1fa1"
+  },
+  {
+    "path": "std/src/identifiers/snowflake.nv",
+    "size": 4863,
+    "sha256": "b9445b97800cad89241c99a8cb0450b50c421bd4c11ccaff85b328b40915a7cf"
+  },
+  {
+    "path": "std/src/identifiers/snowflake_test.nv",
+    "size": 1796,
+    "sha256": "5973e7326c35e80d04190d10a43b22c01b10e4a16424128cf3c13cf243c823df"
+  },
+  {
+    "path": "std/src/identifiers/ulid.nv",
+    "size": 20343,
+    "sha256": "a5c7d0bc2d07d5208c538810ffc8fa80af263d297301d34f729d9a9e780ade4e"
+  },
+  {
+    "path": "std/src/identifiers/ulid_test.nv",
+    "size": 5563,
+    "sha256": "8700e91411162b3647cf9385032fb32f8bb56da419b6b15555d81b25373955df"
+  },
+  {
+    "path": "std/src/identifiers/uuid.nv",
+    "size": 18300,
+    "sha256": "7476611b9c8225e806be85df5976fa346f8a47f75703f860b4db1f09499cc8d7"
+  },
+  {
+    "path": "std/src/identifiers/uuid_namespace.nv",
+    "size": 3879,
+    "sha256": "099d22a3df60de1d89ff0ffd30b084b56d5122b5e53a13b8aac7c67b38210323"
+  },
+  {
+    "path": "std/src/identifiers/uuid_namespace_test.nv",
+    "size": 1408,
+    "sha256": "0742e8702aca0f510d20632095f8c65357f4b0584c3baa56697f60c53086be36"
+  },
+  {
+    "path": "std/src/identifiers/uuid_test.nv",
+    "size": 5016,
+    "sha256": "a8b5686cc43ae4cd1f6fd70cb713f8ca698ade75d4a84a23851687f4f2859437"
+  },
+  {
+    "path": "std/src/io/buffered.nv",
+    "size": 6536,
+    "sha256": "6e403f2061e45bbcefd8820d9e9f7c647a08d3ef82f1f814d316e0150ccb7d50"
+  },
+  {
+    "path": "std/src/io/console.nv",
+    "size": 7460,
+    "sha256": "c3367903997b0778a48cee3f629c5243bef5d86df9e5a1190552ca69caedff81"
+  },
+  {
+    "path": "std/src/io/core.nv",
+    "size": 10316,
+    "sha256": "89eeb3bbf386ce605f1fe5adc5d4b87f2a8894e6485863fe750f641d76c3741c"
+  },
+  {
+    "path": "std/src/io/d322_buffered_test.nv",
+    "size": 1837,
+    "sha256": "d21013e7d833eeb1ae6c6da6ec083a77c1608eb9cbb99a584da4cd20bd6f83fd"
+  },
+  {
+    "path": "std/src/io/d322_io_mock_test.nv",
+    "size": 1746,
+    "sha256": "c6f7918640480743ed844777b00ccc415e8a02d296d5cbf19b543931bac3f33b"
+  },
+  {
+    "path": "std/src/io/d322_io_read_write_seek_test.nv",
+    "size": 2008,
+    "sha256": "6834004e738043a1d919c5615c99404e37eaf4b8bc3562d7c7077ab6ab3f4de2"
+  },
+  {
+    "path": "std/src/io/d322_lines_test.nv",
+    "size": 1380,
+    "sha256": "1f413bb37644ef078993620617e7afdaa332abf97d0df7b7cb28f9447d4d275c"
+  },
+  {
+    "path": "std/src/io/d322_protocols_helpers_test.nv",
+    "size": 2941,
+    "sha256": "1f3ac8aec827224411aaa7d8680c8fc78d78a72d8f6d78a791b6f0cb87b63e99"
+  },
+  {
+    "path": "std/src/io/error.nv",
+    "size": 7557,
+    "sha256": "739b18a215b5ed4c1e916906de7c6d634da637b0291bd92285e3a852b20494ec"
+  },
+  {
+    "path": "std/src/io/mem.nv",
+    "size": 3394,
+    "sha256": "7696457bcfbb1fa7c8392797ae222e5e3bbbdf58b9b1aec464b779f691360bcf"
+  },
+  {
+    "path": "std/src/io/neg/d322_bufwriter_double_close_neg.nv",
+    "size": 374,
+    "sha256": "481cbe800bfebf3527783a1d662fc47153828f19f961dfe91dc458f38446ff19"
+  },
+  {
+    "path": "std/src/io/neg/d322_bufwriter_leak_neg.nv",
+    "size": 1445,
+    "sha256": "ed060bc2b5b23a6a0fdcf15557aae85dfeff26da5cde98706349762430cdb243"
+  },
+  {
+    "path": "std/src/io/wrapper_ctor_inference_test.nv",
+    "size": 1782,
+    "sha256": "aaffc7bc9dc925dbfda99855a7b40f516ae8bc96e6ed61b991febc228b277579"
+  },
+  {
+    "path": "std/src/math/complex.nv",
+    "size": 19807,
+    "sha256": "7bc786b1e246c0303ec352b1121c074e2ee3166007ce7d4c89394836b6b8e0a1"
+  },
+  {
+    "path": "std/src/math/complex_test.nv",
+    "size": 6541,
+    "sha256": "67bfd5c029f14fd7c668c711d79234f329c8ae8b359a9b4c66ca6dedb2aef7dc"
+  },
+  {
+    "path": "std/src/math/int128.nv",
+    "size": 23803,
+    "sha256": "64ad1af7b3aadd4da4ca3427df386d32c42e0cf2c71ffb1f3fbebf57826fb7d7"
+  },
+  {
+    "path": "std/src/math/int128_test.nv",
+    "size": 13728,
+    "sha256": "4f5eb3b0b45996dbdb0f5189ea95e4d9f89ac7ce5facf882f91438231c1104dd"
+  },
+  {
+    "path": "std/src/math/overflow_policy_test.nv",
+    "size": 21626,
+    "sha256": "b438be7e1a3e908edc2ee3c12f13eacd0f9fd5494d94360eb8f9caba42fda728"
+  },
+  {
+    "path": "std/src/math/statistics.nv",
+    "size": 6934,
+    "sha256": "541b2c58249e7d270b75fd82ee030cca75fcaaeac52b1a76a102555e3803055e"
+  },
+  {
+    "path": "std/src/math/statistics_test.nv",
+    "size": 2565,
+    "sha256": "2ac3b0826365619e847ab707d34f3f9bf72aebb9f485dd19ee6054c3f85aa417"
+  },
+  {
+    "path": "std/src/math/try_narrowing_test.nv",
+    "size": 9122,
+    "sha256": "2f450dee437d7b603b4a46bad1d0d5fbc41ef3cef290284d2c38a7f3aac1603f"
+  },
+  {
+    "path": "std/src/net/addr.nv",
+    "size": 7411,
+    "sha256": "dfd4a2e8fd4d413782b260597304a6bc361d53722acec404e8cf6b604dd99645"
+  },
+  {
+    "path": "std/src/net/addr_test.nv",
+    "size": 3253,
+    "sha256": "e38853ee6fb18d34a370ff4b4b7131068e6c009b231c24cac21c4efc29c93ec8"
+  },
+  {
+    "path": "std/src/net/byte_surface_test.nv",
+    "size": 3850,
+    "sha256": "37ae33a2483a30de614142003009fd13334645c389cf081b8c8c6962ca44d577"
+  },
+  {
+    "path": "std/src/net/d302_neterror_iokind_test.nv",
+    "size": 4909,
+    "sha256": "586c6f1d9a306de99d306e9f1a1060a2855b41408acef8fd40e47f164c924533"
+  },
+  {
+    "path": "std/src/net/d432_cleanup_rollout_test.nv",
+    "size": 7410,
+    "sha256": "baa6e8177b7bceb8407995e3e8b4468d744de1c7774fdd96e978feab313afacc"
+  },
+  {
+    "path": "std/src/net/dns.nv",
+    "size": 3212,
+    "sha256": "5ed0d08c52867ee7b224fa929be1ee22b3c0b11f59113f981de2e8ce0841d0c9"
+  },
+  {
+    "path": "std/src/net/dns_test.nv",
+    "size": 1655,
+    "sha256": "0f8c57e75a54d30bd30a34f9536484bf2e4a56cf3e3ad965257c46f5d0b11315"
+  },
+  {
+    "path": "std/src/net/effect.nv",
+    "size": 4413,
+    "sha256": "f8b510a0b7efe10f01baa5f1e04a87bc98935afe93c4886f1a283184aaf6953e"
+  },
+  {
+    "path": "std/src/net/error.nv",
+    "size": 6722,
+    "sha256": "b2dc8c2f78e49d645bc817e69d85a68f71ce88e0762f9a45909d8bd5ac2498b5"
+  },
+  {
+    "path": "std/src/net/error_test.nv",
+    "size": 2899,
+    "sha256": "97ae63ef9850d675d7da9c10288242d4c164e6ecfbc5275c5e7626f00d6d34dc"
+  },
+  {
+    "path": "std/src/net/ffi.nv",
+    "size": 5867,
+    "sha256": "56c9e14784a4cb5b9d98c938c65460b707c1e49316e2b360391750b3d233b1b5"
+  },
+  {
+    "path": "std/src/net/mock.nv",
+    "size": 4746,
+    "sha256": "e42fce6c7d52736d620a4ed9460107ec6efaecf86037e94c237c8904901b2672"
+  },
+  {
+    "path": "std/src/net/mock_test.nv",
+    "size": 3385,
+    "sha256": "8e8c2e34eda0d2bf44453c26d35148a21b905596bd94d1f96b9c092d5a910b28"
+  },
+  {
+    "path": "std/src/net/neg/double_close_neg.nv",
+    "size": 1049,
+    "sha256": "af02a104aae72236f875cda7051ce10d44fbf03ceb35e784ae544621804bf6c8"
+  },
+  {
+    "path": "std/src/net/neg/host_str_removed_neg.nv",
+    "size": 523,
+    "sha256": "112b772bb4b2369a4ea8cb13aa4b71778b739ead6fd458a7287ab2676a5f370c"
+  },
+  {
+    "path": "std/src/net/neg/split_after_use_neg.nv",
+    "size": 892,
+    "sha256": "5b33b14ca7379879c9f67907df2e15494c79a5455a862147e2925346d045ccb7"
+  },
+  {
+    "path": "std/src/net/pingpong_test.nv",
+    "size": 7539,
+    "sha256": "18323e756626da49a87988b8d0cedcf44f18d32a92eed38db9d706fffcc1bd0e"
+  },
+  {
+    "path": "std/src/net/split_test.nv",
+    "size": 10839,
+    "sha256": "383f422bce14de7f3f47763bc8faa1f13109e418b54af53133f80ae7cda32152"
+  },
+  {
+    "path": "std/src/net/stress_test.nv",
+    "size": 8417,
+    "sha256": "ce3b475e0c1cfada5456c73c2c1abbaad4b2503039a07906682d82e91075b323"
+  },
+  {
+    "path": "std/src/net/supervised_cancel_accept_test.nv",
+    "size": 6599,
+    "sha256": "0a48b94e01aed1aaac99344c03a11a926f1e57d0fb1ee6d063a284364ca784f3"
+  },
+  {
+    "path": "std/src/net/tcp.nv",
+    "size": 28279,
+    "sha256": "169de2bb2175abc1c3595b9a33eb4b517f7a870dc899b8dd6ddb0eeea788186b"
+  },
+  {
+    "path": "std/src/net/tcp_share_test.nv",
+    "size": 7562,
+    "sha256": "88dac84818059ae2e682fa3da0dd6f20b043f627249efa3892c7b64173269d4d"
+  },
+  {
+    "path": "std/src/net/tcp_test.nv",
+    "size": 8021,
+    "sha256": "66940c34e1a9f4953a1040d6213fe27e8bc5405badb9a5a4d9e59363e9db12cc"
+  },
+  {
+    "path": "std/src/net/udp.nv",
+    "size": 4686,
+    "sha256": "5c399b99a3c1498f77fa4e791e97be927ee56511c1af701e6f24e9e0ca844bf8"
+  },
+  {
+    "path": "std/src/net/udp_test.nv",
+    "size": 4810,
+    "sha256": "fb69922bfc3f7ebff4e354f4dd75574e489fee14e3960592d52b41e64bcb1f24"
+  },
+  {
+    "path": "std/src/net/write_all_test.nv",
+    "size": 814,
+    "sha256": "28668643d4693bf07a363656f649b3455ce6b043d57b6766cb19b50a45410c81"
+  },
+  {
+    "path": "std/src/os/d324_os_env_args_cwd_test.nv",
+    "size": 3650,
+    "sha256": "cc8cac808be2187ba0c03aea88a4f0dc68a6d3ee67d7aa1c4e7c52b6b6c8a3cc"
+  },
+  {
+    "path": "std/src/os/d324_os_mock_extras_test.nv",
+    "size": 2240,
+    "sha256": "0ab0c493c18fd69f41069b3b263dc31a97ffacc0b83dba449e05ba6d17b76c6e"
+  },
+  {
+    "path": "std/src/os/d324_real_os_test.nv",
+    "size": 1322,
+    "sha256": "f94f954e2505de0bd11d0393cc19d8cae9f926f3e572937f630f51497e550675"
+  },
+  {
+    "path": "std/src/os/d453_os_process_run_test.nv",
+    "size": 4388,
+    "sha256": "bc3a343828773325decd4807d4e5d112549f43aebd1876aeca938b206f27c271"
+  },
+  {
+    "path": "std/src/os/effect.nv",
+    "size": 3552,
+    "sha256": "8459cc5b3f8e2f1ff9587bd8437de0bbd1a65c1305ece7e83c1158678a00abc9"
+  },
+  {
+    "path": "std/src/os/ffi.nv",
+    "size": 4162,
+    "sha256": "33851ae2021d4234b8cd0f643b8401a00149a625426cb41d9029b35ee32cef89"
+  },
+  {
+    "path": "std/src/os/mock.nv",
+    "size": 9207,
+    "sha256": "7e61ffa6600a84977ec2bdc11cfb547a260553062b0e26ea9f6d2fda9d0a7566"
+  },
+  {
+    "path": "std/src/os/n1850_probe/env_bytes_str_literal_test.nv",
+    "size": 1786,
+    "sha256": "e0d64f7942c23669f66bd6055e80da561f3ce97d086634b83ed61f445835736f"
+  },
+  {
+    "path": "std/src/os/os.nv",
+    "size": 15613,
+    "sha256": "8b61cb06c04ca5407b2c979e74785134c491dab5689ce8fbc950d4ffffa9ea1e"
+  },
+  {
+    "path": "std/src/os/proc.nv",
+    "size": 25037,
+    "sha256": "043e3c8d8f00f7d4112604afb119611d6c3b426d8896c807b3efa9eb775b4933"
+  },
+  {
+    "path": "std/src/os/proc_control/proc_control_test.nv",
+    "size": 22219,
+    "sha256": "5d720057c0c490079bde9372d6b176e6a43166d50a9467f7954ce153e61a7adc"
+  },
+  {
+    "path": "std/src/os/proc_ffi.nv",
+    "size": 4129,
+    "sha256": "74c6c40ebae4ca468fd8b800c7872c479bc785dad812fd40a44efea2d9669e2f"
+  },
+  {
+    "path": "std/src/os/proc_streams/proc_streams_test.nv",
+    "size": 17826,
+    "sha256": "69142c4e6381177f596b2581ffbb4a087666cd32f29a199a5be72e9595c8945c"
+  },
+  {
+    "path": "std/src/os/pty.nv",
+    "size": 8668,
+    "sha256": "32ee7e552f0908bd0579f4253d384115d4bd50c6ffc19d99a01ef8c4bfd78cd5"
+  },
+  {
+    "path": "std/src/os/pty/pty_test.nv",
+    "size": 16550,
+    "sha256": "2093730f720c97e239ecdd6a38827debeb91964196af8a077631d1238db21b5e"
+  },
+  {
+    "path": "std/src/path/glob.nv",
+    "size": 4985,
+    "sha256": "cf37b12a007ffe90673e250d1841db6ec5cf6c1f82987038d5014421a1420ff5"
+  },
+  {
+    "path": "std/src/path/glob_test.nv",
+    "size": 1609,
+    "sha256": "de5ca2579dd4bf66ebc93019fda65add9934d7df13581a05c35e8f45c69049ca"
+  },
+  {
+    "path": "std/src/path/path.nv",
+    "size": 8132,
+    "sha256": "346187c2085d1d62d2927fe1b3774c5e7700af6e5436b4ffa24271158840005c"
+  },
+  {
+    "path": "std/src/path/path_test.nv",
+    "size": 1688,
+    "sha256": "5a35ffaff59b17c8226a01380bdb24e4091d915204ca5c306eeaca3751dd4405"
+  },
+  {
+    "path": "std/src/prelude.nv",
+    "size": 20208,
+    "sha256": "f384da27fa55d09bcee97862d6d0e75913acc80e7c7bb4718b72d4a07bf2e15d"
+  },
+  {
+    "path": "std/src/prelude/collections.nv",
+    "size": 12429,
+    "sha256": "46dc3ca9e6f11368dda5de81aba9dd63a0e272ad5b42a949d3a4d24a63b03149"
+  },
+  {
+    "path": "std/src/prelude/concurrency.nv",
+    "size": 7765,
+    "sha256": "b2fa8adbb43884130adfab9e2eec7bae60b7825bfb1bb3ca758dc7c96b72e7f6"
+  },
+  {
+    "path": "std/src/prelude/core.nv",
+    "size": 20514,
+    "sha256": "8d57082c73c59a30fef3af7a10e947d0d044ef330d9d3f4be17e808f1f94fa44"
+  },
+  {
+    "path": "std/src/prelude/e2026_05.nv",
+    "size": 3532,
+    "sha256": "17276f86fd48868c3379eed534f7ceac3f27851cd42e43201415ad5a3bbc4ed1"
+  },
+  {
+    "path": "std/src/prelude/effects.nv",
+    "size": 16967,
+    "sha256": "c565faa405a095c9a1050ea88e2f3d67ab81a36403e6c474c344d98b90d80f3f"
+  },
+  {
+    "path": "std/src/prelude/embed.nv",
+    "size": 7930,
+    "sha256": "0dac6481f96709172f5ee0eff0ebc743cfeb911686ec2c6cea69ede0944cd709"
+  },
+  {
+    "path": "std/src/prelude/embed_test.nv",
+    "size": 6332,
+    "sha256": "782d54b012d61f637f3464153a48bfdd3ff482b8c959941b1f63307e0ed81618"
+  },
+  {
+    "path": "std/src/prelude/errors.nv",
+    "size": 18310,
+    "sha256": "13b040daa62c2ec6c060de00f2f06ab0ed911842b575c2c3d699da632882f83b"
+  },
+  {
+    "path": "std/src/prelude/protocols.nv",
+    "size": 45650,
+    "sha256": "2c2c5ea3e209a4d1cb02c318919f2716b29bcb97b598f858d7b4228072af0f5c"
+  },
+  {
+    "path": "std/src/prelude/runtime.nv",
+    "size": 5839,
+    "sha256": "50bc5020a5748199fb5f94c9bef2d447341bce18b3185069f0dc084ade235397"
+  },
+  {
+    "path": "std/src/reflect.nv",
+    "size": 7183,
+    "sha256": "73ab1fef753a5bf56a8fa0219f963df692f54e47ea2c22a7bb4fd1dcad184382"
+  },
+  {
+    "path": "std/src/reflect_test.nv",
+    "size": 4628,
+    "sha256": "d43e154627d39529c1c05b73b5588e30f59d6f64375935e68679e6582f236b56"
+  },
+  {
+    "path": "std/src/runtime/char.nv",
+    "size": 3992,
+    "sha256": "7832b3c9cc1ca49855514896d9fb54c5dccf1c0c19fcd7c8e23d3f7912b417d8"
+  },
+  {
+    "path": "std/src/runtime/char_test.nv",
+    "size": 5393,
+    "sha256": "c60769112b53c9ce4faedb386a6fba20961d7f7a6668b31bcb19ade1bf41cc94"
+  },
+  {
+    "path": "std/src/runtime/decimal/core.nv",
+    "size": 26288,
+    "sha256": "2f7a170ddee68348940e4245e345d9a7515721a6e0468c557b2460947240bce7"
+  },
+  {
+    "path": "std/src/runtime/decimal/core_test.nv",
+    "size": 2881,
+    "sha256": "3e2d1af98df110d9bdf40249d586ee313be97f3de3739b17f8a42512ee0d5f19"
+  },
+  {
+    "path": "std/src/runtime/defaults.nv",
+    "size": 10115,
+    "sha256": "f6b3749e33d8d9c9f0d6c502af263a4d556623a709985f878db0d3e29f8d1d9d"
+  },
+  {
+    "path": "std/src/runtime/fibers.nv",
+    "size": 5265,
+    "sha256": "56c83384a30ce7e56622d8fc45801391396d969418ff86d6954978b5fcac5fd3"
+  },
+  {
+    "path": "std/src/runtime/float_parse/convert.nv",
+    "size": 24408,
+    "sha256": "0550f4e5961543497894c7245098ae577553d834c804c9d6b71473742a78d14b"
+  },
+  {
+    "path": "std/src/runtime/float_parse/convert_test.nv",
+    "size": 34610,
+    "sha256": "52e37f848171eb9c625b8546cbf5a469540bb17f1b2277eb9c375ad374e498d5"
+  },
+  {
+    "path": "std/src/runtime/float_parse/door.nv",
+    "size": 10278,
+    "sha256": "0e4ce4d85701b616c47a14e4d479ac973fbc218606a57606a997a0b54aeeac22"
+  },
+  {
+    "path": "std/src/runtime/float_parse/pow5_table.nv",
+    "size": 46091,
+    "sha256": "33035984d9d228ae272e234225f254823ffcb70f69c80431baae286b00eb3ee5"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/core.nv",
+    "size": 24735,
+    "sha256": "4b0eee5389ae0428e52a9231d2c29f299574c045997e736d1a69a630aad1c354"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/core_test.nv",
+    "size": 10642,
+    "sha256": "2bdc3ce65174ef54d5267f8d0f6fa9e504f4adf0ebeddcc5834c4b35fa341e73"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/fixed.nv",
+    "size": 10962,
+    "sha256": "bb7a79b5c0af0c95cc692a445d173580a8c0031af577c498ec767f7ddd43a80a"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/fixed_test.nv",
+    "size": 4452,
+    "sha256": "e126808cb2ab9a884bca81a603c938420f3bef2ac9d31fbd001007a920c2bae3"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/pow5_split_table.nv",
+    "size": 56472,
+    "sha256": "fa16bc857b938af76c839a48985dc218fceae1be26e3c3f410bd34cf57c3b920"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/roundtrip_test.nv",
+    "size": 7205,
+    "sha256": "2228816ccc8ef1d1bfb632272ad6aa4073ae034743eb94bebf628d2468c32d5e"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/shortest.nv",
+    "size": 44089,
+    "sha256": "e2678bdef132fad5fed8f0fe4ab857344b5342c1e53239ed9698e285cf455b36"
+  },
+  {
+    "path": "std/src/runtime/fmt_buf/shortest_test.nv",
+    "size": 19638,
+    "sha256": "66b6e6731f51358d2c94f8bc948f7698923df86f40bd762295fc4f9d0e911a8b"
+  },
+  {
+    "path": "std/src/runtime/gc.nv",
+    "size": 6477,
+    "sha256": "657009be57a4b1e1962b17a9e8569e5d4ee311646964663e339a770b0005f57d"
+  },
+  {
+    "path": "std/src/runtime/math.nv",
+    "size": 5253,
+    "sha256": "14801421c258e9e97ed38675bb7b4b24dd1e91064dc437d93ee9ef4f18d5ca8a"
+  },
+  {
+    "path": "std/src/runtime/numeric.nv",
+    "size": 4243,
+    "sha256": "379bce5a23c526cf77d2d0756041a03bca0fa4f0c282416132bec6478c0cbc12"
+  },
+  {
+    "path": "std/src/runtime/numeric_test.nv",
+    "size": 4043,
+    "sha256": "b36364fcafc289b16f8bcd04b64d8fa60f0c76ae96f8a5895de5ba26d0077ec7"
+  },
+  {
+    "path": "std/src/runtime/parse_float_corpus_slow.nv",
+    "size": 14039,
+    "sha256": "0990ed3a7b40ea0f5c44d56f22a891f74943b3439237abfafdce7603209837b5"
+  },
+  {
+    "path": "std/src/runtime/raw_mem.nv",
+    "size": 6282,
+    "sha256": "3fb76784b6166bad570432c2728e0011fe26ad116ef0313d6e44bc09c439f881"
+  },
+  {
+    "path": "std/src/runtime/read_buffer.nv",
+    "size": 17337,
+    "sha256": "dd2649e9934cf98bf0b6e5641f6b0656d8248a5d00a7b708ce6b1a9fbc572987"
+  },
+  {
+    "path": "std/src/runtime/runtime.nv",
+    "size": 8290,
+    "sha256": "dc0468a445fc3026df216c0c76498efe38d9a36ed83822bef3aa5cda876f6797"
+  },
+  {
+    "path": "std/src/runtime/string/chars.nv",
+    "size": 7852,
+    "sha256": "0f7ec5ae3fdb2ad4aa1803179a9314852d81e59135c773e35d6b7462e649f65d"
+  },
+  {
+    "path": "std/src/runtime/string/core.nv",
+    "size": 19977,
+    "sha256": "66335fc10678eff87f7021c1cc705495eb75c73228197c160434851c84463069"
+  },
+  {
+    "path": "std/src/runtime/string/core_test.nv",
+    "size": 5033,
+    "sha256": "bc14f44bf809cf5837e0e20ce3022e37d4bddf20b4f7fa7467125a4d99dd1f02"
+  },
+  {
+    "path": "std/src/runtime/string/parse.nv",
+    "size": 11535,
+    "sha256": "b8ea9a5e632ebc2d6004d16ab505ef9677c9f96f2a306c100b8eb0ba03fff893"
+  },
+  {
+    "path": "std/src/runtime/string/search.nv",
+    "size": 11281,
+    "sha256": "536da4211f6b0a470f7817d6e4c1220a8d6d3c21eadf73bd09f160432646b015"
+  },
+  {
+    "path": "std/src/runtime/string/slice.nv",
+    "size": 5708,
+    "sha256": "164dfb2f015e064a3e1033169bbd7d1f0d8d7cff4746a449d5ae798f9d3ea421"
+  },
+  {
+    "path": "std/src/runtime/string/transform.nv",
+    "size": 11520,
+    "sha256": "7de3a595fc85cbaab78cb7d20824048acf1edd4bad55edb56680dcaa9c159c62"
+  },
+  {
+    "path": "std/src/runtime/string_builder.nv",
+    "size": 32669,
+    "sha256": "1a74d0d63d245355b5cfc382b812dbaad70761e2580986dfd09ad719dd430da9"
+  },
+  {
+    "path": "std/src/runtime/string_builder_test.nv",
+    "size": 7888,
+    "sha256": "eb82e5012d0ee9f71248343949ee801ef4bf73589eae2bbeaf1f5cdbfe4fdf33"
+  },
+  {
+    "path": "std/src/runtime/string_test.nv",
+    "size": 18484,
+    "sha256": "5d8a5d888ebd71f243693a5667d327cc36feea2061858e396e9927275b09bf86"
+  },
+  {
+    "path": "std/src/runtime/sync.nv",
+    "size": 98782,
+    "sha256": "8c17ddd8838586254543393e9cb417f0619826cca0466e1f656191294e6cfe29"
+  },
+  {
+    "path": "std/src/runtime/sync_test.nv",
+    "size": 5517,
+    "sha256": "c7bf52d129e27928090c0050904166db5a796e60a8095953411748b3eb0776e9"
+  },
+  {
+    "path": "std/src/runtime/vclock.nv",
+    "size": 2076,
+    "sha256": "cfaffe0b42e0a9e9e16fe22c5a92e90ea4981619b40c5ce0a4c7fcfe381b2602"
+  },
+  {
+    "path": "std/src/runtime/write_buffer.nv",
+    "size": 9997,
+    "sha256": "4f4bad7c66a0b26f958f5087007e6029875d33464ab7b97229246180966a771c"
+  },
+  {
+    "path": "std/src/sort.nv",
+    "size": 12087,
+    "sha256": "1f697132b9ad1b056bea7127cdc2d7c7f8679c29d63760079b45cfbdf35e1894"
+  },
+  {
+    "path": "std/src/testing/handlers/core.nv",
+    "size": 18922,
+    "sha256": "e9d4cbcc7d77d8f53d8283de41f2d53e0772e5e98e9115659d2a1ccaa62f49f5"
+  },
+  {
+    "path": "std/src/testing/handlers/core_test.nv",
+    "size": 20262,
+    "sha256": "93d620dbf92efebd6f357025b64d5dae9f904044cc7bba13ed4889492c42cd43"
+  },
+  {
+    "path": "std/src/testing/property.nv",
+    "size": 15145,
+    "sha256": "65c914ebd6c02482631647930c0dd8566b3d981fa599d22853bd5d7f735f7a38"
+  },
+  {
+    "path": "std/src/testing/property_test.nv",
+    "size": 4311,
+    "sha256": "778b2c74001b03df255ca59b40464973b31cb3b0ff787703c7004d774b22c24b"
+  },
+  {
+    "path": "std/src/text.nv",
+    "size": 1784,
+    "sha256": "9a9ed0f4ea67b5f8a600acaa9920e9dc3270b6657b9a2298bdeaa14657fb8fb9"
+  },
+  {
+    "path": "std/src/text/diff.nv",
+    "size": 2615,
+    "sha256": "e7f2204eb3731dbf756dda4a95a287b085491f2ec5f56d8d69cefd2d58b0cbaf"
+  },
+  {
+    "path": "std/src/text/diff_test.nv",
+    "size": 1536,
+    "sha256": "1bbcde3a25e4619c3d75ebebb522e7961b92a3ac9782540bc2647ef14aafe358"
+  },
+  {
+    "path": "std/src/text/markdown_minimal.nv",
+    "size": 9300,
+    "sha256": "00ee0803b5fbe68a70803c94cbae0b8328143a7ede7fb068f8db29a63dc4d5ed"
+  },
+  {
+    "path": "std/src/text/markdown_minimal_test.nv",
+    "size": 1772,
+    "sha256": "5c4c41a79b3596e7b2544805062d61794514134a9ae6a196fcda7d7f64c6f5da"
+  },
+  {
+    "path": "std/src/text/regex.nv",
+    "size": 26890,
+    "sha256": "2e0a53db071f8dc814356abd615dcaf5e2de038d69a2febccb7765fae97c0b84"
+  },
+  {
+    "path": "std/src/text/regex_test.nv",
+    "size": 3958,
+    "sha256": "3cd3903a95791d0c5688b3ea4e096aed597af7893b9be9cc9b2e980e03c7db8c"
+  },
+  {
+    "path": "std/src/time/civil/civil_arith_test.nv",
+    "size": 7152,
+    "sha256": "3e8d1ec1168d07085baf325fa817b9abd2846d43b7510b2adc364224fc7a3f71"
+  },
+  {
+    "path": "std/src/time/civil/civil_test.nv",
+    "size": 13196,
+    "sha256": "25de2f72454867d09d2daae50bad189ad56db63d2b59cc59d081799d4db61e24"
+  },
+  {
+    "path": "std/src/time/civil/date.nv",
+    "size": 17696,
+    "sha256": "6f5a36de52d5c9bb9723697127cc8b11b643be9abb873fabbca444d4da02aff8"
+  },
+  {
+    "path": "std/src/time/civil/datetime.nv",
+    "size": 8150,
+    "sha256": "f4f454ebd88e3dd2388e8e9016ee5936143ce56613a1041b1c8372501df1825c"
+  },
+  {
+    "path": "std/src/time/civil/errors.nv",
+    "size": 6771,
+    "sha256": "89514a87213106faa2b0d8a9b947ea13eddc50e1a45c829b5fc61a651f297300"
+  },
+  {
+    "path": "std/src/time/civil/format.nv",
+    "size": 12145,
+    "sha256": "76d7ad6dc1767bbd94ea398ef6e62114425e4a86db8c0f47ff0f7e476c2f3aa9"
+  },
+  {
+    "path": "std/src/time/civil/neg/period_not_duration.nv",
+    "size": 966,
+    "sha256": "b4855b6a3b2090a1dd060494ba8d5c5c488f1e07012f9a55239d26683ce209eb"
+  },
+  {
+    "path": "std/src/time/civil/neg/time_of_day_not_period.nv",
+    "size": 450,
+    "sha256": "9f46573a1259c370cc9310239c84cca6dac561ce6437f64074c67f9c12b15269"
+  },
+  {
+    "path": "std/src/time/civil/offset.nv",
+    "size": 5673,
+    "sha256": "d04ff26c9a98d67f67ddc1acccc0ee3e92ea56b080a19e0813776c27b93bd115"
+  },
+  {
+    "path": "std/src/time/civil/parse.nv",
+    "size": 15228,
+    "sha256": "4f7f0800bcd04aae421a8a7b6b4566230c8b1e27b7af5c86ef3ffab7e6d1b2e0"
+  },
+  {
+    "path": "std/src/time/civil/parse_test.nv",
+    "size": 8954,
+    "sha256": "df0b1d6082df698b70eacae62e514a4411ddab40d1b005c48537486548e13175"
+  },
+  {
+    "path": "std/src/time/civil/period.nv",
+    "size": 15231,
+    "sha256": "aa0cc291cfb7f44c1eb8810d14324df8550a6257e6b6498d3d5219d564987aae"
+  },
+  {
+    "path": "std/src/time/civil/rt/date_period_overflow_trap_test.nv",
+    "size": 516,
+    "sha256": "a4eab8e5b8ddc6eac84959cd21155a54d2f6c59d0bba16cf5704ba13331cab4d"
+  },
+  {
+    "path": "std/src/time/civil/time_of_day.nv",
+    "size": 8851,
+    "sha256": "21bf5e03ee8cd90b071bab7821be0d48d6ff776db80b55e75b3c5eee1e7ad87b"
+  },
+  {
+    "path": "std/src/time/civil/tz.nv",
+    "size": 8027,
+    "sha256": "bb8fa201ced5d115d10beedc6bf0a133f4c0a6a4f5f0398cf9086895d2387d9a"
+  },
+  {
+    "path": "std/src/time/civil/tz_test.nv",
+    "size": 8901,
+    "sha256": "b51a8f8927107ecb54427d0ce74e8e225b52388504d3f3dce4a7625c5051426d"
+  },
+  {
+    "path": "std/src/time/civil/tzif.nv",
+    "size": 7960,
+    "sha256": "41641980e7617b5f11949ceccfc667162a1de164570edc4d733f9edf454a40d3"
+  },
+  {
+    "path": "std/src/time/civil/weekday_month.nv",
+    "size": 5591,
+    "sha256": "056429290971195791e7e7445bc528db9fecc6c3e6a73143d2d34f07685c493d"
+  },
+  {
+    "path": "std/src/time/civil/year_month.nv",
+    "size": 6013,
+    "sha256": "6df0875a27d09e26edc834a863b1ef00df17eae27230b84aa55c7a6e184b36d6"
+  },
+  {
+    "path": "std/src/time/civil/zoned.nv",
+    "size": 18827,
+    "sha256": "c8e8f08dee81cab4ed40293126e4bf399819c6f280628f57fbaf3cc3e88642c0"
+  },
+  {
+    "path": "std/src/time/civil/zoned_test.nv",
+    "size": 12540,
+    "sha256": "8a89e6e1463b50139828e6f9391675fbd41fedaec6cbda3a77efda346aa9f591"
+  },
+  {
+    "path": "std/src/time/cron.nv",
+    "size": 8459,
+    "sha256": "6eb0e3bd5be8957e1d879954bcbe9b285ce0b0d53e3b683c03f3e5c540ab5177"
+  },
+  {
+    "path": "std/src/time/cron_test.nv",
+    "size": 2370,
+    "sha256": "fc49111259b16a91bd2a06cbe791ba97b796deeba7cb41af1b239ce9c4edf761"
+  },
+  {
+    "path": "std/src/time/duration/core.nv",
+    "size": 33416,
+    "sha256": "31ffa2ba4703358d39b9ea1ea12bc5779e2bf7f62caf547c3696511df0a52512"
+  },
+  {
+    "path": "std/src/time/duration/core_test.nv",
+    "size": 15614,
+    "sha256": "1da48bd4d5b201ffd7d6b248957bab6999cb5ee46f18b18774af3230cb50a56e"
+  },
+  {
+    "path": "std/src/time/duration/monotonic.nv",
+    "size": 9350,
+    "sha256": "ba8cd0529cb6152a538d5eed7f0718d789310e047cbc1b9c1d10555db8a476cd"
+  },
+  {
+    "path": "std/src/time/duration/time_effect.nv",
+    "size": 7789,
+    "sha256": "1b2ea66a7d4b3bdd480774f62f83c3c6ed4aacffe4b44e12bea219063198da55"
+  },
+  {
+    "path": "std/src/time/duration/timestamp.nv",
+    "size": 6976,
+    "sha256": "0a3ba922ab283a7109af057606776b345b225b2c44cd2d1ef9f4b74e9665ee97"
+  },
+  {
+    "path": "std/src/time/overflow_safe_test.nv",
+    "size": 2484,
+    "sha256": "0c28d10fe62f1d75d2406e70aea8354ed092602f24959030eee18d1522e8a538"
+  },
+  {
+    "path": "std/src/time/rt/dur_add_overflow_trap_test.nv",
+    "size": 488,
+    "sha256": "a39de240de058ae27be7bd490dba8eb3f97bab407788051d3929d8299f64c179"
+  },
+  {
+    "path": "std/src/time/rt/dur_div_zero_trap_test.nv",
+    "size": 321,
+    "sha256": "4ac6e951b753c160e73551d6252620f2a26b9178b5a3fcc7bd054096bb09f0db"
+  },
+  {
+    "path": "std/src/time/rt/dur_f64_nan_trap_test.nv",
+    "size": 531,
+    "sha256": "f2c8fbf20d175e4e5f1a641da06159dc89b2cfa0b255daf2478bbb4f5325d949"
+  },
+  {
+    "path": "std/src/time/timer_metrics_test.nv",
+    "size": 2501,
+    "sha256": "0c76f2d35c11a09b1e98d039b8ec030da51fbec3c5f821fcb7546782ae7c0857"
+  },
+  {
+    "path": "std/src/time/units_test.nv",
+    "size": 4887,
+    "sha256": "ef0251836916b6c3df40e5575c1b62692c14cfcfc8e2349b9db12182f70cb860"
+  },
+  {
+    "path": "std/src/time/value_typed_surface_test.nv",
+    "size": 3188,
+    "sha256": "485e8e49cd29057da11172a7545a82a57dfe0649ee73607c63ea8c9ad5379046"
+  },
+  {
+    "path": "std/src/unicode/case.nv",
+    "size": 7922,
+    "sha256": "1eef023a0788e30e47661a2c2315b795d3a777ae37a658ec17354f117139a58a"
+  },
+  {
+    "path": "std/src/unicode/case_data.nv",
+    "size": 66995,
+    "sha256": "ab44a4d5146b7a12d0b3c701a61aa4e5f0453db7532030b18061d5b1045db1b4"
+  },
+  {
+    "path": "std/src/unicode/category.nv",
+    "size": 11984,
+    "sha256": "2156f0e688637f23890e3e17eb05acf70f8a45dc17b6589c0e7d49b5e878ec2e"
+  },
+  {
+    "path": "std/src/unicode/category_data.nv",
+    "size": 49495,
+    "sha256": "eefa597807617c6d1bb316228347e2329443740433cd2192fb4183407cddc9c9"
+  },
+  {
+    "path": "std/src/unicode/collate.nv",
+    "size": 17557,
+    "sha256": "f72c1b978472a17cb50ad0b2978a7f0381f9e4e74a926b5608941c5ded9a9124"
+  },
+  {
+    "path": "std/src/unicode/collate_data.nv",
+    "size": 666469,
+    "sha256": "718789ce464ba29105281ff7334a081c9105ac054c246d2de8f44537c1648618"
+  },
+  {
+    "path": "std/src/unicode/cp_utils.nv",
+    "size": 5638,
+    "sha256": "d549ac45473faeb96a632e6727234772ea742edd671e363b90518d95cd298d35"
+  },
+  {
+    "path": "std/src/unicode/grapheme_data.nv",
+    "size": 29158,
+    "sha256": "119b0ae5cb609f873cd45781dafb850d3c04d3cfa7cd6f788f6b1561b1e1899f"
+  },
+  {
+    "path": "std/src/unicode/graphemes.nv",
+    "size": 8018,
+    "sha256": "963fc475a1763e43494f6ed1e623e5b86450797e389afa456f4a01d25fd80869"
+  },
+  {
+    "path": "std/src/unicode/norm_data.nv",
+    "size": 113269,
+    "sha256": "d750f89c7505945b51c93bedb7a0f105c28b7f0016d7064959383b256cae88d9"
+  },
+  {
+    "path": "std/src/unicode/normalize.nv",
+    "size": 7617,
+    "sha256": "ff083847f60c2a3044acb57e2a859ef51bb1b19469a010e1df77fb2f9546d5e8"
+  },
+  {
+    "path": "std/src/unicode/ranges.nv",
+    "size": 1790,
+    "sha256": "32a35ed1f012c7a0c53b0650040c9ae6ac387fc3840ad5bfadc355a61273e3ac"
+  },
+  {
+    "path": "std/src/unicode/sentence_data.nv",
+    "size": 34743,
+    "sha256": "d76748e078635b04c008f7f9d8907817bba8b7b15a26810c7da13ae0d2770c52"
+  },
+  {
+    "path": "std/src/unicode/sentences.nv",
+    "size": 7636,
+    "sha256": "83fdefb79e8150880db2d59c4fb1b1159f4fda27e7da424ecc33d7234df59794"
+  },
+  {
+    "path": "std/src/unicode/word_data.nv",
+    "size": 17986,
+    "sha256": "37cf82f58cdaa24375c9d0efc34db44a97ccf99df15853449669f3eb6803f3b2"
+  },
+  {
+    "path": "std/src/unicode/words.nv",
+    "size": 14960,
+    "sha256": "ea70c03f9e8c889a0635fa1bb73c41ccdee4469a649b5a49595e07a5aa458492"
+  }
+]

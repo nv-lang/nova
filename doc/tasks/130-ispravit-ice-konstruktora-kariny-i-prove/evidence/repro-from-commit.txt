@@ -1,0 +1,14 @@
+== tree ready (1117 .nv files)
+== emit rc=0 bytes=13261434
+C_SHA 6336dcff756d097e0d79895572c95845d4b43f4cf3d27a254995d95bff9f30f6
+nova: libuv not built, building (one-time, ~30 sec)...
+nova: libuv.lib built (37 files)
+== compiled
+EXE_SHA 210861f97b5cc9e13425c4035cdf485f666828556cc11e1a7e3e2e7359446235
+repro p1484_match_arm rc=0
+repro m2_call_arg_record rc=0
+repro p1705_newtype rc=0
+repro po1_option_payload rc=0
+repro po2_option_bare rc=1
+== repro complete
+rc=0

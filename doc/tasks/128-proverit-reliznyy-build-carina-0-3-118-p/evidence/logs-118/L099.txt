@@ -1,0 +1,175 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":3402,"end":3408},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":6197,"end":6203},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":8964,"end":8970},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12140,"end":12141},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12160,"end":12161},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12183,"end":12184},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12211,"end":12212},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12213,"end":12214},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12218,"end":12219},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d9","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12219,"end":12220},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d10","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12220,"end":12221},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d11","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":12222,"end":12223},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d12","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14211,"end":14217},"message":"outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)","poisoned_by":null}
+
+{"id":"d13","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14609,"end":14610},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d14","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14639,"end":14640},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d15","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14641,"end":14642},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d16","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14646,"end":14647},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d17","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14647,"end":14648},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d18","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14648,"end":14649},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d19","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14650,"end":14651},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d20","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14930,"end":14931},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d21","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14958,"end":14959},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d22","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14960,"end":14961},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d23","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14965,"end":14966},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d24","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14966,"end":14967},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d25","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14967,"end":14968},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d26","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":14969,"end":14970},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d27","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15437,"end":15438},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d28","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15446,"end":15447},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d29","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15469,"end":15470},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d30","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15492,"end":15493},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d31","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15494,"end":15495},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d32","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15500,"end":15501},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d33","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15501,"end":15508},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d34","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15508,"end":15509},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d35","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15520,"end":15521},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d36","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15522,"end":15523},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d37","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15527,"end":15528},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d38","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15528,"end":15529},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d39","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15529,"end":15530},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d40","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":15531,"end":15532},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d41","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16576,"end":16577},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d42","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16585,"end":16586},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d43","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16608,"end":16609},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d44","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16631,"end":16632},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d45","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16633,"end":16634},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d46","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16639,"end":16640},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d47","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16640,"end":16647},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d48","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16647,"end":16648},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d49","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16659,"end":16660},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d50","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16661,"end":16662},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d51","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16666,"end":16667},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d52","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16667,"end":16668},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d53","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16668,"end":16669},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d54","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":16670,"end":16671},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d55","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18325,"end":18326},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d56","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18359,"end":18360},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d57","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18365,"end":18366},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d58","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18366,"end":18373},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d59","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18373,"end":18374},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d60","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18376,"end":18377},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d61","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18399,"end":18400},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d62","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18422,"end":18423},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d63","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18424,"end":18425},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d64","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18430,"end":18431},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d65","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18431,"end":18436},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d66","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18436,"end":18437},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d67","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18448,"end":18449},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d68","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18450,"end":18451},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d69","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18455,"end":18456},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d70","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18456,"end":18457},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d71","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18457,"end":18458},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d72","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18459,"end":18460},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d73","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18483,"end":18484},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d74","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18503,"end":18504},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d75","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18593,"end":18599},"message":"outside the subset: no such method in the declarations handed to novac","poisoned_by":null}
+
+{"id":"d76","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":18600,"end":18601},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d77","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19414,"end":19415},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d78","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19434,"end":19435},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d79","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19485,"end":19486},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d80","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19513,"end":19514},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d81","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19515,"end":19516},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d82","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19520,"end":19521},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d83","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19521,"end":19522},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d84","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19522,"end":19523},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}
+
+{"id":"d85","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\real_world\\orm_decorators.nv","start":19524,"end":19525},"message":"novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form","poisoned_by":null}

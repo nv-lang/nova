@@ -1,0 +1,22 @@
+module marker_order.pos_1
+
+// The CANONICAL marker order of a type declaration: `consume value priv`
+// (02-types fixes one order, D241; task 134, class A1). Until 2026-10-31
+// novac's type-declaration door read the markers in the older order only,
+// so this spelling registered as a junk newtype, its methods vanished from
+// the harvest, and the call site heard "no such method in the declarations
+// handed to novac". `get` reading the field (prints 7) and the explicit
+// `close` ending the obligation prove the declaration registered whole.
+type Flag consume value priv { n int }
+
+fn Flag @get() -> int => @n
+
+fn Flag consume @close() -> () {
+    println("closed")
+}
+
+fn main() {
+    consume f = Flag { n: 7 }
+    println(f.get())
+    f.close()
+}

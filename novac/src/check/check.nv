@@ -155,37 +155,28 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 // that a form of the language, so the arm has nothing of its
                 // own to say and the children are walked like anyone else's.
                 Block => {}
+                DeferStmt => {
+                    // `defer` (D90): the word is lexed and the form is parsed
+                    // whole, so the refusal names the debt honestly -- running
+                    // the body at scope exit, LIFO, on every way out is the
+                    // E2 effects/consume horizon's, and the word no longer
+                    // has to lie as a record constructor to be seen (the
+                    // keyword-parity doctrine, registry #1089; the
+                    // 118-corpus sweep's consume_tour, task 134). The body's
+                    // statements are NOT walked after the refusal: the
+                    // program is already refused, and diagnostics from inside
+                    // a form we do not compile would cascade noise onto one
+                    // honest refusal (the lead invariant's other half).
+                    @reject_first_leaf_of(children, DEFER_MSG)
+                    return
+                }
                 MethodCall => {
                     @report_if_unknown_method(children)
                     @report_if_ordered_args(children)
                 }
                 Call => @report_if_ordered_args(children)
                 FnDecl => {
-                    if @report_if_extern_decl(children) {
-                        // The whole FORM is refused, so the rules below have
-                        // nothing left to judge: they ask about the return type
-                        // and the tail of a declaration novac will not compile,
-                        // and the walk of the children would name every unknown
-                        // FFI type on top of that. One cause, one diagnostic.
-                        return
-                    } else {
-                        // An ordinary declaration: the three shape rules below
-                        // are its business as before.
-                    }
-                    // A METHOD ON A VALUE RECORD is compiled since D488: its receiver
-                    // crosses by copy or by pointer (sem/value_recv.nv); until then it
-                    // was refused by name here (VALUE_METHOD_MSG, removed with it).
-                    @tail_value_body = value_body_of(children)
-                    @report_if_default_order(children)
-                    @report_if_generic_decl(children)
-                    @report_if_tail_has_no_value(children)
-                    @report_if_explicit_self_return(children)
-                    @report_if_return_type_undeclared(children)
-                    // Every type NAME the signature writes must be declared
-                    // (#970, typeref_rules): the collector answers no_ty() for
-                    // `-> Strng` and, until this line, nobody judged it -- the
-                    // fn passed while unused and its first call was an ICE.
-                    @report_if_decl_types_undeclared(children)
+                    if @judge_fn_decl(n, children) { return }
                 }
                 ConstDecl => {
                     // A CONSTANT IS TYPED AT ITS USE -- by `@const_type_of`
@@ -305,8 +296,19 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     @loop_depth += 1
                 }
                 Field => {
-                    @report_if_missing_type(past_field_ro(past_field_visibility(children)),
+                    ro fk = past_field_ro(past_field_visibility(children))
+                    @report_if_missing_type(fk,
                         "outside the E1 subset: field must declare a type")
+                    // A FN-TYPED field (task 134, the parameter door's own
+                    // class): the type READS (D43) as a flat leaf run whose
+                    // first leaf is KwFn, and an own record's every field is
+                    // printed through `c_type`, which ices on a function type
+                    // (mangle.nv). Refused by name here, where the
+                    // declaration is judged, so the ice path stays unarmed.
+                    if fk.len() >= 2 && fk[1].kind_of() == NodeKind.LeafNode &&
+                        leaf_kind(fk[1]) == TokenKind.KwFn {
+                        @report_first_leaf_of(fk, FN_FIELD_MSG)
+                    }
                 }
                 RetType => {
                     // The return type is a type reference too, and it was
@@ -392,7 +394,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 AttrDecl => {
                     // Which attributes the subset reads: `@judge_attr` (decl_forms.nv).
-                    @judge_attr(children)
+                    if @is_inactive_fn_node(n.id_of()) {
+                        @walk_syntax(n)
+                    } else {
+                        @judge_attr(n, children)
+                    }
                     return
                 }
                 TestDecl => {
@@ -982,6 +988,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
         }
     }
 }
+
 
 // No silent type defaults (owner's rule 2026-08-14, the #652 class: a
 // quiet nova_int fallback bred a bug family in the current compiler). A

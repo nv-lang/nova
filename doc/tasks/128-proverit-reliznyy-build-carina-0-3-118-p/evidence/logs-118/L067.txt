@@ -1,0 +1,21 @@
+
+--- stderr ---
+carina-gate verify-seed PASS: carina-b windows-x86_64 sha256=7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb source=3729abcce42ec2d94efc898ec6eafe91ff6210d5 compiler=carina:3729abcce42ec2d94efc898ec6eafe91ff6210d5; A built by published Oracle 0.1.0
+
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":614,"end":616},"message":"outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)","poisoned_by":null}
+
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":642,"end":644},"message":"outside the subset: this type form is not compiled yet (slices, tuples, fn types and qualifiers arrive with generics, E2-b)","poisoned_by":null}
+
+{"id":"d2","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1073,"end":1079},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d3","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1132,"end":1138},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d4","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1183,"end":1189},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d5","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1242,"end":1248},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d6","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1311,"end":1317},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d7","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1363,"end":1369},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}
+
+{"id":"d8","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\ffi\\sqlite_mini.nv","start":1430,"end":1436},"message":"outside the subset: an `extern` declaration is read, but novac emits no FFI call yet","poisoned_by":null}

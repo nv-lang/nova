@@ -1,0 +1,10 @@
+// EXPECT_STDOUT cfg-inactive
+module standalone.cfg_target_os_inactive_item
+
+#cfg(!target_os = "windows" && !target_os = "linux" && !target_os = "macos")
+fn inactive_type_error() -> int => "this body must be removed before checking"
+
+#cfg(target_os = "windows" || target_os = "linux" || target_os = "macos")
+fn main() Io -> () {
+    println("cfg-inactive")
+}

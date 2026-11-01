@@ -1,0 +1,32 @@
+SABOTAGE (docs/dev/test-conventions.md: "подсунь заведомо негодное"), on the
+module tests of novac/src/pipeline (the unit of run is the module directory;
+PASS/FAIL line asserted, not the exit code).
+
+GREEN before the probe (fixed implementation):
+
+  $ nova test novac/src/pipeline --timeout 300
+  ===== SUMMARY =====
+  PASS: 1  FAIL: 0        (run twice, both green)
+
+RED (the checker gate sabotaged to refuse ABI "C" again -- one line in
+novac/src/check/rules.nv: `if abi != "C" || abi == "C" {`):
+
+  $ nova test novac/src/pipeline --timeout 300 --keep-artifacts
+  RUN-FAIL novac/src/pipeline/arg_order_test #
+    FAIL: an extern C fn is admitted, prototyped and called by its literal name (D282, task 131) — outside the subset: an `extern "C" fn` declaration -- only the C ABI is compiled yet, by the declaration's literal name (D282)
+    FAIL: an extern C fn returning unit is declared void (D282 rule 5) — extern_c_test.nv:60: assert failed: ediags.len() == 0
+    FAIL: an extern C fn over a handle newtype crosses by its representation (D364) — outside the subset: an `extern "C" fn` declaration -- only the C ABI is compiled yet, by the declaration's literal name (D282)
+    FAIL: an extern declaration outside the class is refused by name, once per form (D282, task 131) — <the same refusal text>
+    FAIL: an extern C fn of another module of the program is called by its literal name (274.11 E.10, task 131) — <the same refusal text>
+  PASS: 0  FAIL: 1
+
+GREEN after the revert (the fix restored verbatim):
+
+  $ nova test novac/src/pipeline --timeout 300
+  PASS: 1  FAIL: 0
+  $ nova test novac/src/check --timeout 300
+  PASS: 1  FAIL: 0
+
+The probe reddens the tests THROUGH the intended refusal text (not through a
+crash or a count), and the revert greens them: both directions are held by
+the same tests that guard the class from now on.
