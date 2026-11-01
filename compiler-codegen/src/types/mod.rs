@@ -10952,16 +10952,26 @@ impl<'a> TypeCheckCtx<'a> {
             );
         }
         // RecordLit: тип литерала = сам объявленный тип. Гейт: только NON-generic
-        // объявленный тип (generic-инстанс требует mono-подстановку — 172.1.2).
+        // объявленный тип (generic-инстанс требует mono-подстановку — 172.1.2),
+        // ИМЕЮЩИЙ record-чтение: имя-сумма не строится `Name { … }`, литерал
+        // тогда — bare record-вариант, и его тип — сумма-владелец (item 30,
+        // pg_polaris_message; класс №599 «имя решает раньше объявления»).
         if let ExprKind::RecordLit { type_name: Some(rl_name), .. } = &e.kind {
             if let Some(rl_last) = rl_name.last() {
-                if e.id.is_set()
-                    && self.types_get_here(rl_last.as_str()).map_or(false, |td| td.generics.is_empty())
-                {
-                    self.resolved_types_buf.borrow_mut().insert(
-                        e.id,
-                        ResolvedType::Named { name: rl_last.clone(), module: vec![], args: vec![] },
-                    );
+                let named_non_generic =
+                    self.types_get_here(rl_last.as_str()).map_or(false, |td| td.generics.is_empty());
+                if e.id.is_set() && named_non_generic {
+                    if self.record_lit_reading(rl_last.as_str()) {
+                        self.resolved_types_buf.borrow_mut().insert(
+                            e.id,
+                            ResolvedType::Named { name: rl_last.clone(), module: vec![], args: vec![] },
+                        );
+                    } else if let Some(owner) = self.bare_record_variant_owner(rl_last.as_str()) {
+                        self.resolved_types_buf.borrow_mut().insert(
+                            e.id,
+                            ResolvedType::Named { name: owner, module: vec![], args: vec![] },
+                        );
+                    }
                 }
             }
         }
@@ -24895,39 +24905,31 @@ impl<'a> TypeCheckCtx<'a> {
                 // real top-level type, look for the ONE non-generic sum type
                 // whose variant list has a Record-kind variant of that name.
                 let last = name.last()?;
-                if self.types_get_here_contains(last.as_str()) {
+                // Item 30 (pg_polaris_message, класс №599 "имя решает раньше
+                // объявления"): the verbatim type-name return above is only
+                // valid when the named type has a RECORD-literal reading. A
+                // non-record type of the same name (a sum: Polaris's `Message`
+                // beside the driver's `DecodeOutcome.Message`) cannot be BUILT
+                // as `Name { … }` — the literal is then the bare record
+                // variant, and its type is the OWNER sum below (the same
+                // single-unambiguous-owner search as before).
+                if self.record_lit_reading(last.as_str()) {
                     return Some(TypeRef::Named {
                         path: name.clone(),
                         generics: Vec::new(),
                         span: expr.span,
                     });
                 }
-                let mut owner: Option<&String> = None;
-                let mut ambiguous = false;
-                for (tn, td) in self.types.iter() {
-                    if let TypeDeclKind::Sum(vs) = &td.kind {
-                        if td.generics.is_empty()
-                            && vs.iter().any(|v| {
-                                &v.name == last && matches!(v.kind, SumVariantKind::Record(_))
-                            })
-                        {
-                            if owner.is_some() {
-                                ambiguous = true;
-                                break;
-                            }
-                            owner = Some(tn);
-                        }
-                    }
-                }
-                match (owner, ambiguous) {
-                    (Some(tn), false) => Some(TypeRef::Named {
-                        path: vec![tn.clone()],
+                let owner = self.bare_record_variant_owner(last.as_str());
+                match owner {
+                    Some(tn) => Some(TypeRef::Named {
+                        path: vec![tn],
                         generics: Vec::new(),
                         span: expr.span,
                     }),
                     // Ambiguous or unresolved: honest None (rather than guessing
                     // — same discipline the source snippet mirrors).
-                    _ => None,
+                    None => None,
                 }
             }
             ExprKind::As(_, ty) => Some(ty.clone()),
@@ -28543,6 +28545,55 @@ impl<'a> TypeCheckCtx<'a> {
             TypeDeclKind::Record(ref fields) => Some(fields),
             _ => None,
         }
+    }
+
+    /// A RECORD-literal reading of the named type: a plain record, or an alias
+    /// chain landing on one (mirrors `record_lit_schema::record_schema_of_type`).
+    /// Item 30 (pg_polaris_message): `Name { … }` is a record literal only when
+    /// this holds; a name that is a SUM type has no record reading, so the
+    /// literal can only be the bare record variant (see
+    /// `bare_record_variant_owner`).
+    fn record_lit_reading(&self, name: &str) -> bool {
+        let mut seen = self.types_get_here(name);
+        for _ in 0..8 {
+            match seen {
+                None => return false,
+                Some(td) => match &td.kind {
+                    TypeDeclKind::Record(_) => return true,
+                    TypeDeclKind::Alias(TypeRef::Named { path, .. }) if td.generics.is_empty() => {
+                        seen = path.last().and_then(|p| self.types_get_here(p.as_str()));
+                    }
+                    _ => return false,
+                },
+            }
+        }
+        false
+    }
+
+    /// The ONE non-generic sum declaring a RECORD variant named `name` -- the
+    /// bare record-variant owner search (172.1.2, №599). `None` when zero or
+    /// ambiguous. Item 30 (pg_polaris_message): in a program where another
+    /// package's SUM type shares the variant's name (Polaris's `Message` beside
+    /// the driver's `DecodeOutcome.Message`), `Name { … }` is still the variant
+    /// -- a sum cannot be record-built, so the unrelated type must not decide
+    /// the literal's reading.
+    fn bare_record_variant_owner(&self, name: &str) -> Option<String> {
+        let mut owner: Option<&String> = None;
+        for (tn, td) in self.types.iter() {
+            if let TypeDeclKind::Sum(vs) = &td.kind {
+                if td.generics.is_empty()
+                    && vs
+                        .iter()
+                        .any(|v| v.name == name && matches!(v.kind, SumVariantKind::Record(_)))
+                {
+                    if owner.is_some() {
+                        return None;
+                    }
+                    owner = Some(tn);
+                }
+            }
+        }
+        owner.cloned()
     }
 
     /// Returns `true` if `expr` is an access path that goes through a readonly field,

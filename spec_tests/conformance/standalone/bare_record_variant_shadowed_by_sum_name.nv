@@ -1,0 +1,56 @@
+// №TBD regression pin (item 30 of the crew-harness spike index
+// `spikes/env/README.md` -- `pg_polaris_message`; the same class as registry
+// 221.1 №599 "the name decides before the declaration", kin №576, and the
+// sibling pin `map_err_bare_variant_owner_type.nv`).
+//
+// A bare RECORD-shaped sum-variant construction (`Message { … }`) whose name
+// is ALSO a real SUM type of the program (Polaris's `Message` beside the
+// PostgreSQL driver's `DecodeOutcome.Message`) used to be typed verbatim as
+// that unrelated type:
+// * `infer_expr_type`'s `RecordLit` arm returned `Named{"Message"}` as soon
+//   as the name was present in the type table -- even though a SUM type has
+//   no record-literal reading, so `Message { … }` cannot build it (E7301:
+//   "cannot return value of type `Result[Message, PostgresError]` from a
+//   function declared `-> Result[DecodeOutcome, PostgresError]`");
+// * the RecordLit channel-materialization stamped the unrelated name the
+//   same way, so codegen never saw the variant;
+// * `record_lit_schema::named_lit_schema` took the type door and skipped the
+//   variant's field checks.
+// The three doors now agree: the verbatim type-name reading requires a
+// RECORD-literal reading of the named type (a plain record or an alias to
+// one); a sum type of the same name falls through to the
+// single-unambiguous-owner search, so the bare record variant builds its OWN
+// sum. In the wild the collision is cross-package (each package compiles
+// alone); in one unit a locally declared sum of the same name reproduces the
+// same merged type-table state.
+// EXPECT_STDOUT ITEM30_VARIANT_VS_SUM_NAME_OK:4
+
+module standalone.bare_record_variant_shadowed_by_sum_name
+
+// A sum type NAMED like the variant below (Polaris's `Message` in the wild).
+type Message enum
+    | Text(str)
+    | Binary(str)
+
+// The driver's sum: a RECORD variant named like the type above.
+type DecodeOutcome enum
+    | Message { msg str, consumed int }
+    | End
+
+fn decode(flush bool) -> Result[DecodeOutcome, str] {
+    if flush { Ok(End) } else { Ok(Message { msg: "ping", consumed: 4 }) }
+}
+
+fn main() {
+    match decode(false) {
+        Ok(DecodeOutcome.Message { msg, consumed }) => {
+            assert(msg == "ping")
+            println("ITEM30_VARIANT_VS_SUM_NAME_OK:${consumed}")
+        }
+        _ => println("WRONG")
+    }
+    match decode(true) {
+        Ok(End) => assert(true)
+        _ => assert(false)
+    }
+}
