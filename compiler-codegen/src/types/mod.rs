@@ -16012,6 +16012,68 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
+            // Item 32 (crew-harness `repro_text_import`): a RECORD pattern --
+            // a struct-style sum-variant (`Garbage { text }` on a `Line`) or a
+            // record scrutinee (`Point { x }` on a `Point`) -- bound NOTHING
+            // here, so the arm body ran with the binding REMOVED from the
+            // scope (`shadow_bound_names` above erases the outer namesake and
+            // nothing re-typed it). When the binding's name happened to equal
+            // a module prefix imported anywhere in the program (`import
+            // std.text` in a NEIGHBOR module; `imported_modules` is a
+            // whole-CU set), `f1_check_call`'s `scope.contains_key(prefix)`
+            // miss classified `text.byte_len()` as a module-qualified call →
+            // `[E7401] no function `byte_len` in module `text``. Derive the
+            // field types from the scrutinee's declaration, the same rule the
+            // tuple-variant arm above applies to the single payload.
+            Pattern::Record { type_path, fields, .. } => {
+                if let TypeRef::Named { path: sp, generics, .. } = st {
+                    let sum_name = sp.last().map(|s| s.as_str()).unwrap_or("");
+                    let Some(td) = self.types_get_here(sum_name) else { return out };
+                    let declared: Option<&Vec<RecordField>> = match &td.kind {
+                        TypeDeclKind::Record(fs) => Some(fs),
+                        TypeDeclKind::Sum(variants) => {
+                            let variant = type_path
+                                .as_ref()
+                                .and_then(|p| p.last())
+                                .map(|s| s.as_str())
+                                .unwrap_or("");
+                            variants
+                                .iter()
+                                .find(|v| v.name == variant)
+                                .and_then(|v| match &v.kind {
+                                    SumVariantKind::Record(fs) => Some(fs),
+                                    _ => None,
+                                })
+                        }
+                        _ => None,
+                    };
+                    let Some(declared) = declared else { return out };
+                    let subst: HashMap<String, TypeRef> = if generics.is_empty() {
+                        HashMap::new()
+                    } else {
+                        td.generics
+                            .iter()
+                            .map(|g| g.name.clone())
+                            .zip(generics.iter().cloned())
+                            .collect()
+                    };
+                    for f in fields {
+                        let bind = match &f.pattern {
+                            None => &f.name,
+                            Some(Pattern::Ident { name: pn, .. }) => pn,
+                            _ => continue,
+                        };
+                        if let Some(df) = declared.iter().find(|df| df.name == f.name) {
+                            let ty = if subst.is_empty() {
+                                df.ty.clone()
+                            } else {
+                                subst_typeref(&df.ty, &subst)
+                            };
+                            out.push((bind.clone(), ty));
+                        }
+                    }
+                }
+            }
             _ => {}
         }
         out

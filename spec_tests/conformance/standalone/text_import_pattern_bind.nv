@@ -1,0 +1,51 @@
+// EXPECT_STDOUT a,b 2
+//
+// №TBD regression pin (item 32 of the crew-harness spike index
+// `spikes/env/README.md` -- `repro_text_import`; real-world carrier: the
+// CrewHarness session server, `acp/client.nv` arm
+// `RpcGarbage { text } => text.byte_len()`).
+//
+// `import std.text` in ONE module of a program used to make a variable named
+// `text`, bound by a RECORD pattern (`Garbage { text } => ...`) in ANOTHER
+// module, mean the MODULE: `[E7401] no function `byte_len` in module `text``.
+// Root cause: `match_arm_bindings` (checker) had no arm for `Pattern::Record`
+// (struct-style variant / record destructure), so the arm body ran with the
+// binding REMOVED from the scope (`shadow_bound_names` erases the outer
+// namesake and nothing re-typed it); `f1_check_call`'s
+// `scope.contains_key(prefix)` miss then classified `text.byte_len()` as a
+// module-qualified call, because `imported_modules` is a WHOLE-CU set -- the
+// neighbor's import registers the prefix `text` for every module of the
+// program. A parameter named `text` was never affected (parameters are always
+// in scope).
+//
+// Mode note: under `nova test` the released (pre-fix) toolchain PASSES this
+// fixture silently -- the test-mode sig-table pre-pass knows `byte_len`
+// (`is_known_fn` suppresses the false E7401) and codegen's own
+// `var_types`-guarded module-alias rewrite dispatches the instance method
+// anyway, so the wrong classification is invisible there. The defect lives in
+// `nova build` (exactly how the harness hit it): on the released toolchain
+//   nova build spec_tests/conformance/standalone/text_import_pattern_bind.nv
+// fails `[E7401] no function `byte_len` in module `text``; with the fix it
+// builds and prints the EXPECT_STDOUT line below.
+//
+// Shape mirrors the spike: the ENTRY module declares the sum + the record
+// pattern and imports NO std module; the SIDE module imports `std.text` for
+// `[]str.join`.
+module standalone.text_import_pattern_bind
+
+import ./text_import_pattern_bind_side.{joined}
+
+type Line enum
+    | Garbage { text str }
+    | Empty
+
+fn length_of(line Line) -> int {
+    match line {
+        Garbage { text } => text.byte_len()
+        Empty => 0
+    }
+}
+
+fn main() {
+    println("${joined(["a", "b"])} ${length_of(Garbage { text: "xy" })}")
+}
