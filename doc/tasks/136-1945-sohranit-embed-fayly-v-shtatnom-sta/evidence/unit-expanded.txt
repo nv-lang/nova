@@ -1,0 +1,38 @@
+   Compiling nova-driver v0.1.0 ($WT\nova-driver)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.06s
+     Running unittests src\main.rs ($SCRATCH/cargo-target\debug\deps\nova-066c2f39a2264eba.exe)
+
+running 31 tests
+test carina_build::tests::absent_capture_variable_keeps_default_path_side_effect_free ... ok
+test carina_build::tests::child_metadata_escapes_paths_and_arguments_as_json_strings ... ok
+test carina_build::tests::emit_failure_detail_does_not_repeat_identical_streams ... ok
+test carina_build::tests::emit_failure_detail_is_blank_when_both_streams_are_blank ... ok
+test carina_build::tests::emit_failure_detail_keeps_both_streams_without_duplication ... ok
+test carina_build::tests::emit_failure_detail_shows_stderr_when_stdout_is_blank ... ok
+test carina_build::tests::emit_failure_detail_shows_stdout_jsonl_when_stderr_is_blank ... ok
+test carina_build::tests::resolves_source_checkout_root_for_an_external_entry_path ... ok
+test carina_build::tests::capture_refuses_to_overwrite_existing_evidence ... ok
+test carina_build::tests::captures_exact_raw_bytes_and_nonzero_child_status ... ok
+test program::tests::discovery_includes_same_module_peers_of_the_entry ... ok
+test program::tests::discovery_walks_folder_modules_and_skips_tests_and_aliens ... ok
+test program::tests::module_line_reads_the_first_declaration ... ok
+test carina_build::tests::capture_control_is_removed_from_the_seed_child_environment ... ok
+test program::tests::dependency_modules_are_staged_one_directory_per_module_with_rewritten_imports ... ok
+test program::tests::peer_suffix_filter_matches_the_oracle_matrix ... ok
+test program::tests::own_qualified_import_from_a_nested_directory_spells_upward ... ok
+test program::tests::own_qualified_imports_are_rewritten_in_the_staged_copies_only ... ok
+test program::tests::rewrite_keeps_the_module_last_segment_for_ancestor_targets ... ok
+test program::tests::rewrite_touches_only_the_listed_tokens_and_keeps_line_endings ... ok
+test program::tests::scan_finds_relative_qualified_and_export_imports ... ok
+test program::tests::same_unit_and_root_own_imports_are_not_rewritten ... ok
+test program::tests::staging_embed_missing_directory_and_non_calls_do_not_sweep_files ... ok
+test program::tests::staging_embed_parent_path_stays_relative_and_sources_stay_unchanged ... ok
+test program::tests::staging_embed_rejects_dependency_destination_collisions ... ok
+test program::tests::staging_embed_checks_the_callers_package_not_entry_or_workspace ... ok
+test program::tests::staging_mirrors_the_package_relative_layout ... ok
+test program::tests::staging_preserves_explicit_embed_assets_without_sweeping_directories ... ok
+test program::tests::staging_preserves_the_bom_of_rewritten_and_plain_copies ... ok
+test tests::positional_build_word_does_not_capture_other_commands ... ok
+test tests::selects_build_after_global_options_and_skips_option_values ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s

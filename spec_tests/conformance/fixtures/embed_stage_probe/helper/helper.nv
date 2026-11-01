@@ -1,0 +1,2 @@
+module embed_stage_probe.helper
+export fn marker() -> str => "own"

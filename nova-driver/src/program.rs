@@ -51,16 +51,16 @@
 //! rewrite trades one spelling for the other without moving any module.
 //!
 //! Known boundaries of the shallow scan (all failures are loud at the seed,
-//! never silent): import paths split across lines are not seen; `embed`
-//! (D412) assets beside the sources are not staged; a package-qualified
+//! never silent): import paths split across lines are not seen; only plain
+//! literal byte `embed` assets are staged (not `embed_dir`/`embed_str`); a package-qualified
 //! import of the package ROOT itself (`import mypkg.{x}`) has no last
 //! segment to name and keeps its text; spans in the seed's diagnostics name
 //! the staged copies, and a rewritten import line shifts the byte offsets
 //! behind it within that copy.
 
 use anyhow::{Context, Result};
-use nova_driver_support::manifest::{DepSource, Manifest};
 use nova_driver_support::git_cache;
+use nova_driver_support::manifest::{DepSource, Manifest};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
@@ -114,8 +114,7 @@ pub(crate) fn collect_dep_roots(root_manifest: &Manifest) -> DepRoots {
                 DepSource::Registry(_) | DepSource::Invalid(_) => continue,
             };
             let toml = dir.join("nova.toml");
-            let Some(dep_manifest) =
-                nova_driver_support::manifest::parse_manifest(&toml, &dir)
+            let Some(dep_manifest) = nova_driver_support::manifest::parse_manifest(&toml, &dir)
             else {
                 continue;
             };
@@ -279,7 +278,32 @@ pub(crate) fn stage_program(
             format!("cannot clear stale program stage {}", stage_root.display())
         })?;
     }
+    // A virtual project boundary for the seed's filesystem door. Each asset
+    // was checked against its ORIGINAL caller package before copying; the
+    // relocated tree must now admit legal ../ paths between staged folders.
+    // Without a marker an installed driver gives each source directory its
+    // own boundary (no ancestor manifest), rejecting resources already staged
+    // inside this tree. This is metadata, never a program source unit.
+    std::fs::create_dir_all(stage_root)?;
+    let stage_manifest = stage_root.join("nova.toml");
+    std::fs::write(&stage_manifest, "[workspace]\nmembers = []\n")?;
     let entry_rel = relative_to_base(entry, source_base);
+    let mut destinations = crate::embed_stage::Destinations::new();
+    destinations.insert(
+        crate::embed_stage::destination_key(&stage_manifest),
+        stage_manifest.clone(),
+    );
+    for (source, rel) in std::iter::once((entry, entry_rel.as_str())).chain(
+        discovery
+            .files
+            .iter()
+            .map(|f| (f.source.as_path(), f.staged.as_str())),
+    ) {
+        destinations.insert(
+            crate::embed_stage::destination_key(&stage_root.join(rel)),
+            source.to_path_buf(),
+        );
+    }
     let mut staged_entry = PathBuf::new();
     for (source, rel) in std::iter::once((entry, entry_rel.as_str())).chain(
         discovery
@@ -293,8 +317,8 @@ pub(crate) fn stage_program(
                 format!("cannot create program stage directory {}", parent.display())
             })?;
         }
-        let bytes = std::fs::read(source)
-            .with_context(|| format!("cannot read {}", source.display()))?;
+        let bytes =
+            std::fs::read(source).with_context(|| format!("cannot read {}", source.display()))?;
         let staged_dir = parent_dir_of(rel);
         let out: Vec<u8> = match discovery.rewrites.get(&normalize_path(source)) {
             Some(pairs) => {
@@ -319,6 +343,10 @@ pub(crate) fn stage_program(
             // No rewrite: the staged copy is byte for byte the source.
             None => bytes,
         };
+        let text = std::str::from_utf8(&out)
+            .with_context(|| format!("program source is not UTF-8: {}", source.display()))?;
+        let out =
+            crate::embed_stage::stage_embeds(source, &target, stage_root, text, &mut destinations)?;
         std::fs::write(&target, out).with_context(|| {
             format!(
                 "cannot stage program file {} -> {}",
@@ -480,11 +508,7 @@ fn own_qualified(token: &str, manifest: &Manifest) -> bool {
     if token.starts_with("./") || token.starts_with("../") {
         return false;
     }
-    token
-        .split(['.', '/'])
-        .next()
-        .unwrap_or("")
-        == manifest.package_name
+    token.split(['.', '/']).next().unwrap_or("") == manifest.package_name
 }
 
 /// The staged location of the own-package module a qualified import names:
@@ -544,7 +568,11 @@ fn staged_dir_of(file: &Path, manifest: &Manifest) -> String {
 /// and the module's source files. `None` for relative, own-package, std and
 /// unknown imports — the caller's own-package scan answers those.
 fn resolve_dep_import(token: &str, deps: &DepRoots) -> Result<Option<(String, Vec<PathBuf>)>> {
-    if token.starts_with("./") || token.starts_with("../") || token.starts_with("std.") || token == "std" {
+    if token.starts_with("./")
+        || token.starts_with("../")
+        || token.starts_with("std.")
+        || token == "std"
+    {
         return Ok(None);
     }
     let first = token.split(['.', '/']).next().unwrap_or("");
@@ -764,9 +792,7 @@ fn peer_active_for_target(stem: &str, target: &str) -> bool {
         Some("windows") => target == "windows",
         Some("linux") => target == "linux",
         Some("macos") => target == "macos",
-        Some("unix") | Some("posix") => {
-            target == "linux" || target == "macos" || target == "unix"
-        }
+        Some("unix") | Some("posix") => target == "linux" || target == "macos" || target == "unix",
         Some(_) => true,
     }
 }
@@ -947,7 +973,10 @@ mod tests {
             &dir.join("helper/b.nv"),
             "module probe.helper\nexport fn other() -> int => 2\n",
         );
-        write(&dir.join("helper/a_test.nv"), "module probe.helper\nfn t() {}\n");
+        write(
+            &dir.join("helper/a_test.nv"),
+            "module probe.helper\nfn t() {}\n",
+        );
         // A sibling of the entry with its OWN module is not the program's.
         write(&dir.join("other.nv"), "module probe.other\nfn main() {}\n");
         let found = discover_program_files(&entry, &manifest(&dir), &no_deps()).unwrap();
@@ -963,7 +992,10 @@ mod tests {
     fn discovery_includes_same_module_peers_of_the_entry() {
         let dir = test_dir();
         let entry = dir.join("one.nv");
-        write(&entry, "module probe.shared\nfn main() { println(part()) }\n");
+        write(
+            &entry,
+            "module probe.shared\nfn main() { println(part()) }\n",
+        );
         write(
             &dir.join("two.nv"),
             "module probe.shared\nexport fn part() -> int => 1\n",
@@ -972,6 +1004,257 @@ mod tests {
         let found = discover_program_files(&entry, &manifest(&dir), &no_deps()).unwrap();
         let sources: Vec<PathBuf> = found.files.iter().map(|f| f.source.clone()).collect();
         assert_eq!(sources, vec![dir.join("two.nv")]);
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_manifest_bytes_do_not_overwrite_virtual_project_boundary() {
+        let dir = test_dir();
+        let entry = dir.join("main.nv");
+        write(&entry, "fn bytes() -> []u8 => embed(\"nova.toml\")\n");
+        let m = manifest(&dir);
+        let original_manifest = std::fs::read(dir.join("nova.toml")).unwrap();
+        let found = discover_program_files(&entry, &m, &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        let staged = stage_program(&stage, &dir, &entry, &found).unwrap();
+        let text = std::fs::read_to_string(staged).unwrap();
+        let name = text.split('"').nth(1).unwrap();
+        assert!(name.starts_with("__nova_embed_"), "{text}");
+        assert_eq!(std::fs::read(stage.join(name)).unwrap(), original_manifest);
+        assert_eq!(
+            std::fs::read_to_string(stage.join("nova.toml")).unwrap(),
+            "[workspace]\nmembers = []\n"
+        );
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_absolute_in_package_path_is_relocated_without_reading_live_tree() {
+        let dir = test_dir();
+        let entry = dir.join("main.nv");
+        let asset = dir.join("data.bin");
+        write(&asset, "absolute resource");
+        let absolute = asset.to_string_lossy().replace('\\', "/");
+        write(
+            &entry,
+            &format!("fn bytes() -> []u8 => embed(\"{absolute}\")\n"),
+        );
+        let found = discover_program_files(&entry, &manifest(&dir), &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        let staged = stage_program(&stage, &dir, &entry, &found).unwrap();
+        let text = std::fs::read_to_string(staged).unwrap();
+        let name = text.split('"').nth(1).unwrap();
+        assert!(name.starts_with("__nova_embed_"), "{text}");
+        assert_eq!(
+            std::fs::read(stage.join(name)).unwrap(),
+            b"absolute resource"
+        );
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_symlink_cannot_escape_the_callers_package() {
+        let dir = test_dir();
+        let package = dir.join("package");
+        let outside = dir.join("outside");
+        let entry = package.join("main.nv");
+        write(&entry, "fn bytes() -> []u8 => embed(\"link/data.bin\")\n");
+        write(&outside.join("data.bin"), "must not copy");
+        let m = manifest(&package);
+        let link = package.join("link");
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("cmd")
+                .args(["/c", "mklink", "/J"])
+                .arg(link.to_string_lossy().replace('/', "\\"))
+                .arg(outside.to_string_lossy().replace('/', "\\"))
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "junction setup: {:?}", output);
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let found = discover_program_files(&entry, &m, &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        let error = stage_program(&stage, &package, &entry, &found)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside package root"), "{error}");
+        assert!(!stage.join("link/data.bin").exists());
+        assert_eq!(
+            std::fs::read(outside.join("data.bin")).unwrap(),
+            b"must not copy"
+        );
+        // Unlink the junction rather than letting recursive cleanup traverse it.
+        #[cfg(windows)]
+        std::fs::remove_dir(&link).unwrap();
+        #[cfg(unix)]
+        std::fs::remove_file(&link).unwrap();
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_parent_path_stays_relative_and_sources_stay_unchanged() {
+        let dir = test_dir();
+        let entry = dir.join("src/main.nv");
+        let helper = dir.join("src/helper/helper.nv");
+        write(&entry, "module probe.main\nimport ./helper.{help}\n");
+        let text = "module probe.helper\nfn help() -> []u8 => embed(\"../assets/data.bin\")\n";
+        write(&helper, text);
+        write(&dir.join("src/assets/data.bin"), "parent resource");
+        let found = discover_program_files(&entry, &manifest(&dir), &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        stage_program(&stage, &dir, &entry, &found).unwrap();
+        assert_eq!(
+            std::fs::read(stage.join("src/assets/data.bin")).unwrap(),
+            b"parent resource"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stage.join("src/helper/helper.nv")).unwrap(),
+            text
+        );
+        assert_eq!(std::fs::read_to_string(&helper).unwrap(), text);
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_checks_the_callers_package_not_entry_or_workspace() {
+        let dir = test_dir();
+        let root = dir.join("consumer");
+        let dep = dir.join("dependency");
+        write(&dir.join("nova.toml"), "[workspace]\nmembers = []\n");
+        write(&root.join("nova.toml"), "[package]\nname = \"probe\"\nversion = \"0.1.0\"\n[lib]\nsrc = \".\"\n[dependencies]\ndep = { path = \"../dependency\" }\n");
+        write(
+            &dep.join("nova.toml"),
+            "[package]\nname = \"dep\"\nversion = \"0.1.0\"\n[lib]\nsrc = \"src\"\n",
+        );
+        let entry = root.join("main.nv");
+        write(&entry, "module probe.main\nimport dep.{bytes}\n");
+        let dep_source = dep.join("src/dep.nv");
+        let text = "module dep\nexport fn bytes() -> []u8 => embed(\"../assets/data.bin\")\n";
+        write(&dep_source, text);
+        write(&dep.join("assets/data.bin"), "dependency bytes");
+        let m =
+            nova_driver_support::manifest::parse_manifest(&root.join("nova.toml"), &root).unwrap();
+        let found = discover_program_files(&entry, &m, &collect_dep_roots(&m)).unwrap();
+        let stage = dir.join("stage");
+        stage_program(&stage, &root, &entry, &found).unwrap();
+        assert_eq!(
+            std::fs::read(stage.join("_deps/assets/data.bin")).unwrap(),
+            b"dependency bytes"
+        );
+        assert_eq!(std::fs::read_to_string(&dep_source).unwrap(), text);
+        // The sibling is inside the workspace but OUTSIDE this dependency.
+        write(&dir.join("outside.bin"), "must not copy");
+        write(
+            &dep_source,
+            "module dep\nexport fn bytes() -> []u8 => embed(\"../../outside.bin\")\n",
+        );
+        let error = stage_program(&stage, &root, &entry, &found)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("outside package root"), "{error}");
+        assert!(!stage.join("outside.bin").exists());
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_missing_directory_and_non_calls_do_not_sweep_files() {
+        let dir = test_dir();
+        let entry = dir.join("main.nv");
+        let text = "module probe.main\n// embed(\"unrelated.txt\")\n/* embed(\"unrelated.txt\") */\nfn main() { ro s = \"embed(\\\"unrelated.txt\\\")\"; thing.embed(\"unrelated.txt\"); ro b = embed(\"absent.bin\"); ro d = embed(\"data\") }\n";
+        write(&entry, text);
+        write(&dir.join("unrelated.txt"), "must not copy");
+        write(&dir.join("data/unrelated.txt"), "must not copy");
+        let found = discover_program_files(&entry, &manifest(&dir), &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        stage_program(&stage, &dir, &entry, &found).unwrap();
+        assert!(!stage.join("unrelated.txt").exists());
+        assert!(!stage.join("absent.bin").exists());
+        assert!(stage.join("data").is_dir());
+        assert_eq!(std::fs::read_dir(stage.join("data")).unwrap().count(), 0);
+        assert!(std::fs::read_to_string(stage.join("main.nv"))
+            .unwrap()
+            .contains("__nova_missing_embed_"));
+        assert_eq!(std::fs::read_to_string(&entry).unwrap(), text);
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_embed_rejects_dependency_destination_collisions() {
+        let dir = test_dir();
+        let entry = dir.join("main.nv");
+        write(&entry, "module probe.main\n");
+        manifest(&dir);
+        let mut files = Vec::new();
+        for name in ["a", "b"] {
+            let root = dir.join(name);
+            manifest(&root);
+            let source = root.join("src/module.nv");
+            write(&source, "fn bytes() -> []u8 => embed(\"../data.bin\")\n");
+            write(&root.join("data.bin"), name);
+            files.push(super::ProgramFile {
+                source,
+                staged: format!("_deps/{name}/module.nv"),
+            });
+        }
+        let discovery = super::Discovery {
+            files,
+            rewrites: HashMap::new(),
+        };
+        let error = stage_program(&dir.join("stage"), &dir, &entry, &discovery)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("destination collision"), "{error}");
+        remove_dir(&dir);
+    }
+
+    #[test]
+    fn staging_preserves_explicit_embed_assets_without_sweeping_directories() {
+        let dir = test_dir();
+        let entry = dir.join("main.nv");
+        write(&entry, "module probe.main\nimport ./helper.{help}\n");
+        let helper = dir.join("helper/helper.nv");
+        let text = "module probe.helper\nro shell = embed(\"shell.tpl.c\")\nro cert = embed(\"certs/localhost_cert.pem\")\nro data = embed(\"assets/data.nv\")\n";
+        write(&helper, text);
+        write(&dir.join("helper/shell.tpl.c"), "shell bytes\n");
+        write(
+            &dir.join("helper/certs/localhost_cert.pem"),
+            "public fixture bytes\n",
+        );
+        write(
+            &dir.join("helper/assets/data.nv"),
+            "not a module: embedded bytes\n",
+        );
+        write(&dir.join("helper/unreferenced.txt"), "must not be staged");
+        write(&dir.join("helper/target/build.bin"), "must not be staged");
+        let found = discover_program_files(&entry, &manifest(&dir), &no_deps()).unwrap();
+        let stage = dir.join("stage");
+        stage_program(&stage, &dir, &entry, &found).unwrap();
+        assert_eq!(
+            std::fs::read(stage.join("helper/shell.tpl.c")).unwrap(),
+            b"shell bytes\n"
+        );
+        assert_eq!(
+            std::fs::read(stage.join("helper/certs/localhost_cert.pem")).unwrap(),
+            b"public fixture bytes\n"
+        );
+        let staged_helper = std::fs::read_to_string(stage.join("helper/helper.nv")).unwrap();
+        let data_name = staged_helper
+            .lines()
+            .find(|s| s.starts_with("ro data"))
+            .unwrap()
+            .split('"')
+            .nth(1)
+            .unwrap();
+        assert!(data_name.ends_with(".bin"));
+        assert_eq!(
+            std::fs::read(stage.join("helper").join(data_name)).unwrap(),
+            b"not a module: embedded bytes\n"
+        );
+        assert!(!stage.join("helper/unreferenced.txt").exists());
+        assert!(!stage.join("helper/target").exists());
+        assert_eq!(std::fs::read_to_string(&helper).unwrap(), text);
         remove_dir(&dir);
     }
 
@@ -1021,9 +1304,15 @@ mod tests {
             &dep.join("src/dep.nv"),
             "module dep\nimport dep.types.{T}\nexport fn greet() -> int => 1\n",
         );
-        write(&dep.join("src/types.nv"), "module dep.types\nexport type T { n int }\n");
+        write(
+            &dep.join("src/types.nv"),
+            "module dep.types\nexport type T { n int }\n",
+        );
         // A test file of the dependency is not an interface.
-        write(&dep.join("src/types_test.nv"), "module dep.types\nfn t() {}\n");
+        write(
+            &dep.join("src/types_test.nv"),
+            "module dep.types\nfn t() {}\n",
+        );
         // A `_slow` root peer is a self-contained slow-lane entry, never
         // part of an importer's unit ([M-d376-slow-suffix-folder-module-peer-merge]).
         write(
@@ -1037,10 +1326,12 @@ mod tests {
         assert_eq!(deps.source_root("dep"), Some(dep.join("src").as_path()));
 
         let found = discover_program_files(&entry, &root_manifest, &deps).unwrap();
-        let mut staged_paths: Vec<String> =
-            found.files.iter().map(|f| f.staged.clone()).collect();
+        let mut staged_paths: Vec<String> = found.files.iter().map(|f| f.staged.clone()).collect();
         staged_paths.sort();
-        assert_eq!(staged_paths, vec!["_deps/dep/dep.nv", "_deps/dep/types/types.nv"]);
+        assert_eq!(
+            staged_paths,
+            vec!["_deps/dep/dep.nv", "_deps/dep/types/types.nv"]
+        );
 
         let stage = dir.join("stage");
         let staged_entry = stage_program(&stage, &root, &entry, &found).unwrap();
@@ -1088,8 +1379,11 @@ mod tests {
             b"\xef\xbb\xbfmodule probe.main\nimport dep.{greet}\nfn main() {}\n",
         )
         .unwrap();
-        std::fs::write(&dep.join("dep.nv"), b"\xef\xbb\xbfmodule dep\nexport fn greet() -> int => 1\n")
-            .unwrap();
+        std::fs::write(
+            &dep.join("dep.nv"),
+            b"\xef\xbb\xbfmodule dep\nexport fn greet() -> int => 1\n",
+        )
+        .unwrap();
         let root_manifest =
             nova_driver_support::manifest::parse_manifest(&root.join("nova.toml"), &root).unwrap();
         let deps = collect_dep_roots(&root_manifest);
