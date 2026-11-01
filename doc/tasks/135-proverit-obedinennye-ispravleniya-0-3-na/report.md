@@ -26,6 +26,8 @@
 
 ## Замер 118 примеров (порядок и входы — байт-в-байт из evidence 128)
 
+**Оба замера ниже — patched-scratch-driver, не поставляемый путь. Pristine-driver на объединённом сиде НЕ ЗАМЕРЕН.** Разделение контуров, оба набора таблиц и воспроизводимый diff: [evidence/README.md](evidence/README.md), [driver-contours.tsv](evidence/driver-contours.tsv). 62 PASS не являются утверждением о поставляемом драйвере.
+
 Контур: scratch-драйвер (SEED_* → 0.2.2-135combined, unpacked-путь, sidecar-фикс стейджинга), install135 (std = HEAD == std замера 128, diff пуст), clang, Boehm/libuv из vendored подмодулей.
 
 ИТОГИ ПЕРВОГО ПРОГОНА (run118, 21 мин): **62 PASS (60 rc=0 + 2 намеренные rc=101), FAIL 56** — дословно расклад 128 по числам. Гистограмма классов:
