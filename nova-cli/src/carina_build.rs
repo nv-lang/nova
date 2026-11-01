@@ -362,7 +362,33 @@ fn prepare_seed(repo: &Path) -> Result<Seed> {
     Ok(Seed { exe })
 }
 
+/// Locate the Nova workspace (monorepo) root for a `build` entry.
+///
+/// Resolution order (mirrors `NOVA_RT_DIR`/`NOVA_CG_INCLUDE` in
+/// `main.rs::resolve_paths`): the `NOVA_WORKSPACE_ROOT` environment
+/// variable, when set to an existing directory, wins outright; otherwise
+/// the parent directories of `entry` are walked looking for the workspace
+/// markers (`docs/dev/carina-seeds/windows-x86_64.json` +
+/// `compiler-codegen/nova_rt`).
+///
+/// The env override exists because marker walking starts at the ENTRY
+/// file's own path: a `.nv` program built from OUTSIDE this repository
+/// (e.g. a fixture in the OS temp dir, or any user project) has no
+/// ancestor carrying the markers, and the driver would hard-fail with
+/// "entry is not inside a Nova workspace" before any toolchain work
+/// (regression introduced by 12ac789aa, which routed every `nova build`
+/// through this driver). Pointing `NOVA_WORKSPACE_ROOT` at a checkout
+/// restores a working seed/runtime/toolchain setup.
 fn find_workspace_root(entry: &Path) -> Result<PathBuf> {
+    if let Some(root) = super::env_path_override("NOVA_WORKSPACE_ROOT") {
+        if root.is_dir() {
+            return Ok(root);
+        }
+        bail!(
+            "NOVA_WORKSPACE_ROOT is set but is not an existing directory: {}",
+            root.display()
+        );
+    }
     let mut dir = entry
         .parent()
         .ok_or_else(|| anyhow!("entry has no parent directory"))?;

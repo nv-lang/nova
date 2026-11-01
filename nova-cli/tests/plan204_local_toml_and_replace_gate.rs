@@ -58,9 +58,22 @@ fn init_repo(dir: &Path) {
     git(&["config", "user.name", "t"], dir);
 }
 
+/// Repo root — `nova-cli`'s parent (mirrors `entry_folder_module.rs`).
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("nova-cli has a parent dir")
+        .to_path_buf()
+}
+
 fn nova(cwd: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_nova"))
         .args(args)
+        // Fixtures live in the OS temp dir, outside any Nova workspace; the
+        // Carina build driver resolves the workspace root (seed/runtime
+        // layout) via NOVA_WORKSPACE_ROOT when marker walking from the entry
+        // file cannot find one. Harmless for non-build subcommands (`add`).
+        .env("NOVA_WORKSPACE_ROOT", repo_root())
         .current_dir(cwd)
         .output()
         .expect("failed to spawn `nova`")
