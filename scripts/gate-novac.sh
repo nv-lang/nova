@@ -159,7 +159,12 @@ rm -f "$NOVAC_DONE"
 NOVAC_REACHED_VERDICT=0
 _novac_write_verdict() {
     _rc=$?
+    # Snapshot before releasing the lock; never replace the original exit code.
+    if [ "$_rc" -ne 0 ] || [ "$NOVAC_REACHED_VERDICT" != "1" ]; then
+        if declare -F par_snapshot >/dev/null; then par_snapshot || :; fi
+    fi
     _tail=""
+    [ "$NOVAC_REACHED_VERDICT" = "1" ] || _tail=" INTERRUPTED=1"
     if [ "$_rc" -eq 0 ] && [ "$NOVAC_REACHED_VERDICT" != "1" ]; then
         _rc=125
         _tail=" INTERRUPTED=1"
@@ -175,6 +180,8 @@ _novac_write_verdict() {
     return $_rc
 }
 trap _novac_write_verdict EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 SEAMS=""
 [ "${NOVAC_CORPUS:-1}" = "0" ] && SEAMS="$SEAMS NOVAC_CORPUS=0"
@@ -302,6 +309,35 @@ guard() {
 # читался бы как разные прогоны.
 PAR_DIR="${TMPDIR:-/tmp}/novac-gate-par.$$"
 PAR_N=0
+par_snapshot() {
+    # Only the active pool's allowlisted files: no environment or arbitrary tree.
+    [ -d "${PAR_DIR:-}" ] || return 0
+    local dest="$ROOT/target/novac-partial/$(basename "$PAR_DIR")" i now start elapsed state rc suffix
+    mkdir -p "$dest" || return 0
+    now=$(date +%s)
+    echo "novac-par partial snapshot (not a verdict)"
+    for ((i=1; i<=PAR_N; i++)); do
+        state=queued; elapsed=0; rc=unknown
+        if [ -f "$PAR_DIR/$i.start" ]; then
+            state=started
+            read -r start < "$PAR_DIR/$i.start"
+            elapsed=$((now - start))
+        fi
+        if [ -f "$PAR_DIR/$i.rc" ]; then
+            state=completed
+            read -r rc < "$PAR_DIR/$i.rc"
+        fi
+        [ ! -f "$PAR_DIR/$i.sec" ] || read -r elapsed < "$PAR_DIR/$i.sec"
+        for suffix in cmd out rc sec start; do
+            [ ! -f "$PAR_DIR/$i.$suffix" ] || cp "$PAR_DIR/$i.$suffix" "$dest/$i.$suffix" 2>/dev/null || :
+        done
+        printf 'status=%s elapsed_sec=%s rc=%s\n' "$state" "$elapsed" "$rc" > "$dest/$i.status"
+        printf 'guard=%s ' "$i"
+        cat "$dest/$i.status"
+        [ ! -f "$dest/$i.cmd" ] || cat "$dest/$i.cmd"
+        [ ! -f "$dest/$i.out" ] || cat "$dest/$i.out"
+    done
+}
 par_reset() { rm -rf "$PAR_DIR"; mkdir -p "$PAR_DIR"; PAR_N=0; }
 par_add() {
     # Страж, ПОДМЕНЯЮЩИЙ файлы стражей в дереве, в параллельный блок не
@@ -353,6 +389,7 @@ par_run() {
         # внутри свой бюджет времени (фаззер), тот обязан уложиться в предел,
         # а не узнавать о нём по сигналу (реестр №1372, ci-green-0930).
         ( _t0=$(date +%s)
+          printf '%s\n' "$_t0" > "$PAR_DIR/$_i.start"
           NOVAC_STEP_DEADLINE="$_pdl" bash "$ROOT/scripts/tools/with-deadline.sh" "$_pdl" bash "$_g" "$ROOT" \
               > "$PAR_DIR/$_i.out" 2>&1
           rc=$?
