@@ -1198,6 +1198,34 @@ pub fn check_module_path_with_kind(
     // accepted (full corpus migration completed; ~846 files migrated to
     // rev-3 via scripts/tools/d78_audit_migrate.py). Declaration в rev-1 form
     // теперь → hard error E_D78_MODULE_PATH_MISMATCH.
+    //
+    // Item 25 (crew-harness spike env, item 25 `nested_module`, repro
+    // `spikes/env/repro_engine/src/nested_module`): the package-prefixed
+    // full-path form — `module <package>.<rel path from source_root>` — is
+    // accepted AGAIN as an ALTERNATIVE legal declaration alongside rev-3
+    // (which stays canonical and is what the corpus declares). Reasoning:
+    // [M-D78-strict-removal] could hard-error this form because the module
+    // registry was keyed by the DECLARATION, where mixing rev-1 and rev-3
+    // spellings of one module could collide; D78 rev-4 (Plan 202) has since
+    // re-keyed the registry on the canonical FILESYSTEM path (the
+    // declaration is a pure identity check, never a routing key — imports
+    // resolve by path), so accepting the longer spelling carries no
+    // collision risk. Refusing a declaration that THIS function's own
+    // diagnostic prints as "expected (rev-1 legacy)" is the item 25 defect:
+    // a module two (or more) folders under the source root had to be
+    // declared `parent.target` (no prefix) yet imported WITH the package
+    // prefix — the declaration could never equal the import path. With this
+    // acceptance, `module crew_harness.server.front` in
+    // `src/server/front/…` and `module repro_engine.nested_module.inner` in
+    // `src/nested_module/inner/inner.nv` are both legal, in the bare
+    // (`src/`-shifted) entry mode the spelling is the plain rel path
+    // (`module a.b.c` in `src/a/b/c.nv`), and every pre-existing rev-3
+    // declaration keeps compiling unchanged.
+    if let Some(exp) = &expected_legacy {
+        if declared == exp.as_slice() {
+            return Ok(ModulePathCheck::Rev3);
+        }
+    }
 
     let exp_legacy_str = expected_legacy
         .as_ref()

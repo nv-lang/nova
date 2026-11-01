@@ -1,0 +1,37 @@
+// №TBD regression pin (item 25 of the crew-harness spike index
+// `spikes/env/README.md` — `nested_module`, repro
+// `spikes/env/repro_engine/src/nested_module`).
+//
+// A module in a folder TWO levels under the source root, with no `.nv` file
+// in the middle folder, declared the way a user naturally spells it — the
+// path from the source root WITH the package prefix (the form the D78
+// diagnostic itself prints as "expected (rev-1 legacy)") — used to be
+// refused:
+// * [M-D78-strict-removal] (2026-06-01) made the rev-3 `parent.target`
+//   spelling the ONLY accepted declaration, so `module
+//   <package>.<rel path>` hit a hard `E_D78_MODULE_PATH_MISMATCH` even
+//   though the very same error message listed that spelling as expected;
+// * a module two folders deep therefore had to be declared WITHOUT the
+//   package prefix (`module parent.target`) yet imported WITH it
+//   (`import <package>.parent.target.…`) — the declaration could never
+//   equal the import path, and crew-harness flattened its folder tree
+//   (17 `ORACLE-WORKAROUND(25)` labels).
+// The package-prefixed full-path spelling is accepted again as an
+// ALTERNATIVE legal declaration (rev-3 stays canonical). This is safe since
+// D78 rev-4 (Plan 202): the module registry is keyed by the canonical
+// filesystem path, the declaration is a pure identity check and never a
+// routing key, so the two spellings cannot collide.
+//
+// The helper module lives at
+// `nested_module_two_levels_pos_helper/inner/inner.nv` (the middle folder
+// holds no `.nv`, mirroring the repro's `src/nested_module/inner/`), and it
+// declares the PACKAGE-PREFIXED form — the shape that used to be refused.
+// EXPECT_STDOUT ITEM25_NESTED_MODULE_TWO_LEVELS_OK:42
+
+module standalone.nested_module_two_levels_pos
+
+import spec_tests.conformance.standalone.nested_module_two_levels_pos_helper.inner.{answer}
+
+fn main() Io -> () {
+    print("ITEM25_NESTED_MODULE_TWO_LEVELS_OK:${answer()}")
+}
