@@ -1,0 +1,87 @@
+// EXPECT_STDOUT ok
+//
+
+module standalone.generic_protocol_bound_inference
+
+// Regression pin (items 12 + 13 of the crew-harness spike index
+// `spikes/env/README.md` -- `repro_engine/generic_protocol_inference` and
+// `repro_engine/generic_protocol_one_param`; 28 ORACLE-WORKAROUND(12/13)
+// markers in the product spelled the type arguments out by hand).
+//
+// A generic function whose parameter is PROTOCOL-BOUNDED with SEVERAL type
+// parameters (`fn run[S, B, M Machine[S, B]](m M, ev Event[B])`), called
+// with S/B to be INFERRED, used to emit the binding `let` of its result
+// WITHOUT a C type -- ` r = run_once(...)` -- a CC-FAIL
+// `use of undeclared identifier 'r'`. The mono call itself was mangled
+// correctly (`emit_call` resolves the type args through
+// `resolve_mono_type_args`, whose Source 2e/2e-bis walks the protocol bound
+// against the concrete implementor's methods), but the LET-side probe
+// (`infer_call_ret_c`'s B10j arm) collected its own subst WITHOUT those
+// protocol-bound sources, left S/B unbound, and fell through to an empty
+// type. The fix fills the still-unbound slots of that probe's subst from
+// the SAME `resolve_mono_type_args`, so the local is declared with the
+// identical mono return type the emit side instantiates.
+//
+// Two-param bound (item 12, state + event body) and one-param bound with a
+// sum-type state (item 13) are pinned in the two tests below; the
+// explicit-arguments form (item 26) stays green either way.
+//
+// This file is a standalone single-file pin; `nova test` runs both tests.
+
+type Event[B] { id str, body B }
+type StepResult[S] { state S, count int }
+
+type Machine[S, B] protocol {
+    @initial() -> S
+    @step(state S, event Event[B]) -> StepResult[S]
+}
+
+type Counter { n int }
+
+fn Counter @initial() -> int => 0
+fn Counter @step(state int, event Event[int]) -> StepResult[int] => { state: state + event.body, count: 1 }
+
+fn run_once[S, B, M Machine[S, B]](m M, ev Event[B]) -> StepResult[S] => m.step(m.initial(), ev)
+
+type Mode enum
+    | Idle
+    | Busy(int)
+
+type Machine1[S] protocol {
+    @initial() -> S
+    @encode(state S) -> str
+}
+
+fn Counter @encode(state int) -> str => "int"
+
+type Encoder { n int }
+
+fn Encoder @initial() -> Mode => Idle
+fn Encoder @encode(state Mode) -> str => match state {
+    Idle => "idle"
+    Busy(k) => "busy"
+}
+
+type Engine[M, S] { machine M, state S, saved str }
+
+fn Engine[M Machine1[S], S] mut @save() -> () {
+    @saved = @machine.encode(@state)
+}
+
+fn start[S, M Machine1[S]](m M) -> Engine[M, S] => { machine: m, state: m.initial(), saved: "" }
+
+test "protocol bound with two type parameters, args inferred" {
+    ro r = run_once(Counter { n: 0 }, Event { id: "e", body: 3 })
+    assert(r.state == 3)
+    assert(r.count == 1)
+}
+
+test "protocol bound with one type parameter, sum-type state inferred" {
+    mut e = start(Encoder { n: 0 })
+    e.save()
+    assert(e.saved == "idle")
+}
+
+fn main() -> () {
+    print("ok")
+}
