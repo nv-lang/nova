@@ -10025,6 +10025,34 @@ impl Parser {
                         return self.parse_record_lit_after_path(path, first_span);
                     }
                 }
+                // Item 54 (generic_literal_args): `Holder[str] { … }` —
+                // turbofish-конструкция record-литерала. Спека (02-types,
+                // D55) знает только голую форму `Holder { … }` — аргумент
+                // выводится из полей. Раньше это разваливалось на два
+                // «стейтмента» с baffling E_STMT_SEP_MISSING. Даём
+                // actionable ошибку с правильной формой. Судим только
+                // Upper-пути (имя типа) и только когда после сбалансированного
+                // turbofish идёт `{` с field-сигнатурой — иначе не мешаем
+                // turbofish-static вызовам `Type[Args].method(...)`.
+                if matches!(self.peek().kind, TokenKind::LBracket)
+                    && path.first().map_or(false, |s| {
+                        s.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    })
+                    && self.turbofish_braced_record_lit_ahead()
+                {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "[E_GENERIC_TURBOFISH_LIT] generic record construction is written \
+                             without the turbofish: `{} {{ ... }}` -- the type argument is \
+                             inferred from the field values (D55 construction). For an \
+                             explicitly typed binding write `ro h {}[T] = {} {{ ... }}`.",
+                            path.join("::"),
+                            path.join("::"),
+                            path.join("::"),
+                        ),
+                        self.peek().span,
+                    ));
+                }
                 if path.len() == 1 {
                     Ok(Expr::new(
                         ExprKind::Ident(path.into_iter().next().unwrap()),
@@ -10567,6 +10595,48 @@ impl Parser {
     /// does NOT un-suppress the guard — that `{` may still be the
     /// introducer's own brace (item-51 regression: `w.put(if flag { s }
     /// else { "xy" })` mis-parsed `flag { s }` as a record literal).
+    /// Item 54: pure lookahead from `self.pos` — a balanced `[...]`
+    /// turbofish immediately followed by `{` with a field signature
+    /// (`Ident :` / `Ident ,` / `Ident }` after skipping newlines). Does
+    /// not consume tokens; turbofish static calls (`Type[Args].method`)
+    /// have a `.` after the brackets and are never flagged.
+    fn turbofish_braced_record_lit_ahead(&self) -> bool {
+        let mut depth: i32 = 0;
+        let mut i = self.pos.min(self.tokens.len());
+        while i < self.tokens.len() {
+            match self.tokens[i].kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if !matches!(self.tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LBrace))
+                        {
+                            return false;
+                        }
+                        let mut k = i + 2;
+                        while k < self.tokens.len()
+                            && matches!(
+                                self.tokens[k].kind,
+                                TokenKind::Newline | TokenKind::Semicolon
+                            )
+                        {
+                            k += 1;
+                        }
+                        let after = self.tokens.get(k + 1);
+                        return matches!(self.tokens.get(k).map(|t| &t.kind), Some(TokenKind::Ident(_)))
+                            && matches!(
+                                after.map(|t| &t.kind),
+                                Some(TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace)
+                            );
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
     fn inside_open_bracket_from(&self, from: usize) -> bool {
         let mut depth: i32 = 0;
         let mut i = self.pos.min(self.tokens.len());
