@@ -5038,13 +5038,49 @@ impl CEmitter {
         recv_type: &str,
         variant: &str,
         args: &[CallArg],
+        call_id: Option<crate::ast::ExprId>,
     ) -> Result<Option<String>, String> {
         // Collision-aware sum base: mirrors the ctor DEFINITION prefix
         // (`nova_make_<base>_<variant>`), qualified per module for colliding sums.
         let sum_base = self.ref_type_base(recv_type, &[]);
-        // Generic sums own their mono ctor path — do not intercept.
+        // Generic sums own their mono ctor path — do not intercept... but the
+        // mono path itself used to leave the QUALIFIED ctor form
+        // (`Output.Send("x")` on `type Output[I] enum | Send(I) | Log(str)`)
+        // unrouted: it fell through to the pseudo-static dispatch
+        // (`Nova_Output_static_Send`, never defined — a silent link failure,
+        // or a silent miscompile when the arg is pointer-coercible). Item 8
+        // (crew-harness `enum_str_payload`): route the qualified form to the
+        // mono'd ctor `nova_make_<mono>_<Variant>(...)` — type-args inferred
+        // from the ctor args, then (a mixed payload variant like `Log(str)`
+        // reveals no param) from the checker's resolved call type — via the
+        // same `try_infer_variant_mono_args` the bare-Ident door uses.
         if self.generic_types.contains(&sum_base) || self.generic_types.contains(recv_type) {
-            return Ok(None);
+            let Some((_, mangled, _)) = self.try_infer_variant_mono_args(variant, args, call_id)
+            else {
+                return Ok(None);
+            };
+            // Per-arg expected-record-type, scoped from the variant's OWN
+            // field type under the mono schema — mirrors the plain path below
+            // ([M-155.a] / [M-181]).
+            let mono_fields = self.reconstruct_mono_sum_schema(&mangled)
+                .and_then(|vs| vs.into_iter().find(|(n, _)| n == variant).map(|(_, f)| f));
+            let saved_expected = self.expected_record_type.clone();
+            let mut arg_strs = Vec::with_capacity(args.len());
+            for (i, a) in args.iter().enumerate() {
+                let expected = mono_fields.as_ref()
+                    .and_then(|f| f.get(i))
+                    .and_then(|fty| Self::debt_struct_name_from_c_type(fty))
+                    .or_else(|| self.expected_record_type.clone());
+                self.expected_record_type = expected;
+                arg_strs.push(self.emit_expr(a.expr())?);
+            }
+            self.expected_record_type = saved_expected;
+            return Ok(Some(format!(
+                "nova_make_{}_{}({})",
+                mangled,
+                variant,
+                arg_strs.join(", ")
+            )));
         }
         // Receiver sum must OWN a payload variant of matching arity — need its
         // field_c_types (not just a bool), see [M-155.a] below (221.1, NOTES.md).
@@ -24001,6 +24037,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         &self,
         variant_name: &str,
         args: &[crate::ast::CallArg],
+        call_id: Option<crate::ast::ExprId>,
     ) -> Option<(String, String, Vec<String>)> {
         use crate::ast::{TypeDeclKind, SumVariantKind};
         // 1. Find parent sum-type by variant name.
@@ -24028,6 +24065,68 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for (field_ty, arg) in field_types.iter().zip(args.iter()) {
             let arg_c = self.infer_expr_c_type(arg.expr());
             self.infer_type_param_binding(field_ty, &arg_c, &mut subst);
+        }
+        // 4b. Item 8 (crew-harness `enum_str_payload`): a MIXED generic sum
+        // (`type Output[I] enum | Send(I) | Log(str)`) has variants whose
+        // payload mentions NO generic param — `Log(str)` reveals nothing
+        // about `I`, so step 4 leaves it unresolved and the caller used to
+        // fall back to the erased path (the ctor arg boxed to `void*` →
+        // CC-FAIL `passing 'void *' to parameter of incompatible type
+        // 'nova_str'`, or a call to the never-defined erased ctor). Fill the
+        // still-unresolved params from the checker's resolved type of the
+        // CALL expression itself: `Log("x")` in a fn returning
+        // `Output[int]` carries resolved type `Output[int]` — the same sum,
+        // already instantiated by the checker.
+        if subst.iter().any(|(_, c)| c.is_none()) {
+            if let Some(cid) = call_id {
+                if cid.is_set() {
+                    if let Some(crate::types::ResolvedType::Named {
+                        name, args: rt_args, ..
+                    }) = self.resolved_types.get(&cid).cloned()
+                    {
+                        if name == parent_type {
+                            for i in 0..template.generics.len() {
+                                if subst[i].1.is_none() {
+                                    if let Some(a) = rt_args.get(i) {
+                                        if let Ok(c) = self.resolved_type_to_c(a) {
+                                            if !c.is_empty() && c != "void*" {
+                                                subst[i].1 = Some(c);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // 4c. Item 8 fallback #2: the checker's `resolved_types` channel does
+        // not always carry the ctor call's own type, so also consult the
+        // ENCLOSING fn's mono'd return type (`fn make() -> Output[int]` has
+        // `current_fn_return_ty` = `Nova_Output____nova_int*`): when the
+        // instance is registered, its type-args are exactly the parent sum's
+        // instantiation at this site.
+        if subst.iter().any(|(_, c)| c.is_none()) {
+            if let Some(ret) = self.current_fn_return_ty.as_deref() {
+                let key = ret.trim_end_matches('*').trim();
+                if let Some((base, rt_args)) =
+                    self.generic_type_instance_info.borrow().get(key).cloned()
+                {
+                    if base == parent_type {
+                        for i in 0..template.generics.len() {
+                            if subst[i].1.is_none() {
+                                if let Some(a) = rt_args.get(i) {
+                                    let c = self.arg_c(&a);
+                                    if !c.is_empty() && c != "void*" {
+                                        subst[i].1 = Some(c);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         // 5. Require every generic param resolved.
         let type_args_c: Vec<String> = subst.iter()
@@ -41659,7 +41758,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 48 Ф.7.4 (partial): generic parent sum-type
                         // с выводимыми type-args (`Ok2(42)` → Result2[int])
                         // → mono-pipeline (concrete C struct receiver).
-                        self.try_infer_variant_mono_args(name, args)
+                        self.try_infer_variant_mono_args(name, args, Some(call_id))
                     {
                         format!("nova_make_{}_{}", mangled, name)
                     } else {
@@ -46831,7 +46930,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && matches!(&obj.kind, ExprKind::Ident(_) | ExprKind::Path(_))
                     {
                         if let Some(call) =
-                            self.try_emit_explicit_variant_ctor(&type_name, method, args)?
+                            self.try_emit_explicit_variant_ctor(&type_name, method, args, Some(call_id))?
                         {
                             return Ok(call);
                         }
@@ -47751,7 +47850,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // the `nova_make_<Sum>_<Variant>` ctor is emitted). The
                     // variant belongs unambiguously to its sum, so the ctor wins.
                     if let Some(call) =
-                        self.try_emit_explicit_variant_ctor(&recv_seg, method_name, args)?
+                        self.try_emit_explicit_variant_ctor(&recv_seg, method_name, args, Some(call_id))?
                     {
                         return Ok(call);
                     }
@@ -48317,7 +48416,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
             if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                 self.generic_types.contains(&type_name)
-                    && self.try_infer_variant_mono_args(name, args).is_none()
+                    && self.try_infer_variant_mono_args(name, args, Some(call_id)).is_none()
             } else { false }
         } else { false };
         // Bidirectional inference: extract callee name for HOF context lookup.
@@ -63547,7 +63646,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         };
                         return self.result_repr_c_type(&ok_c, &err_c);
                     }
-                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
+                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args, Some(expr.id)) {
                         return format!("{}*", mangled);
                     }
                     return self.a4_sum_c_type(&type_name);
