@@ -1,0 +1,22 @@
+// Item 47 (`leak_ab`) pin fixture, side module: the module whose TEST peer
+// (`leak_ab_embed_import_side_test.nv`, compiled into the importer's unit
+// under `nova test`) binds the names `a`/`b` to `[]StepTrace` -- the leak
+// carrier -- and whose `embed_dir` pulls the prelude `EmbeddedDir` into the
+// same compile unit.
+module standalone.leak_ab_embed_import_side
+
+// NO field named `path` (the pre-fix CC-FAIL was `no member named 'path'
+// in 'struct Nova_StepTrace'` -- the leaked element type).
+export type StepTrace {
+    op    str
+    state str
+}
+
+// A GENERIC fn (the real carrier `drive_scenario[State, Machine](...)` of
+// CrewHarness was generic): the elem-type propagation of a turbofish CALL
+// result is what writes the leaked `array_element_types` entries.
+export fn traces_of[T](seed T) -> []StepTrace {
+    [StepTrace { op: "read", state: "go" }, StepTrace { op: "write", state: "go" }]
+}
+
+export fn case_count() -> int => embed_dir("leak_ab_cases").len()
