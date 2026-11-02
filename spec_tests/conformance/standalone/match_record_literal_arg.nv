@@ -1,0 +1,44 @@
+// №TBD regression pin (item 51 of the crew-harness spike index
+// `spikes/env/README.md` -- `match_record_literal_arg`, task 114; the note
+// (e)) of task 110 had the direct form). A record literal -- directly or
+// inside a list literal -- in the argument of the call that is the
+// scrutinee of a `match` used to be a syntax error ("expected `,` or `]`
+// in array literal, got `{`" / "expected `)`, got `{`"): `parse_match`
+// parses the scrutinee under `with_no_struct_or_trailing`, whose
+// `no_struct_lit` guard makes `looks_like_record_lit` refuse EVERY `{` of
+// the subtree. The guard exists for the introducer's OWN brace
+// (`match expr {`), which always sits at bracket depth 0 after a complete
+// expression; inside balanced `(`/`[` (a call argument, an array-literal
+// element) a `{` cannot be that brace, so the record-lit reading there is
+// unambiguous and `looks_like_record_lit` now stays live inside open
+// brackets (`Parser::inside_open_bracket`). The product workaround
+// (`ORACLE-WORKAROUND(51)` in crew-harness `table_test.nv`: bind the list
+// in a function instead of writing the literal in the scrutinee) can be
+// written in place. The `guard` arm below pins the other side: a complete
+// scrutinee still hands its `{` to the match block, not to a record lit.
+// EXPECT_STDOUT ITEM51_MATCH_REC_ARG_OK
+
+module standalone.match_record_literal_arg
+
+type Item51PV { key str, value int }
+
+fn item51_count(ps []Item51PV) -> int => ps.len()
+fn item51_one(p Item51PV) -> int => p.value
+
+fn main() {
+    // direct record literal as the argument of the scrutinee call
+    match item51_one(Item51PV { key: "a", value: 4 }) {
+        n => println("ITEM51_MATCH_REC_ARG_OK:direct:${n}")
+    }
+    // record literal inside a list literal in the same position (the form
+    // the product had to round with a helper function)
+    match item51_count([Item51PV { key: "b", value: 1 }, Item51PV { key: "c", value: 2 }]) {
+        n => println("ITEM51_MATCH_REC_ARG_OK:list:${n}")
+    }
+    // guard: the introducer's own `{` at bracket depth 0 is still the
+    // match block, and an arm body brace is a block, not a record lit
+    ro xs = [Item51PV { key: "d", value: 8 }]
+    match item51_count(xs) {
+        n => { println("ITEM51_MATCH_REC_ARG_OK:guard:${n}") }
+    }
+}
