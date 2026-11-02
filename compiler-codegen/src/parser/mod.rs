@@ -10530,9 +10530,44 @@ impl Parser {
         }
     }
 
+    /// Crew-harness spike item 51 (`match_record_literal_arg`): is the
+    /// current position inside an as-yet-unclosed `(`/`[`? The
+    /// `no_struct_lit` ambiguity guard exists for the introducer's OWN
+    /// brace (`match expr {`, `if cond {`, `for x in it {`) — that brace
+    /// always sits at bracket depth 0, after a COMPLETE expression.
+    /// Inside balanced `(`/`[` (a call argument, an array-literal element)
+    /// a `{` cannot be the introducer's brace, so a record literal there
+    /// (`f(PV { .. })`, `[PV { .. }]` as the scrutinee's call argument) is
+    /// unambiguous and must not be suppressed. Walks the token stream
+    /// backwards; brackets that closed on the way balance out, so the
+    /// first unmatched opener (if any) answers the question.
+    fn inside_open_bracket(&self) -> bool {
+        let mut depth: i32 = 0;
+        let mut i = self.pos;
+        while i > 0 {
+            i -= 1;
+            match self.tokens[i].kind {
+                TokenKind::RParen | TokenKind::RBracket => depth += 1,
+                TokenKind::LParen | TokenKind::LBracket => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn looks_like_record_lit(&self) -> bool {
         if self.no_struct_lit {
-            return false;
+            // Item 51: inside `(`/`[` the record-lit reading stays live
+            // (see `inside_open_bracket`); only the depth-0 introducer
+            // brace keeps the guard.
+            if !self.inside_open_bracket() {
+                return false;
+            }
         }
         // Skip newlines внутри.
         let mut i = self.pos + 1;
