@@ -37944,7 +37944,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     };
                     if let Some(arr_name) = arr_var_name {
                         if let Some(real_elem_ty) = self.array_element_types.get(arr_name).cloned() {
-                            if real_elem_ty.ends_with('*') {
+                            // [M-array-elem-type-cross-body-leak] (crew-harness
+                            // spike item 47, `leak_ab`): `array_element_types`
+                            // is keyed by BARE local name and is NOT scope-
+                            // keyed — the per-fn param loop (`emit_fn`, the
+                            // `array_element_types.insert(p.name, …)` trail)
+                            // and the Let-binding propagation
+                            // (`ro b = <[]StepTrace expr>` → `insert("b", …)`)
+                            // persist past the end of the body that produced
+                            // them. A SIBLING body of the same compile unit (a
+                            // `*_test.nv` peer of an imported module, compiled
+                            // into the importer's unit) that binds `a`/`b` to a
+                            // `[]StepTrace` leaks `b → Nova_StepTrace*` into
+                            // the PRELUDE's `EmbeddedDir @merge`, whose own
+                            // local `b` is `[]EmbeddedEntry`: `b[j].path` then
+                            // emitted as `(((Nova_StepTrace*)(b[j]))->path)` →
+                            // CC-FAIL `no member named 'path' in 'struct
+                            // Nova_StepTrace'`. Guard: when the array's own C
+                            // type is known (`var_types[arr_name]` is a
+                            // `Nova_Vec____…`) and its decoded element type
+                            // DISAGREES with the side-table entry, the entry is
+                            // stale — fall through to the regular inference
+                            // instead of casting. nova_int-stomped arrays (the
+                            // legitimate users of this fast path: erased
+                            // generics) have no `Nova_Vec____` type in
+                            // var_types and keep the old behavior.
+                            let entry_stale = real_elem_ty.ends_with('*')
+                                && !real_elem_ty.ends_with("**")
+                                && self.var_types.get(arr_name).map_or(false, |vt| {
+                                    let vt = vt.trim_end_matches('*').trim();
+                                    vt.starts_with("Nova_Vec____")
+                                        && vt
+                                            .strip_prefix("Nova_Vec____")
+                                            .and_then(|frag| frag.strip_suffix("_p").or(Some(frag)))
+                                            .map(|elem_base| {
+                                                elem_base
+                                                    != real_elem_ty
+                                                        .trim_end_matches('*')
+                                                        .trim()
+                                            })
+                                            .unwrap_or(false)
+                                });
+                            if real_elem_ty.ends_with('*') && !entry_stale {
                                 // Cast the nova_int array element back to the real pointer type
                                 return Ok(format!("((({})({}))->{})", real_elem_ty, o, field_name));
                             }

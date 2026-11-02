@@ -1,0 +1,38 @@
+// №TBD regression pin (item 47 of the crew-harness spike index
+// `spikes/env/README.md` -- `leak_ab`; real-world carrier: the unit
+// `src/machine_text_render` of CrewHarness task 113, importing
+// `machine_text_eq` whose `eq_test.nv` had `trace_diff(a StepTrace,
+// b StepTrace)` and `engine_diff` with `ro a`/`ro b` of `[]StepTrace`; the
+// workaround renamed them `ta`/`tb`).
+//
+// A unit that imports a module whose TEST files bind the names `a`, `b` to a
+// `[]Record` got the C of the prelude method `EmbeddedDir.merge` wrong as
+// soon as the unit's program embedded a directory: CC-FAIL `no member named
+// 'path' in 'struct Nova_StepTrace'`. Root cause: `array_element_types`
+// (emit_c.rs) is keyed by BARE local name and is NOT scope-keyed -- the
+// Let-binding elem-type propagation of the test peer's free fn persists
+// `b -> Nova_StepTrace*` past the end of that body; merge's own `ro a =
+// @entries` overwrites `a` (field-access RHS hits the channel) but `ro b =
+// other.entries()` (method-call RHS) does not, and the member fast path for
+// `b[j].path` inside `EmbeddedDir @merge` (whose own `b` is
+// `[]EmbeddedEntry`) cast the element to the stale `Nova_StepTrace`.
+//
+// Run:  nova test spec_tests/conformance/standalone/leak_ab_embed_import.nv
+// Pre-fix (released 0.1.0 / pre-fix main): CC-FAIL `no member named 'path'
+// in 'struct Nova_StepTrace'`. With the fix: PASS.
+module standalone.leak_ab_embed_import
+
+// std.text FIRST: its subtree (whose own locals bind `b` as `[]u8`) has to
+// be emitted BEFORE the side module's test peer, exactly like the real
+// carrier unit imported `std.fs`/`std.text` before `machine_text_eq`.
+import std.text
+import ./leak_ab_embed_import_side.{StepTrace, traces_of, case_count}
+
+test "embedded dir + foreign a/b test peers coexist" {
+    assert(case_count() == 1)
+    assert(["x", "y"].join(",") == "x,y")
+    ro first = StepTrace { op: "read", state: "go" }
+    ro a = traces_of[StepTrace](first)
+    assert(a.len() == 2)
+    assert(a[0].op == "read")
+}
