@@ -13349,6 +13349,59 @@ impl<'a> TypeCheckCtx<'a> {
                                 e.span,
                             ));
                         }
+                        // Item 42 (split_index): scalar index READ `x[i]` on a KNOWN
+                        // user type that declares NO `index` overload at all passed
+                        // the checker and fell through to codegen, which stopped with
+                        // INTERNAL-PANIC `[E_CODEGEN_TYPE_UNKNOWN] Index element type
+                        // unknown for obj_ty="NovaValue_SplitIter"` — at the GENERATED
+                        // expression, with no source span (measured on the released
+                        // 0.1.0: `ro parts = text.split(","); ro first = parts[0]`).
+                        // Per D238 `a[key]` desugars to `a.@index(key)`; the builtin
+                        // doors (`[]T`/`[N]T` structural, `str` above, raw pointer
+                        // №367 above) are each handled on their own path, so a type
+                        // with zero `index` overloads has NOTHING to call and the
+                        // honest refusal belongs here, with a span — the same
+                        // check-in-the-checker placement Plan 284 chose for
+                        // E_SLICE_ROLE_UNSATISFIED ("a codegen-side error carries no
+                        // span"). Judge by SIGNATURE, the №1022 convention: fire only
+                        // when the method table knows the type at all (`known`),
+                        // so builtin/foreign types invisible to this table keep the
+                        // legacy path; and only on the READ form — an assignment
+                        // target goes through MutIndex/D240 on its own door.
+                        if !is_assign_target_top {
+                            if let Some(tname) = Self::typeref_named_base(&obj_tr) {
+                                // Skip the scope-alias names the `[]T` extension door
+                                // mints (`scope["@"]` stores "[]int" as a Named), the
+                                // `str` door above (would double-fire), and bare
+                                // generic params (`Named{T}` in a generic body — their
+                                // instantiations may implement `Index`).
+                                let named_slice_alias = matches!(&obj_tr,
+                                    TypeRef::Named { path, .. }
+                                        if path.len() == 1 && path[0].starts_with("[]"));
+                                if !named_slice_alias
+                                    && tname != "str"
+                                    && !gs.contains_key(tname)
+                                {
+                                    let (known, has_index, _takes_range, _answers_end) =
+                                        self.t_slice_role_by_signature(tname);
+                                    if known && !has_index {
+                                        errors.push(Diagnostic::new(
+                                            format!(
+                                                "[E_NO_INDEX_IMPL] `{tname}` does not implement \
+                                                 `Index[int, V]` — `x[i]` desugars to \
+                                                 `x.@index(i)` (D238) and the type declares no \
+                                                 `@index` overload. Iterator types (e.g. the \
+                                                 result of `str.split` / `str.rsplit`) are \
+                                                 consumed by iteration, not by index: use \
+                                                 `for part in text.split(sep)` (and push to a \
+                                                 list if you need indexed access afterwards)."
+                                            ),
+                                            e.span,
+                                        ));
+                                    }
+                                }
+                            }
+                        }
                         // Registry #894 (plan 281 F.1): the KEY of `a[k]` was compared
                         // with NOTHING, while the explicit `a.index(k)` on the same type
                         // and the same method IS checked. One operation, two doors,
