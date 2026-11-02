@@ -13310,7 +13310,7 @@ static nova_str nova_fn_8encoding5serde13parse_err_msg(Nova_ParseJsonError* e) {
         _nv_match_1236 = _nv_interp_str_1239;
         _nv_matched_1237 = 1;
     }
-    if (!_nv_matched_1237 && (((_nv_scr_1235->tag == NOVA_TAG_ErrorKind_UnexpectedEof)))) {
+    if (!_nv_matched_1237 && (((_nv_scr_1235->tag == NOVA_TAG_ParseJsonError_UnexpectedEof)))) {
         nova_int line = _nv_scr_1235->payload.UnexpectedEof.line;
         nova_int col = _nv_scr_1235->payload.UnexpectedEof.col;
         Nova_StringBuilder* _nv_interp_sb_1240 = Nova_StringBuilder_static_new(70);
@@ -23092,7 +23092,7 @@ static NovaOpt_nova_int HashMap____nova_str__nova_int_method_insert(Nova_HashMap
     Nova_Slot____nova_str__nova_int* _nv_scr_2906 = ((Nova_Slot____nova_str__nova_int*)((*(nova_int*)nova_idx_chk((void*)((nova_self->buckets)), (idx), sizeof(nova_int)))));
     NovaOpt_nova_int _nv_match_2907;
     int _nv_matched_2908 = 0;
-    if (!_nv_matched_2908 && (((_nv_scr_2906->tag == NOVA_TAG_Slot_Occupied)))) {
+    if (!_nv_matched_2908 && (((_nv_scr_2906->tag == NOVA_TAG_Nova_Slot____nova_str__nova_int_Occupied)))) {
         nova_int old = _nv_scr_2906->payload.Occupied.value;
         Nova_Slot____nova_str__nova_int* _nv_tmp_2909 = nova_make_Nova_Slot____nova_str__nova_int_Occupied(key, value);
         { nova_int _wi = (idx); if (_wi < 0 || _wi >= ((nova_self->buckets))->len) nv_panic_index_oob(_wi, ((nova_self->buckets))->len); (((nova_self->buckets))->data)[_wi] = (Nova_Slot____nova_str__nova_int*)(_nv_tmp_2909); }
@@ -23126,7 +23126,7 @@ static NovaOpt_nova_int HashMap____nova_str__nova_int_method_get(Nova_HashMap___
     Nova_Slot____nova_str__nova_int* _nv_scr_2915 = ((Nova_Slot____nova_str__nova_int*)((*(nova_int*)nova_idx_chk((void*)((nova_self->buckets)), (idx), sizeof(nova_int)))));
     NovaOpt_nova_int _nv_match_2916;
     int _nv_matched_2917 = 0;
-    if (!_nv_matched_2917 && (((_nv_scr_2915->tag == NOVA_TAG_Slot_Occupied)))) {
+    if (!_nv_matched_2917 && (((_nv_scr_2915->tag == NOVA_TAG_Nova_Slot____nova_str__nova_int_Occupied)))) {
         nova_int value = _nv_scr_2915->payload.Occupied.value;
         _nv_match_2916 = ((NovaOpt_nova_int){.tag = NOVA_TAG_Option_Some, .value = (value)});
         _nv_matched_2917 = 1;
@@ -24040,7 +24040,7 @@ static nova_int HashMap____nova_str__nova_int_method_find_slot(Nova_HashMap____n
             _nv_match_3064 = _nv_if_3067;
             _nv_matched_3065 = 1;
         }
-        if (!_nv_matched_3065 && (((_nv_scr_3063->tag == NOVA_TAG_Slot_Occupied)))) {
+        if (!_nv_matched_3065 && (((_nv_scr_3063->tag == NOVA_TAG_Nova_Slot____nova_str__nova_int_Occupied)))) {
             nova_str k = _nv_scr_3063->payload.Occupied.key;
             nova_unit _nv_if_3068;
             if ((Nova_str_method_equal(k, key))) {
@@ -24104,7 +24104,7 @@ static NovaOpt__NovaTuple_2_8_nova_str_8_nova_int Nova_HashMapIter____nova_str__
         *_nv_ca_3072 = nova_int_checked_add(*_nv_ca_3072, ((nova_int)1LL));
         Nova_Slot____nova_str__nova_int* _nv_scr_3073 = slot;
         nova_unit _nv_if_let_3074;
-        if (((_nv_scr_3073->tag == NOVA_TAG_Slot_Occupied))) {
+        if (((_nv_scr_3073->tag == NOVA_TAG_Nova_Slot____nova_str__nova_int_Occupied))) {
             nova_str key = _nv_scr_3073->payload.Occupied.key;
             nova_int value = _nv_scr_3073->payload.Occupied.value;
             _NovaTuple_2_8_nova_str_8_nova_int _nv_tmp_3075;
@@ -24533,7 +24533,7 @@ static nova_unit HashMap____nova_str__nova_int_method_rehash(Nova_HashMap____nov
         nova_preempt_check();
         Nova_Slot____nova_str__nova_int* _nv_scr_3138 = slot;
         nova_unit _nv_if_let_3139;
-        if (((_nv_scr_3138->tag == NOVA_TAG_Slot_Occupied))) {
+        if (((_nv_scr_3138->tag == NOVA_TAG_Nova_Slot____nova_str__nova_int_Occupied))) {
             nova_str key = _nv_scr_3138->payload.Occupied.key;
             nova_int value = _nv_scr_3138->payload.Occupied.value;
             _nv_if_let_3139 = NOVA_UNIT; (void)(HashMap____nova_str__nova_int_method_insert(nova_self, key, value));

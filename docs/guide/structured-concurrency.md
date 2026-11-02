@@ -12,6 +12,38 @@ controls — deadlines (`timeout:` / `deadline:`) and cooperative cancellation
 For channels and `select`, see [channels](channels.md). For resource cleanup
 on scope exit, see the [cleanup cookbook](cleanup-cookbook.md).
 
+## Waiting without `await` and the handler context
+
+Nova uses stackful fibers: an ordinary waiting operation, such as `recv()` on an empty channel, can park the current fiber and allow another one to proceed. The call site does not need a separate `await` keyword. An effect operation does not inherently suspend execution; suspension depends on its implementation.
+
+Under [D80](../../spec/decisions/06-concurrency.md#d80-handler-scoping-per-fiber), active handler bindings belong to a fiber. `spawn` inherits a snapshot of the current handler pointers; later `with` bindings are local to the child. The scheduler saves and restores this context when switching fibers. A pointer snapshot does not imply a deep copy of handler state.
+
+```nova
+test "two fibers communicate on a single worker without await" {
+    runtime.init(1)
+    ro { tx: ready_tx, rx: ready_rx } = Channel[int].new(1)
+    ro { tx: data_tx, rx: data_rx } = Channel[int].new(1)
+    supervised {
+        spawn {
+            ready_tx.send(1)
+            assert((data_rx.recv() ?? -1) == 42)
+        }
+        spawn {
+            assert((ready_rx.recv() ?? -1) == 1)
+            data_tx.send(42)
+        }
+    }
+    ready_tx.close()
+    data_tx.close()
+    runtime.shutdown()
+    println("handoff-ok")
+}
+```
+
+The example checks channel handoff with assertions rather than relying on console ordering. Run the individual file with `nova test example.nv --jobs 1`.
+
+`runtime.yield()` explicitly gives up execution. [D103](../../spec/decisions/06-concurrency.md#d103-preemption--sysmon-thread--codegen-safepoints) separately defines safepoints for CPU-bound code. Neither mechanism promises to interrupt an arbitrary blocking C/FFI call.
+
 ## Deadlines: `timeout:` / `deadline:`
 
 A scope can carry its own deadline — either relative (`timeout:` takes a
