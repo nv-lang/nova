@@ -332,7 +332,7 @@ fn parent_of_key(key str) -> Option[str] {
     match key.rfind("/") {
         None        => Some("/")
         Some(0)     => Some("/")
-        Some(cut)   => Some(key[0..cut])
+        Some(cut)   => Some(key[..cut])
     }
 }
 
