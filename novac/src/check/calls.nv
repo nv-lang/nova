@@ -902,6 +902,14 @@ fn Checker mut @type_free_call(e Node) -> () {
             @param_expect(arg_row, argi, pre)
         }
         argi += 1
+        if c.kind_of() == NodeKind.ArrayLit && branch_children(c).len() == 0 {
+            @type_tag_args(c, want, kids)
+            if @out.len() > before {
+                @value_expect = saved_expect
+                return
+            }
+            continue
+        }
         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
         if @is_deferred_arg(c) { continue }
         @type_arg_expecting(arg_expr_of(c), want)
@@ -917,7 +925,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
     // past silently.
     ro def = found ?? ice_at(
-        "novac/src/check/calls.nv:919",
+        "novac/src/check/calls.nv:927",
         "check: the callee row vanished between two reads of one Option")
     match def.target {
         DefFn(_) => {

@@ -1,0 +1,39 @@
+// EXPECT_STDOUT tag:hello
+// EXPECT_STDOUT int:world
+// EXPECT_STDOUT backtick-ok
+// D467/D48: exact text, the ordinary tag call and its typed empty arguments.
+fn tag(parts []str, args []str) -> str {
+    assert(parts.len() == 1)
+    assert(args.len() == 0)
+    print("tag:")
+    parts[0]
+}
+fn int_tag(parts []str, args []int) -> str {
+    assert(parts.len() == 1)
+    assert(args.len() == 0)
+    print("int:")
+    parts[0]
+}
+fn guarded(s str) -> int
+    requires s != `no
+bad`
+{ 1 }
+fn main() {
+    assert(`` == "")
+    assert(`C:\new\table` == "C:\\new\\table")
+    assert(`tick \` slash \\ dollar \${name}` == "tick ` slash \\ dollar \${name}")
+    assert(`first
+second` == "first\nsecond")
+    assert(`
+        one
+          two
+        ` == "one\n  two\n")
+    assert(`café` == "café")
+    assert(guarded("yes") == 1)
+    ro n = 7
+    assert("`head${n}`tail`" == "`head7`tail`")
+    assert("${n}`raw\\n`" == "7`raw\\n`")
+    println(tag`hello`)
+    println(int_tag`world`)
+    println("backtick-ok")
+}

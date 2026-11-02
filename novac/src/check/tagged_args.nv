@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: ordinary call argument expectation (calls.nv); D48 specifies the sugar.
+// Role: types the implicit empty args vector of a text-only tagged literal.
+// Used by: type_free_call; no tag-specific overload or naming mechanism.
+// Guarded by: carina_text_backtick_tag runtime fixture and negative probes.
+module novac.check
+
+import ../tree.{Node}
+import ../types.{TyId, is_ty}
+import ../builtins.{TypeKind, SLICE_HEAD, EMPTY_CTOR}
+import ../sem.{decl_of_ty, ty_source_name}
+
+/// Only the tag parser creates a leafless ArrayLit; explicit [] has brackets.
+/// The expected type is the ordinary parameter's, not a hardcoded str default.
+fn Checker mut @type_tag_args(arg Node, want TyId, call_kids []Node) -> () {
+    if !is_ty(want) || !@ctx.tys.is_concrete(want) ||
+        @ctx.tys.kind_of(want) != TypeKind.TkApp ||
+        decl_of_ty(@ctx, want).name != SLICE_HEAD || @ctx.tys.arg_count(want) != 1 {
+        @report_first_leaf_of(call_kids, "outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, 274.14 F2)")
+        return
+    }
+    if !@vec_op_carried(want, EMPTY_CTOR) {
+        @report_first_leaf_of(call_kids, no_shell_vec_msg(ty_source_name(@ctx, @ctx.tys.arg(want, 0))))
+        return
+    }
+    @record(arg, want)
+}

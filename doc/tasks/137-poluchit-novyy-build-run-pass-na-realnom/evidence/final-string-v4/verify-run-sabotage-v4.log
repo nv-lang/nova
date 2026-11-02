@@ -1,0 +1,40 @@
+real-emit rc=0
+real-native rc=0
+real-run rc=0
+real BUILD+RUN FAIL stdout='hello Nova\none long line, written across two source lines\nfirst\tsecond\tthird\na tagged literal\ncost: $ and more\nshell: $HOME plain\nC:\\new\\table\ntick ` slash \\ dollar ${name}\n'
+fixture-emit rc=0
+fixture-native rc=0
+fixture-run rc=101
+fixture BUILD+RUN FAIL stdout=''
+fixture-crlf-emit rc=0
+fixture-crlf-native rc=0
+fixture-crlf-run rc=101
+fixture-crlf BUILD+RUN FAIL stdout=''
+previous-str_eq-emit rc=0
+previous-str_eq-native rc=0
+previous-str_eq-run rc=0
+previous-str_eq BUILD+RUN PASS stdout='true\nfalse\ntrue\n'
+previous-strings-emit rc=0
+previous-strings-native rc=0
+previous-strings-run rc=0
+previous-strings BUILD+RUN PASS stdout="len = 12\nupper = HELLO, WORLD\nstarts with 'hello' = true\ncontains 'world' = true\n"
+previous-requires_string_guard-emit rc=0
+previous-requires_string_guard-native rc=0
+previous-requires_string_guard-run rc=0
+previous-requires_string_guard BUILD+RUN PASS stdout='1\n'
+previous-interp_display-emit rc=0
+previous-interp_display-native rc=0
+previous-interp_display-run rc=0
+previous-interp_display BUILD+RUN PASS stdout='p Pt end\nPtPt\n'
+live rc=1
+live REFUSAL PASS
+tag-live rc=1
+tag-live REFUSAL PASS
+unclosed rc=1
+unclosed REFUSAL PASS
+escaped-close rc=1
+escaped-close REFUSAL PASS
+generic-tag rc=1
+generic-tag REFUSAL PASS
+overloaded-tag rc=1
+overloaded-tag REFUSAL PASS

@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$SCRATCH\\string-final-green-v4\\tag-live.nv","start":88,"end":100},"message":"outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled","poisoned_by":null}

@@ -64,6 +64,9 @@ scripts/guards/*.txt    text eol=lf
 # ПРАВИЛО НА БУДУЩЕЕ: появился новый артефакт, который судится побайтово —
 # строка сюда ТЕМ ЖЕ слиянием, что вводит артефакт.
 novac/src/emit_c/shell.tpl.c -text
+# Task 137 evidence is hashed byte-for-byte after documented path normalization.
+# Preserve those published bytes, including CRLF retained in captured stdout.
+doc/tasks/137-poluchit-novyy-build-run-pass-na-realnom/evidence/** -text
 
 # Скрипты: msys выполняет и CRLF-версии, но shebang с `\r` ломает запуск на
 # любой другой машине, и это уже кусало проект. Замер 2026-08-18: два стража

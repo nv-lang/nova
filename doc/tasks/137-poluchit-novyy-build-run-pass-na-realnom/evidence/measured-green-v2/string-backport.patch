@@ -1,0 +1,171 @@
+diff --git a/novac/src/check/binds.nv b/novac/src/check/binds.nv
+index 44099958e..626d48e73 100644
+--- a/novac/src/check/binds.nv
++++ b/novac/src/check/binds.nv
+@@ -663,6 +663,10 @@ fn Checker mut @walk_carried(kids []Node, ht TyId) -> bool {
+ /// is the probe program, and widening it is a visible edit.
+ fn Checker mut @type_array_lit(init Node) -> TyId {
+     ro kids = branch_children(init)
++    // A tag's implicit empty args is typed at its call site, which owns the
++    // concrete parameter expectation. Explicit empty literals have brackets
++    // and continue to the ordinary language/subset rules below.
++    if kids.len() == 0 { return @chan.type_if_known(init.id_of()) }
+     ro elems = literal_elems(kids)
+     if Some(ctor) = literal_ctor_name(kids) {
+         if ctor == EMPTY_CTOR {
+diff --git a/novac/src/check/calls.nv b/novac/src/check/calls.nv
+index 919d635d5..aca23f301 100644
+--- a/novac/src/check/calls.nv
++++ b/novac/src/check/calls.nv
+@@ -902,6 +902,14 @@ fn Checker mut @type_free_call(e Node) -> () {
+             @param_expect(arg_row, argi, pre)
+         }
+         argi += 1
++        if c.kind_of() == NodeKind.ArrayLit && branch_children(c).len() == 0 {
++            @type_tag_args(c, want, kids)
++            if @out.len() > before {
++                @value_expect = saved_expect
++                return
++            }
++            continue
++        }
+         // A bare `None` takes its PARAMETER's instance, after the lookup (1565).
+         if @is_deferred_arg(c) { continue }
+         @type_arg_expecting(arg_expr_of(c), want)
+diff --git a/novac/src/check/literal_rules.nv b/novac/src/check/literal_rules.nv
+index 5c8b99aa7..8f6339454 100644
+--- a/novac/src/check/literal_rules.nv
++++ b/novac/src/check/literal_rules.nv
+@@ -21,7 +21,7 @@ import ../tree.{Node, NodeKind}
+ import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
+ import ../sem.{raw_frow, no_frow, ctor_field_name}
+ // The interpolation slicer comes with the judge moved here on 2026-09-20.
+-import ../sem.{interp_slices, subst_type, literal_digits}
++import ../sem.{interp_slices, subst_type, literal_digits, is_backtick_literal}
+ import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
+ import ../sem.{const_int_value}
+ import ../diag.{ice_at}
+@@ -540,7 +540,7 @@ fn Checker mut @judge_interp_lit(e Node) -> () {
+     // InterpStr node -- a WHOLE literal with a live slot can only be a
+     // string nested inside another slot, and that form is refused by name
+     // (the I2 chain builds one level).
+-    @report_first_leaf_of(kids, NESTED_INTERP_MSG)
++    @report_first_leaf_of(kids, if is_backtick_literal(leaf_text(t)) { BACKTICK_SLOTS_MSG } else { NESTED_INTERP_MSG })
+ }
+ 
+ /// The char-literal judge (the char wave). The lexer finds the closing quote
+diff --git a/novac/src/check/strings.nv b/novac/src/check/strings.nv
+index 5a85b3679..fe41ba35f 100644
+--- a/novac/src/check/strings.nv
++++ b/novac/src/check/strings.nv
+@@ -24,7 +24,9 @@ module novac.check
+ 
+ import ../tree.{Node, NodeKind}
+ import ../lex.{TokenKind}
+-import ../sem.{leaf_kind, leaf_text, interp_slices, unicode_escape_end}
++import ../sem.{leaf_kind, leaf_text, interp_slices, unicode_escape_end, is_backtick_literal}
++
++const BACKTICK_SLOTS_MSG = "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, plan 274.6 C2); text-only backticks are compiled"
+ 
+ /// The escapes the subset knows. Everything else is REFUSED rather than
+ /// copied into the C.
+@@ -43,6 +45,9 @@ fn Checker mut @report_if_bad_escape(kids []Node) -> () {
+         // text unchecked, so `"a\qb${o}"` passed where `"a\qb"` alone was
+         // refused. Same bytes, same rule; only the leaf kind differs.
+         if leaf_kind(c) != TokenKind.StrLit && leaf_kind(c) != TokenKind.StrFrag { continue }
++        // D467's raw form has a different, closed escape set. Unknown pairs
++        // are literal text there, not invalid double-quoted string escapes.
++        if is_backtick_literal(leaf_text(c)) { continue }
+         // D249: a `str` has three diverging lengths, so bytes are asked for
+         // through the byte lens -- the same door the lexer uses on the source.
+         ro b = leaf_text(c).bytes()
+@@ -155,6 +160,10 @@ fn Checker mut @report_if_interpolated(kids []Node) -> () {
+         // came before it.
+         ro pieces = interp_slices(leaf_text(c))
+         if pieces.len() < 2 { continue }
++        if is_backtick_literal(leaf_text(c)) {
++            @report_first_leaf_of(kids, BACKTICK_SLOTS_MSG)
++            return
++        }
+         // Since I2 the lexer splits every top-level interpolation, so a
+         // WHOLE literal with a live slot is a string nested inside another
+         // slot -- one refusal, one name (typing's judge is the backstop).
+diff --git a/novac/src/emit_c/emit_requires.nv b/novac/src/emit_c/emit_requires.nv
+index 140022b75..6da76a425 100644
+--- a/novac/src/emit_c/emit_requires.nv
++++ b/novac/src/emit_c/emit_requires.nv
+@@ -87,5 +87,7 @@ fn contract_msg_c(rk []Node) -> str {
+ /// string literal among them carries its own quotes -- unescaped, those
+ /// closed the C literal around the display (hunt 2026-09-02, N4/#872:
+ /// a quoted literal in the condition closed the C string and clang refused).
++/// D467 backticks also carry physical line breaks: the display is source text,
++/// not a Nova literal value, so CR/LF/tab must be escaped rather than spliced.
+ fn c_literal_escaped(s str) -> str =>
+-    s.replace("\\", "\\\\").replace("\"", "\\\"")
++    s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+diff --git a/novac/src/lex/lex.nv b/novac/src/lex/lex.nv
+index e32d7bd4b..3752988fd 100644
+--- a/novac/src/lex/lex.nv
++++ b/novac/src/lex/lex.nv
+@@ -653,6 +653,24 @@ export fn lex(src str) -> []Token {
+             } else {
+                 // Clean end: `kind` is already decided above.
+             }
++        } else if c == ('`' as u8) {
++            // D467: backticks keep their source bytes, including newlines.
++            // Only backtick, backslash and dollar are escaped. The checker
++            // owns the live-slot boundary; a token must never rewrite text.
++            i += 1
++            mut closed = false
++            while i < n && !closed {
++                if b[i] == ('`' as u8) {
++                    i += 1
++                    closed = true
++                } else if b[i] == B_BACKSLASH && i + 1 < n &&
++                    (b[i + 1] == ('`' as u8) || b[i + 1] == B_BACKSLASH || b[i + 1] == ('$' as u8)) {
++                    i += 2
++                } else {
++                    i += 1
++                }
++            }
++            kind = if closed { TokenKind.StrLit } else { TokenKind.ErrorTok }
+         } else if c == ('"' as u8) {
+             // String literal: raw bytes between quotes, escapes kept verbatim
+             // (lossless; meaning is parse/check business, not lex).
+diff --git a/novac/src/parse/expr.nv b/novac/src/parse/expr.nv
+index a15a498d1..33b080a73 100644
+--- a/novac/src/parse/expr.nv
++++ b/novac/src/parse/expr.nv
+@@ -758,6 +758,16 @@ fn Cursor mut @atom() -> Node {
+     }
+     if @peek() == TokenKind.Ident {
+         ro name = @take()
++        if @peek() == TokenKind.StrLit && @peek_same_line() && @peek_text().bytes()[0] == ('`' as u8) {
++            // D48's text-only sugar is an ordinary call. Branches add no
++            // bytes: every original token occurs once, so reserialization
++            // remains lossless. The leafless array is the implicit empty
++            // args vector, typed from the tag's second parameter by check.
++            ro text = @node(NodeKind.Lit, []Node.of(@take()))
++            ro parts = @node(NodeKind.ArrayLit, []Node.of(text))
++            ro args = @node(NodeKind.ArrayLit, []Node.new())
++            return @node(NodeKind.Call, []Node.of(name, parts, args))
++        }
+         if @peek() == TokenKind.LBracket && @peek_same_line() && @after_bracket_run() != TokenKind.LParen {
+             // INDEX: `xs[0]` (274.5 wave B8). A bracket after a name stopped
+             // being unambiguous the moment the index expression got a node --
+diff --git a/novac/src/sem/literal_spelling.nv b/novac/src/sem/literal_spelling.nv
+index 13594e5b5..8374cf960 100644
+--- a/novac/src/sem/literal_spelling.nv
++++ b/novac/src/sem/literal_spelling.nv
+@@ -122,7 +122,10 @@ const DOLLAR_BYTE u8 = 0x24     // $
+ /// its P1 contradiction) caught the pool claiming to be `the only place`
+ /// while the prologue shipped the backslash through; one door ends that
+ /// argument by construction.
+-export fn literal_as_c_text(s str) -> str => unescape_dollar(spell_unicode_escapes(splice_continuations(s)))
++export fn literal_as_c_text(s str) -> str {
++    if is_backtick_literal(s) { return backtick_c_text(s) }
++    unescape_dollar(spell_unicode_escapes(splice_continuations(s)))
++}
+ 
+ /// THE `\u{H…}` ESCAPE (D467 section 2) as the judge asks it: `at` is the
+ /// index of the `u` in the literal's bytes; the answer is the index of the

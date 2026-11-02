@@ -24,7 +24,9 @@ module novac.check
 
 import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
-import ../sem.{leaf_kind, leaf_text, interp_slices, unicode_escape_end}
+import ../sem.{leaf_kind, leaf_text, interp_slices, unicode_escape_end, is_backtick_literal}
+
+const BACKTICK_SLOTS_MSG = "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled"
 
 /// The escapes the subset knows. Everything else is REFUSED rather than
 /// copied into the C.
@@ -43,6 +45,9 @@ fn Checker mut @report_if_bad_escape(kids []Node) -> () {
         // text unchecked, so `"a\qb${o}"` passed where `"a\qb"` alone was
         // refused. Same bytes, same rule; only the leaf kind differs.
         if leaf_kind(c) != TokenKind.StrLit && leaf_kind(c) != TokenKind.StrFrag { continue }
+        // D467's raw form has a different, closed escape set. Unknown pairs
+        // are literal text there, not invalid double-quoted string escapes.
+        if is_backtick_literal(leaf_text(c)) { continue }
         // D249: a `str` has three diverging lengths, so bytes are asked for
         // through the byte lens -- the same door the lexer uses on the source.
         ro b = leaf_text(c).bytes()
@@ -155,6 +160,10 @@ fn Checker mut @report_if_interpolated(kids []Node) -> () {
         // came before it.
         ro pieces = interp_slices(leaf_text(c))
         if pieces.len() < 2 { continue }
+        if is_backtick_literal(leaf_text(c)) {
+            @report_first_leaf_of(kids, BACKTICK_SLOTS_MSG)
+            return
+        }
         // Since I2 the lexer splits every top-level interpolation, so a
         // WHOLE literal with a live slot is a string nested inside another
         // slot -- one refusal, one name (typing's judge is the backstop).

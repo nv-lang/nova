@@ -653,6 +653,24 @@ export fn lex(src str) -> []Token {
             } else {
                 // Clean end: `kind` is already decided above.
             }
+        } else if c == ('`' as u8) {
+            // D467: backticks keep their source bytes, including newlines.
+            // Only backtick, backslash and dollar are escaped. The checker
+            // owns the live-slot boundary; a token must never rewrite text.
+            i += 1
+            mut closed = false
+            while i < n && !closed {
+                if b[i] == ('`' as u8) {
+                    i += 1
+                    closed = true
+                } else if b[i] == B_BACKSLASH && i + 1 < n &&
+                    (b[i + 1] == ('`' as u8) || b[i + 1] == B_BACKSLASH || b[i + 1] == ('$' as u8)) {
+                    i += 2
+                } else {
+                    i += 1
+                }
+            }
+            kind = if closed { TokenKind.StrLit } else { TokenKind.ErrorTok }
         } else if c == ('"' as u8) {
             // String literal: raw bytes between quotes, escapes kept verbatim
             // (lossless; meaning is parse/check business, not lex).

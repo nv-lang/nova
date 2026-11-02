@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$SCRATCH\\string-extra-probes\\generic-tag.nv","start":74,"end":77},"message":"outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, plan 274.6 C2)","poisoned_by":null}

@@ -758,6 +758,16 @@ fn Cursor mut @atom() -> Node {
     }
     if @peek() == TokenKind.Ident {
         ro name = @take()
+        if @peek() == TokenKind.StrLit && @peek_same_line() && @peek_text().bytes()[0] == ('`' as u8) {
+            // D48's text-only sugar is an ordinary call. Branches add no
+            // bytes: every original token occurs once, so reserialization
+            // remains lossless. The leafless array is the implicit empty
+            // args vector, typed from the tag's second parameter by check.
+            ro text = @node(NodeKind.Lit, []Node.of(@take()))
+            ro parts = @node(NodeKind.ArrayLit, []Node.of(text))
+            ro args = @node(NodeKind.ArrayLit, []Node.new())
+            return @node(NodeKind.Call, []Node.of(name, parts, args))
+        }
         if @peek() == TokenKind.LBracket && @peek_same_line() && @after_bracket_run() != TokenKind.LParen {
             // INDEX: `xs[0]` (274.5 wave B8). A bracket after a name stopped
             // being unambiguous the moment the index expression got a node --

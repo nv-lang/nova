@@ -87,5 +87,7 @@ fn contract_msg_c(rk []Node) -> str {
 /// string literal among them carries its own quotes -- unescaped, those
 /// closed the C literal around the display (hunt 2026-09-02, N4/#872:
 /// a quoted literal in the condition closed the C string and clang refused).
+/// D467 backticks also carry physical line breaks: the display is source text,
+/// not a Nova literal value, so CR/LF/tab must be escaped rather than spliced.
 fn c_literal_escaped(s str) -> str =>
-    s.replace("\\", "\\\\").replace("\"", "\\\"")
+    s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")

@@ -122,7 +122,15 @@ const DOLLAR_BYTE u8 = 0x24     // $
 /// its P1 contradiction) caught the pool claiming to be `the only place`
 /// while the prologue shipped the backslash through; one door ends that
 /// argument by construction.
-export fn literal_as_c_text(s str) -> str => unescape_dollar(spell_unicode_escapes(splice_continuations(s)))
+export fn literal_as_c_text(s str) -> str {
+    if is_backtick_literal(s) { return backtick_c_text(s) }
+    quoted_fragment_c_text(s)
+}
+
+/// A double-quoted interpolation fragment has no delimiters. Its first byte
+/// may itself be a backtick: only a whole token can select D467's raw alphabet.
+export fn quoted_fragment_c_text(s str) -> str =>
+    unescape_dollar(spell_unicode_escapes(splice_continuations(s)))
 
 /// THE `\u{H…}` ESCAPE (D467 section 2) as the judge asks it: `at` is the
 /// index of the `u` in the literal's bytes; the answer is the index of the
