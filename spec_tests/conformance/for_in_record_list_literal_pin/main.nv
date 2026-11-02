@@ -1,0 +1,21 @@
+// EXPECT_STDOUT record-literal-forin ok
+// Pin (crew-harness spikes/env item 36): `for s in [make(1), make(2)]` — a
+// for over a BARE array literal whose items are records made by calls.
+// Oracle 0.1.0 and main failed with CODEGEN-FAIL "for-in: cannot resolve
+// iterator type for expression of C-type 'nova_unit'" (same root as item
+// 33: the literal's Vec mono instance is never registered, so the implicit
+// `.iter()` return inference collapses to nova_unit). Fixed in emit_c.rs
+// [M-for-in-array-literal-vec].
+module for_in_record_list_literal_pin.main
+
+type Chunk { n int, label str }
+
+fn make(n int) -> Chunk => { n, label: "s" }
+
+fn main() Io -> () {
+    mut total = 0
+    for s in [make(1), make(2)] { total += s.n }
+    if total == 3 {
+        println("record-literal-forin ok")
+    }
+}

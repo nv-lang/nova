@@ -51068,6 +51068,71 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
+        // [M-for-in-array-literal-vec] (crew-harness spike items 33/36/52):
+        // `for x in [a, b, …]` — a BARE array literal in the for-header. The
+        // literal infers to a typed `Nova_Vec____<T>*`, so the implicit
+        // `.iter()` synthesis below would recurse into
+        // `infer_expr_c_type(<literal>.iter())` — but, unlike a bound
+        // `ro all = […]` (whose LET already emitted and registered the Vec
+        // mono instance + its methods), a literal that is ONLY the iterator
+        // is never emitted as a standalone binding, so the mono instance
+        // registry has no entry for it and the member-call return inference
+        // collapses to `nova_unit` → "for-in: cannot resolve iterator type".
+        // Fix: emit the literal ONCE into a temp (this registers the mono and
+        // builds the elements, byte-identical to the bound case's LET) and
+        // iterate it by index over the Vec header (`->len` / `->data[i]`),
+        // mirroring Case 2 above for legacy `NovaArray_`. Element types of
+        // every shape work (value enums, records, nested Vecs) because the
+        // element C type comes from the iterator's own mono name.
+        if !iter_struct.is_empty()
+            && arr_ty.starts_with("Nova_Vec____")
+            && matches!(&iter.kind, ExprKind::ArrayLit(elems)
+                if !elems.iter().any(|e| matches!(e, ArrayElem::Spread(_))))
+        {
+            if let Some(elem_c_san) = self.vec_or_array_elem_c(&arr_ty) {
+                let binding = self.pattern_binding(pattern)?;
+                let vec_tmp = self.fresh_tmp();
+                let idx_tmp = self.fresh_tmp();
+                let result_tmp = self.fresh_tmp();
+                let vec_expr = self.emit_expr(iter)?;
+                self.line(&format!("{} {} = {};", arr_ty, vec_tmp, vec_expr));
+                self.var_types.insert(vec_tmp.clone(), arr_ty.clone());
+                // Plan 138.1 Ф.6 (same as the iter-protocol path above): the
+                // elem name extracted from the mono mangle encodes a trailing
+                // pointer as `_p`; as a C variable type it must be the pointer
+                // spelling. Mono'd tuple structs (`_NovaTuple_…`) and NovaOpt_
+                // names are already final value-type spellings — never
+                // re-desanitize them.
+                let binding_c_ty = if elem_c_san.starts_with("_NovaTuple_")
+                    || elem_c_san.starts_with("NovaOpt_")
+                {
+                    elem_c_san.clone()
+                } else {
+                    Self::desanitize_c_from_ident(&elem_c_san)
+                };
+                self.line(&format!("nova_unit {};", result_tmp));
+                self.line(&format!(
+                    "for (nova_int {} = 0; {} < {}->len; {}++) {{",
+                    idx_tmp, idx_tmp, vec_tmp, idx_tmp
+                ));
+                self.indent += 1;
+                self.line(&format!(
+                    "{} {} = {}->data[{}];",
+                    binding_c_ty, Self::mangle_field_name(&binding), vec_tmp, idx_tmp
+                ));
+                let prev_ty = self.var_types.insert(binding.clone(), binding_c_ty);
+                self.emit_loop_body_inline(body)?;
+                match prev_ty {
+                    Some(t) => { self.var_types.insert(binding.clone(), t); }
+                    None => { self.var_types.remove(&binding); }
+                }
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("{} = NOVA_UNIT;", result_tmp));
+                return Ok(result_tmp);
+            }
+        }
+
         // Plan 06 Ф.3: implicit `.iter()` для коллекций.
         // Если у типа НЕТ метода `next` (значит это не Iter), но ЕСТЬ
         // метод `iter` — синтезируем call: `for x in coll` →
