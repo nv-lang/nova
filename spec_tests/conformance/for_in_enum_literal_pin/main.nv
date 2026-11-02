@@ -1,0 +1,30 @@
+// EXPECT_STDOUT enum-literal-forin ok
+// Pin (crew-harness spikes/env items 33): `for c in [Pure, Writing]` — a for
+// over a BARE array literal whose items are payload-less variants of a user
+// enum. Oracle 0.1.0 and main failed with CODEGEN-FAIL "for-in: cannot
+// resolve iterator type for expression of C-type 'nova_unit'": the implicit
+// `.iter()` synthesis could not infer the return type of `<literal>.iter()`
+// because the Vec mono instance of the literal was never registered (unlike
+// a bound `ro all = [...]`, whose LET registers it). Fixed in emit_c.rs
+// [M-for-in-array-literal-vec]: the literal is emitted into a temp Vec and
+// iterated by index over the Vec header.
+module for_in_enum_literal_pin.main
+
+type Class enum
+    | Pure
+    | Writing
+
+fn flag(c Class) -> bool => match c {
+    Pure => false
+    Writing => true
+}
+
+fn main() Io -> () {
+    mut n = 0
+    for c in [Pure, Writing] {
+        if flag(c) { n += 1 }
+    }
+    if n == 1 {
+        println("enum-literal-forin ok")
+    }
+}
