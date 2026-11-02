@@ -31,3 +31,26 @@ test "mock_fs: remove non-empty dir -> DirectoryNotEmpty" {
         }
     }
 }
+
+// Item 55 (crew-harness spikes/env README): `create_dir_all("/a/b/c")` used to
+// make only the LAST folder — `mem_mkdir` succeeded without a parent, so the
+// `fs.create_dir_all` NotFound-recursion never ran and `try_exists("/a/b")`
+// was false (while `read_dir` of it still worked). `mkdir` now returns ENOENT
+// for a missing parent, like a real FS.
+test "mock_fs: create_dir_all makes every parent level (item 55)" {
+    mut fs = MemFs.new()
+    with Fs = mock_fs(fs) {
+        ro d = Path.posix("/a/b/c")
+        match create_dir_all(d) { Ok(()) => assert(true), Err(_) => assert(false) }
+        match try_exists(Path.posix("/a"))     { Ok(b) => assert(b), Err(_) => assert(false) }
+        match try_exists(Path.posix("/a/b"))   { Ok(b) => assert(b), Err(_) => assert(false) }
+        match try_exists(d)                    { Ok(b) => assert(b), Err(_) => assert(false) }
+        // Idempotent: an existing dir is not an error.
+        match create_dir_all(d) { Ok(()) => assert(true), Err(_) => assert(false) }
+        // And a bare mkdir under a missing parent is NotFound (real-FS parity).
+        match create_dir(Path.posix("/x/y")) {
+            Ok(())  => assert(false)
+            Err(e)  => match e.kind { ErrorKind.NotFound => assert(true), _ => assert(false) }
+        }
+    }
+}
