@@ -1,0 +1,153 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT rounds 40, echo missing 0, writer stuck 0
+// EXPECT_TIMEOUT_MS 120000
+//
+// item 19 (child-process pipes hang), pin fixture for the exit-path fix.
+// Shape is the crew-harness spike `repro_child_pipes` scaled down: each
+// round spawns an echoer child with piped stdin/stdout, a detached reader
+// fiber pumps stdout, a detached writer fiber owns stdin and is driven
+// through a channel — the exact arrangement whose parked remote children
+// the pre-exit orphan-drain used to wait on forever (cancel fan-out never
+// delivered a wake to the worker-scope slot once the pipe backend event
+// had already fired; `pending_remote` never reached 0 and the process
+// hung in pre-exit-drain after printing its last line).
+//
+// RED on the released 0.1.1 runtime: probabilistically — when the race
+// strikes (about one round in a few hundred on an idle box; the 400-round
+// spike is the stress vehicle), the run prints its rounds line and then
+// never exits; the runner kills it at EXPECT_TIMEOUT_MS and the fixture
+// fails. GREEN on the fix build: every run prints the line above AND the
+// process exits by itself (the orphan-drain stop is re-delivered and each
+// matched worker slot gets a direct, idempotent wake).
+//
+// Platform helpers use only binaries guaranteed on this repo's CI runners
+// (`findstr` on Windows — echoes every line; `cat` on POSIX), same policy
+// as d453_os_process_run_test.nv.
+
+module standalone.item19_child_pipes_exit
+
+import std.io.{write_all}
+import std.os.{Command, ChildStdin, ChildStdout, Stdio, Signal}
+import std.concurrency.nvchan.{Chan, ChanTx, ChanRx}
+
+#cfg(target_os = "windows")
+fn echoer() -> Command => Command.new("findstr").arg(".*")
+
+#cfg(!target_os = "windows")
+fn echoer() -> Command => Command.new("cat")
+
+fn pipe_in(o Option[ChildStdin]) -> ChildStdin {
+    match o {
+        Some(consume s) => s
+        None => panic("no stdin")
+    }
+}
+
+fn pipe_out(o Option[ChildStdout]) -> ChildStdout {
+    match o {
+        Some(consume s) => s
+        None => panic("no stdout")
+    }
+}
+
+fn reader(consume rx ChildStdout, got ChanTx[int]) Proc -> () {
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    mut reading = true
+    while reading {
+        match rx.read(buf) {
+            Ok(0) => { reading = false }
+            Ok(n) => { ro ok = got.send(n) }
+            Err(e) => { reading = false }
+        }
+    }
+    rx.close()
+    ro end = got.send(-1)
+}
+
+fn writer(consume tx ChildStdin, lines ChanRx[str], done ChanTx[int]) Proc -> () {
+    mut writing = true
+    while writing {
+        match lines.recv() {
+            Some(line) => {
+                match write_all(tx, "${line}\n".bytes()) {
+                    Ok(x) => ()
+                    Err(e) => { writing = false }
+                }
+            }
+            None => { writing = false }
+        }
+    }
+    tx.close()
+    ro ok = done.send(1)
+}
+
+// 0 ok, 1 echo missing, 2 writer stuck, 3 spawn failed
+fn round() Proc Detach Time -> int {
+    mut cmd = echoer()
+    cmd.stdin(Stdio.Piped)
+    cmd.stdout(Stdio.Piped)
+    match cmd.start() {
+        Err(e) => 3
+        Ok(consume started) => {
+            consume child = started
+            consume win = pipe_in(child.take_stdin())
+            consume rout = pipe_out(child.take_stdout())
+            ro got = Chan[int].new(64)
+            ro lines = Chan[str].new(64)
+            ro done = Chan[int].new(4)
+            detach consume rout { reader(rout, got.tx) }
+            detach consume win { writer(win, lines.rx, done.tx) }
+            mut result = 0
+            ro a = lines.tx.try_send("{\"a\":1}")
+            ro b = lines.tx.try_send("{\"b\":2}")
+            ro c = lines.tx.try_send("{\"c\":3}")
+            // The echoer only flushes on stdin EOF (findstr buffers its
+            // whole input), so close the writer's channel right away: the
+            // writer drains the three lines, closes stdin, and the echo
+            // arrives in one piece.
+            lines.tx.close()
+            mut waits = 0
+            mut finished = false
+            while waits < 200 && !finished {
+                match done.rx.try_recv() {
+                    Some(x) => { finished = true }
+                    None => { 10.to_millis().sleep(); waits += 1 }
+                }
+            }
+            if !finished { result = 2 }
+            mut bytes = 0
+            mut spins = 0
+            // each line is `{"a":1}` (7 bytes) + \n = 8; the plain echoer
+            // returns exactly what it was given (the crew-harness spike's
+            // node child adds an `echo:` prefix — hence its 3*12 target)
+            while bytes < 3 * 8 && spins < 300 {
+                match got.rx.try_recv() {
+                    Some(n) => { if n > 0 { bytes += n } }
+                    None => { 10.to_millis().sleep(); spins += 1 }
+                }
+            }
+            if bytes < 3 * 8 { result = 1 }
+            ro k = child.kill(Signal.Kill)
+            ro w = child.wait()
+            child.release()
+            result
+        }
+    }
+}
+
+fn main() Proc Io Detach Time -> () {
+    mut bad_echo = 0
+    mut stuck = 0
+    mut i = 0
+    while i < 40 {
+        ro r = round()
+        if r == 1 { bad_echo += 1 }
+        if r == 2 { stuck += 1 }
+        if r == 3 { bad_echo += 1 }
+        i += 1
+    }
+    println("rounds ${i}, echo missing ${bad_echo}, writer stuck ${stuck}")
+    // No exit_process here on purpose: the pin is that the runtime's
+    // pre-exit orphan-drain completes on its own.
+}
