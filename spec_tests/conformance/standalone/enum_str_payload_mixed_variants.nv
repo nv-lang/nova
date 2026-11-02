@@ -1,0 +1,55 @@
+// EXPECT_STDOUT enum_str_payload=send=x log=y
+//
+// №TBD regression pin (item 8 of the crew-harness spike index
+// `spikes/env/README.md` -- `enum_str_payload`; repro
+// `spikes/env/repro_engine/src/enum_str_payload`). A GENERIC sum with MIXED
+// payload variants -- a type parameter AND a concrete type
+// (`type Output[I] enum | Send(I) | Log(str)`) -- is allowed by the language
+// (the stdlib itself uses the shape: `Option[T]` = `Some(T) | None`,
+// spec/syntax.md "generic-instantiated named payload"). Both constructor
+// DOORS of a variant whose payload mentions NO generic param used to break:
+//
+// * bare ctor (`Log("y")`): `try_infer_variant_mono_args` infers the
+//   type-args from the ctor ARGS only; `Log(str)` reveals nothing about `I`,
+//   inference failed, the call fell to the erased path -- the arg was boxed
+//   to `void*` and passed to the erased `nova_make_Output_Log(nova_str)`
+//   (CC-FAIL `passing 'void *' to parameter of incompatible type
+//   'nova_str'`);
+// * qualified ctor (`Output.Send("x")`): `try_emit_explicit_variant_ctor`
+//   bailed out on any generic sum, the call fell to the pseudo-static
+//   dispatch (`Nova_Output_static_Send`, never defined -- a silent link
+//   failure, or a silent miscompile when the arg is pointer-coercible, as a
+//   str literal to `void*` is).
+//
+// The fix routes BOTH doors through the mono'd ctor
+// (`nova_make_Nova_Output____<args>_<Variant>`): type-args are inferred from
+// the ctor args first, and what the args of a mixed payload variant cannot
+// reveal is filled from the enclosing fn's mono'd return type
+// (`fn make_log() -> Output[int]` -- `current_fn_return_ty`
+// `Nova_Output____nova_int*`, the instance the checker already
+// instantiated). On the released toolchain this file does not even compile
+// (the two CC-FAILs above); the fixed one prints the match-bound payloads.
+//
+// Mode note: the defect is visible under BOTH `nova test` and `nova build`
+// -- the ctor emission happens in shared codegen.
+module standalone.enum_str_payload_mixed_variants
+
+type Output[I] enum
+    | Send(I)
+    | Log(str)
+    | Save
+
+fn make_send() -> Output[str] => Output.Send("x")
+
+fn make_log() -> Output[int] => Log("y")
+
+fn main() Io -> () {
+    match make_send() {
+        Send(s) => print("enum_str_payload=send=${s}")
+        _ => print("enum_str_payload=send=none")
+    }
+    match make_log() {
+        Log(t) => print(" log=${t}")
+        _ => print(" log=none")
+    }
+}
