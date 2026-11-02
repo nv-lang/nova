@@ -54455,6 +54455,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         self.var_types.insert(raw.clone(), t.clone());
                                         tmp_registrations.push(raw.clone());
                                     }
+                                    // Item 10 (crew-harness `nested_generic_pattern`):
+                                    // Option-payload — a MONO'D USER SUM pointer
+                                    // (`Nova_Response____nova_str*`, the `T` of
+                                    // `Option[Response[str]]`) with a nested
+                                    // VARIANT sub-pattern (`Some(Answer(s))`) —
+                                    // same registration gap/fix as the record and
+                                    // mono-Result branches above. Without it the
+                                    // recursive `pattern_bind_typed` saw an
+                                    // unregistered `scr` and derived the variant's
+                                    // payload field type from the ERASED base
+                                    // schema (`sum_schemas["Response"]["Answer"]`
+                                    // = `void*`): the checker stays silent, the C
+                                    // binds `void* s = ...->payload.Answer._0` (a
+                                    // `nova_str`) — CC-FAIL on str, and a NULL/garbage
+                                    // bind on a record payload. Registering the mono
+                                    // pointer lets the recursion prefer the mono
+                                    // schema (`Response____nova_str`) via the
+                                    // scr_base branch, with the real field type.
+                                    if t.starts_with("Nova_") && t.ends_with('*')
+                                        && matches!(p, Pattern::Variant { .. })
+                                    {
+                                        self.var_types.insert(raw.clone(), t.clone());
+                                        tmp_registrations.push(raw.clone());
+                                    }
                                     (raw, t, false)
                                 } else {
                                     (raw, "nova_int".into(), false)

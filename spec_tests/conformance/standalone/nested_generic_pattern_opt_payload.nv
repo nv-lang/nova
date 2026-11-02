@@ -1,0 +1,67 @@
+// EXPECT_STDOUT nested_generic_pattern=ok refusal=none
+
+// №TBD regression pin (item 10 of the crew-harness spike index
+// `spikes/env/README.md` -- `nested_generic_pattern`; repro
+// `spikes/env/repro_engine/src/nested_generic_pattern`; real-world carrier:
+// the CrewHarness engine/pgstore/chat tests, 4 `ORACLE-WORKAROUND(10)`
+// labels -- the answer was read with two nested `match`es, one level each).
+//
+// A nested VARIANT pattern over a GENERIC payload
+// (`Some(Answer(reply))` on `Option[Response[str]]`, `Response[R]` a sum,
+// `Answer` carrying the record `Reply[R]`) used to bind the inner name from
+// the ERASED base schema instead of the mono'd one: the checker stays
+// silent, `pattern_bind_typed`'s Option branch derived the access path
+// `_scr.value->payload.Answer._0` correctly but never registered the mono
+// pointer type (`Nova_Response____nova_str*`) in `var_types` for a Variant
+// sub-pattern, so the recursive bind read the variant's payload field type
+// from `sum_schemas["Response"]["Answer"]` = `void*` (the erased generic
+// base). On the released toolchain this file builds WITHOUT a single
+// diagnostic and prints `nested_generic_pattern=0 refusal=none` -- the record
+// fields are read through a `void*` at the wrong offsets (a silent
+// miscompile; with a `str` payload typed directly the same door is a
+// CC-FAIL `initializing 'void *' with an expression of incompatible type
+// 'nova_str'`, and the original spike's `assert(reply.result == "ok")`
+// form dies at link with `undefined symbol: Nova_str_method_eq` -- the C
+// reads `*(nova_str*)(NULL)`).
+//
+// The fix registers the mono'd user-sum pointer in `var_types` for the
+// Variant sub-pattern (the same registration the mono-Result and
+// record-payload branches beside it already did), so the recursive
+// `pattern_bind_typed` prefers the mono schema and binds the real
+// `Nova_Reply____nova_str*` / `nova_str`.
+//
+// Mode note: the defect is visible under BOTH `nova test` and `nova build`
+// -- the bind happens in shared codegen, only the erased schema differs;
+// there is no test-mode pre-pass masking it (unlike the item-32 pin next
+// door).
+module standalone.nested_generic_pattern_opt_payload
+
+type Reply[R] { result R }
+
+type Response[R] enum
+    | Answer(Reply[R])
+    | Refusal(str)
+
+fn make() -> Option[Response[str]] {
+    ro reply = Reply { result: "ok" }
+    ro response Response[str] = Answer(reply)
+    Some(response)
+}
+
+// A `Refusal(str)` CONSTRUCTOR (a variant that does not mention `R`) is a
+// SEPARATE door of the same family -- item 8 `enum_str_payload`: the erased
+// base schema's `void*` constructor parameter. The Refusal PATTERN arm below
+// is exercised through `None` here; constructing it is out of scope for this
+// pin.
+fn make_refusal() -> Option[Response[str]] => None
+
+fn main() Io -> () {
+    match make() {
+        Some(Answer(reply)) => print("nested_generic_pattern=${reply.result}")
+        _ => print("nested_generic_pattern=none")
+    }
+    match make_refusal() {
+        Some(Refusal(_)) => print(" refusal=refused")
+        _ => print(" refusal=none")
+    }
+}
