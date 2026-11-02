@@ -61441,6 +61441,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                         }
                                     }
+                                    // [items 12/13, generic-protocol-inference] A generic
+                                    // whose param is PROTOCOL-BOUNDED (`fn run_once[S, B,
+                                    // M Machine[S, B]](m M, ev Event[B]) -> StepResult[S]`)
+                                    // leaves S/B unbound in every source above — they surface
+                                    // only inside M's BOUND, never in a param position the
+                                    // structural walks can unify. The EMIT side (`emit_call`
+                                    // → `resolve_mono_type_args`) closes exactly this gap via
+                                    // its Source 2e/2e-bis protocol-structural walk, so the
+                                    // CALL mono's correctly (`run_once__int__int__Counter`)
+                                    // while this probe leaves the binding `let` typeless —
+                                    // the emitted C declaration comes out as bare
+                                    // ` r = run_once(...)` (CC-FAIL `use of undeclared
+                                    // identifier 'r'`). Borrow the SAME resolver here and
+                                    // fill ONLY still-`None` slots (never overwrite a slot
+                                    // an earlier source bound — the established no-overwrite
+                                    // rule), so the local's declared C type is derived from
+                                    // the identical subst the emit side will mono with.
+                                    // Err (a genuinely uninferrable `S`, e.g. returned-only
+                                    // without a bound) keeps today's fall-through: the loud
+                                    // turbofish diagnostic still comes from `emit_call`.
+                                    if subst.iter().any(|(_, v)| v.is_none()) {
+                                        if let Ok(full) =
+                                            self.resolve_mono_type_args(&fn_decl, &turbofish_args, args)
+                                        {
+                                            for (name, c_ty) in full {
+                                                if let Some(slot) = subst.iter_mut()
+                                                    .find(|(n, v)| n == &name && v.is_none())
+                                                {
+                                                    slot.1 = Some(c_ty);
+                                                }
+                                            }
+                                        }
+                                    }
                                     // Resolve return type by substituting bare type params.
                                     // Plan 153.2 Ф.2 (STAGE 2): value-AWARE so a nested
                                     // generic-over-source instance (`MapIter[VecIter[int],U]`)
