@@ -3236,7 +3236,6 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
      * the fix off. The window runs from the last CHANGE of `remote`, so a
      * scope whose children keep completing keeps resetting it. */
     const bool _ods_is_orphan = (q == (NovaFiberQueue*)nova_runtime_orphan_scope());
-    bool     _ods_fired  = false;
     int      _ods_secs   = 10;
     {
         const char* _ods_env = getenv("NOVA_ORPHAN_DRAIN_GRACE_SECS");
@@ -3272,14 +3271,29 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                         (void*)q, remote, _nv456_iters);
                 fflush(stderr);
             }
-            /* [221.1 #791] orphan-drain stop -- see the banner above. */
-            if (_ods_is_orphan && !_ods_fired && _ods_secs > 0) {
+            /* [221.1 #791] orphan-drain stop -- see the banner above.
+             * [item 19 root 2] the stop used to fire ONCE. A fiber that
+             * parks in a worker scope AFTER that single fan-out walk (it
+             * was between operations, or its blocking op registered its
+             * pending stop_cb a moment later) is never asked again: the
+             * op-entry cancel check covers pipe ops (they consult
+             * _nova_parent_scope == the orphan scope), but a channel
+             * waiter entered after the cancel only consults the WORKER
+             * scope's cancel_requested, which nobody ever sets — the
+             * fiber parks forever and pending_remote never reaches 0
+             * (repro_child_pipes live dump: orphan cancel_req=1
+             * pending_remote=1, worker slot parked with a live stop_cb
+             * that nobody invoked). The stop is therefore now PERIODIC:
+             * re-deliver every grace period while remote is stuck.
+             * deliver_cancel is safe to repeat — stop_cbs are CAS/idempotent
+             * guarded and spurious wakes are absorbed by park predicates. */
+            if (_ods_is_orphan && _ods_secs > 0) {
                 if (remote != _ods_last) {
                     _ods_last = remote;
                     _ods_mark = uv_hrtime();
                 } else if ((uv_hrtime() - _ods_mark) / 1000000000ULL
                            >= (uint64_t)_ods_secs) {
-                    _ods_fired = true;
+                    _ods_mark = uv_hrtime();   /* re-arm: fire again next period */
                     nova_scope_deliver_cancel(q, NULL);
                 }
             }

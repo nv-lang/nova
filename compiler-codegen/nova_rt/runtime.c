@@ -2690,6 +2690,23 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
                  * including driver mode. This is the actual fix: previously
                  * unreachable whenever driver_mode was true. */
                 cb(hdl);
+                /* [item 19 root 2] the ASYNC contract leaves the fiber parked
+                 * until the backend close_cb wakes it — but by the time a
+                 * (possibly repeated) cancel reaches this slot the backend
+                 * event may ALREADY have fired and its wake been consumed or
+                 * lost (repro_child_pipes live dump: write_cb completed with
+                 * status 0, write_done=1, stage later CLOSED, yet the fiber
+                 * stayed parked in _pp_write_ready's WAIT forever — the
+                 * pending_remote of the orphan scope never reached 0 and
+                 * pre-exit-drain waited endlessly). Deliver a direct wake as
+                 * well: nova_sched_wake is idempotent (goready single-winner)
+                 * and a SPURIOUS wake is absorbed by every park_until
+                 * predicate's re-check (the documented contract) — the fiber
+                 * either finds its predicate already true (this bug's shape:
+                 * return immediately) or re-parks to wait for the genuine
+                 * backend wake. SYNC stop_cbs wake on their own; the extra
+                 * wake coalesces (R4 no-op). */
+                nova_sched_wake(&w->scope, j);
             } else if (!driver_mode && j < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, j)) {
                 /* Bare park (no registered stop_cb): direct dispatch_ready.
                  * Driver-exclusive when driver_mode — a driver-routed sleep
