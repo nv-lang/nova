@@ -10,6 +10,33 @@ source_date: 2026-08-02
 > Пользовательский гайд по `std.io`/`std.fs`/`std.os` (Plan 176). Модель, сравнение
 > с другими языками (7 языков) и рецепт долговечной записи `write_atomic`.
 
+## `println` и `Io`: известное расхождение
+
+Вывод в stdout — наблюдаемый побочный эффект. Однако текущие prelude-декларации `print` и `println` в `std/src/prelude/runtime.nv` не содержат `Io`. Нормативный [D26](../../spec/decisions/08-runtime.md#d26-базовая-stdlib-и-prelude) указывает для `print` сигнатуру с `Io`. Это расхождение между нормой и реализацией; данный текст его фиксирует, а не вводит исключение из системы эффектов.
+
+`stdout()` и `write_str` используют другой путь: запись делегируется активному обработчику `Io`. Подменяемый вывод нужно демонстрировать этим API; из наличия `with Io = ...` нельзя заключать, что он перехватывает прямой `println`.
+
+```nova
+import std.io.{Io, IoCapture, mock_io, stdout, write_str}
+
+test "direct println and effectful output are different paths" {
+    mut cap = IoCapture.new([]u8.new())
+    with Io = mock_io(cap) {
+        println("direct-print")
+        mut out = stdout()
+        ro result = write_str(out, "captured")
+        assert(result.is_ok())
+    }
+    ro bytes = cap.out_bytes()
+    assert(bytes.len() == 8)
+    assert(bytes[0] == 0x63 as u8)
+    assert(bytes[7] == 0x64 as u8)
+    println("io-capture-ok")
+}
+```
+
+Отсутствие `Io` в сигнатуре вызванной функции сейчас не доказывает отсутствие вывода. Пример показывает границу двух путей; он не объявляет согласование деклараций и проверки эффектов завершённым.
+
 ## TL;DR
 
 ```nova

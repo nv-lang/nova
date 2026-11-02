@@ -18,6 +18,38 @@ source_date: 2026-08-06
 Про каналы и `select` — [channels](channels.ru.md). Про освобождение ресурсов
 на выходе из области — [cleanup cookbook](cleanup-cookbook.ru.md).
 
+## Ожидание без `await` и контекст обработчиков
+
+Nova использует стековые файберы: обычная операция ожидания, например `recv()` пустого канала, может припарковать текущий файбер и дать продолжить другому. Для этого не требуется отдельное слово `await` в месте вызова. Операция эффекта сама по себе не обязана приостанавливать выполнение: это зависит от её реализации.
+
+По [D80](../../spec/decisions/06-concurrency.md#d80-handler-scoping-per-fiber) привязки активных обработчиков принадлежат файберу. При `spawn` ребёнок наследует снимок указателей на обработчики; последующие `with` меняют привязки только своего файбера. Планировщик сохраняет и восстанавливает этот контекст при переключении. Снимок указателей не означает глубокого копирования состояния обработчиков.
+
+```nova
+test "two fibers communicate on a single worker without await" {
+    runtime.init(1)
+    ro { tx: ready_tx, rx: ready_rx } = Channel[int].new(1)
+    ro { tx: data_tx, rx: data_rx } = Channel[int].new(1)
+    supervised {
+        spawn {
+            ready_tx.send(1)
+            assert((data_rx.recv() ?? -1) == 42)
+        }
+        spawn {
+            assert((ready_rx.recv() ?? -1) == 1)
+            data_tx.send(42)
+        }
+    }
+    ready_tx.close()
+    data_tx.close()
+    runtime.shutdown()
+    println("handoff-ok")
+}
+```
+
+Пример использует взаимное ожидание через каналы и проверяет результат утверждениями, без предположений о порядке печати. Запуск отдельного файла: `nova test example.nv --jobs 1`.
+
+`runtime.yield()` даёт явную уступку управления. [D103](../../spec/decisions/06-concurrency.md#d103-preemption--sysmon-thread--codegen-safepoints) отдельно описывает safepoints для CPU-bound кода. Эти механизмы не обещают прерывания произвольного блокирующего C/FFI-вызова.
+
 ## Сроки: `timeout:` / `deadline:`
 
 Область может нести собственный срок — относительный (`timeout:` принимает
