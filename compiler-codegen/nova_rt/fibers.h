@@ -2161,6 +2161,15 @@ static inline void nova_park_state_store(mco_coro* co, int32_t state, int mo) {
     __atomic_store_n(&base->_nova_park_state, state, mo);
 }
 
+/* [item 19 root 3] exchange helper: returns the PREVIOUS value. gopark's G1
+ * must observe what it overwrites — a blindly-stored WAIT clobbers a
+ * concurrent goready R3 NIL->READY latch (see nova_gopark's G1 fix). */
+static inline int32_t nova_park_state_xchg(mco_coro* co, int32_t state) {
+    if (!co) return NOVA_PARK_NIL;
+    NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+    if (!base) return NOVA_PARK_NIL;
+    return __atomic_exchange_n(&base->_nova_park_state, state, __ATOMIC_SEQ_CST);
+}
 static inline int32_t nova_park_state_load(mco_coro* co) {
     if (!co) return NOVA_PARK_NIL;
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);

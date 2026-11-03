@@ -289,7 +289,25 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
     nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
     /* G1: park_state -> WAIT (SEQ_CST = XCHG on x86, full fence, drains store
      * buffer). The load-bearing publish: globally visible before any waker that
-     * later acquires the resource lock (released by unlock_fn post-yield). */
+     * later acquires the resource lock (released by unlock_fn post-yield).
+     *
+     * [item 19 root 3 - DIAGNOSED, FIX NEEDS DESIGN] this blind WAIT store is
+     * the exact lost-wake point, captured under 6-way load with
+     * NOVA_DIAG_ITEM19_R3: the main thread was preempted between entering
+     * gopark and this store while its driver sleep fired - close_cb's goready
+     * saw park_state==NIL, took the R3 NIL->READY latch ("G3 will consume
+     * it") and returned; this store then overwrote READY with WAIT, G3's
+     * READY->DISPATCHED CAS failed on our own WAIT, the fiber yielded with
+     * no waker left - permanent park (the process prints nothing: the rounds
+     * line dies in the killed process's stdout buffer). A first minimal fix
+     * (xchg at G1, consume the observed READY like the G3 fast path) was
+     * A/B-tested and REVERTED: it traded the hang for segfaults under load
+     * (5 crashes / 18 loaded runs vs 0/18 with the blind store; suspected: a
+     * STALE READY latched by a late waker of the PREVIOUS wait turns a
+     * single-shot park into a skip, breaking exactly-once-yield sites). The
+     * correct consume semantics - a G1 that preserves a concurrent latch
+     * without skipping the park - needs its own scheduler-design pass. See
+     * nova_park_state_xchg (fibers.h). */
     nova_park_state_store(co, NOVA_PARK_WAIT, __ATOMIC_SEQ_CST);
     /* G2: stash deferred-unlock in TLS — the scheduler drains it AFTER the fiber
      * yields (runtime.c / supervised_step), so the unlock (and thus a peer's
