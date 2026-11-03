@@ -535,6 +535,12 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
 
     /* Normal path: publish CLOSED, then wake by-co. */
     __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+    /* [item 19 root 3 diag] a MAIN-thread sleep closed — the wake below plus
+     * signal_main is exactly the chain whose loss leaves main parked with an
+     * empty-output process. */
+    if (st->home_worker_id < 0 && _nova_r3_diag()) {
+        _nova_r3_log("sleep-close-main", st->expected_co, (long)st->slot, 0);
+    }
 
     /* №656: wake строго BY-CO, не через слот-резолв. Прежняя строка
      * (`nova_sched_wake(st->scope, st->slot)`) и её комментарий («латч

@@ -831,6 +831,34 @@ static inline void nova_sched_register_pending(NovaFiberQueue* scope, int slot,
 static inline void nova_sched_unregister_pending(NovaFiberQueue* scope, int slot);
 
 /* Plan 83.11 Ф.3: forward decls (definitions further down in this file). */
+/* ─── [item 19 root 3] MAIN-FIBER park/wake trace (diagnostic-only) ───
+ *
+ * The empty-output hang signature (repro_child_pipes on merged main: the
+ * process prints NOTHING — no rounds line, no pre-exit-drain dump) means the
+ * MAIN fiber parked early and its wake was lost. This gate traces ONLY the
+ * main fiber (`_nova_fiber_scope == NULL` — the main fiber's ctx carries no
+ * home scope) through gopark/goready plus its driver-sleep lifecycle, capped
+ * so a hung run's log stays small. Sequence numbers only. Lives HERE (not in
+ * nova_sched.h) because fibers.h is the first include of the umbrella and
+ * its sleep path calls it before nova_sched.h would define it (implicit
+ * declaration → C2371). */
+static inline int _nova_r3_diag(void) {
+    static int _on = -1;
+    if (_on < 0) {
+        const char* _e = getenv("NOVA_DIAG_ITEM19_R3");
+        _on = (_e && _e[0]) ? 1 : 0;
+    }
+    return _on;
+}
+static inline void _nova_r3_log(const char* ev, void* co, long a, long b) {
+    static volatile long _n = 0;
+    long _seq = __atomic_fetch_add(&_n, 1, __ATOMIC_RELAXED);
+    if (_seq > 20000) return;
+    fprintf(stderr, "[r3] #%ld %s co=%p a=%ld b=%ld\n",
+            _seq, ev, co, a, b);
+    fflush(stderr);
+}
+
 static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot, nova_int ms);
 static inline void _nova_cancel_via_driver(NovaFiberQueue* scope);
 /* №398: targeted single-slot counterpart — see driver.h
@@ -4953,6 +4981,11 @@ static inline void _nova_sleep_via_driver(NovaFiberQueue* scope, int slot,
 
     /* Plan 83.11 Phase B2: capture fiber pointer for close_cb mismatch detection. */
     st.expected_co = mco_running();
+    /* [item 19 root 3 diag] main-thread sleep (the empty-output hang parks
+     * main early; its sleeps are the primary park/wake window). */
+    if (st.home_worker_id < 0 && _nova_r3_diag()) {
+        _nova_r3_log("sleep-submit-main", st.expected_co, (long)ms, (long)slot);
+    }
 
     /* Submit ARM_SLEEP job to driver. malloc + driver frees после processing. */
     NovaDriverJob* job = (NovaDriverJob*)malloc(sizeof(NovaDriverJob));
