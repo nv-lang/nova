@@ -27803,12 +27803,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // defensive `_p`-suffix strip for tuple/fixarr element
                     // strings (a mangled-arg convention elsewhere in this
                     // file sometimes substitutes `_p` for a literal `*`) —
-                    // carried over for byte-behavior parity on that sub-case;
-                    // a real struct tag name coincidentally ending in `_p`
-                    // is not a pattern used anywhere in this codebase's
-                    // naming scheme.
-                    let core = elem.trim_end_matches("_p");
-                    !known_names.contains(core) || emitted.contains(core)
+                    // carried over for byte-behavior parity on that sub-case.
+                    //
+                    // [M-chan-nested-mono-value-dep-order] (wave 0.1.2, bug
+                    // catalog item 2, 2026-11-03): the strip must not REPLACE
+                    // the element name — a NESTED generic instantiation whose
+                    // LAST mangled arg is itself pointer-mangled ends in `_p`
+                    // as part of its OWN node name (`ChanPair[Result[str,str]]`
+                    // has a by-value field `NovaValue_ChanTx____NovaRes_nova_str_nova_str_p`
+                    // — the trailing `_p` belongs to the arg, the field is NOT
+                    // a pointer). Stripping it looked up
+                    // `NovaValue_ChanTx____NovaRes_nova_str_nova_str`, found
+                    // nothing in `known_names`, and declared the dep satisfied
+                    // — ChanPair sorted BEFORE ChanTx/ChanRx and the emitted C
+                    // died with "field has incomplete type" / "unknown type
+                    // name" (only `Chan[str/int/bool]`, whose args are not
+                    // `_p`-suffixed, ever worked). Both candidates — the name
+                    // as-is and the `_p`-stripped form — now count as the dep
+                    // node; the edge is satisfied when the exact-name node is
+                    // emitted, or when the stripped candidate is (the pointer
+                    // case the strip was added for).
+                    let stripped = elem.trim_end_matches("_p");
+                    let known_as_is = known_names.contains(elem);
+                    let known_stripped = known_names.contains(stripped);
+                    let done_as_is = emitted.contains(elem);
+                    let done_stripped = emitted.contains(stripped);
+                    (!known_as_is && !known_stripped) || done_as_is || done_stripped
                 });
                 if deps_satisfied {
                     emitted.insert(node.0.clone());
@@ -28125,6 +28145,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // `_NovaTupleN` (see `debt_is_guaranteed_struct_tag`'s
                             // doc for the exact redefinition error this
                             // avoids).
+                            self.line(&format!("typedef struct {0} {0};", base));
+                        } else if base.starts_with("NovaRes_")
+                            || base.starts_with("NovaOpt_Nova")
+                            || (base.starts_with("NovaOpt_") && base.contains("____"))
+                        {
+                            // [M-chan-nested-mono-value-dep-order] (wave 0.1.2,
+                            // bug catalog item 2, 2026-11-03): a payload type
+                            // that occurs ONLY as a substituted generic arg
+                            // inside a channel/Vec mono name (`Chan[Result[str,str]]`
+                            // → Vec's `data` is `NovaRes_nova_str_nova_str**`)
+                            // has its typedef registered lazily in the
+                            // `__NOVARES_TYPEDEFS__`/`__NOVAOPT_TYPEDEFS__`
+                            // splices, which sit AFTER the unified
+                            // value-record section this instance belongs to —
+                            // the pointer field needs a forward typedef here.
+                            // Codegen owns every `NovaRes_*` and every
+                            // `NovaOpt_<Nova…>`/mono-mangled tag (the runtime
+                            // only macro-declares `NovaOpt_<primitive>` via
+                            // NOVA_OPT_DECL, which this guard excludes), so a
+                            // `typedef struct X X;` here is the canonical
+                            // compatible-redecl pair with the later full body
+                            // (C11 6.7p3).
                             self.line(&format!("typedef struct {0} {0};", base));
                         }
                     }
@@ -35322,7 +35364,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("#define {} {}", Self::mangle_field_name(&binding), c_binding));
                 // Register binding's C type for downstream member/method dispatch
                 // (var_types drives `r.field` → `r->field` on pointer types).
-                self.var_types.insert(binding.clone(), init_c_type.clone());
+                // [M-detach-consume-match-arm-capture-lost] (wave 0.1.2, bug
+                // catalog item 1, 2026-11-03): SAVE the previous var_types
+                // entry and RESTORE it at scope exit instead of an
+                // unconditional `remove` below. The desugared fiber body of
+                // `spawn/detach consume X { … }` runs this ConsumeScope with
+                // the SAME flat, shared `var_types` map the PARENT emission
+                // uses (emit_spawn/emit_detach swap only `out`/`var_boxed`);
+                // the scope's own insert OVERWROTE the parent's live entry
+                // and the trailing remove then DELETED it — so a SECOND
+                // capture of the same name later in the parent (a
+                // `detach consume child { … }` in ANOTHER match arm — the
+                // checker-legitimate exactly-one-move-per-arm shape) found
+                // nothing in `var_types`, produced an EMPTY ctx-capture set,
+                // and the emitted C fiber referenced a never-declared
+                // identifier (CC-FAIL: use of undeclared identifier 'child').
+                // Save/restore is byte-identical to the old behavior when
+                // there was no prior entry (nested scopes), and restores the
+                // parent's own entry when there was one.
+                let saved_binding_ty = self.var_types.insert(binding.clone(), init_c_type.clone());
 
                 // Plan 110.2.3 (D192): resolve exit_timeout via 3-level fallback —
                 //   L1 per-type WithExitTimeout (exit_timeout_ms method),
@@ -35513,7 +35573,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.leave_defer_scope(consume_block_id);
 
                 self.line(&format!("#undef {}", Self::mangle_field_name(&binding)));
-                self.var_types.remove(binding);
+                // [M-detach-consume-match-arm-capture-lost]: restore, not
+                // remove — see the paired save at the scope's var_types
+                // insert above for the full root-cause.
+                match saved_binding_ty {
+                    Some(prev_ty)
+                        if self.current_spawn_captures.as_ref()
+                            .is_some_and(|s| s.contains(binding.as_str())) =>
+                    {
+                        // [M-detach-consume-match-arm-capture-lost]: this
+                        // ConsumeScope is the desugared fiber body of a
+                        // `spawn/detach consume <binding> { … }` (the capture
+                        // set is armed exactly for the fiber-body emission,
+                        // and `<binding>` is one of its captures) — the
+                        // binding REALLY belongs to the parent frame here,
+                        // restore its var_types entry. Every OTHER shape
+                        // (nested D188/re-consume scopes in the parent) keeps
+                        // the old unconditional remove: the name is lexically
+                        // gone at scope exit there, and the wider corpus
+                        // (mega-CU conformance) depends on that removal.
+                        self.var_types.insert(binding.clone(), prev_ty);
+                    }
+                    _ => { self.var_types.remove(binding); }
+                }
                 self.indent -= 1;
                 self.line("}");
             }
