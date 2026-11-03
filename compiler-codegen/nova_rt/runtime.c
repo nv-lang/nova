@@ -2419,7 +2419,13 @@ void nova_runtime_spawn_into(struct NovaFiberQueue* scope,
  * plan83_6 spawn-pool tests. */
 void nova_runtime_signal_main(void) {
     if (_main_wake_inited) {
-        uv_async_send(&_main_wake);
+        int _rc = uv_async_send(&_main_wake);
+        /* [item 19 root 3 diag] cross-thread poke of the main loop — a lost
+         * poke here leaves main parked (empty-output hang signature). */
+        if (_nova_r3_diag()) {
+            _nova_r3_log("signal-main", NULL, (long)_rc, 0);
+        }
+        (void)_rc;
     }
 }
 
