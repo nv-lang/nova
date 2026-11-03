@@ -13,7 +13,10 @@
 // is a thin int layer — `IoError`/`Metadata` are built in the fs.nv wrappers), so
 // mock and real are byte-for-byte substitutable. Codes: >= 0 success, negative
 // POSIX errno on failure. The tree is keyed by POSIX-normalised path strings.
-// Parent-existence is NOT enforced (lenient virtual FS); OpenOptions
+// Parent-existence IS enforced for `mkdir` (ENOENT when the parent dir is
+// missing, like a real FS — item 55: the old lenient mkdir let
+// `create_dir_all` make only the LAST folder); file creation stays lenient
+// (a write into a missing folder still succeeds); OpenOptions
 // create/create_new/truncate semantics ARE honoured.
 //
 // Named `mock_fs` (not the plan's `mem_fs`) for symmetry with `mock_io` /
@@ -307,7 +310,29 @@ fn MemFs mut @mem_mkdir(path []u8, mode int) -> int {
     ro key = mem_key(path)
     match @find(key) {
         Some(_) => 0 - EN_ALREADYEXISTS
-        None    => { ro _ = @add_node(key, KIND_DIR, mode); 0 }
+        None    => match parent_of_key(key) {
+            // "/" is the implicit root: always exists (no node for it).
+            None      => { ro _ = @add_node(key, KIND_DIR, mode); 0 }
+            Some("/") => { ro _ = @add_node(key, KIND_DIR, mode); 0 }
+            Some(par) => match @find(par) {
+                // Parent missing -> ENOENT, like a real FS: `fs.create_dir_all`
+                // recurses on NotFound and builds every level (item 55 — the
+                // old lenient mkdir made only the LAST folder succeed).
+                None => 0 - EN_NOTFOUND
+                Some(_) => { ro _ = @add_node(key, KIND_DIR, mode); 0 }
+            }
+        }
+    }
+}
+
+// Parent key of a normalised POSIX key: "/a/b" -> "/a", "/a" -> "/",
+// "/" (root) and "" -> none (no parent to require).
+fn parent_of_key(key str) -> Option[str] {
+    if key == "" || key == "/" { return None }
+    match key.rfind("/") {
+        None        => Some("/")
+        Some(0)     => Some("/")
+        Some(cut)   => Some(key[..cut])
     }
 }
 

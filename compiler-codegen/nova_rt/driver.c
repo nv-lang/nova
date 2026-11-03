@@ -148,7 +148,15 @@ int nova_driver_submit_job(NovaDriverJob* job) {
     _nova_driver.jobs.tail = job;
     nova_mutex_unlock(&_nova_driver.jobs.mu);
 
-    uv_async_send(&_nova_driver.job_async);
+    int _src = uv_async_send(&_nova_driver.job_async);
+    /* [item 19 root 3 diag] main-thread sleep job enqueued: if this job is
+     * never drained the main fiber parks forever (captured hang: trace ends
+     * at sleep-submit-main + gopark-enter, no sleep-close-main ever). */
+    if (_nova_r3_diag() && job->kind == NOVA_DRV_JOB_ARM_SLEEP
+        && job->u.arm_sleep.st && job->u.arm_sleep.st->home_worker_id < 0) {
+        _nova_r3_log("job-enqueue-arm-main", job->u.arm_sleep.st->expected_co,
+                     (long)job->u.arm_sleep.ms, _src);
+    }
     return 0;
 }
 
@@ -228,8 +236,14 @@ static void _nova_driver_drain_jobs(void) {
     _nova_driver.jobs.tail = NULL;
     nova_mutex_unlock(&_nova_driver.jobs.mu);
 
+    int _r3d = _nova_r3_diag();
     while (job) {
         NovaDriverJob* next = job->next;
+        if (_r3d && job->kind == NOVA_DRV_JOB_ARM_SLEEP
+            && job->u.arm_sleep.st && job->u.arm_sleep.st->home_worker_id < 0) {
+            _nova_r3_log("job-drain-arm-main", job->u.arm_sleep.st->expected_co,
+                         (long)job->u.arm_sleep.ms, 0);
+        }
         _nova_driver_process_job(job);
         /* Plan 83.11 Ф.2: job allocated via malloc by worker (nova_driver_submit_job
          * caller). Free after processing. Driver retains st pointers (inside job
@@ -304,6 +318,9 @@ static void _nova_driver_handle_arm_sleep(NovaSleepState* st, uint64_t ms) {
      * from uv_run already (job_async_cb path). Timer registered to fire next
      * iteration. */
     rc = uv_timer_start(&st->timer, _nova_driver_sleep_timer_cb, ms, 0);
+    if (_nova_r3_diag() && st->home_worker_id < 0) {
+        _nova_r3_log("timer-armed-main", st->expected_co, (long)ms, rc);
+    }
     if (rc != 0) {
         fprintf(stderr, "nova: driver uv_timer_start failed: %s\n", uv_strerror(rc));
         _nova_driver_arm_list_unlink(st);
@@ -319,10 +336,15 @@ static void _nova_driver_sleep_timer_cb(uv_timer_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     if (!st) return;
 
+    /* [item 19 root 3 diag] */
+    int _r3m = _nova_r3_diag() && st->home_worker_id < 0;
+    if (_r3m) _nova_r3_log("timer-fired-main", st->expected_co, (long)st->stage, 0);
+
     /* CAS ARMED → FIRING. Loser = cancel-job won race; cancel path will
      * uv_close. We just exit. */
     int32_t expected = NOVA_SLEEP_DRV_ARMED;
     if (!nova_aint_cas(&st->stage, &expected, NOVA_SLEEP_DRV_FIRING)) {
+        if (_r3m) _nova_r3_log("timer-cas-LOST-main", st->expected_co, (long)expected, 0);
         return;
     }
 
@@ -415,6 +437,8 @@ static void _nova_driver_handle_cancel_timer(NovaSleepState* st) {
 static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     if (!st) return;
+    int _r3m = _nova_r3_diag() && st->home_worker_id < 0;
+    if (_r3m) _nova_r3_log("close-cb-enter-main", st->expected_co, (long)st->slot, 0);
 
     /* Unlink from armed list (driver-only). */
     _nova_driver_arm_list_unlink(st);
@@ -454,6 +478,9 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     int sc_count = sc ? __atomic_load_n(&sc->count, __ATOMIC_ACQUIRE) : 0;
     mco_coro* actual_co = (sc && sl >= 0 && sl < sc_count) ? sc->fibers[sl] : NULL;
 
+    if (_r3m && actual_co != st->expected_co) {
+        _nova_r3_log("close-wrong-fiber-main", st->expected_co, (long)st->slot, 0);
+    }
     if (actual_co != st->expected_co) {
         /* WRONG-FIBER: scope->fibers[slot] does not match expected_co.
          * Two sub-cases:
@@ -535,6 +562,12 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
 
     /* Normal path: publish CLOSED, then wake by-co. */
     __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
+    /* [item 19 root 3 diag] a MAIN-thread sleep closed — the wake below plus
+     * signal_main is exactly the chain whose loss leaves main parked with an
+     * empty-output process. */
+    if (st->home_worker_id < 0 && _nova_r3_diag()) {
+        _nova_r3_log("sleep-close-main", st->expected_co, (long)st->slot, 0);
+    }
 
     /* №656: wake строго BY-CO, не через слот-резолв. Прежняя строка
      * (`nova_sched_wake(st->scope, st->slot)`) и её комментарий («латч

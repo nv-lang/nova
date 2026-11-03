@@ -411,9 +411,16 @@ static void _pp_read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf)
     if (nread == UV_EOF || (p->eio_eof && nread == UV_EIO)) { p->read_n = 0; p->read_eof = 1; p->read_err = 0; }
     else if (nread < 0)    { p->read_n = 0; p->read_err = (int)nread; }
     else                   { p->read_n = (nova_int)nread; p->read_err = 0; }
-    nova_aint_store(&p->read_done, 1);
+    /* Item 19 root 1 (repro_child_pipes): clear the registration BEFORE the
+     * done-store. The worker, once it sees read_done == 1, returns and may
+     * register the NEXT operation (a fresh p->read_scope) at any moment; a
+     * late plain NULL store from this callback would erase that new
+     * registration, the next callback then finds scope == NULL, skips
+     * nova_sched_wake, and the fiber parks forever ("WRITER STUCK" /
+     * "echo missing" under load). Order: clear -> done-store -> wake. */
     NovaFiberQueue* sc = p->read_scope; int sl = p->read_slot;
     p->read_scope = NULL;
+    nova_aint_store(&p->read_done, 1);
     if (sc) nova_sched_wake(sc, sl);
 }
 
@@ -422,9 +429,10 @@ static void _pp_do_read_start_deferred(void* argp) {
     int rc = uv_read_start((uv_stream_t*)&p->handle, _pp_alloc_cb, _pp_read_cb);
     if (rc != 0) {
         p->read_n = 0; p->read_err = rc;
-        nova_aint_store(&p->read_done, 1);
+        /* Item 19 root 1: clear before the done-store (see _pp_read_cb). */
         NovaFiberQueue* sc = p->read_scope; int sl = p->read_slot;
         p->read_scope = NULL;
+        nova_aint_store(&p->read_done, 1);
         if (sc) nova_sched_wake(sc, sl);
     }
 }
@@ -476,9 +484,10 @@ out:
 static void _pp_write_cb(uv_write_t* req, int status) {
     NovaProcPipe* p = (NovaProcPipe*)req->data;
     p->write_err = status;
-    nova_aint_store(&p->write_done, 1);
+    /* Item 19 root 1: clear before the done-store (see _pp_read_cb). */
     NovaFiberQueue* sc = p->write_scope; int sl = p->write_slot;
     p->write_scope = NULL;
+    nova_aint_store(&p->write_done, 1);
     if (sc) nova_sched_wake(sc, sl);
 }
 
@@ -494,9 +503,10 @@ static void _pp_do_write_deferred(void* argp) {
     _pp_write_issue(c, &rc);
     if (rc != 0) {
         p->write_err = rc;
-        nova_aint_store(&p->write_done, 1);
+        /* Item 19 root 1: clear before the done-store (see _pp_read_cb). */
         NovaFiberQueue* sc = p->write_scope; int sl = p->write_slot;
         p->write_scope = NULL;
+        nova_aint_store(&p->write_done, 1);
         if (sc) nova_sched_wake(sc, sl);
     }
 }

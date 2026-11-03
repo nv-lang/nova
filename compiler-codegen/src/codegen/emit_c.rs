@@ -4383,6 +4383,29 @@ impl CEmitter {
         s.strip_prefix("Nova_").unwrap_or(s)
     }
 
+    /// Item 48 (user_type_vs_driver_variant): does the SCRUTINEE's own sum
+    /// type declare a record variant named `variant`? A bare record-variant
+    /// pattern (`Row { values }`) beside a plain RECORD of the same name (the
+    /// machines' `Row`) used to be decided by `record_schemas` alone -- the
+    /// unrelated record turned the arm into a plain-record read (no tag
+    /// check, fields read off the sum struct, `nova_int` binders). The
+    /// scrutinee decides first (the №279 discipline); a record scrutinee
+    /// never matches here, so plain-record patterns are unaffected.
+    fn scr_sum_has_record_variant(&self, scr_ty: &str, variant: &str) -> bool {
+        let base = scr_ty.trim_end_matches('*').trim();
+        let stripped = Self::debt_strip_nova_prefix(base).trim();
+        let value_form = base.strip_prefix("NovaValue_").unwrap_or("");
+        [stripped, value_form].into_iter().filter(|k| !k.is_empty()).any(|k| {
+            self.sum_schemas
+                .get(k)
+                .map_or(false, |vs| vs.contains_key(variant))
+                || self
+                    .sum_schema_registry
+                    .lookup_sum_schema(k)
+                    .map_or(false, |e| e.variants.iter().any(|v| v.variant_name == variant))
+        })
+    }
+
     /// Strip a single leading `Nova_` prefix, or `""` if absent (base-name
     /// extraction where a non-`Nova_` input is treated as "no match" upstream).
     fn debt_strip_nova_prefix_or_empty(s: &str) -> &str {
@@ -5015,13 +5038,49 @@ impl CEmitter {
         recv_type: &str,
         variant: &str,
         args: &[CallArg],
+        call_id: Option<crate::ast::ExprId>,
     ) -> Result<Option<String>, String> {
         // Collision-aware sum base: mirrors the ctor DEFINITION prefix
         // (`nova_make_<base>_<variant>`), qualified per module for colliding sums.
         let sum_base = self.ref_type_base(recv_type, &[]);
-        // Generic sums own their mono ctor path — do not intercept.
+        // Generic sums own their mono ctor path — do not intercept... but the
+        // mono path itself used to leave the QUALIFIED ctor form
+        // (`Output.Send("x")` on `type Output[I] enum | Send(I) | Log(str)`)
+        // unrouted: it fell through to the pseudo-static dispatch
+        // (`Nova_Output_static_Send`, never defined — a silent link failure,
+        // or a silent miscompile when the arg is pointer-coercible). Item 8
+        // (crew-harness `enum_str_payload`): route the qualified form to the
+        // mono'd ctor `nova_make_<mono>_<Variant>(...)` — type-args inferred
+        // from the ctor args, then (a mixed payload variant like `Log(str)`
+        // reveals no param) from the checker's resolved call type — via the
+        // same `try_infer_variant_mono_args` the bare-Ident door uses.
         if self.generic_types.contains(&sum_base) || self.generic_types.contains(recv_type) {
-            return Ok(None);
+            let Some((_, mangled, _)) = self.try_infer_variant_mono_args(variant, args, call_id)
+            else {
+                return Ok(None);
+            };
+            // Per-arg expected-record-type, scoped from the variant's OWN
+            // field type under the mono schema — mirrors the plain path below
+            // ([M-155.a] / [M-181]).
+            let mono_fields = self.reconstruct_mono_sum_schema(&mangled)
+                .and_then(|vs| vs.into_iter().find(|(n, _)| n == variant).map(|(_, f)| f));
+            let saved_expected = self.expected_record_type.clone();
+            let mut arg_strs = Vec::with_capacity(args.len());
+            for (i, a) in args.iter().enumerate() {
+                let expected = mono_fields.as_ref()
+                    .and_then(|f| f.get(i))
+                    .and_then(|fty| Self::debt_struct_name_from_c_type(fty))
+                    .or_else(|| self.expected_record_type.clone());
+                self.expected_record_type = expected;
+                arg_strs.push(self.emit_expr(a.expr())?);
+            }
+            self.expected_record_type = saved_expected;
+            return Ok(Some(format!(
+                "nova_make_{}_{}({})",
+                mangled,
+                variant,
+                arg_strs.join(", ")
+            )));
         }
         // Receiver sum must OWN a payload variant of matching arity — need its
         // field_c_types (not just a bool), see [M-155.a] below (221.1, NOTES.md).
@@ -23978,6 +24037,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         &self,
         variant_name: &str,
         args: &[crate::ast::CallArg],
+        call_id: Option<crate::ast::ExprId>,
     ) -> Option<(String, String, Vec<String>)> {
         use crate::ast::{TypeDeclKind, SumVariantKind};
         // 1. Find parent sum-type by variant name.
@@ -24005,6 +24065,68 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         for (field_ty, arg) in field_types.iter().zip(args.iter()) {
             let arg_c = self.infer_expr_c_type(arg.expr());
             self.infer_type_param_binding(field_ty, &arg_c, &mut subst);
+        }
+        // 4b. Item 8 (crew-harness `enum_str_payload`): a MIXED generic sum
+        // (`type Output[I] enum | Send(I) | Log(str)`) has variants whose
+        // payload mentions NO generic param — `Log(str)` reveals nothing
+        // about `I`, so step 4 leaves it unresolved and the caller used to
+        // fall back to the erased path (the ctor arg boxed to `void*` →
+        // CC-FAIL `passing 'void *' to parameter of incompatible type
+        // 'nova_str'`, or a call to the never-defined erased ctor). Fill the
+        // still-unresolved params from the checker's resolved type of the
+        // CALL expression itself: `Log("x")` in a fn returning
+        // `Output[int]` carries resolved type `Output[int]` — the same sum,
+        // already instantiated by the checker.
+        if subst.iter().any(|(_, c)| c.is_none()) {
+            if let Some(cid) = call_id {
+                if cid.is_set() {
+                    if let Some(crate::types::ResolvedType::Named {
+                        name, args: rt_args, ..
+                    }) = self.resolved_types.get(&cid).cloned()
+                    {
+                        if name == parent_type {
+                            for i in 0..template.generics.len() {
+                                if subst[i].1.is_none() {
+                                    if let Some(a) = rt_args.get(i) {
+                                        if let Ok(c) = self.resolved_type_to_c(a) {
+                                            if !c.is_empty() && c != "void*" {
+                                                subst[i].1 = Some(c);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // 4c. Item 8 fallback #2: the checker's `resolved_types` channel does
+        // not always carry the ctor call's own type, so also consult the
+        // ENCLOSING fn's mono'd return type (`fn make() -> Output[int]` has
+        // `current_fn_return_ty` = `Nova_Output____nova_int*`): when the
+        // instance is registered, its type-args are exactly the parent sum's
+        // instantiation at this site.
+        if subst.iter().any(|(_, c)| c.is_none()) {
+            if let Some(ret) = self.current_fn_return_ty.as_deref() {
+                let key = ret.trim_end_matches('*').trim();
+                if let Some((base, rt_args)) =
+                    self.generic_type_instance_info.borrow().get(key).cloned()
+                {
+                    if base == parent_type {
+                        for i in 0..template.generics.len() {
+                            if subst[i].1.is_none() {
+                                if let Some(a) = rt_args.get(i) {
+                                    let c = self.arg_c(&a);
+                                    if !c.is_empty() && c != "void*" {
+                                        subst[i].1 = Some(c);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         // 5. Require every generic param resolved.
         let type_args_c: Vec<String> = subst.iter()
@@ -24428,9 +24550,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // `next() -> Option[U]` lowers to the value
                                     // type `NovaOpt_<U>` (no `*`); a boxed form
                                     // `NovaOpt_<U>*` may also occur. Accept both.
-                                    let inner = rest.strip_suffix('*').unwrap_or(rest);
+                                    // [items 12/13 chat-shape, task 282] The Option
+                                    // struct id is SANITIZED: a pointer payload
+                                    // `Nova_ChatState*` is spelled `Nova_ChatState_p`
+                                    // in the id, and that sanitized remainder is NOT a
+                                    // C type (no such typedef exists). Binding the
+                                    // slot to it emits params/locals like
+                                    // `Nova_ChatState_p state` -- CC-FAIL
+                                    // `unknown type name 'Nova_ChatState_p'` (and the
+                                    // same call in an IMPORTED module's unit poisons
+                                    // every importing unit's C). Recover the REAL
+                                    // payload c-type via `novaopt_value_types` (the
+                                    // same recovery `infer_type_param_binding`'s
+                                    // Option arm and `pattern_bind_typed` use;
+                                    // `Nova_ChatState_p` -> `Nova_ChatState*`); a map
+                                    // miss keeps the sanitized remainder (for
+                                    // primitives sanitized == real, e.g. `nova_int`).
+                                    let inner_raw = rest.strip_suffix('*').unwrap_or(rest);
+                                    let inner = self.novaopt_value_types.borrow()
+                                        .get(inner_raw).cloned()
+                                        .or_else(|| self.desanitize_pointer_id(inner_raw))
+                                        .unwrap_or_else(|| inner_raw.to_string());
                                     if !inner.is_empty() && inner != "void" {
-                                        candidates.push((u_name.clone(), inner.to_string()));
+                                        candidates.push((u_name.clone(), inner));
                                         break;
                                     }
                                 }
@@ -27661,12 +27803,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // defensive `_p`-suffix strip for tuple/fixarr element
                     // strings (a mangled-arg convention elsewhere in this
                     // file sometimes substitutes `_p` for a literal `*`) —
-                    // carried over for byte-behavior parity on that sub-case;
-                    // a real struct tag name coincidentally ending in `_p`
-                    // is not a pattern used anywhere in this codebase's
-                    // naming scheme.
-                    let core = elem.trim_end_matches("_p");
-                    !known_names.contains(core) || emitted.contains(core)
+                    // carried over for byte-behavior parity on that sub-case.
+                    //
+                    // [M-chan-nested-mono-value-dep-order] (wave 0.1.2, bug
+                    // catalog item 2, 2026-11-03): the strip must not REPLACE
+                    // the element name — a NESTED generic instantiation whose
+                    // LAST mangled arg is itself pointer-mangled ends in `_p`
+                    // as part of its OWN node name (`ChanPair[Result[str,str]]`
+                    // has a by-value field `NovaValue_ChanTx____NovaRes_nova_str_nova_str_p`
+                    // — the trailing `_p` belongs to the arg, the field is NOT
+                    // a pointer). Stripping it looked up
+                    // `NovaValue_ChanTx____NovaRes_nova_str_nova_str`, found
+                    // nothing in `known_names`, and declared the dep satisfied
+                    // — ChanPair sorted BEFORE ChanTx/ChanRx and the emitted C
+                    // died with "field has incomplete type" / "unknown type
+                    // name" (only `Chan[str/int/bool]`, whose args are not
+                    // `_p`-suffixed, ever worked). Both candidates — the name
+                    // as-is and the `_p`-stripped form — now count as the dep
+                    // node; the edge is satisfied when the exact-name node is
+                    // emitted, or when the stripped candidate is (the pointer
+                    // case the strip was added for).
+                    let stripped = elem.trim_end_matches("_p");
+                    let known_as_is = known_names.contains(elem);
+                    let known_stripped = known_names.contains(stripped);
+                    let done_as_is = emitted.contains(elem);
+                    let done_stripped = emitted.contains(stripped);
+                    (!known_as_is && !known_stripped) || done_as_is || done_stripped
                 });
                 if deps_satisfied {
                     emitted.insert(node.0.clone());
@@ -27983,6 +28145,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // `_NovaTupleN` (see `debt_is_guaranteed_struct_tag`'s
                             // doc for the exact redefinition error this
                             // avoids).
+                            self.line(&format!("typedef struct {0} {0};", base));
+                        } else if base.starts_with("NovaRes_")
+                            || base.starts_with("NovaOpt_Nova")
+                            || (base.starts_with("NovaOpt_") && base.contains("____"))
+                        {
+                            // [M-chan-nested-mono-value-dep-order] (wave 0.1.2,
+                            // bug catalog item 2, 2026-11-03): a payload type
+                            // that occurs ONLY as a substituted generic arg
+                            // inside a channel/Vec mono name (`Chan[Result[str,str]]`
+                            // → Vec's `data` is `NovaRes_nova_str_nova_str**`)
+                            // has its typedef registered lazily in the
+                            // `__NOVARES_TYPEDEFS__`/`__NOVAOPT_TYPEDEFS__`
+                            // splices, which sit AFTER the unified
+                            // value-record section this instance belongs to —
+                            // the pointer field needs a forward typedef here.
+                            // Codegen owns every `NovaRes_*` and every
+                            // `NovaOpt_<Nova…>`/mono-mangled tag (the runtime
+                            // only macro-declares `NovaOpt_<primitive>` via
+                            // NOVA_OPT_DECL, which this guard excludes), so a
+                            // `typedef struct X X;` here is the canonical
+                            // compatible-redecl pair with the later full body
+                            // (C11 6.7p3).
                             self.line(&format!("typedef struct {0} {0};", base));
                         }
                     }
@@ -35180,7 +35364,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("#define {} {}", Self::mangle_field_name(&binding), c_binding));
                 // Register binding's C type for downstream member/method dispatch
                 // (var_types drives `r.field` → `r->field` on pointer types).
-                self.var_types.insert(binding.clone(), init_c_type.clone());
+                // [M-detach-consume-match-arm-capture-lost] (wave 0.1.2, bug
+                // catalog item 1, 2026-11-03): SAVE the previous var_types
+                // entry and RESTORE it at scope exit instead of an
+                // unconditional `remove` below. The desugared fiber body of
+                // `spawn/detach consume X { … }` runs this ConsumeScope with
+                // the SAME flat, shared `var_types` map the PARENT emission
+                // uses (emit_spawn/emit_detach swap only `out`/`var_boxed`);
+                // the scope's own insert OVERWROTE the parent's live entry
+                // and the trailing remove then DELETED it — so a SECOND
+                // capture of the same name later in the parent (a
+                // `detach consume child { … }` in ANOTHER match arm — the
+                // checker-legitimate exactly-one-move-per-arm shape) found
+                // nothing in `var_types`, produced an EMPTY ctx-capture set,
+                // and the emitted C fiber referenced a never-declared
+                // identifier (CC-FAIL: use of undeclared identifier 'child').
+                // Save/restore is byte-identical to the old behavior when
+                // there was no prior entry (nested scopes), and restores the
+                // parent's own entry when there was one.
+                let saved_binding_ty = self.var_types.insert(binding.clone(), init_c_type.clone());
 
                 // Plan 110.2.3 (D192): resolve exit_timeout via 3-level fallback —
                 //   L1 per-type WithExitTimeout (exit_timeout_ms method),
@@ -35371,7 +35573,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.leave_defer_scope(consume_block_id);
 
                 self.line(&format!("#undef {}", Self::mangle_field_name(&binding)));
-                self.var_types.remove(binding);
+                // [M-detach-consume-match-arm-capture-lost]: restore, not
+                // remove — see the paired save at the scope's var_types
+                // insert above for the full root-cause.
+                match saved_binding_ty {
+                    Some(prev_ty)
+                        if self.current_spawn_captures.as_ref()
+                            .is_some_and(|s| s.contains(binding.as_str())) =>
+                    {
+                        // [M-detach-consume-match-arm-capture-lost]: this
+                        // ConsumeScope is the desugared fiber body of a
+                        // `spawn/detach consume <binding> { … }` (the capture
+                        // set is armed exactly for the fiber-body emission,
+                        // and `<binding>` is one of its captures) — the
+                        // binding REALLY belongs to the parent frame here,
+                        // restore its var_types entry. Every OTHER shape
+                        // (nested D188/re-consume scopes in the parent) keeps
+                        // the old unconditional remove: the name is lexically
+                        // gone at scope exit there, and the wider corpus
+                        // (mega-CU conformance) depends on that removal.
+                        self.var_types.insert(binding.clone(), prev_ty);
+                    }
+                    _ => { self.var_types.remove(binding); }
+                }
                 self.indent -= 1;
                 self.line("}");
             }
@@ -37921,7 +38145,48 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     };
                     if let Some(arr_name) = arr_var_name {
                         if let Some(real_elem_ty) = self.array_element_types.get(arr_name).cloned() {
-                            if real_elem_ty.ends_with('*') {
+                            // [M-array-elem-type-cross-body-leak] (crew-harness
+                            // spike item 47, `leak_ab`): `array_element_types`
+                            // is keyed by BARE local name and is NOT scope-
+                            // keyed — the per-fn param loop (`emit_fn`, the
+                            // `array_element_types.insert(p.name, …)` trail)
+                            // and the Let-binding propagation
+                            // (`ro b = <[]StepTrace expr>` → `insert("b", …)`)
+                            // persist past the end of the body that produced
+                            // them. A SIBLING body of the same compile unit (a
+                            // `*_test.nv` peer of an imported module, compiled
+                            // into the importer's unit) that binds `a`/`b` to a
+                            // `[]StepTrace` leaks `b → Nova_StepTrace*` into
+                            // the PRELUDE's `EmbeddedDir @merge`, whose own
+                            // local `b` is `[]EmbeddedEntry`: `b[j].path` then
+                            // emitted as `(((Nova_StepTrace*)(b[j]))->path)` →
+                            // CC-FAIL `no member named 'path' in 'struct
+                            // Nova_StepTrace'`. Guard: when the array's own C
+                            // type is known (`var_types[arr_name]` is a
+                            // `Nova_Vec____…`) and its decoded element type
+                            // DISAGREES with the side-table entry, the entry is
+                            // stale — fall through to the regular inference
+                            // instead of casting. nova_int-stomped arrays (the
+                            // legitimate users of this fast path: erased
+                            // generics) have no `Nova_Vec____` type in
+                            // var_types and keep the old behavior.
+                            let entry_stale = real_elem_ty.ends_with('*')
+                                && !real_elem_ty.ends_with("**")
+                                && self.var_types.get(arr_name).map_or(false, |vt| {
+                                    let vt = vt.trim_end_matches('*').trim();
+                                    vt.starts_with("Nova_Vec____")
+                                        && vt
+                                            .strip_prefix("Nova_Vec____")
+                                            .and_then(|frag| frag.strip_suffix("_p").or(Some(frag)))
+                                            .map(|elem_base| {
+                                                elem_base
+                                                    != real_elem_ty
+                                                        .trim_end_matches('*')
+                                                        .trim()
+                                            })
+                                            .unwrap_or(false)
+                                });
+                            if real_elem_ty.ends_with('*') && !entry_stale {
                                 // Cast the nova_int array element back to the real pointer type
                                 return Ok(format!("((({})({}))->{})", real_elem_ty, o, field_name));
                             }
@@ -41595,7 +41860,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         // Plan 48 Ф.7.4 (partial): generic parent sum-type
                         // с выводимыми type-args (`Ok2(42)` → Result2[int])
                         // → mono-pipeline (concrete C struct receiver).
-                        self.try_infer_variant_mono_args(name, args)
+                        self.try_infer_variant_mono_args(name, args, Some(call_id))
                     {
                         format!("nova_make_{}_{}", mangled, name)
                     } else {
@@ -46767,7 +47032,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         && matches!(&obj.kind, ExprKind::Ident(_) | ExprKind::Path(_))
                     {
                         if let Some(call) =
-                            self.try_emit_explicit_variant_ctor(&type_name, method, args)?
+                            self.try_emit_explicit_variant_ctor(&type_name, method, args, Some(call_id))?
                         {
                             return Ok(call);
                         }
@@ -47687,7 +47952,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // the `nova_make_<Sum>_<Variant>` ctor is emitted). The
                     // variant belongs unambiguously to its sum, so the ctor wins.
                     if let Some(call) =
-                        self.try_emit_explicit_variant_ctor(&recv_seg, method_name, args)?
+                        self.try_emit_explicit_variant_ctor(&recv_seg, method_name, args, Some(call_id))?
                     {
                         return Ok(call);
                     }
@@ -48253,7 +48518,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
             if let Some((type_name, _)) = self.sum_schema_registry.find_variant_compat(name) {
                 self.generic_types.contains(&type_name)
-                    && self.try_infer_variant_mono_args(name, args).is_none()
+                    && self.try_infer_variant_mono_args(name, args, Some(call_id)).is_none()
             } else { false }
         } else { false };
         // Bidirectional inference: extract callee name for HOF context lookup.
@@ -51045,6 +51310,71 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
 
+        // [M-for-in-array-literal-vec] (crew-harness spike items 33/36/52):
+        // `for x in [a, b, …]` — a BARE array literal in the for-header. The
+        // literal infers to a typed `Nova_Vec____<T>*`, so the implicit
+        // `.iter()` synthesis below would recurse into
+        // `infer_expr_c_type(<literal>.iter())` — but, unlike a bound
+        // `ro all = […]` (whose LET already emitted and registered the Vec
+        // mono instance + its methods), a literal that is ONLY the iterator
+        // is never emitted as a standalone binding, so the mono instance
+        // registry has no entry for it and the member-call return inference
+        // collapses to `nova_unit` → "for-in: cannot resolve iterator type".
+        // Fix: emit the literal ONCE into a temp (this registers the mono and
+        // builds the elements, byte-identical to the bound case's LET) and
+        // iterate it by index over the Vec header (`->len` / `->data[i]`),
+        // mirroring Case 2 above for legacy `NovaArray_`. Element types of
+        // every shape work (value enums, records, nested Vecs) because the
+        // element C type comes from the iterator's own mono name.
+        if !iter_struct.is_empty()
+            && arr_ty.starts_with("Nova_Vec____")
+            && matches!(&iter.kind, ExprKind::ArrayLit(elems)
+                if !elems.iter().any(|e| matches!(e, ArrayElem::Spread(_))))
+        {
+            if let Some(elem_c_san) = self.vec_or_array_elem_c(&arr_ty) {
+                let binding = self.pattern_binding(pattern)?;
+                let vec_tmp = self.fresh_tmp();
+                let idx_tmp = self.fresh_tmp();
+                let result_tmp = self.fresh_tmp();
+                let vec_expr = self.emit_expr(iter)?;
+                self.line(&format!("{} {} = {};", arr_ty, vec_tmp, vec_expr));
+                self.var_types.insert(vec_tmp.clone(), arr_ty.clone());
+                // Plan 138.1 Ф.6 (same as the iter-protocol path above): the
+                // elem name extracted from the mono mangle encodes a trailing
+                // pointer as `_p`; as a C variable type it must be the pointer
+                // spelling. Mono'd tuple structs (`_NovaTuple_…`) and NovaOpt_
+                // names are already final value-type spellings — never
+                // re-desanitize them.
+                let binding_c_ty = if elem_c_san.starts_with("_NovaTuple_")
+                    || elem_c_san.starts_with("NovaOpt_")
+                {
+                    elem_c_san.clone()
+                } else {
+                    Self::desanitize_c_from_ident(&elem_c_san)
+                };
+                self.line(&format!("nova_unit {};", result_tmp));
+                self.line(&format!(
+                    "for (nova_int {} = 0; {} < {}->len; {}++) {{",
+                    idx_tmp, idx_tmp, vec_tmp, idx_tmp
+                ));
+                self.indent += 1;
+                self.line(&format!(
+                    "{} {} = {}->data[{}];",
+                    binding_c_ty, Self::mangle_field_name(&binding), vec_tmp, idx_tmp
+                ));
+                let prev_ty = self.var_types.insert(binding.clone(), binding_c_ty);
+                self.emit_loop_body_inline(body)?;
+                match prev_ty {
+                    Some(t) => { self.var_types.insert(binding.clone(), t); }
+                    None => { self.var_types.remove(&binding); }
+                }
+                self.indent -= 1;
+                self.line("}");
+                self.line(&format!("{} = NOVA_UNIT;", result_tmp));
+                return Ok(result_tmp);
+            }
+        }
+
         // Plan 06 Ф.3: implicit `.iter()` для коллекций.
         // Если у типа НЕТ метода `next` (значит это не Iter), но ЕСТЬ
         // метод `iter` — синтезируем call: `for x in coll` →
@@ -51563,7 +51893,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .as_ref()
                     .and_then(|p| p.last().cloned())
                     .unwrap_or_else(|| scr_base.clone());
-                if this.record_schemas.contains_key(&type_name_from_path) {
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment type_path
+                // (`PgEvent.Row`) is a variant of the OWNER sum -- never a plain
+                // record by the bare last segment; and for a BARE pattern the
+                // scrutinee's own sum wins over an unrelated record of the same
+                // name (see scr_sum_has_record_variant; the sum-variant half
+                // below resolves the sum from the scrutinee).
+                if type_path.as_ref().map_or(true, |p| p.len() != 2)
+                    && !this.scr_sum_has_record_variant(scr_ty, &type_name_from_path)
+                    && this.record_schemas.contains_key(&type_name_from_path)
+                {
                     let field_types = this.record_schemas.get(&type_name_from_path).cloned().unwrap_or_default();
                     for f in fields {
                         let ty = field_types.get(&f.name).cloned().unwrap_or_else(|| "nova_int".into());
@@ -54187,11 +54526,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             Pattern::Record { type_path, fields, .. } => {
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
                 let type_name_from_path = type_path.as_ref().and_then(|p| p.last().cloned()).unwrap_or_default();
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment path
+                // (`PgEvent.Row`) is a variant of the OWNER sum -- the bare last
+                // segment must not decide (record_schemas["Row"] turned this arm
+                // into a plain-record pattern: no tag check, fields read straight
+                // off the sum struct). Owner-based resolution mirrors D109/D381.
+                let (owner_seg, variant_name) = match type_path.as_ref() {
+                    Some(p) if p.len() == 2 => (Some(p[0].clone()), p[1].clone()),
+                    _ => (None, type_name_from_path.clone()),
+                };
                 // Determine if this is a plain record or a sum-type record variant.
                 // Plan 62.A.bis Ф.2.1: registry-driven lookup для sum-variant test.
-                let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
+                // Item 48, bare-pattern face: the SCRUTINEE's own sum wins over
+                // an unrelated record of the same name (see scr_sum_has_record_variant).
+                let is_plain_record = owner_seg.is_none()
+                    && !self.scr_sum_has_record_variant(&scr_ty, &variant_name)
+                    && self.record_schemas.contains_key(&variant_name);
+                let owner_sum_base = owner_seg.as_ref().map(|o| self.ref_type_base(o, &[]));
                 let is_sum_variant = !is_plain_record
-                    && self.sum_schema_registry.find_variant_compat(&type_name_from_path).is_some();
+                    && match &owner_sum_base {
+                        Some(base) => self.sum_schemas.contains_key(base)
+                            || self.sum_schema_registry.lookup_sum_schema(base).is_some(),
+                        None => self.sum_schema_registry
+                            .find_variant_compat(&variant_name).is_some(),
+                    };
                 if is_plain_record {
                     // Plain record match: always succeeds; check literal fields
                     let mut conds = Vec::new();
@@ -54209,9 +54567,34 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 } else if is_sum_variant {
                     // Sum-type record variant: check tag + literal fields.
                     // Plan 62.A.bis Ф.2.1: registry lookup для sum-type name.
-                    let (sum_type_name, _) = self.sum_schema_registry
-                        .find_variant_compat(&type_name_from_path).unwrap();
-                    let variant_name = type_name_from_path.clone();
+                    let sum_type_name = match &owner_sum_base {
+                        Some(base) => base.clone(),
+                        None => {
+                            // Scrutinee-first (item 48). The tag constant form
+                            // follows the DECLARED name: a mono'd generic sum's
+                            // tag carries the full C name
+                            // (`NOVA_TAG_Nova_Slot____…`), a plain user sum's
+                            // carries the bare name (`NOVA_TAG_Event2_…`) --
+                            // mono is told by the `____` type-arg separator.
+                            let as_is = scr_ty.trim_end_matches('*').trim().to_string();
+                            let stripped = Self::debt_strip_nova_prefix(&as_is).trim().to_string();
+                            if as_is.contains("____") {
+                                as_is
+                            } else if self.sum_schemas.contains_key(&stripped)
+                                || self
+                                    .sum_schema_registry
+                                    .lookup_sum_schema(&stripped)
+                                    .is_some()
+                            {
+                                stripped
+                            } else {
+                                self.sum_schema_registry
+                                    .find_variant_compat(&type_name_from_path)
+                                    .unwrap()
+                                    .0
+                            }
+                        }
+                    };
                     let mut conds = vec![format!("({}->tag == NOVA_TAG_{}_{})", scr, sum_type_name, variant_name)];
                     for field in fields {
                         if let Some(Pattern::Literal(lit, _)) = &field.pattern {
@@ -54315,6 +54698,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .map(|s| {
                                         self.novaopt_value_types.borrow()
                                             .get(s).cloned()
+                                            .or_else(|| self.desanitize_pointer_id(s))
                                             .unwrap_or_else(|| s.to_string())
                                     });
                                 if sub_is_opt_variant {
@@ -54375,6 +54759,30 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // bogus field-access expression.
                                     if t.starts_with("Nova_") && t.ends_with('*')
                                         && matches!(p, Pattern::Record { .. })
+                                    {
+                                        self.var_types.insert(raw.clone(), t.clone());
+                                        tmp_registrations.push(raw.clone());
+                                    }
+                                    // Item 10 (crew-harness `nested_generic_pattern`):
+                                    // Option-payload — a MONO'D USER SUM pointer
+                                    // (`Nova_Response____nova_str*`, the `T` of
+                                    // `Option[Response[str]]`) with a nested
+                                    // VARIANT sub-pattern (`Some(Answer(s))`) —
+                                    // same registration gap/fix as the record and
+                                    // mono-Result branches above. Without it the
+                                    // recursive `pattern_bind_typed` saw an
+                                    // unregistered `scr` and derived the variant's
+                                    // payload field type from the ERASED base
+                                    // schema (`sum_schemas["Response"]["Answer"]`
+                                    // = `void*`): the checker stays silent, the C
+                                    // binds `void* s = ...->payload.Answer._0` (a
+                                    // `nova_str`) — CC-FAIL on str, and a NULL/garbage
+                                    // bind on a record payload. Registering the mono
+                                    // pointer lets the recursion prefer the mono
+                                    // schema (`Response____nova_str`) via the
+                                    // scr_base branch, with the real field type.
+                                    if t.starts_with("Nova_") && t.ends_with('*')
+                                        && matches!(p, Pattern::Variant { .. })
                                     {
                                         self.var_types.insert(raw.clone(), t.clone());
                                         tmp_registrations.push(raw.clone());
@@ -54720,7 +55128,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             Self::debt_strip_nova_prefix_or_empty(base).to_string()
                         }
                     });
-                let is_plain_record = self.record_schemas.contains_key(&type_name_from_path);
+                // Item 48 (user_type_vs_driver_variant): a TWO-segment type_path
+                // (`PgEvent.Row` beside a plain record `Row`) is a variant of the
+                // OWNER sum -- never a plain record by the bare last segment; and
+                // for a BARE pattern the scrutinee's own sum wins over an
+                // unrelated record of the same name (see scr_sum_has_record_variant).
+                // The sum-variant half below resolves the sum from the scrutinee.
+                let is_plain_record = type_path.as_ref().map_or(true, |p| p.len() != 2)
+                    && !self.scr_sum_has_record_variant(&scr_ty, &type_name_from_path)
+                    && self.record_schemas.contains_key(&type_name_from_path);
                 let accessor = if Self::is_value_type(&scr_ty) { "." } else { "->" };
                 if is_plain_record {
                     // Plain record: bind fields directly from scr->field or scr.field
@@ -58246,6 +58662,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (unsigned skips the MIN/-1 check, effects.h `NOVA_DEFINE_CHECKED_
     /// UNSIGNED_DIVMOD` vs `..._SIGNED_DIVMODNEG`), but the naming scheme is
     /// uniform so this dispatch stays signedness-agnostic.
+    /// [items 12/13 chat-shape, task 282] De-sanitize an Option/mono payload
+    /// id's pointer spelling: `Nova_ChatState_p` (the mangled form of
+    /// `Nova_ChatState*`, as it appears inside `NovaOpt_<id>` struct ids) is
+    /// NOT a C type -- no such typedef exists. When the trailing `_p` stems
+    /// from a KNOWN user sum/record (`sum_schemas`/`record_schemas`/
+    /// `generic_types`), return the real pointer c-type; otherwise `None`
+    /// (the caller keeps the id as-is -- for primitives the sanitized id IS
+    /// the real type, e.g. `nova_int`).
+    fn desanitize_pointer_id(&self, sani: &str) -> Option<String> {
+        let stem = sani.strip_suffix("_p")?;
+        let bare = stem.strip_prefix("Nova_").unwrap_or(stem);
+        if self.sum_schemas.contains_key(bare)
+            || self.record_schemas.contains_key(bare)
+            || self.generic_types.contains(bare)
+        {
+            return Some(format!("{}*", stem));
+        }
+        None
+    }
+
     fn sized_checked_helper(ty_c: &str, op: BinOp) -> Option<String> {
         let base = match ty_c {
             "int8_t" => "i8",
@@ -61357,6 +61793,39 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                             }
                                         }
                                     }
+                                    // [items 12/13, generic-protocol-inference] A generic
+                                    // whose param is PROTOCOL-BOUNDED (`fn run_once[S, B,
+                                    // M Machine[S, B]](m M, ev Event[B]) -> StepResult[S]`)
+                                    // leaves S/B unbound in every source above — they surface
+                                    // only inside M's BOUND, never in a param position the
+                                    // structural walks can unify. The EMIT side (`emit_call`
+                                    // → `resolve_mono_type_args`) closes exactly this gap via
+                                    // its Source 2e/2e-bis protocol-structural walk, so the
+                                    // CALL mono's correctly (`run_once__int__int__Counter`)
+                                    // while this probe leaves the binding `let` typeless —
+                                    // the emitted C declaration comes out as bare
+                                    // ` r = run_once(...)` (CC-FAIL `use of undeclared
+                                    // identifier 'r'`). Borrow the SAME resolver here and
+                                    // fill ONLY still-`None` slots (never overwrite a slot
+                                    // an earlier source bound — the established no-overwrite
+                                    // rule), so the local's declared C type is derived from
+                                    // the identical subst the emit side will mono with.
+                                    // Err (a genuinely uninferrable `S`, e.g. returned-only
+                                    // without a bound) keeps today's fall-through: the loud
+                                    // turbofish diagnostic still comes from `emit_call`.
+                                    if subst.iter().any(|(_, v)| v.is_none()) {
+                                        if let Ok(full) =
+                                            self.resolve_mono_type_args(&fn_decl, &turbofish_args, args)
+                                        {
+                                            for (name, c_ty) in full {
+                                                if let Some(slot) = subst.iter_mut()
+                                                    .find(|(n, v)| n == &name && v.is_none())
+                                                {
+                                                    slot.1 = Some(c_ty);
+                                                }
+                                            }
+                                        }
+                                    }
                                     // Resolve return type by substituting bare type params.
                                     // Plan 153.2 Ф.2 (STAGE 2): value-AWARE so a nested
                                     // generic-over-source instance (`MapIter[VecIter[int],U]`)
@@ -63300,7 +63769,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         };
                         return self.result_repr_c_type(&ok_c, &err_c);
                     }
-                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args) {
+                    if let Some((_, mangled, _)) = self.try_infer_variant_mono_args(name, args, Some(expr.id)) {
                         return format!("{}*", mangled);
                     }
                     return self.a4_sum_c_type(&type_name);

@@ -1,0 +1,31 @@
+// EXPECT_COMPILE_ERROR E_NO_INDEX_IMPL
+//
+// Item 42 (split_index): indexing the result of `str.split(sep)` —
+// `parts[0]`, the result is the lazy iterator `SplitIter` — passed the
+// checker and fell through to codegen, which stopped with INTERNAL-PANIC
+// `[E_CODEGEN_TYPE_UNKNOWN] Index element type unknown for
+// obj_ty="NovaValue_SplitIter"` at the GENERATED expression, with no source
+// span (measured on the released 0.1.0). The workaround in the field was
+// `for part in text.split(sep)` plus pushes into a list.
+//
+// Per D238 `a[key]` desugars to `a.@index(key)`: the builtin doors are the
+// structural `[]T`/`[N]T`, the `str` slice (`str[int]` retracted, D249) and
+// typed pointers (№367); a user type must DECLARE an `@index` overload.
+// `SplitIter` is a lazy iterator — it declares `@next` (Next[str]) and no
+// `index` at all — so `parts[0]` must be an honest CHECKER diagnostic with a
+// span, not a codegen panic. The refusal judges by SIGNATURE (the №1022
+// convention, same door as E_SLICE_ROLE_UNSATISFIED): it fires only when the
+// method table knows the type and it has zero `index` overloads, so types
+// invisible to the table keep the legacy path.
+
+module neg.iter_no_index_impl_neg
+
+import std.text
+
+fn main() {
+    ro text = "a,b,c"
+    ro parts = text.split(",")
+    // nova:expect E_NO_INDEX_IMPL -- SplitIter declares no `@index`; iterate instead
+    ro first = parts[0]
+    println(first)
+}

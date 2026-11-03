@@ -1,0 +1,8 @@
+// Item 32 pin fixture, side module: the module whose `import std.text` (for
+// `[]str.join`) used to poison a RECORD-pattern binding named `text` in a
+// NEIGHBOR module.
+module standalone.text_import_pattern_bind_side
+
+import std.text
+
+export fn joined(parts []str) -> str => parts.join(",")

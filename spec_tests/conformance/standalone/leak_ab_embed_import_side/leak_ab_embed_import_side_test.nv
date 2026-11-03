@@ -1,0 +1,25 @@
+module standalone.leak_ab_embed_import_side
+
+// Item 47: this FREE FN of the test peer (emitted BEFORE the prelude's
+// `EmbeddedDir @merge` in the unit's C) binds `a`/`b` to `[]StepTrace` from
+// turbofish calls -- the `array_element_types` entries that used to persist
+// past the end of this body and hijack merge's own `b[j].path`.
+fn trace_diff(a StepTrace, b StepTrace) -> bool {
+    a.op == b.op && a.state == b.state
+}
+
+fn traces_probe() -> bool {
+    ro seed = StepTrace { op: "read", state: "go" }
+    ro a = traces_of[StepTrace](seed)
+    ro b = traces_of[StepTrace](seed)
+    mut i = 0
+    while i < a.len() {
+        if !trace_diff(a[i], b[i]) { return false }
+        i += 1
+    }
+    true
+}
+
+test "trace_diff over runs" {
+    assert(traces_probe())
+}

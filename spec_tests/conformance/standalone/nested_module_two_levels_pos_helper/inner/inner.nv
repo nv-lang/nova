@@ -1,0 +1,20 @@
+// №TBD regression pin (item 25, crew-harness spike index
+// `spikes/env/README.md` — `nested_module`): the HELPER half of
+// `../nested_module_two_levels_pos.nv`. A folder-module two folders under
+// the source root, with no `.nv` file in the middle folder
+// (`nested_module_two_levels_pos_helper/` here, `src/nested_module/` in the
+// repro), declaring the package-prefixed full-path form —
+// `module <package>.<rel path from source root>` — the exact shape the D78
+// diagnostic used to print as "expected (rev-1 legacy)" while refusing it
+// with `E_D78_MODULE_PATH_MISMATCH`. The canonical rev-3 spelling
+// (`module nested_module_two_levels_pos_helper.inner`) keeps working
+// unchanged; this file pins the ALTERNATIVE spelling so the declaration can
+// equal the import path for nested modules.
+
+module spec_tests.conformance.standalone.nested_module_two_levels_pos_helper.inner
+
+export fn answer() -> int => 42
+
+test "a module two folders deep, declared with the package prefix" {
+    assert(answer() == 42)
+}

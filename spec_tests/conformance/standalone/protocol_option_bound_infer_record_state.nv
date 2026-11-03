@@ -1,0 +1,59 @@
+// EXPECT_STDOUT step=3 name=idle
+
+// №TBD regression pin (items 12/13 incomplete -- the ALULA/record shape of
+// the same task-282 defect as `protocol_option_bound_infer_sum_state.nv`;
+// repro `spikes/env/repro_infer12_chat/src/infer_record_state`). With a
+// plain-record state the poisoned door is `pattern_bind_typed`'s
+// Option-payload fallback (`t_from_scr`): when the mono Option's
+// `novaopt_value_types` entry is not yet registered at the bind site, the
+// sanitized remainder (`Nova_AlulaState_p`) bound the `Some(state)` local and
+// through it the callee's `S` slot -- CC-FAIL
+// `unknown type name 'Nova_AlulaState_p'` on the released 0.1.1 toolchain.
+// The `desanitize_pointer_id` fallback (a KNOWN user record's sanitized
+// pointer id -> the real pointer) closes it; the record shape is pinned so
+// the pattern-bind door cannot reopen while the Source 2e door stays closed.
+module standalone.protocol_option_bound_infer_record_state
+
+type EngineState[S] { trace str, step int, state S }
+type Snapshot { step int, data str }
+
+type Machine[S] protocol {
+    @name() -> str
+    @initial() -> S
+    @encode_state(state S) -> str
+    @decode_state(text str) -> Option[S]
+}
+
+type AlulaState { name str, taken []str }
+
+type AlulaMachine { party str }
+
+fn AlulaMachine @name() -> str => "AlulaMachine"
+fn AlulaMachine @initial() -> AlulaState => { name: "idle", taken: []str.new() }
+fn AlulaMachine @encode_state(state AlulaState) -> str => state.name
+fn AlulaMachine @decode_state(text str) -> Option[AlulaState] => Some({ name: "idle", taken: []str.new() })
+
+fn state_of[S](text str, step int, state S) -> Option[EngineState[S]] {
+    ro r EngineState[S] = { trace: text, step, state }
+    Some(r)
+}
+
+fn encode_snapshot[S, M Machine[S]](machine M, state EngineState[S]) -> Snapshot =>
+    { step: state.step, data: machine.encode_state(state.state) }
+
+fn decode_snapshot[S, M Machine[S]](machine M, snapshot Snapshot) -> Option[EngineState[S]] {
+    match machine.decode_state(snapshot.data) {
+        Some(state) => state_of[S](snapshot.data, snapshot.step, state)
+        None => None
+    }
+}
+
+fn main() Io -> () {
+    ro m = AlulaMachine { party: "agent" }
+    ro state EngineState[AlulaState] = { trace: "t", step: 3, state: { name: "busy", taken: []str.new() } }
+    ro snap = encode_snapshot(m, state)
+    match decode_snapshot(m, snap) {
+        Some(back) => print("step=${back.step} name=${back.state.name}")
+        None => print("step=none name=none")
+    }
+}

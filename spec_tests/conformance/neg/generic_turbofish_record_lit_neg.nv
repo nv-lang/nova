@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_GENERIC_TURBOFISH_LIT
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Item 54 (crew-harness spike `generic_literal_args`): the turbofish record
+// construction `Holder[str] { ... }` used to collapse into two "statements"
+// with a baffling E_STMT_SEP_MISSING. The canonical construction form is the
+// bare `Holder { ... }` (D55 construction table) with the type argument
+// inferred from the field values -- the bare form compiles and runs on
+// 0.1.0 already. This pin holds the actionable diagnostic that names the
+// canonical form.
+
+module standalone.generic_turbofish_record_lit_neg
+
+type Holder[T] { id T, input str }
+
+fn make() -> Holder[str] {
+    Holder[str] { id: "a", input: "b" }
+}
+
+fn main() {
+    ro h = make()
+    println("${h.id}")
+}

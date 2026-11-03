@@ -5,6 +5,33 @@
 > User-facing guide for `std.io`/`std.fs`/`std.os` (Plan 176). Model, cross-language
 > comparison (7 languages), and the `write_atomic` durability recipe.
 
+## `println` and `Io`: a known mismatch
+
+Writing to stdout is an observable side effect. However, the current prelude declarations of `print` and `println` in `std/src/prelude/runtime.nv` do not carry `Io`, while normative [D26](../../spec/decisions/08-runtime.md#d26-базовая-stdlib-и-prelude) gives `print` a signature with `Io`. This is a specification/implementation mismatch; this note records it rather than defining an exception to the effect system.
+
+`stdout()` and `write_str` follow a different path: writes dispatch to the active `Io` handler. Use that API to demonstrate replaceable console output. The presence of `with Io = ...` alone does not establish that direct `println` calls are intercepted.
+
+```nova
+import std.io.{Io, IoCapture, mock_io, stdout, write_str}
+
+test "direct println and effectful output are different paths" {
+    mut cap = IoCapture.new([]u8.new())
+    with Io = mock_io(cap) {
+        println("direct-print")
+        mut out = stdout()
+        ro result = write_str(out, "captured")
+        assert(result.is_ok())
+    }
+    ro bytes = cap.out_bytes()
+    assert(bytes.len() == 8)
+    assert(bytes[0] == 0x63 as u8)
+    assert(bytes[7] == 0x64 as u8)
+    println("io-capture-ok")
+}
+```
+
+An omitted `Io` effect in a called signature does not currently establish that the call cannot print. This example distinguishes the two paths; it does not claim that the declaration and effect-checking discrepancy has been resolved.
+
 ## TL;DR
 
 ```nova

@@ -90,6 +90,16 @@ pub struct Parser {
     /// (используется в head-позициях `if`/`while`/`match`-scrutinee
     /// и `for`-итераторах, чтобы `{` следующего блока не съедался).
     no_struct_lit: bool,
+    /// Token position where the CURRENT `no_struct_lit` guard was
+    /// installed (head-позиция `if`/`while`/`match`/`for`). Brackets
+    /// opened BEFORE that position (e.g. the call `w.put(` hosting the
+    /// whole if-expression) do not count as "inside brackets" for the
+    /// item-51 record-lit un-suppression: only brackets opened INSIDE
+    /// the guarded expression make a `{` unambiguous as a record
+    /// literal. Without this, `w.put(if flag { s } else { .. })`
+    /// mis-parses `flag { s }` as a record literal (regression after
+    /// item 51) and then chokes on `else`.
+    no_struct_lit_since: usize,
     /// Когда true — `expr(args) { ... }` не парсится как call-with-
     /// trailing-block. Используется в head-позиции `match`-scrutinee,
     /// чтобы `match foo() { Some(i) => ... }` не рассматривался как
@@ -406,6 +416,7 @@ impl Parser {
             tokens,
             pos: 0,
             no_struct_lit: false,
+            no_struct_lit_since: 0,
             no_trailing_block: false,
             src,
             src_base: 0,
@@ -555,9 +566,12 @@ impl Parser {
         f: impl FnOnce(&mut Self) -> Result<R, Diagnostic>,
     ) -> Result<R, Diagnostic> {
         let saved = self.no_struct_lit;
+        let saved_since = self.no_struct_lit_since;
         self.no_struct_lit = true;
+        self.no_struct_lit_since = self.pos;
         let result = f(self);
         self.no_struct_lit = saved;
+        self.no_struct_lit_since = saved_since;
         result
     }
 
@@ -568,11 +582,14 @@ impl Parser {
         f: impl FnOnce(&mut Self) -> Result<R, Diagnostic>,
     ) -> Result<R, Diagnostic> {
         let saved_struct = self.no_struct_lit;
+        let saved_struct_since = self.no_struct_lit_since;
         let saved_trailing = self.no_trailing_block;
         self.no_struct_lit = true;
+        self.no_struct_lit_since = self.pos;
         self.no_trailing_block = true;
         let result = f(self);
         self.no_struct_lit = saved_struct;
+        self.no_struct_lit_since = saved_struct_since;
         self.no_trailing_block = saved_trailing;
         result
     }
@@ -10008,6 +10025,34 @@ impl Parser {
                         return self.parse_record_lit_after_path(path, first_span);
                     }
                 }
+                // Item 54 (generic_literal_args): `Holder[str] { … }` —
+                // turbofish-конструкция record-литерала. Спека (02-types,
+                // D55) знает только голую форму `Holder { … }` — аргумент
+                // выводится из полей. Раньше это разваливалось на два
+                // «стейтмента» с baffling E_STMT_SEP_MISSING. Даём
+                // actionable ошибку с правильной формой. Судим только
+                // Upper-пути (имя типа) и только когда после сбалансированного
+                // turbofish идёт `{` с field-сигнатурой — иначе не мешаем
+                // turbofish-static вызовам `Type[Args].method(...)`.
+                if matches!(self.peek().kind, TokenKind::LBracket)
+                    && path.first().map_or(false, |s| {
+                        s.chars().next().map_or(false, |c| c.is_ascii_uppercase())
+                    })
+                    && self.turbofish_braced_record_lit_ahead()
+                {
+                    return Err(Diagnostic::new(
+                        format!(
+                            "[E_GENERIC_TURBOFISH_LIT] generic record construction is written \
+                             without the turbofish: `{} {{ ... }}` -- the type argument is \
+                             inferred from the field values (D55 construction). For an \
+                             explicitly typed binding write `ro h {}[T] = {} {{ ... }}`.",
+                            path.join("::"),
+                            path.join("::"),
+                            path.join("::"),
+                        ),
+                        self.peek().span,
+                    ));
+                }
                 if path.len() == 1 {
                     Ok(Expr::new(
                         ExprKind::Ident(path.into_iter().next().unwrap()),
@@ -10530,9 +10575,98 @@ impl Parser {
         }
     }
 
+    /// Crew-harness spike item 51 (`match_record_literal_arg`): is the
+    /// current position inside an as-yet-unclosed `(`/`[`? The
+    /// `no_struct_lit` ambiguity guard exists for the introducer's OWN
+    /// brace (`match expr {`, `if cond {`, `for x in it {`) — that brace
+    /// always sits at bracket depth 0, after a COMPLETE expression.
+    /// Inside balanced `(`/`[` (a call argument, an array-literal element)
+    /// a `{` cannot be the introducer's brace, so a record literal there
+    /// (`f(PV { .. })`, `[PV { .. }]` as the scrutinee's call argument) is
+    /// unambiguous and must not be suppressed. Walks the token stream
+    /// backwards; brackets that closed on the way balance out, so the
+    /// first unmatched opener (if any) answers the question.
+    ///
+    /// The backward walk is bounded by `from` (token index): only
+    /// brackets opened at/after `from` count. `looks_like_record_lit`
+    /// passes the `no_struct_lit` install position
+    /// (`no_struct_lit_since`), so a call paren opened BEFORE the
+    /// guarded head-expression (`w.put(` around a whole `if cond { .. }`)
+    /// does NOT un-suppress the guard — that `{` may still be the
+    /// introducer's own brace (item-51 regression: `w.put(if flag { s }
+    /// else { "xy" })` mis-parsed `flag { s }` as a record literal).
+    /// Item 54: pure lookahead from `self.pos` — a balanced `[...]`
+    /// turbofish immediately followed by `{` with a field signature
+    /// (`Ident :` / `Ident ,` / `Ident }` after skipping newlines). Does
+    /// not consume tokens; turbofish static calls (`Type[Args].method`)
+    /// have a `.` after the brackets and are never flagged.
+    fn turbofish_braced_record_lit_ahead(&self) -> bool {
+        let mut depth: i32 = 0;
+        let mut i = self.pos.min(self.tokens.len());
+        while i < self.tokens.len() {
+            match self.tokens[i].kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        if !matches!(self.tokens.get(i + 1).map(|t| &t.kind), Some(TokenKind::LBrace))
+                        {
+                            return false;
+                        }
+                        let mut k = i + 2;
+                        while k < self.tokens.len()
+                            && matches!(
+                                self.tokens[k].kind,
+                                TokenKind::Newline | TokenKind::Semicolon
+                            )
+                        {
+                            k += 1;
+                        }
+                        let after = self.tokens.get(k + 1);
+                        return matches!(self.tokens.get(k).map(|t| &t.kind), Some(TokenKind::Ident(_)))
+                            && matches!(
+                                after.map(|t| &t.kind),
+                                Some(TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace)
+                            );
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
+    }
+
+    fn inside_open_bracket_from(&self, from: usize) -> bool {
+        let mut depth: i32 = 0;
+        let mut i = self.pos.min(self.tokens.len());
+        while i > from {
+            i -= 1;
+            match self.tokens[i].kind {
+                TokenKind::RParen | TokenKind::RBracket => depth += 1,
+                TokenKind::LParen | TokenKind::LBracket => {
+                    depth -= 1;
+                    if depth < 0 {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn looks_like_record_lit(&self) -> bool {
         if self.no_struct_lit {
-            return false;
+            // Item 51: inside `(`/`[` the record-lit reading stays live
+            // (see `inside_open_bracket_from`); only the depth-0
+            // introducer brace keeps the guard. But only brackets opened
+            // INSIDE the guarded head-expression count — a paren that
+            // already encloses the whole `if cond { .. }` (e.g. a call
+            // argument) does not disambiguate the introducer's brace.
+            if !self.inside_open_bracket_from(self.no_struct_lit_since) {
+                return false;
+            }
         }
         // Skip newlines внутри.
         let mut i = self.pos + 1;

@@ -157,9 +157,10 @@ static inline void nova_sched_drop_state(NovaFiberQueue* scope) {
 
 /* ─── Park / wake ─────────────────────────────────────────────── */
 
-/* ─── Plan 83-go-cmn Ф.2: gopark / goready (Go-style by-co handshake) ──
- *
- * The single-winner election and the ready-before-park latch both live on
+/* ─── Plan 83-go-cmn Ф.2: gopark / goready (Go-style by-co handshake) ── */
+
+
+/*
  * the per-fiber `_nova_park_state` (NIL/WAIT/READY/DISPATCHED), addressed BY
  * co-pointer. This REPLACES the entire Plan 83.11 pending_wake t1/t3 dance +
  * the parked[] CAS dispatch gate. parked[] is DEMOTED to a cancel-reachability
@@ -190,6 +191,10 @@ static inline void nova_goready(mco_coro* co) {
     if (!co) return;
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
     if (!base) return;  /* legacy fiber без base — no latch; cannot have gopark'd */
+    /* [item 19 root 3 diag] main-fiber wake attempt: record the park_state
+     * BEFORE the election so a lost R4 (no-op on WAIT) is visible. */
+    int _r3m = _nova_r3_diag() && base->_nova_fiber_scope == NULL;
+    if (_r3m) _nova_r3_log("goready-pre", co, (long)base->_nova_park_state, 0);
     /* [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер: сигнатура-2 гонки —
      * мусорный/освобождённый SpawnCtx к моменту wake. Диаг-режим ловит его
      * ЗДЕСЬ (точка детонации по gdb-раскопке), до разыменования полей.
@@ -203,6 +208,7 @@ static inline void nova_goready(mco_coro* co) {
     if (__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
                                     NOVA_PARK_DISPATCHED, false,
                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (_r3m) _nova_r3_log("goready-R2-won", co, (long)expected, 0);
         /* WON WAIT->DISPATCHED. Consistency order (review correction #4):
          *   (2) fiber_state PARKED->IDLE
          *   (3) clear parked[slot] (cancel-reachability bit) + parked_co[slot]
@@ -248,11 +254,13 @@ static inline void nova_goready(mco_coro* co) {
     if (__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
                                     NOVA_PARK_READY, false,
                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        if (_r3m) _nova_r3_log("goready-R3-latch", co, (long)expected, 0);
         return;
     }
 
     /* R4: observed READY or DISPATCHED — idempotent no-op (double-goready
      * coalesces; the prior dispatcher already re-queued or latched). */
+    if (_r3m) _nova_r3_log("goready-R4-noop", co, (long)expected, 0);
 }
 
 /* nova_gopark(unlock_fn, unlock_arg): commit the current fiber to a wait.
@@ -268,13 +276,38 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
         fprintf(stderr, "nova: nova_gopark: not in fiber context\n");
         abort();
     }
+    /* [item 19 root 3 diag] main-fiber park attempt. */
+    {
+        NovaSpawnCtxBase* _b = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        if (_nova_r3_diag() && _b && _b->_nova_fiber_scope == NULL) {
+            _nova_r3_log("gopark-enter", co, (long)_b->_nova_park_state, 0);
+        }
+    }
     /* G0: fiber_state RUNNING -> PARKED (RELEASE). Ordered BEFORE G1 so the
      * SEQ_CST G1 store publishes PARKED too (single coherent observation point
      * for goready's R2 PARKED->IDLE — review fence_hazard #1). */
     nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
     /* G1: park_state -> WAIT (SEQ_CST = XCHG on x86, full fence, drains store
      * buffer). The load-bearing publish: globally visible before any waker that
-     * later acquires the resource lock (released by unlock_fn post-yield). */
+     * later acquires the resource lock (released by unlock_fn post-yield).
+     *
+     * [item 19 root 3 - DIAGNOSED, FIX NEEDS DESIGN] this blind WAIT store is
+     * the exact lost-wake point, captured under 6-way load with
+     * NOVA_DIAG_ITEM19_R3: the main thread was preempted between entering
+     * gopark and this store while its driver sleep fired - close_cb's goready
+     * saw park_state==NIL, took the R3 NIL->READY latch ("G3 will consume
+     * it") and returned; this store then overwrote READY with WAIT, G3's
+     * READY->DISPATCHED CAS failed on our own WAIT, the fiber yielded with
+     * no waker left - permanent park (the process prints nothing: the rounds
+     * line dies in the killed process's stdout buffer). A first minimal fix
+     * (xchg at G1, consume the observed READY like the G3 fast path) was
+     * A/B-tested and REVERTED: it traded the hang for segfaults under load
+     * (5 crashes / 18 loaded runs vs 0/18 with the blind store; suspected: a
+     * STALE READY latched by a late waker of the PREVIOUS wait turns a
+     * single-shot park into a skip, breaking exactly-once-yield sites). The
+     * correct consume semantics - a G1 that preserves a concurrent latch
+     * without skipping the park - needs its own scheduler-design pass. See
+     * nova_park_state_xchg (fibers.h). */
     nova_park_state_store(co, NOVA_PARK_WAIT, __ATOMIC_SEQ_CST);
     /* G2: stash deferred-unlock in TLS — the scheduler drains it AFTER the fiber
      * yields (runtime.c / supervised_step), so the unlock (and thus a peer's
@@ -293,6 +326,12 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
         _nova_park_unlock_arg = NULL;
         nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         if (unlock_fn) unlock_fn(unlock_arg);
+        {
+            NovaSpawnCtxBase* _b = (NovaSpawnCtxBase*)mco_get_user_data(co);
+            if (_nova_r3_diag() && _b && _b->_nova_fiber_scope == NULL) {
+                _nova_r3_log("gopark-G3-fastpath", co, 0, 0);
+            }
+        }
         return;
     }
     /* G3 failed ⇒ state is WAIT (normal) or DISPATCHED (a peer goready already
@@ -310,6 +349,13 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
     /* Resumed. Clear the TLS the scheduler already drained (yield path). */
     _nova_park_unlock_fn  = NULL;
     _nova_park_unlock_arg = NULL;
+    /* [item 19 root 3 diag] main-fiber park returned (wake consumed). */
+    {
+        NovaSpawnCtxBase* _b = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        if (_nova_r3_diag() && _b && _b->_nova_fiber_scope == NULL) {
+            _nova_r3_log("gopark-returned", co, (long)_b->_nova_park_state, 0);
+        }
+    }
     /* Reset the descriptor latch to NIL at the canonical end-of-wait (review
      * correction #3): a late/duplicate cross-thread waker that latched NIL->READY
      * after we resumed would otherwise make our NEXT gopark skip yielding. */
