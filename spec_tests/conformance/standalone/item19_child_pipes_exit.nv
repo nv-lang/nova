@@ -70,7 +70,7 @@ fn writer(consume tx ChildStdin, lines ChanRx[str], done ChanTx[int]) Proc -> ()
     while writing {
         match lines.recv() {
             Some(line) => {
-                match write_all(tx, "${line}\n".bytes()) {
+                match write_all(tx, "${line}\n") {
                     Ok(x) => ()
                     Err(e) => { writing = false }
                 }
