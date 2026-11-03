@@ -579,8 +579,13 @@
 # the existing typed API. No new language surface. Library/runtime behavior, not a novac rule.
 # 2026-10-16 (task #97): 187 -- D493 specifies marker safety effects; Carina implementation is deferred,
 # stages E1-E3 are not executed by this task.
+# 2026-11-03 (task #139): oracle-pin 2803de2d9 -> a0f2c9d71 (tag oracle-v0.1.2). The shell template was
+# regenerated against the v0.1.2 oracle; the +1 line (a forward `typedef struct NovaRes_nova_int_nova_str`)
+# is the emission of bd5349b93 ([M-chan-nested-mono-value-dep-order], merged as 1ea1f96fa), measured both
+# ways: the packaged v0.1.1 oracle reproduces the old 26348-line template byte-for-byte, the packaged
+# v0.1.2 oracle (== the local main-copy binary, same sha256) reproduces the new 26349-line one.
 #   spec-queue: 191
-#   oracle-pin: 2803de2d9
+#   oracle-pin: a0f2c9d71
 #   stage: E2
 # stage is the CURRENT stage of plan 274 (E1, E2, E2b1, E2b2, E2b3, E3, E4, E5,
 # E6). It anchors self-expiring records: a temporary edge in the architecture's

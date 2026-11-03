@@ -618,6 +618,7 @@ struct Nova_Vec____nova_byte {
     nova_int cap;
 };
 
+typedef struct NovaRes_nova_int_nova_str NovaRes_nova_int_nova_str;
 typedef struct Nova_Vec____NovaRes_nova_int_nova_str_p Nova_Vec____NovaRes_nova_int_nova_str_p;
 struct Nova_Vec____NovaRes_nova_int_nova_str_p {
     NovaRes_nova_int_nova_str** data;

@@ -40,6 +40,17 @@
 # `n < 0` в чтении/записи пайпа, ушедшие в `stream_result`. Эмиссия novac не
 # менялась: novac пересобран под шаблоном и замерен, рост равен приросту шаблона.
 #
+# 2026-11-03 (задача #139): +1 строка КАЖДОМУ, рост целиком оболочечный —
+# shell.tpl.c регенерирован под оракул v0.1.2 (26348 -> 26349). Лишняя строка —
+# форвард-typedef `NovaRes_nova_int_nova_str`, эмиссия коммита bd5349b93
+# ([M-chan-nested-mono-value-dep-order], слит 1ea1f96fa 2026-11-03, ПОСЛЕ
+# вчерашней регенерации e590ef6b4). Источник замерен, не угадан: упакованный
+# оракул v0.1.1 (31c8f6041) против std/nova_rt этого дерева даёт старые 26348
+# байт-в-байт, упакованный v0.1.2 (a0f2c9d71) — новые 26349; контрольная
+# переменная одна — бинарь компилятора. Эмиссия самого novac не менялась
+# (дельта одинакова у всех четырёх). Пин в novac/nova.toml сдвинут тем же
+# слиянием: 2803de2d9 -> a0f2c9d71 (274.3/F6; строки реестра №1442/№1373).
+#
 # ЛОВУШКА, названная чтобы её не переучивать: этот страж остаётся ЗЕЛЁНЫМ,
 # пока novac не пересобран под новым шаблоном, — старый бинарь несёт старую
 # оболочку и честно совпадает со старой базой. Краснота приходит только из CI,
@@ -162,9 +173,11 @@
 # print/println). База в main не поднята: двоичный novac самого main (`dc2617993`) даёт те же
 # 15386/15316/15309/15277. Эмиссия novac не менялась -- рост целиком оболочечный.
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-match_demo 26472
+# 2026-11-03 (task #139): +1 on every fixture, shell-only (the v0.1.2 forward typedef, bd5349b93) -- see the dated entry above. Measured.
+match_demo 26473
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-records 26395
+# 2026-11-03 (task #139): +1 on every fixture, shell-only (the v0.1.2 forward typedef, bd5349b93) -- see the dated entry above. Measured.
+records 26396
 # strings 6082 -> 6073 (2026-08-18, Э2-б2): заработал коллектор достижимого.
 # Девять строк -- это ровно те функции фикстуры, до которых из `main` нет
 # пути. Храповик двусторонний, и опускать базу СНИЖЕНИЕМ обязательно: иначе
@@ -193,7 +206,8 @@ records 26395
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-arithmetic 26392
+# 2026-11-03 (task #139): +1 on every fixture, shell-only (the v0.1.2 forward typedef, bd5349b93) -- see the dated entry above. Measured.
+arithmetic 26393
 # 2026-09-30 (Carina window, batch 5): +5465 lines on EVERY fixture, all of it
 #   the shell, novac's own emission unchanged. +5446 came with E.9 step 1
 #   (75b205fe0): the shell probe imports std.fs/std.os and exercises args, an
@@ -213,7 +227,8 @@ arithmetic 26392
 # merge of p274-carina-sweep (steps 10-12) into main (integrator, 2026-10-03; unchanged by the strarm merge, measured): the merge takes sweep's
 #   Linux-regenerated shell.tpl.c, so the numbers are sweep's own (measured again on the merged tree).
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
-hello 26354
+# 2026-11-03 (task #139): +1 on every fixture, shell-only (the v0.1.2 forward typedef, bd5349b93) -- see the dated entry above. Measured.
+hello 26355
 # match_demo 6197 -> 6373, records 6127 -> 6303, arithmetic 6117 -> 6293, hello 6088 -> 6264 (2026-09-05, волна 274.7 В7): реген shell.tpl.c — проба оболочки получила
 # `Vec[f64]` (`reals = [1.5, 2.5]`, ради `Vec[Meters]` -> `Nova_Vec____nova_f64`, №940), и в
 # шаблон въехали инстанс Vec[f64] с его методами плюс всё, что оракул сам добавил в прелюдию с
