@@ -52,6 +52,7 @@ fn main() Proc Detach -> () {
 
     // Option-of-record payload
     ro opt_ch = Chan[Option[CnmHook]].new(2)
+    // nova:allow W_RESULT_DISCARDED -- fixture: send on a fresh channel cannot fail here
     ro _ = opt_ch.tx.send(Some(CnmHook { name: "n" }))
     match opt_ch.rx.recv() {
         Some(Some(h)) => assert(h.name == "n")
@@ -62,6 +63,7 @@ fn main() Proc Detach -> () {
 
     // Plain record payload
     ro rec_ch = Chan[CnmHook].new(2)
+    // nova:allow W_RESULT_DISCARDED -- fixture: send on a fresh channel cannot fail here
     ro _ = rec_ch.tx.send(CnmHook { name: "m" })
     match rec_ch.rx.recv() {
         Some(h) => assert(h.name == "m")
