@@ -89,8 +89,7 @@ fn round() Proc Detach Time -> int {
     cmd.stdout(Stdio.Piped)
     match cmd.start() {
         Err(e) => 3
-        Ok(consume started) => {
-            consume child = started
+        Ok(consume child) => {
             consume win = pipe_in(child.take_stdin())
             consume rout = pipe_out(child.take_stdout())
             ro got = Chan[int].new(64)

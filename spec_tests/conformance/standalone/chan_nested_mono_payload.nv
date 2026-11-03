@@ -41,6 +41,7 @@ type CnmHook {
 fn main() Proc Detach -> () {
     // Result payload
     ro res_ch = Chan[Result[str, str]].new(2)
+    // nova:allow W_RESULT_DISCARDED -- fixture: send on a fresh channel cannot fail here
     ro _ = res_ch.tx.send(Ok("v"))
     match res_ch.rx.recv() {
         Some(Ok(v)) => assert(v == "v")
