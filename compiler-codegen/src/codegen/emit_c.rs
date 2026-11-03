@@ -27783,12 +27783,32 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // defensive `_p`-suffix strip for tuple/fixarr element
                     // strings (a mangled-arg convention elsewhere in this
                     // file sometimes substitutes `_p` for a literal `*`) —
-                    // carried over for byte-behavior parity on that sub-case;
-                    // a real struct tag name coincidentally ending in `_p`
-                    // is not a pattern used anywhere in this codebase's
-                    // naming scheme.
-                    let core = elem.trim_end_matches("_p");
-                    !known_names.contains(core) || emitted.contains(core)
+                    // carried over for byte-behavior parity on that sub-case.
+                    //
+                    // [M-chan-nested-mono-value-dep-order] (wave 0.1.2, bug
+                    // catalog item 2, 2026-11-03): the strip must not REPLACE
+                    // the element name — a NESTED generic instantiation whose
+                    // LAST mangled arg is itself pointer-mangled ends in `_p`
+                    // as part of its OWN node name (`ChanPair[Result[str,str]]`
+                    // has a by-value field `NovaValue_ChanTx____NovaRes_nova_str_nova_str_p`
+                    // — the trailing `_p` belongs to the arg, the field is NOT
+                    // a pointer). Stripping it looked up
+                    // `NovaValue_ChanTx____NovaRes_nova_str_nova_str`, found
+                    // nothing in `known_names`, and declared the dep satisfied
+                    // — ChanPair sorted BEFORE ChanTx/ChanRx and the emitted C
+                    // died with "field has incomplete type" / "unknown type
+                    // name" (only `Chan[str/int/bool]`, whose args are not
+                    // `_p`-suffixed, ever worked). Both candidates — the name
+                    // as-is and the `_p`-stripped form — now count as the dep
+                    // node; the edge is satisfied when the exact-name node is
+                    // emitted, or when the stripped candidate is (the pointer
+                    // case the strip was added for).
+                    let stripped = elem.trim_end_matches("_p");
+                    let known_as_is = known_names.contains(elem);
+                    let known_stripped = known_names.contains(stripped);
+                    let done_as_is = emitted.contains(elem);
+                    let done_stripped = emitted.contains(stripped);
+                    (!known_as_is && !known_stripped) || done_as_is || done_stripped
                 });
                 if deps_satisfied {
                     emitted.insert(node.0.clone());
@@ -28105,6 +28125,28 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             // `_NovaTupleN` (see `debt_is_guaranteed_struct_tag`'s
                             // doc for the exact redefinition error this
                             // avoids).
+                            self.line(&format!("typedef struct {0} {0};", base));
+                        } else if base.starts_with("NovaRes_")
+                            || base.starts_with("NovaOpt_Nova")
+                            || (base.starts_with("NovaOpt_") && base.contains("____"))
+                        {
+                            // [M-chan-nested-mono-value-dep-order] (wave 0.1.2,
+                            // bug catalog item 2, 2026-11-03): a payload type
+                            // that occurs ONLY as a substituted generic arg
+                            // inside a channel/Vec mono name (`Chan[Result[str,str]]`
+                            // → Vec's `data` is `NovaRes_nova_str_nova_str**`)
+                            // has its typedef registered lazily in the
+                            // `__NOVARES_TYPEDEFS__`/`__NOVAOPT_TYPEDEFS__`
+                            // splices, which sit AFTER the unified
+                            // value-record section this instance belongs to —
+                            // the pointer field needs a forward typedef here.
+                            // Codegen owns every `NovaRes_*` and every
+                            // `NovaOpt_<Nova…>`/mono-mangled tag (the runtime
+                            // only macro-declares `NovaOpt_<primitive>` via
+                            // NOVA_OPT_DECL, which this guard excludes), so a
+                            // `typedef struct X X;` here is the canonical
+                            // compatible-redecl pair with the later full body
+                            // (C11 6.7p3).
                             self.line(&format!("typedef struct {0} {0};", base));
                         }
                     }

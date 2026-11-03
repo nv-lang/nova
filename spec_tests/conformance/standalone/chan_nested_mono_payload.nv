@@ -1,0 +1,71 @@
+// Wave 0.1.2 pin (bug catalog item 2, 2026-11-03, found by the CrewHarness
+// 268 live test in `src/model_metadata/observer.nv`; the same family as
+// Plan 173.2 "TUPLE-MONO CODEGEN BUG" noted in `std/concurrency/nvchan.nv`):
+// `[M-chan-nested-mono-value-dep-order]`.
+//
+// `Chan[T]` (`std.concurrency.nvchan`) where T is anything but str/int/bool
+// — `Result[str,str]`, `Option[SomeRecord]`, a plain record — did not
+// codegenerate:
+//
+//     error: unknown type name 'NovaOpt_Nova_MetadataHook_p'
+//     error: field has incomplete type 'NovaValue_ChanPair____NovaRes_nova_str_nova_str_p'
+//     error: unknown type name 'NovaValue_ChanTx____Nova_BodyTell_p'
+//
+// Two independent roots in the C emitter's unified value-type section
+// (`render_unified_value_types` + the generic-instance pointer-field
+// pre-pass):
+//   1. The by-value dep-edge check stripped a trailing `_p` from the FIELD
+//      C-type before looking it up in the known-node set. A nested mono
+//      name whose LAST mangled arg is pointer-mangled ends in `_p` as part
+//      of its OWN node name (`NovaValue_ChanTx____NovaRes_nova_str_nova_str_p`
+//      — the field is a value wrapper, not a pointer), so ChanPair's dep on
+//      ChanTx/ChanRx looked satisfied before they were emitted →
+//      "field has incomplete type".
+//   2. A payload type that occurs only as a substituted arg inside the
+//      channel mono name (`Vec`'s `data` of `NovaRes_nova_str_nova_str**`)
+//      has its typedef registered lazily at the LATER
+//      `__NOVARES_TYPEDEFS__`/`__NOVARES_TYPEDEFS__` splice positions; the
+//      pointer field needed a forward typedef inside the unified section →
+//      "unknown type name".
+// Both fixed; `Chan[str]` and the legacy `Channel[T]`
+// (`pos_channel_elem_type_record_sum_map.nv`) must stay green.
+
+module spec_tests.conformance.standalone.chan_nested_mono_payload
+
+import std.concurrency.nvchan.{Chan}
+
+type CnmHook {
+    name str,
+}
+
+fn main() Proc Detach -> () {
+    // Result payload
+    ro res_ch = Chan[Result[str, str]].new(2)
+    ro _ = res_ch.tx.send(Ok("v"))
+    match res_ch.rx.recv() {
+        Some(Ok(v)) => assert(v == "v")
+        _ => assert(false)
+    }
+    res_ch.tx.close()
+    println("CHAN_RESULT_PAYLOAD_OK")
+
+    // Option-of-record payload
+    ro opt_ch = Chan[Option[CnmHook]].new(2)
+    ro _ = opt_ch.tx.send(Some(CnmHook { name: "n" }))
+    match opt_ch.rx.recv() {
+        Some(Some(h)) => assert(h.name == "n")
+        _ => assert(false)
+    }
+    opt_ch.tx.close()
+    println("CHAN_OPTION_RECORD_PAYLOAD_OK")
+
+    // Plain record payload
+    ro rec_ch = Chan[CnmHook].new(2)
+    ro _ = rec_ch.tx.send(CnmHook { name: "m" })
+    match rec_ch.rx.recv() {
+        Some(h) => assert(h.name == "m")
+        None => assert(false)
+    }
+    rec_ch.tx.close()
+    println("CHAN_RECORD_PAYLOAD_OK")
+}
