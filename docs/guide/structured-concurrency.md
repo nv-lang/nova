@@ -12,9 +12,9 @@ controls — deadlines (`timeout:` / `deadline:`) and cooperative cancellation
 For channels and `select`, see [channels](channels.md). For resource cleanup
 on scope exit, see the [cleanup cookbook](cleanup-cookbook.md).
 
-## Waiting without `await` and the handler context
+## Waiting and the handler context
 
-Nova uses stackful fibers: an ordinary waiting operation, such as `recv()` on an empty channel, can park the current fiber and allow another one to proceed. The call site does not need a separate `await` keyword. An effect operation does not inherently suspend execution; suspension depends on its implementation.
+Nova has no `await` keyword: the model is not async/await but M:N — many stackful fibers scheduled over fewer OS threads. An ordinary waiting operation, such as `recv()` on an empty channel, parks the current fiber and lets the scheduler run another one on the same thread. An effect operation does not inherently suspend execution; suspension depends on its implementation.
 
 Under [D80](../../spec/decisions/06-concurrency.md#d80-handler-scoping-per-fiber), active handler bindings belong to a fiber. `spawn` inherits a snapshot of the current handler pointers; later `with` bindings are local to the child. The scheduler saves and restores this context when switching fibers. A pointer snapshot does not imply a deep copy of handler state.
 
