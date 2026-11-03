@@ -35302,7 +35302,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("#define {} {}", Self::mangle_field_name(&binding), c_binding));
                 // Register binding's C type for downstream member/method dispatch
                 // (var_types drives `r.field` → `r->field` on pointer types).
-                self.var_types.insert(binding.clone(), init_c_type.clone());
+                // [M-detach-consume-match-arm-capture-lost] (wave 0.1.2, bug
+                // catalog item 1, 2026-11-03): SAVE the previous var_types
+                // entry and RESTORE it at scope exit instead of an
+                // unconditional `remove` below. The desugared fiber body of
+                // `spawn/detach consume X { … }` runs this ConsumeScope with
+                // the SAME flat, shared `var_types` map the PARENT emission
+                // uses (emit_spawn/emit_detach swap only `out`/`var_boxed`);
+                // the scope's own insert OVERWROTE the parent's live entry
+                // and the trailing remove then DELETED it — so a SECOND
+                // capture of the same name later in the parent (a
+                // `detach consume child { … }` in ANOTHER match arm — the
+                // checker-legitimate exactly-one-move-per-arm shape) found
+                // nothing in `var_types`, produced an EMPTY ctx-capture set,
+                // and the emitted C fiber referenced a never-declared
+                // identifier (CC-FAIL: use of undeclared identifier 'child').
+                // Save/restore is byte-identical to the old behavior when
+                // there was no prior entry (nested scopes), and restores the
+                // parent's own entry when there was one.
+                let saved_binding_ty = self.var_types.insert(binding.clone(), init_c_type.clone());
 
                 // Plan 110.2.3 (D192): resolve exit_timeout via 3-level fallback —
                 //   L1 per-type WithExitTimeout (exit_timeout_ms method),
@@ -35493,7 +35511,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.leave_defer_scope(consume_block_id);
 
                 self.line(&format!("#undef {}", Self::mangle_field_name(&binding)));
-                self.var_types.remove(binding);
+                // [M-detach-consume-match-arm-capture-lost]: restore, not
+                // remove — see the paired save at the scope's var_types
+                // insert above for the full root-cause.
+                match saved_binding_ty {
+                    Some(prev_ty)
+                        if self.current_spawn_captures.as_ref()
+                            .is_some_and(|s| s.contains(binding.as_str())) =>
+                    {
+                        // [M-detach-consume-match-arm-capture-lost]: this
+                        // ConsumeScope is the desugared fiber body of a
+                        // `spawn/detach consume <binding> { … }` (the capture
+                        // set is armed exactly for the fiber-body emission,
+                        // and `<binding>` is one of its captures) — the
+                        // binding REALLY belongs to the parent frame here,
+                        // restore its var_types entry. Every OTHER shape
+                        // (nested D188/re-consume scopes in the parent) keeps
+                        // the old unconditional remove: the name is lexically
+                        // gone at scope exit there, and the wider corpus
+                        // (mega-CU conformance) depends on that removal.
+                        self.var_types.insert(binding.clone(), prev_ty);
+                    }
+                    _ => { self.var_types.remove(binding); }
+                }
                 self.indent -= 1;
                 self.line("}");
             }

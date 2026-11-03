@@ -1,0 +1,59 @@
+// Wave 0.1.2 pin (bug catalog item 1, 2026-11-03, found by the CrewHarness
+// 268 live test in `src/model_metadata/observer.nv` — the pre-workaround
+// shape is preserved verbatim in the task-268 journal scripts):
+// `[M-detach-consume-match-arm-capture-lost]`.
+//
+// A consume binding declared BEFORE a match (`consume child = …`) and moved
+// into a child fiber by `detach consume child { … }` INSIDE a match arm —
+// with a SECOND `detach consume child { … }` in ANOTHER arm (the
+// checker-legitimate exactly-one-move-per-arm shape the observer needed:
+// both arms hand the spawned child to its keeper fiber). The desugared
+// fiber body of the FIRST detach runs the arm's ConsumeScope on the shared
+// flat `var_types` map; its trailing `var_types.remove(binding)` then
+// deleted the PARENT's still-live entry, so the SECOND detach's
+// capture-collection pass found nothing, emitted an EMPTY ctx-capture set,
+// and the C fiber referenced a never-declared identifier:
+//
+//     CC-FAIL: use of undeclared identifier 'child'
+//
+// (reproduced on released 0.1.1 and on main afdcd3395). The fix saves the
+// previous `var_types` entry at the ConsumeScope's own insert and restores
+// it at scope exit (`emit_c.rs`, `Stmt::ConsumeScope` arm). The
+// straight-line single-detach form (`spawn_detach_consume_multivar_ok.nv`,
+// `detach_consume_move_ok.nv`) always worked and must stay green.
+
+module spec_tests.conformance.standalone.detach_consume_match_arm_captured_binding
+
+type DcmChild consume {
+    id int,
+}
+
+fn DcmChild consume @cleanup(_outcome ScopeOutcome) -> () => ()
+fn DcmChild consume @close() -> () => ()
+
+fn dcm_make(v int) -> DcmChild => { id: v }
+
+fn dcm_pick(v int) -> Option[int] => if v > 0 { Some(v) } else { None }
+
+fn dcm_keeper(consume c DcmChild) Proc -> () {
+    ro _n = c.id
+    c.close()
+}
+
+fn dcm_run(v int) Detach -> () {
+    consume child = dcm_make(7)
+    match dcm_pick(v) {
+        Some(_x) => {
+            detach consume child { dcm_keeper(child) }
+        }
+        None => {
+            detach consume child { dcm_keeper(child) }
+        }
+    }
+}
+
+fn main() {
+    dcm_run(1)
+    dcm_run(0)
+    println("DETACH_CONSUME_MATCH_ARM_CAPTURE_OK")
+}
