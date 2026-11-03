@@ -1,0 +1,91 @@
+// EXPECT_STDOUT step=3 state=idle
+
+// №TBD regression pin (items 12/13 incomplete -- the CHAT shape, task 282 of
+// CrewHarness; repro `spikes/env/repro_infer12_chat/src/infer_sum_record_state`
+// and `.../cross_file_nested_a`; real-world carrier: crew-harness
+// src/chat/chat_engine_test.nv and src/pgstore/engine_test.nv with the
+// turbofish removed from `decode_snapshot`/`encode_snapshot` --
+// `unknown type name 'Nova_ChatState_p'` / `passing 'Nova_ChatState *' to a
+// parameter of incompatible type 'Nova_ChatState'`).
+//
+// A generic `fn decode_snapshot[S, M Machine[S]](machine M, snapshot
+// Snapshot)` called WITHOUT a turbofish leaves S unbound in the structural
+// sources (S never appears in a parameter position); `resolve_mono_type_args`
+// Source 2e then binds S from an `Option[S]`-RETURNING protocol method
+// (`@decode_state(text) -> Option[S]`) by stripping the `NovaOpt_` prefix of
+// the registered return C type -- which is the SANITIZED struct id
+// `NovaOpt_Nova_ChatState_p`, so S bound to `Nova_ChatState_p`: a name that
+// is not a C type (no such typedef exists). Every place the slot reaches a
+// bare `S` position (the `state S` parameter of the `state_of` helper here,
+// a `let` of the result) emits it verbatim -- CC-FAIL. The ALULA shape (a
+// plain record state) hit the same door through `pattern_bind_typed`'s
+// Option-payload fallback when `novaopt_value_types` had not yet registered
+// the mono Option, so BOTH recovery sites are hardened.
+//
+// The fix resolves the payload through `novaopt_value_types` (the same
+// recovery the Option arm of `infer_type_param_binding` uses), with a
+// `desanitize_pointer_id` fallback that turns a KNOWN user sum/record's
+// sanitized pointer id back into the real pointer c-type (`Nova_X_p` ->
+// `Nova_X*`); the identical fallback covers `pattern_bind_typed`'s
+// Option-payload `t_from_scr` when the map misses.
+//
+// On the released 0.1.1 toolchain this file dies at CC with
+// `unknown type name 'Nova_ChatState_p'`.
+module standalone.protocol_option_bound_infer_sum_state
+
+type EngineState[S] { trace str, step int, state S }
+type Snapshot { step int, data str }
+
+type Machine[S] protocol {
+    @name() -> str
+    @initial() -> S
+    @encode_state(state S) -> str
+    @decode_state(text str) -> Option[S]
+}
+
+// The CHAT shape: a sum whose variants carry RECORD payloads.
+type ChatState enum
+    | Idle
+    | Awaiting { user str, reply str }
+    | Done { reply str }
+
+type ChatSession { party str }
+
+fn chat_session() -> ChatSession => { party: "agent" }
+
+fn ChatSession @name() -> str => "ChatSession"
+fn ChatSession @initial() -> ChatState => Idle
+fn ChatSession @encode_state(state ChatState) -> str => match state {
+    Idle => "idle"
+    Awaiting => "awaiting"
+    Done => "done"
+}
+fn ChatSession @decode_state(text str) -> Option[ChatState] => Some(Idle)
+
+// A bare `S` parameter -- where the poisoned slot surfaced as a C parameter
+// type (`Nova_ChatState_p state`) in the real alula `engine_state_of`.
+fn state_of[S](text str, step int, state S) -> Option[EngineState[S]] {
+    ro r EngineState[S] = { trace: text, step, state }
+    Some(r)
+}
+
+fn encode_snapshot[S, M Machine[S]](machine M, state EngineState[S]) -> Snapshot =>
+    { step: state.step, data: machine.encode_state(state.state) }
+
+fn decode_snapshot[S, M Machine[S]](machine M, snapshot Snapshot) -> Option[EngineState[S]] {
+    match machine.decode_state(snapshot.data) {
+        Some(state) => state_of[S](snapshot.data, snapshot.step, state)
+        None => None
+    }
+}
+
+fn main() Io -> () {
+    ro state EngineState[ChatState] = { trace: "t", step: 3, state: Awaiting { user: "u", reply: "r" } }
+    ro snap = encode_snapshot(chat_session(), state)
+    // The turbofish-less call: S must come from ChatSession's conformance,
+    // through the Option[S]-returning @decode_state.
+    match decode_snapshot(chat_session(), snap) {
+        Some(back) => print("step=${back.step} state=${chat_session().encode_state(back.state)}")
+        None => print("step=none state=none")
+    }
+}

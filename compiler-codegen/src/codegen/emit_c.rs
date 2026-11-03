@@ -24451,9 +24451,29 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     // `next() -> Option[U]` lowers to the value
                                     // type `NovaOpt_<U>` (no `*`); a boxed form
                                     // `NovaOpt_<U>*` may also occur. Accept both.
-                                    let inner = rest.strip_suffix('*').unwrap_or(rest);
+                                    // [items 12/13 chat-shape, task 282] The Option
+                                    // struct id is SANITIZED: a pointer payload
+                                    // `Nova_ChatState*` is spelled `Nova_ChatState_p`
+                                    // in the id, and that sanitized remainder is NOT a
+                                    // C type (no such typedef exists). Binding the
+                                    // slot to it emits params/locals like
+                                    // `Nova_ChatState_p state` -- CC-FAIL
+                                    // `unknown type name 'Nova_ChatState_p'` (and the
+                                    // same call in an IMPORTED module's unit poisons
+                                    // every importing unit's C). Recover the REAL
+                                    // payload c-type via `novaopt_value_types` (the
+                                    // same recovery `infer_type_param_binding`'s
+                                    // Option arm and `pattern_bind_typed` use;
+                                    // `Nova_ChatState_p` -> `Nova_ChatState*`); a map
+                                    // miss keeps the sanitized remainder (for
+                                    // primitives sanitized == real, e.g. `nova_int`).
+                                    let inner_raw = rest.strip_suffix('*').unwrap_or(rest);
+                                    let inner = self.novaopt_value_types.borrow()
+                                        .get(inner_raw).cloned()
+                                        .or_else(|| self.desanitize_pointer_id(inner_raw))
+                                        .unwrap_or_else(|| inner_raw.to_string());
                                     if !inner.is_empty() && inner != "void" {
-                                        candidates.push((u_name.clone(), inner.to_string()));
+                                        candidates.push((u_name.clone(), inner));
                                         break;
                                     }
                                 }
@@ -54497,6 +54517,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                     .map(|s| {
                                         self.novaopt_value_types.borrow()
                                             .get(s).cloned()
+                                            .or_else(|| self.desanitize_pointer_id(s))
                                             .unwrap_or_else(|| s.to_string())
                                     });
                                 if sub_is_opt_variant {
@@ -58460,6 +58481,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// (unsigned skips the MIN/-1 check, effects.h `NOVA_DEFINE_CHECKED_
     /// UNSIGNED_DIVMOD` vs `..._SIGNED_DIVMODNEG`), but the naming scheme is
     /// uniform so this dispatch stays signedness-agnostic.
+    /// [items 12/13 chat-shape, task 282] De-sanitize an Option/mono payload
+    /// id's pointer spelling: `Nova_ChatState_p` (the mangled form of
+    /// `Nova_ChatState*`, as it appears inside `NovaOpt_<id>` struct ids) is
+    /// NOT a C type -- no such typedef exists. When the trailing `_p` stems
+    /// from a KNOWN user sum/record (`sum_schemas`/`record_schemas`/
+    /// `generic_types`), return the real pointer c-type; otherwise `None`
+    /// (the caller keeps the id as-is -- for primitives the sanitized id IS
+    /// the real type, e.g. `nova_int`).
+    fn desanitize_pointer_id(&self, sani: &str) -> Option<String> {
+        let stem = sani.strip_suffix("_p")?;
+        let bare = stem.strip_prefix("Nova_").unwrap_or(stem);
+        if self.sum_schemas.contains_key(bare)
+            || self.record_schemas.contains_key(bare)
+            || self.generic_types.contains(bare)
+        {
+            return Some(format!("{}*", stem));
+        }
+        None
+    }
+
     fn sized_checked_helper(ty_c: &str, op: BinOp) -> Option<String> {
         let base = match ty_c {
             "int8_t" => "i8",
