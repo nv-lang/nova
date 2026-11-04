@@ -100,7 +100,7 @@ jobs:
         run: python scripts/tools/carina-native-build.py link --repo pinned --cache "$env:NATIVE_CACHE" --c stage2.c --out novac-b2.exe
 
       - name: Smoke -- b2 compiles hello.nv with the pinned std
-        run: python scripts/tools/carina-native-build.py smoke --repo pinned --exe novac-b2.exe --cache "$env:NATIVE_CACHE"
+        run: python scripts/tools/carina-native-build.py smoke --repo pinned --exe novac-b2.exe --cache "$env:NATIVE_CACHE" --workdir smoke-work
 
       - name: Textual guard corpus (gate-carina.sh)
         shell: bash
