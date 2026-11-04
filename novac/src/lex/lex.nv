@@ -656,7 +656,9 @@ export fn lex(src str) -> []Token {
         } else if c == ('`' as u8) {
             // D467: backticks keep their source bytes, including newlines.
             // Only backtick, backslash and dollar are escaped. The checker
-            // owns the live-slot boundary; a token must never rewrite text.
+            // owns the live-slot boundary; [INV-PROPERTY] a token must never
+            // rewrite text — a token that rewrote its source bytes would not
+            // be a typed failure this door could report.
             i += 1
             mut closed = false
             while i < n && !closed {

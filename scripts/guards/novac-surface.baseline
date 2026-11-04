@@ -1288,8 +1288,15 @@ resolve 27
 #   (check/extern_rules.nv) and by BOTH declaration readers (sem/collect.nv, sem/harvest.nv)
 #   that mark the row; `FnTable @extern_c` -- the row's own fact (the declaration node does
 #   not survive collect), read by the emitter (literal call name, prototype walk) and the
-#   program pipeline (no wanted name). Out because three layers ask it, not one module.
-sem 404
+#   program pipeline (no wanted name). Out because three layers ask it, not one module.#
+#   2026-11-04 (задача 137, text-only backtick/tag, D467/D48): sem 404 -> 406.
+#   `is_backtick_literal` и `backtick_c_text` (sem/backtick.nv) — дверь ЗНАЧЕНИЯ
+#   текстового литерала: лексер держит байты, а нормализация (CRLF/отступ/escape)
+#   и C-алфавит живут здесь и зовутся из literal_as_c_text и судьи строк
+#   (check/strings.nv). Без экспорта каждый потребитель дублировал бы алфавит
+#   D467, и расхождение ловилось бы поздно, в эмиссии.
+#
+sem 406
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

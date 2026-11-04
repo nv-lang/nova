@@ -31,6 +31,7 @@ fn backtick_normalized(s str) -> str {
     out
 }
 
+/// The width of the run of spaces/tabs that starts the line at `start`.
 fn backtick_indent(b []u8, start int, end int) -> int {
     mut i = start
     while i < end && (b[i] == 0x20 || b[i] == 0x09) { i += 1 }
@@ -47,10 +48,17 @@ fn backtick_dedent(text str) -> str {
     while end <= b.len() {
         if end == b.len() || b[end] == 0x0A {
             ro indent = backtick_indent(b, start, end)
+            // Content lines and the final (closing) line set the margin;
+            // whitespace-only middle lines do not participate.
             if start + indent < end || end == b.len() {
-                if indent < margin { margin = indent }
+                margin = margin.min(indent)
+            } else {
+                // Whitespace-only line inside the block: skipped; the margin
+                // is decided by lines that carry text or by the closing line.
             }
             start = end + 1
+        } else {
+            // Not a line end: the scan advances one byte, nothing to decide.
         }
         end += 1
     }
@@ -60,13 +68,22 @@ fn backtick_dedent(text str) -> str {
     while end <= b.len() {
         if end == b.len() || b[end] == 0x0A {
             ro indent = backtick_indent(b, start, end)
-            ro trim = if indent < margin { indent } else { margin }
+            ro trim = indent.min(margin)
             // The closing delimiter's whitespace-only line has no content.
             if end != b.len() || start + indent < end {
                 out.append(text[start + trim..end])
-                if end < b.len() { out.append("\n") }
+                if end < b.len() {
+                    out.append("\n")
+                } else {
+                    // The final line is the closing run itself: the text ends
+                    // without an added newline.
+                }
+            } else {
+                // Whitespace-only closing line: contributes no text at all.
             }
             start = end + 1
+        } else {
+            // Not a line end: the scan advances one byte, nothing to decide.
         }
         end += 1
     }
@@ -96,11 +113,18 @@ fn backtick_c_text(s str) -> str {
             from = i
         } else if c == 0x22 || c == 0x0A || c == 0x0D || c == 0x09 || c == 0 {
             out.append(text[from..i])
-            if c == 0x22 { out.append("\\\"") }
-            if c == 0x0A { out.append("\\n") }
-            if c == 0x0D { out.append("\\r") }
-            if c == 0x09 { out.append("\\t") }
-            if c == 0 { out.append("\\000") }
+            if c == 0x22 {
+                out.append("\\\"")
+            } else if c == 0x0A {
+                out.append("\\n")
+            } else if c == 0x0D {
+                out.append("\\r")
+            } else if c == 0x09 {
+                out.append("\\t")
+            } else {
+                // c == 0: the only separator left in this branch's condition.
+                out.append("\\000")
+            }
             i += 1
             from = i
         } else {
