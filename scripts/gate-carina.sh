@@ -28,23 +28,15 @@ check-novac-build-clean.sh
 check-novac-cli-surface.sh
 check-novac-shell-freshness.sh
 "
-# EXCLUDED_CORPUS — runs the Carina binary over the CURRENT corpus of
-# fixtures/sources. The pinned v0.2.1 seed speaks the subset of its source
-# revision (3729abcc); novac/src and the fixtures have drifted past it, so
-# these guards would judge "the seed rejects post-seed features", not the
-# tree (question qmw20r28mxjek). The behavioural proof of this contour is
-# the self-host rebuild + smoke in carina-gate.yml; the corpus guards stay
-# with gate-novac.sh, where the binary is built from the same tree it judges:
+# EXCLUDED_CORPUS — corpus guards that CANNOT run in this contour even in the
+# pinned world. check-novac-fuzz-zero-panic.sh needs the built fuzz harness
+# (novac/target/novac-fuzz), which the oracle-free contour does not build;
+# it stays with gate-novac.sh (measured 2026-11-04: red in the pinned world
+# on the missing harness, not on a crash). The other nine corpus guards moved
+# INTO this contour as the CORPUS tier below (owner decision 2026-11-04,
+# owner-decisions.md section 1: the module level of Carina is judged without
+# the Oracle — self-accepted plus the corpus guards).
 EXCLUDED_CORPUS="
-check-novac-grammar-fixture-coverage.sh
-check-novac-no-panic.sh
-check-novac-diag-schema.sh
-check-novac-no-cascade.sh
-check-novac-fixture-expect.sh
-check-novac-emission-size.sh
-check-novac-emitted-unique.py
-check-novac-self-accepted.py
-check-novac-mangle-fixed-point.sh
 check-novac-fuzz-zero-panic.sh
 "
 # EXCLUDED_FULL — full-tier of gate-novac.sh (nightly measurement/mutation,
@@ -100,9 +92,11 @@ judge() {
 # interpreter start ~73ms vs 40-60ms of work per guard).
 # check-carina-gate-ci.py is this contour's own anti-drift guard (task 140):
 # it is not invoked by gate-novac.sh, it is listed here on top of the
-# mirrored set.
+# mirrored set. check-carina-seed-drift.py (owner decision 2026-11-04,
+# mechanism 2) publishes and ratchets the HEAD-vs-seed drift.
 PY_GUARDS="
 check-carina-gate-ci.py
+check-carina-seed-drift.py
 check-novac-arch-class-proofs.py
 check-novac-arch-invariants.py
 check-novac-keyword-parity.py
@@ -244,11 +238,55 @@ for g in $DEVNULL_GUARDS; do
     judge "$g" "$PAR_DIR/dn.rc" "$PAR_DIR/dn.out"
 done
 
+# ── Corpus tier (owner decision 2026-11-04, owner-decisions.md section 1):
+# the module-level judgement of Carina WITHOUT the Oracle. The contour's own
+# b2 ($NOVAC) judges the PINNED tree ($CARINA_CORPUS_ROOT) it was built from —
+# binary, corpus and guard scripts of ONE generation, so a red here is the
+# compiler's own regression, never "the seed rejects post-seed drift".
+# Measured 2026-11-04 in the pinned world (b1 of 3729abcc): all nine green
+# (self-accepted 214/0; no-panic 569 fixtures; diag-schema/no-cascade 269;
+# fixture-expect 232 pinned; emission-size; emitted-unique 269 units;
+# mangle-fixed-point; grammar-coverage 20 forms). Needs the bootstrap
+# artifacts; absent locally the tier is skipped with a notice, absent in CI
+# it is a failure (fail-closed).
+CORPUS_GUARDS="
+check-novac-self-accepted.py
+check-novac-no-panic.sh
+check-novac-diag-schema.sh
+check-novac-no-cascade.sh
+check-novac-fixture-expect.sh
+check-novac-emission-size.sh
+check-novac-emitted-unique.py
+check-novac-mangle-fixed-point.sh
+check-novac-grammar-fixture-coverage.sh
+"
+CORPUS_N=0
+if [ -n "${CARINA_CORPUS_ROOT:-}" ] && [ -n "${NOVAC:-}" ]; then
+    CG="$CARINA_CORPUS_ROOT/scripts/guards"
+    echo "carina-gate :: corpus tier — pinned world $CARINA_CORPUS_ROOT, binary $NOVAC"
+    for g in $CORPUS_GUARDS; do
+        CORPUS_N=$((CORPUS_N + 1))
+        echo "── [corpus] $g"
+        runner=bash
+        case "$g" in *.py) runner=python ;; esac
+        # 1200s: no-panic's deadline in gate-novac.sh (its 569 fixtures took
+        # 147s on 16 threads; CI runners are slower).
+        bash "$ROOT/scripts/tools/with-deadline.sh" 1200 "$runner" "$CG/$g" "$CARINA_CORPUS_ROOT" \
+            > "$PAR_DIR/cg.out" 2>&1
+        echo "$?" > "$PAR_DIR/cg.rc"
+        judge "[corpus] $g" "$PAR_DIR/cg.rc" "$PAR_DIR/cg.out"
+    done
+elif [ "${CI:-}" = "true" ]; then
+    note_fail "corpus tier unconfigured in CI: CARINA_CORPUS_ROOT/NOVAC unset — the module level is not judged"
+else
+    echo "carina-gate :: corpus tier SKIPPED (no CARINA_CORPUS_ROOT/NOVAC — set them to the bootstrap artifacts)"
+fi
+
 ELAPSED=$(( $(date +%s) - GATE_T0 ))
 if [ "$FAIL_N" -gt 0 ]; then
     echo "" >&2
     echo "CARINA-GATE: $FAIL_N failure(s):$FAILS" >&2
     exit 1
 fi
-echo "CARINA-GATE OK (final): $PY_N python + $(echo $SH_GUARDS | wc -w) shell + $(echo $DEVNULL_GUARDS | wc -w) devnull guards, ${ELAPSED}s, no Oracle invoked"
+echo "CARINA-GATE OK (final): $PY_N python + $(echo $SH_GUARDS | wc -w) shell + $(echo $DEVNULL_GUARDS | wc -w) devnull + $CORPUS_N corpus guards, ${ELAPSED}s, no Oracle invoked"
 exit 0

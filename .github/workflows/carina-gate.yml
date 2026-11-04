@@ -106,4 +106,8 @@ jobs:
         shell: bash
         env:
           NOVAC: ${{ github.workspace }}/novac-b2.exe
+          # The corpus tier of gate-carina.sh judges the PINNED world (owner
+          # decision 2026-11-04, section 1): b2 against the tree it was built
+          # from — binary, fixtures and guard scripts of one generation.
+          CARINA_CORPUS_ROOT: ${{ github.workspace }}/pinned
         run: bash scripts/gate-carina.sh .
