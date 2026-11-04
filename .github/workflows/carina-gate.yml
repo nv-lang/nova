@@ -50,7 +50,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Read seed pins (single truth: docs/dev/carina-seeds/)
+      - name: Read seed pins (single truth is docs/dev/carina-seeds/)
         id: pins
         shell: bash
         run: |
