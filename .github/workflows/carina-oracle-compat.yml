@@ -1,0 +1,105 @@
+# Carina oracle-compat -- ADVISORY oracle-backed checks (task 140).
+#
+# The oracle-free contour is .github/workflows/carina-gate.yml. This workflow
+# keeps the seven gate-novac.sh guards that still need the Rust oracle
+# (differential, module tests, lint, build-clean, cli-surface, oracle-fresh,
+# shell-freshness) running in the open, WITHOUT letting them gate merges:
+# every step is continue-on-error and the job verdict is always green; the
+# per-guard outcome lands in the step summary. A red line here is a
+# compatibility signal against the oracle, not a merge blocker -- the merge
+# gate remains scripts/gate.sh -> gate-novac.sh on the REQUIRED side.
+#
+# The split itself is judged by scripts/guards/check-carina-gate-ci.py:
+# a guard leaving carina-gate.sh, or an oracle guard missing here, is red.
+
+name: carina-oracle-compat
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'novac/**'
+      - 'std/**'
+      - 'spec_tests/**'
+      - 'scripts/**'
+      - 'compiler-codegen/**'
+      - 'nova-cli/**'
+      - '.github/workflows/carina-oracle-compat.yml'
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: carina-oracle-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oracle-compat:
+    name: carina-oracle-compat (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout nova (submodules recursive — compiler-codegen/nova_rt/libuv)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Rust toolchain (rustup, pinned to MSRV 1.85)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install system deps (docs/guide/linux-build.md recipe)
+        run: bash scripts/tools/ci-apt-install.sh clang cmake make libgc-dev build-essential
+        timeout-minutes: 15
+
+      - name: Cache cargo registry + nova-cli target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            nova-cli/target
+          key: ${{ runner.os }}-carina-compat-cargo-${{ hashFiles('nova-cli/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-carina-compat-cargo-
+
+      - name: Build nova-cli (release — the oracle that compiles novac)
+        run: cargo build --release --manifest-path nova-cli/Cargo.toml
+
+      - name: Build novac with the oracle
+        run: |
+          set -uo pipefail
+          mkdir -p novac/target
+          ./nova-cli/target/release/nova build novac/src/main.nv -o novac/target/novac
+
+      # Advisory by construction: a failing guard is reported, never fails the
+      # job. The summary table is the deliverable of the run.
+      - name: Oracle-backed guards (advisory)
+        if: always()
+        env:
+          NOVAC: novac/target/novac
+          NOVAC_SMOKE_EXE_CACHE: ~/.cache/novac-oracle-exe
+        run: |
+          set -u
+          mkdir -p "$NOVAC_SMOKE_EXE_CACHE"
+          GUARDS="check-novac-oracle-fresh.sh check-novac-differential.sh check-novac-module-tests.sh check-novac-lint.sh check-novac-build-clean.sh check-novac-cli-surface.sh check-novac-shell-freshness.sh"
+          echo "| guard | verdict |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          red=0
+          for g in $GUARDS; do
+            echo "=== $g ==="
+            if bash "scripts/guards/$g" "$PWD"; then
+              echo "| $g | ok |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $g | RED (advisory) |" >> "$GITHUB_STEP_SUMMARY"
+              red=$((red + 1))
+            fi
+          done
+          echo "oracle-compat: $red of 7 guards red (advisory, merge gate untouched)"
+          exit 0

@@ -1,0 +1,102 @@
+# Carina gate -- oracle-free CI contour (task 140).
+#
+# Proves on every push to main that the self-hosted compiler builds and works
+# WITHOUT the Rust oracle: the pinned seed (docs/dev/carina-seeds/) compiles
+# the pinned tree via the native C backend (scripts/tools/carina-native-build.py),
+# the stage-2 output is byte-identical to the seed output (self-host fixed
+# point), and the textual guard corpus (scripts/gate-carina.sh) passes.
+#
+# Oracle-dependent guards live separately (advisory) in
+# .github/workflows/carina-oracle-compat.yml; the split is enforced by
+# scripts/guards/check-carina-gate-ci.py. Main merges remain governed by the
+# full gate (scripts/gate.sh -> gate-novac.sh with the oracle); this workflow
+# is an ADDITIONAL contour, it does not replace gate.sh.
+
+name: carina-gate
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'novac/**'
+      - 'std/**'
+      - 'spec_tests/**'
+      - 'scripts/**'
+      - 'docs/dev/carina-seeds/**'
+      - '.github/workflows/carina-gate.yml'
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: carina-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  carina-gate:
+    name: carina-gate (oracle-free)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      SEED_CACHE: seed-cache
+      NATIVE_CACHE: native-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # The seed speaks the pinned snapshot (docs/dev/carina-seeds/), not
+      # necessarily HEAD: bootstrap sources come from the pinned tree.
+      - name: Checkout pinned bootstrap tree
+        uses: actions/checkout@v4
+        with:
+          ref: 3729abcc5a04c04abaf6823592e5c4a3d54a37be
+          path: pinned
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Fetch and verify the pinned seed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/tools/carina-native-build.py fetch-seed --cache "$env:SEED_CACHE"
+
+      - name: Verify pinned tree and stage-a output against the seed
+        shell: bash
+        run: |
+          ASSET="$SEED_CACHE/$(python -c "import json;print(json.load(open('docs/dev/carina-seeds/windows-x86_64.json'))['asset_name'])")"
+          python scripts/tools/verify-carina-bootstrap-c.py pinned --asset "$ASSET" --work-dir pinned-verify
+
+      - name: Build native support libraries (libuv, gc)
+        run: python scripts/tools/carina-native-build.py libs --cache "$env:NATIVE_CACHE"
+
+      - name: Stage 1 -- pinned seed emits C for the pinned tree
+        shell: bash
+        run: |
+          SEED_EXE="$SEED_CACHE/unpacked/$(python -c "import json,os;print(os.path.splitext(json.load(open('docs/dev/carina-seeds/windows-x86_64.json'))['asset_name'])[0])")/novac.exe"
+          python scripts/tools/carina-native-build.py emit --repo pinned --seed "$SEED_EXE" --out stage1.c
+
+      - name: Link stage-1 novac (b1)
+        run: python scripts/tools/carina-native-build.py link --repo pinned --cache "$env:NATIVE_CACHE" --c stage1.c --out novac-b1.exe
+
+      - name: Stage 2 -- b1 re-emits C; must be byte-identical (self-host fixed point)
+        shell: bash
+        run: |
+          python scripts/tools/carina-native-build.py emit --repo pinned --seed novac-b1.exe --out stage2.c
+          python -c "import sys; a=open('stage1.c','rb').read(); b=open('stage2.c','rb').read(); sys.exit(0 if a==b else 'stage1/stage2 C differ: self-host fixed point broken')"
+
+      - name: Link stage-2 novac (b2, the working binary)
+        run: python scripts/tools/carina-native-build.py link --repo pinned --cache "$env:NATIVE_CACHE" --c stage2.c --out novac-b2.exe
+
+      - name: Smoke -- b2 compiles hello.nv with the pinned std
+        run: python scripts/tools/carina-native-build.py smoke --repo pinned --exe novac-b2.exe --cache "$env:NATIVE_CACHE"
+
+      - name: Textual guard corpus (gate-carina.sh)
+        shell: bash
+        env:
+          NOVAC: ${{ github.workspace }}/novac-b2.exe
+        run: bash scripts/gate-carina.sh .
