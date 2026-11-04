@@ -2538,6 +2538,49 @@ unsafe в сигнатуре) — снять: балансировать неч�
 компиляции на гейт.
 
 
+## CI-контур (задача 140)
+
+Два workflow, разделённые по отношению к Оракулу; раздел держит механизм
+(`scripts/guards/check-carina-gate-ci.py` с самотестом), не дисциплина.
+
+**Oracle-free контур** — `.github/workflows/carina-gate.yml` (windows-latest, push/PR/расписание).
+Цепочка: checkout main + checkout pinned-дерева (SHA из `docs/dev/carina-seeds/`) →
+`carina-native-build.py fetch-seed` (ассет релиза `carina-v0.2.1`, сверка SHA256) →
+`verify-carina-bootstrap-c.py` (pinned-дерево и stage-a против сида, авторитетный
+верификатор) → `emit` сидом → `libs` → `link` (b1) → `emit` бинарём b1 → побайтовое
+сравнение C stage-1/stage-2 (неподвижная точка самосборки) → `link` (b2) → `smoke` →
+`bash scripts/gate-carina.sh .` с `NOVAC=<b2>`. Ни одной строки cargo/rustup/
+`nova-cli/target`/`novac_find_oracle`/`$ORACLE` — форму держит тот же страж.
+
+**Почему bootstrap идёт по pinned-дереву, а не по HEAD:** сид v0.2.1 говорит на
+снимке языка своего релиза; текущий main он не собирает (E_NOVAC_SUBSET,
+`std/src/os/os.nv:2537` — вопрос qmw20r28mxjek). Компилирует сид — pinned-дерево;
+судит main — текстовый ярус `gate-carina.sh`, который запускается на checkout HEAD.
+
+**`scripts/gate-carina.sh`** — oracle-free текстовый ярус: все текстовые стражи
+`gate-novac.sh` одним списком (python — одним процессом через `run-guards.py`),
+плюс собственный `check-carina-gate-ci.py`. Исключения — данные в шапке скрипта,
+три класса: `EXCLUDED_ORACLE` (7 стражей, живут в oracle-compat), `EXCLUDED_CORPUS`
+(корпусные: сид релиза не говорит на дрейфнувшем корпусе main), `EXCLUDED_FULL`
+(ночной ярус: цена цикла, самотест-мутации).
+
+**Advisory-контур** — `.github/workflows/carina-oracle-compat.yml` (ubuntu-latest,
+`continue-on-error` по построению, вердикт джобы всегда зелёный, итог — таблица в
+step summary). Собирает Оракула и novac Оракулом, гоняет семь oracle-стражей:
+oracle-fresh, differential, module-tests, lint, build-clean, cli-surface,
+shell-freshness. Красное здесь — сигнал совместимости, не блокер: рубеж слияния в
+main остаётся `scripts/gate.sh` → `gate-novac.sh`, этот контур его НЕ заменяет.
+Хит `nova build novac` в этом workflow — осознанная строка долга в
+`scripts/guards/carina-oracle-debt.json` (due: контур умирает целиком, когда
+драйвер сида покроет дифференциал и модульные тесты).
+
+**Анти-дрейф:** `check-carina-gate-ci.py` судит обе стороны разбиения — каждый
+страж, вызываемый в `gate-novac.sh`, обязан либо исполняться в `gate-carina.sh`,
+либо лежать ровно в одном EXCLUDED-блоке (протухшее исключение — красное); каждый
+EXCLUDED_ORACLE обязан быть вызван в `carina-oracle-compat.yml` (вынесен — значит
+перенесён, не выброшен); пины сида (`SEED_SOURCE`, `SEED_EXE_SHA256`) сверяются
+между `carina-native-build.py` и `carina_build.rs`.
+
 ## Связь
 
 - [274](../plans/274-novac-self-hosted-compiler.md) — зонтик, все решения
