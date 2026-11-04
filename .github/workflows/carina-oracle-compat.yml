@@ -75,15 +75,19 @@ jobs:
       - name: Build novac with the oracle
         run: |
           set -uo pipefail
-          mkdir -p novac/target
-          ./nova-cli/target/release/nova build novac/src/main.nv -o novac/target/novac
+          mkdir -p novac/target target
+          # The build log is the contract of check-novac-build-clean.sh:
+          # gate-novac.sh writes target/novac-build.log and the guard judges
+          # THAT log; without it the guard rebuilds on its own.
+          ./nova-cli/target/release/nova build novac/src/main.nv -o novac/target/novac > target/novac-build.log 2>&1 || {
+            tail -50 target/novac-build.log; exit 1; }
 
       # Advisory by construction: a failing guard is reported, never fails the
       # job. The summary table is the deliverable of the run.
       - name: Oracle-backed guards (advisory)
         if: always()
         env:
-          NOVAC: novac/target/novac
+          NOVAC: ${{ github.workspace }}/novac/target/novac
           NOVAC_SMOKE_EXE_CACHE: ~/.cache/novac-oracle-exe
         run: |
           set -u
