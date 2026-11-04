@@ -2,6 +2,8 @@
 // EXPECT_STDOUT int:world
 // EXPECT_STDOUT backtick-ok
 // D467/D48: exact text, the ordinary tag call and its typed empty arguments.
+module standalone.carina_text_backtick_tag
+
 fn tag(parts []str, args []str) -> str {
     assert(parts.len() == 1)
     assert(args.len() == 0)

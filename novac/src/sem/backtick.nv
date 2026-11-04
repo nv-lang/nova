@@ -2,7 +2,8 @@
 // Donor: Java text blocks' incidental indentation, as required by D467 s7.
 // Role: value spelling for text-only backticks; lossless tokens stay untouched.
 // Used by: literal_as_c_text and the string judge.
-// Guarded by: the task 137 targeted backtick value probes.
+// Guarded by: nova test spec_tests — runtime fixture carina_text_backtick_tag.nv;
+// task 137 targeted negative probes cover the refused boundaries.
 module novac.sem
 
 /// The delimiter distinguishes D467's escape alphabet from quoted strings.

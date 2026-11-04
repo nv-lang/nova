@@ -2,7 +2,8 @@
 // Donor: ordinary call argument expectation (calls.nv); D48 specifies the sugar.
 // Role: types the implicit empty args vector of a text-only tagged literal.
 // Used by: type_free_call; no tag-specific overload or naming mechanism.
-// Guarded by: carina_text_backtick_tag runtime fixture and negative probes.
+// Guarded by: nova test spec_tests — runtime fixture carina_text_backtick_tag.nv;
+// task 137 targeted negative probes cover the refused boundaries.
 module novac.check
 
 import ../tree.{Node}
