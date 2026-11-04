@@ -1906,8 +1906,11 @@
 # removed by this same merge per the note above. Measured: rows 1860 -> 1861,
 # max stays 1952 (main's). The three new №TBD rows are invisible to the count
 # until the integrator assigns numbers at acceptance.
-rows=1861
-max=1952
+# Integrator, 2026-11-04 (same merge): assigned 1953 (map-literal), 1954
+# (backtick live slots), 1955 (tag empty args). Measured: rows 1861 -> 1864,
+# max 1952 -> 1955, duplicates 0.
+rows=1864
+max=1955
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
