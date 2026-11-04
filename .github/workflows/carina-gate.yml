@@ -75,6 +75,7 @@ jobs:
       - name: Verify pinned tree and stage-a output against the seed
         shell: bash
         run: |
+          mkdir -p pinned-verify
           python scripts/tools/verify-carina-bootstrap-c.py pinned --asset "$SEED_CACHE/${{ steps.pins.outputs.asset }}" --work-dir pinned-verify
 
       - name: Build native support libraries (libuv, gc)
