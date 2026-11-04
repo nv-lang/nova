@@ -1,0 +1,350 @@
+[
+  {
+    "name": "live",
+    "source_sha256": "9e7c5dc12d76b97d3e3f87b2dfdf164358d632fb9dffd53c3290bd51793d1bde",
+    "before": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\live.nv",
+            "start": 31,
+            "end": 32
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d1",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\live.nv",
+            "start": 37,
+            "end": 38
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d2",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\live.nv",
+            "start": 38,
+            "end": 39
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d3",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\live.nv",
+            "start": 42,
+            "end": 43
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    },
+    "after": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\live.nv",
+            "start": 31,
+            "end": 43
+          },
+          "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+          "poisoned_by": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "tag-live",
+    "source_sha256": "5b99d3f83893c85ee8c3fb9c38a814d108ef2589e1467a69ad5077ee708183fd",
+    "before": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\tag-live.nv",
+            "start": 88,
+            "end": 89
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d1",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\tag-live.nv",
+            "start": 94,
+            "end": 95
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d2",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\tag-live.nv",
+            "start": 95,
+            "end": 96
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d3",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\tag-live.nv",
+            "start": 99,
+            "end": 100
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    },
+    "after": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\tag-live.nv",
+            "start": 88,
+            "end": 100
+          },
+          "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+          "poisoned_by": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "unclosed",
+    "source_sha256": "93b52a205439623603773af1d875e899e2287e64bca674610900c200a27411e0",
+    "before": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\unclosed.nv",
+            "start": 20,
+            "end": 21
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    },
+    "after": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\unclosed.nv",
+            "start": 20,
+            "end": 34
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "escaped-close",
+    "source_sha256": "42e93d187e2042eca0f48627c782cb4d3107502fafc61001350e3ec80927ebae",
+    "before": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\escaped-close.nv",
+            "start": 20,
+            "end": 21
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d1",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\escaped-close.nv",
+            "start": 29,
+            "end": 30
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d2",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\escaped-close.nv",
+            "start": 30,
+            "end": 31
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    },
+    "after": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\escaped-close.nv",
+            "start": 20,
+            "end": 36
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "generic-tag",
+    "source_sha256": "cbfb49b2756fa426170bf7ae75a8d9d75fa2c50d9d0d686e342252ea72fb737b",
+    "before": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\generic-tag.nv",
+            "start": 77,
+            "end": 78
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d1",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\generic-tag.nv",
+            "start": 83,
+            "end": 84
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    },
+    "after": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\generic-tag.nv",
+            "start": 74,
+            "end": 77
+          },
+          "message": "outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, 274.14 F2)",
+          "poisoned_by": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "overloaded-tag",
+    "source_sha256": "c79bd1365b7a4d0c3b25bb2d38dfd325acb6df1a20ac8ad829e964abf00353ce",
+    "before": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\overloaded-tag.nv",
+            "start": 129,
+            "end": 130
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        },
+        {
+          "id": "d1",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\overloaded-tag.nv",
+            "start": 135,
+            "end": 136
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+          "poisoned_by": null
+        }
+      ]
+    },
+    "after": {
+      "rc": 1,
+      "diagnostics": [
+        {
+          "id": "d0",
+          "code": "E_NOVAC_SUBSET",
+          "severity": "error",
+          "primary": {
+            "file": "$SCRATCH\\string-final-green-v4\\overloaded-tag.nv",
+            "start": 126,
+            "end": 129
+          },
+          "message": "outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, 274.14 F2)",
+          "poisoned_by": null
+        }
+      ]
+    }
+  }
+]

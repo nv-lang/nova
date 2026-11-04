@@ -1,0 +1,172 @@
+[
+  {
+    "name": "real",
+    "stage": "run",
+    "passed": false,
+    "stdout": "hello Nova\none long line, written across two source lines\nfirst\tsecond\tthird\na tagged literal\ncost: $ and more\nshell: $HOME plain\nC:\\new\\table\ntick ` slash \\ dollar ${name}\n",
+    "c_sha256": "1d1d5b451952710292239ff4a76c98dd61cd134f8f5ddf2c861c4c1f833a2374",
+    "exe_sha256": "473f3edbcfaa15799b4a7eed6b04d8a5983afa37b9ca05d8caa40f5ae0a3b865"
+  },
+  {
+    "name": "fixture",
+    "stage": "run",
+    "passed": false,
+    "stdout": "",
+    "c_sha256": "9b0f6379d1dca5abac78c4a96735264618f3155a27e6d52ec1df51b53ebc7c06",
+    "exe_sha256": "f192afa2d6471318eaf340af6711ec27342a4d66260563f3b74fd8839bc40015"
+  },
+  {
+    "name": "fixture-crlf",
+    "stage": "run",
+    "passed": false,
+    "stdout": "",
+    "c_sha256": "7fabada06584aac9379810a5b2f2a5753db1bc5a93e38099bbda9c306028cbfb",
+    "exe_sha256": "c66728276be50262b21164c0e295575e0e82fa65fab7868d7dcaa76390d73fc6"
+  },
+  {
+    "name": "previous-str_eq",
+    "stage": "run",
+    "passed": true,
+    "stdout": "true\nfalse\ntrue\n",
+    "c_sha256": "2b6b57e2087567c12e3b4317d3b453f5f93ca567ca0e3aabfe6362a50b7b6a20",
+    "exe_sha256": "47e9be2a7dae02a28b7bf1f5f8785e84e22b83923c6d2dbd73a1b73f72caab79"
+  },
+  {
+    "name": "previous-strings",
+    "stage": "run",
+    "passed": true,
+    "stdout": "len = 12\nupper = HELLO, WORLD\nstarts with 'hello' = true\ncontains 'world' = true\n",
+    "c_sha256": "0f3d2cdc5b62a8b362b0ccf959da0f378a6c7ed4270262049ff55970531995cf",
+    "exe_sha256": "c897d237cfff1190bd84c6e4ac5775f5cb1d6dea18293ae8bfb9b983ce21b6d5"
+  },
+  {
+    "name": "previous-requires_string_guard",
+    "stage": "run",
+    "passed": true,
+    "stdout": "1\n",
+    "c_sha256": "7900d12f4d96b4a37a30511bfeff2d077b248765927dad0d6c0fa46afd636cd7",
+    "exe_sha256": "a5a635e6267e1288d287d885a21f2aed6c2f3b341da9ddddc6e36b903f32a0e2"
+  },
+  {
+    "name": "previous-interp_display",
+    "stage": "run",
+    "passed": true,
+    "stdout": "p Pt end\nPtPt\n",
+    "c_sha256": "690ddf3338ca1bb8aceb36b4c7087385d310087e84a6080c40b5bc4c7502ee58",
+    "exe_sha256": "d9f5e9f95fb95f5d95c2b110924726abc2ba1e56fd1b35eeef7af4b7a43602dd"
+  },
+  {
+    "name": "live",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-sabotage-v4\\live.nv",
+          "start": 31,
+          "end": 43
+        },
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "tag-live",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-sabotage-v4\\tag-live.nv",
+          "start": 88,
+          "end": 100
+        },
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "unclosed",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-sabotage-v4\\unclosed.nv",
+          "start": 20,
+          "end": 34
+        },
+        "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "escaped-close",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-sabotage-v4\\escaped-close.nv",
+          "start": 20,
+          "end": 36
+        },
+        "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "generic-tag",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-sabotage-v4\\generic-tag.nv",
+          "start": 74,
+          "end": 77
+        },
+        "message": "outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, 274.14 F2)",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "overloaded-tag",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-sabotage-v4\\overloaded-tag.nv",
+          "start": 126,
+          "end": 129
+        },
+        "message": "outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, 274.14 F2)",
+        "poisoned_by": null
+      }
+    ]
+  }
+]

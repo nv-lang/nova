@@ -663,6 +663,12 @@ fn Checker mut @walk_carried(kids []Node, ht TyId) -> bool {
 /// is the probe program, and widening it is a visible edit.
 fn Checker mut @type_array_lit(init Node) -> TyId {
     ro kids = branch_children(init)
+    // A tag's implicit empty args is typed at its call site, which owns the
+    // concrete parameter expectation. Explicit empty literals have brackets
+    // and continue to the ordinary language/subset rules below.
+    // SILENT-OK: a leafless literal is the tag parser's implicit empty args;
+    // its type is recorded by the call site's parameter expectation, never here.
+    if kids.len() == 0 { return @chan.type_if_known(init.id_of()) }
     ro elems = literal_elems(kids)
     if Some(ctor) = literal_ctor_name(kids) {
         if ctor == EMPTY_CTOR {

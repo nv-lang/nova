@@ -1,0 +1,12 @@
+[
+  "$SCRATCH\\nova135.exe",
+  "build",
+  "$SCRATCH\\string-tree\\novac\\src\\main.nv",
+  "-o",
+  "$SCRATCH\\novac137-sabotage.exe",
+  "--toolchain",
+  "clang",
+  "--timeout",
+  "300",
+  "--keep-artifacts"
+]

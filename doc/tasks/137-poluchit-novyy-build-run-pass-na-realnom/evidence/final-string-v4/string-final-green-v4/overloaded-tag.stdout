@@ -1,0 +1,1 @@
+{"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$SCRATCH\\string-final-green-v4\\overloaded-tag.nv","start":126,"end":129},"message":"outside the subset: a text-only tag requires a uniquely resolved concrete vector parameter for its empty args (D48, 274.14 F2)","poisoned_by":null}

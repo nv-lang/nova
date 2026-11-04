@@ -1,0 +1,134 @@
+[
+  {
+    "name": "real",
+    "stage": "run",
+    "passed": true,
+    "stdout": "hello Nova\none long line, written across two source lines\nfirst\nsecond\nthird\na tagged literal\ncost: $ and more\nshell: $HOME plain\nC:\\new\\table\ntick ` slash \\ dollar ${name}\n",
+    "c_sha256": "3d627c775faa52a2c849b60eff0ac2aa9519a1ea42428cf3a81f6fae48473ac9",
+    "exe_sha256": "ccae619bd82322206181f3a51830e3e9de9d0a17d09b2274e238942a863d2f84"
+  },
+  {
+    "name": "fixture",
+    "stage": "run",
+    "passed": true,
+    "stdout": "tag:hello\nint:world\nbacktick-ok\n",
+    "c_sha256": "11cb53c248f845ee35aa7d164447426db6497c771c81402b25db924420c67bde",
+    "exe_sha256": "8d146a2d1c4aa5cf2ece8304d4013de40b5e83527a350540057c09bec54b86f7"
+  },
+  {
+    "name": "fixture-crlf",
+    "stage": "run",
+    "passed": true,
+    "stdout": "tag:hello\nint:world\nbacktick-ok\n",
+    "c_sha256": "19442fe6fecef112406288d661ec93a7ad6c47878450d818b2abf084f51641d1",
+    "exe_sha256": "270e15be46cb01b8e84d733d21989812a44ffba4030661066d1f9b4b45eb7d17"
+  },
+  {
+    "name": "previous-str_eq",
+    "stage": "run",
+    "passed": true,
+    "stdout": "true\nfalse\ntrue\n",
+    "c_sha256": "2b6b57e2087567c12e3b4317d3b453f5f93ca567ca0e3aabfe6362a50b7b6a20",
+    "exe_sha256": "5af061918ac076af87d4859c621b98579193e6261aa170702f3312e6e12ff62a"
+  },
+  {
+    "name": "previous-strings",
+    "stage": "run",
+    "passed": true,
+    "stdout": "len = 12\nupper = HELLO, WORLD\nstarts with 'hello' = true\ncontains 'world' = true\n",
+    "c_sha256": "0f3d2cdc5b62a8b362b0ccf959da0f378a6c7ed4270262049ff55970531995cf",
+    "exe_sha256": "d0cb8aeb59b6f7692d77b0c34916510d6a9fb5768d3679fa4b11810aa9a62be1"
+  },
+  {
+    "name": "previous-requires_string_guard",
+    "stage": "run",
+    "passed": true,
+    "stdout": "1\n",
+    "c_sha256": "7900d12f4d96b4a37a30511bfeff2d077b248765927dad0d6c0fa46afd636cd7",
+    "exe_sha256": "0258542a705737edc5b3440abe785ff0a52b604c736159ac97c103578832d93b"
+  },
+  {
+    "name": "previous-interp_display",
+    "stage": "run",
+    "passed": true,
+    "stdout": "p Pt end\nPtPt\n",
+    "c_sha256": "690ddf3338ca1bb8aceb36b4c7087385d310087e84a6080c40b5bc4c7502ee58",
+    "exe_sha256": "d9fdd108c4b1b65696429836fed29f55b096ae6c9b5b5ae9dd2f502324f38b2a"
+  },
+  {
+    "name": "live",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-final-green-v2\\live.nv",
+          "start": 31,
+          "end": 43
+        },
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, plan 274.6 C2); text-only backticks are compiled",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "tag-live",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-final-green-v2\\tag-live.nv",
+          "start": 88,
+          "end": 100
+        },
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, plan 274.6 C2); text-only backticks are compiled",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "unclosed",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-final-green-v2\\unclosed.nv",
+          "start": 20,
+          "end": 34
+        },
+        "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+        "poisoned_by": null
+      }
+    ]
+  },
+  {
+    "name": "escaped-close",
+    "stage": "negative",
+    "passed": true,
+    "diagnostics": [
+      {
+        "id": "d0",
+        "code": "E_NOVAC_SUBSET",
+        "severity": "error",
+        "primary": {
+          "file": "$SCRATCH\\string-final-green-v2\\escaped-close.nv",
+          "start": 20,
+          "end": 36
+        },
+        "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+        "poisoned_by": null
+      }
+    ]
+  }
+]

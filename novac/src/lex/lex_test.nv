@@ -81,14 +81,31 @@ test "one source in LF and in CRLF lexes to the same tokens -- an interpolated s
 }
 
 test "unknown byte becomes ErrorTok, not a panic, and keeps its text" {
-    // `?` used to stand for "a byte no rule claims" here -- it no longer
-    // does (registry #1264: a lone `?` lexes its own `TokenKind.Question`
-    // now, refused BY NAME in the checker instead of dying as an anonymous
-    // ErrorTok). Backtick is still genuinely unclaimed by any rule in the
-    // table.
-    ro toks = lex("a ` b")
+    // Backtick used to stand for "a byte no rule claims" here -- task 137
+    // claimed it for D467 text literals. A raw control byte (\x01) is still
+    // genuinely unclaimed: no rule in the table answers for it, and it is
+    // ASCII, so the non-ASCII run swallowing does not hide it either.
+    ro src = "a \u{1} b"
+    ro toks = lex(src)
     assert(toks[1].kind == TokenKind.ErrorTok)
-    assert(toks[1].text == "`")
+    assert(toks[1].text == "\u{1}")
+    assert(reserialize(toks) == src)
+}
+
+test "backtick lexes as one text literal, lossless (task 137, D467)" {
+    // A backtick run is a StrLit carrying its delimiters verbatim: the lexer
+    // never interprets D467 escapes or live slots, it only finds the end.
+    ro src = "a `hi` b"
+    ro toks = lex(src)
+    assert(toks[1].kind == TokenKind.StrLit)
+    assert(toks[1].text == "`hi`")
+    assert(reserialize(toks) == src)
+    // A multiline body with an escaped closing delimiter stays source bytes;
+    // reserialization is the load-bearing assertion.
+    ro multi = "x `one\ntwo \\` end` y"
+    ro mt = lex(multi)
+    assert(mt[1].kind == TokenKind.StrLit)
+    assert(reserialize(mt) == multi)
 }
 
 test "positions derive by prefix sum, no span is stored (owner 2026-08-14)" {

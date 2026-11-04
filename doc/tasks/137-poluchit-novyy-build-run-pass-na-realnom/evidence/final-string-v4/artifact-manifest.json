@@ -1,0 +1,84 @@
+{
+  "compiler": {
+    "path": "$SCRATCH\\final-string-v4-compiler.exe",
+    "sha256": "abc58e46628439a79b68606821f905856b2dec30ebccb1b33f09d5536e22d58a"
+  },
+  "compiler_sabotage": {
+    "path": "$SCRATCH\\final-string-v4-compiler_sabotage.exe",
+    "sha256": "8cd4eff334e7d8b37d201a1e88309ceddc89b3b088deeb51cf3b08e534c2c3a6"
+  },
+  "real_source": {
+    "path": "$WT\\examples\\basics\\string_literals.nv",
+    "sha256": "2fc215846972f602772e95ab7aa60b863fdb63b425bd395ee19ecb2959fdd1fe"
+  },
+  "real_c": {
+    "path": "$SCRATCH\\string-final-green-v4\\real.c",
+    "sha256": "3d627c775faa52a2c849b60eff0ac2aa9519a1ea42428cf3a81f6fae48473ac9"
+  },
+  "real_exe": {
+    "path": "$SCRATCH\\string-final-green-v4\\real.exe",
+    "sha256": "d45c9fe4c0a38198a344ca99537227344475373607d27b2bae66e66ccf131a6b"
+  },
+  "runtime_archive": {
+    "path": "$SCRATCH\\install135\\target\\rt-archive-cache\\13bfb182615468d7\\libnova_rt.lib",
+    "sha256": "81db3c5c49fb882642c8d11e64aac1355ecb4e34a977e2c636045997f666fdf3"
+  },
+  "libuv": {
+    "path": "$SCRATCH\\install135\\target\\libuv-cache\\d28184508b18249e\\libuv.lib",
+    "sha256": "aa16ff538e01f185b3bf2c254fc90c718f27ec34e6f4fbd9828cc2a6487909aa"
+  },
+  "gc": {
+    "path": "$SCRATCH\\install135\\target\\gc-cache\\gc.lib",
+    "sha256": "56dfb6688c9ea5d33fbec7b458216b0a25920a2215bd1409194eec49d8ea4f2b"
+  },
+  "compiler_c": {
+    "path": "$SCRATCH\\install135\\target\\carina-build\\main.84244.carina.c",
+    "sha256": "902436b8bcc8ae217bc2eb21d25e842214eb67def1f545bec075f06e806fcfd2"
+  },
+  "builder_driver": {
+    "path": "$SCRATCH\\nova135.exe",
+    "sha256": "71d9e77b1d4b68849a0394c209101114e7e174d9c840beeebef50fffad77a7ac"
+  },
+  "parent_seed_zip": {
+    "path": "$SCRATCH\\nova-carina-0.2.2-135combined-windows-x86_64.zip",
+    "sha256": "c727288f301b4b8849bffe4d6e75b7bc9f55589472cfec97029d70521d16fb69"
+  },
+  "evidence_sha256": {
+    "candidate-build-command-green.json": "03873d7ad5a51642dbdc3ce5f22fbb0993a412f484869b635fb24faa2e43ee53",
+    "candidate-build-command-sabotage.json": "5f52e3c52b44ed5295b6c5303071238d0d523f1f4364a24ff97c0167bd232416",
+    "final-refusal-comparison/before-after.json": "4fe150679dbe30060e1aa1a02b9682f476d090c7aae5805867d434f03553e1f0",
+    "std-after.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "std-after.stdout": "2e3342a12bec6fcc4795883f9561b1fc2f3d8a3f2f09b4a36eed542f349b72ff",
+    "std-batch-comparison/after-command.json": "df9c2a7aa9559f0f5b5de2101dadff469836f25879ab7f6e8ba6e6d38ff8d102",
+    "std-batch-comparison/before-command.json": "1344680327859e00e43dbaae91d9ef46cb4e0d41b28ff75f2d98b590ddcb3ddb",
+    "std-batch-comparison/summary.json": "312e8de6c9ec74705c73bef71dc84498aa2976eef54d4fe8466b71b477ec9cdd",
+    "std-before.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "std-before.stdout": "2e3342a12bec6fcc4795883f9561b1fc2f3d8a3f2f09b4a36eed542f349b72ff",
+    "string-backport.patch": "c0d0f45dd12d5f338b94c2c5bddafc39814f802700eb1333b403a3805d042c0f",
+    "string-build-green.stderr": "70832941afa6db034ac606d8639bc2684ee46c7a694ce57587a75a489c626a6c",
+    "string-build-green.stdout": "ac106847a76db690053cecaae9ead9dcb79714bc2af5626b18acf930dc428874",
+    "string-build-sabotage.stderr": "70832941afa6db034ac606d8639bc2684ee46c7a694ce57587a75a489c626a6c",
+    "string-build-sabotage.stdout": "c55d3edb3c07f31f381bf63f4089b631aa997e6e66244ffdb92bd07117cb0a6e",
+    "string-extra-probes-v2/roundtrip.native.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "string-extra-probes-v2/roundtrip.run.log": "cc5ff75f4d74a9b84b66cac019aa9e5d0bdca96514bd91dabb2de875b0825279",
+    "string-final-green-v4/escaped-close.stdout": "23066b2e36dec3230b728621c70cf63ba979bf34269ca56b358f34b6ed416a3b",
+    "string-final-green-v4/generic-tag.stdout": "f6e4637cc5471440f54a35c8b08900ed19fee01c7435edf35011bdcc3900a9a6",
+    "string-final-green-v4/live.stdout": "f13967e5ddd1f0c28c243d584edcd46bfc7c3efc33a93bb93c23d68bf5ca0a66",
+    "string-final-green-v4/overloaded-tag.stdout": "f3b504b1d5532014e2cba2a28fc540e0eb79e5d59415a4050852e3ab71e87a86",
+    "string-final-green-v4/real-native-command.json": "1a4e7fbb885a0a80073dbe20fd2e22bdf116e730361bdff9c7c75e6e7b7a56e3",
+    "string-final-green-v4/real-run.stdout": "feeb1f2a28c3f5267ccd69c586e79b1d8e7dbc342029aea6f809808570fd1835",
+    "string-final-green-v4/results.json": "67c4dc17efacb270009396924bb275e393b37c754aef0ce0f61ebbf8a3ba0369",
+    "string-final-green-v4/tag-live.stdout": "3c8c9219508ab7b57d5a640faad304aa0699a08f6f83942314af37f04e648399",
+    "string-final-green-v4/unclosed.stdout": "60d65c62ef399c5b7d3d6c96cdfabf3865c59b53346fd57a38b694486b72605f",
+    "string-full-manifest-green.json": "7b33fc1adb41c89777b8b6050e947badf0e4a7e6ff7bd4366d1cd8f4a2bf8525",
+    "string-full-manifest-sabotage.json": "a381779893f20030d582618ed4ce46a3964c4b4140f0f2472bbb49582796359f",
+    "string-sabotage-v4/results.json": "c04efbf6400aa15b8ffe83e24d96efd8e15bf21261fc5c234d1470863fdc0731",
+    "string-supplement/orm_decorators.stdout": "5268f81ad10b873435a35bcb8068e0006c577e9aab8b1eaf51a537458d6a45c7",
+    "string-supplement/orm_demo.stdout": "bc163e44518fe86adf7a44208f348f4585f277017c656ecb258047d738a2549c",
+    "subset-inventory.json": "d75ff8f81ef9cfcfe30dc943b94c126547448bc74b48a8d111070ebd1224382e",
+    "verify-run-green-v4.log": "7ab71c0be37b53b654758b86cc96e8212bfc1cfba6894068b442773d9766776e",
+    "verify-run-sabotage-v4.log": "253573eb9d150a50e3c66ea47c518438411bf8f08a9ce4366db63c5784b567c6"
+  },
+  "warning": "Measured candidate snapshot; later working-tree edits are not asserted to belong to this binary. No seed asset is published.",
+  "normalization": "Machine prefixes only: $SCRATCH, $WT, $HOME, $CLANG. JSON is decoded, normalized and reserialized as UTF-8 with indent=2. Other text retains original line endings. Artifact hashes still name raw binary/source/C bytes. Raw evidence is retained in the session scratch under raw-evidence-final-string-v4"
+}

@@ -1,0 +1,533 @@
+{
+  "before_rc": 1,
+  "after_rc": 1,
+  "before_diagnostics": 5064,
+  "after_diagnostics": 5033,
+  "added": [
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+      "primary": {
+        "end": 3001,
+        "file": "data\\sql_test.nv",
+        "start": 2957
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+      "primary": {
+        "end": 414,
+        "file": "data\\sql_test.nv",
+        "start": 371
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+      "primary": {
+        "end": 5683,
+        "file": "data\\sql_test.nv",
+        "start": 5595
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+      "primary": {
+        "end": 6823,
+        "file": "data\\sql_test.nv",
+        "start": 6811
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+      "primary": {
+        "end": 792,
+        "file": "data\\sql_test.nv",
+        "start": 736
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+      "primary": {
+        "end": 8637,
+        "file": "data\\sql_test.nv",
+        "start": 8606
+      }
+    }
+  ],
+  "removed": [
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 1192,
+        "file": "data\\sql_test.nv",
+        "start": 1191
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 1201,
+        "file": "data\\sql_test.nv",
+        "start": 1200
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2461,
+        "file": "data\\sql_test.nv",
+        "start": 2460
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2490,
+        "file": "data\\sql_test.nv",
+        "start": 2489
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2493,
+        "file": "data\\sql_test.nv",
+        "start": 2492
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2620,
+        "file": "data\\sql_test.nv",
+        "start": 2619
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2654,
+        "file": "data\\sql_test.nv",
+        "start": 2653
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2958,
+        "file": "data\\sql_test.nv",
+        "start": 2957
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 2994,
+        "file": "data\\sql_test.nv",
+        "start": 2993
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 3001,
+        "file": "data\\sql_test.nv",
+        "start": 3000
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 3046,
+        "file": "data\\sql_test.nv",
+        "start": 3045
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 3065,
+        "file": "data\\sql_test.nv",
+        "start": 3064
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 372,
+        "file": "data\\sql_test.nv",
+        "start": 371
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 404,
+        "file": "data\\sql_test.nv",
+        "start": 403
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 414,
+        "file": "data\\sql_test.nv",
+        "start": 413
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 5596,
+        "file": "data\\sql_test.nv",
+        "start": 5595
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 5621,
+        "file": "data\\sql_test.nv",
+        "start": 5620
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 5643,
+        "file": "data\\sql_test.nv",
+        "start": 5642
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 5661,
+        "file": "data\\sql_test.nv",
+        "start": 5660
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 5679,
+        "file": "data\\sql_test.nv",
+        "start": 5678
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 5683,
+        "file": "data\\sql_test.nv",
+        "start": 5682
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 6775,
+        "file": "data\\sql_test.nv",
+        "start": 6774
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 6795,
+        "file": "data\\sql_test.nv",
+        "start": 6794
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 6812,
+        "file": "data\\sql_test.nv",
+        "start": 6811
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 6819,
+        "file": "data\\sql_test.nv",
+        "start": 6818
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 6823,
+        "file": "data\\sql_test.nv",
+        "start": 6822
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 737,
+        "file": "data\\sql_test.nv",
+        "start": 736
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 776,
+        "file": "data\\sql_test.nv",
+        "start": 775
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 785,
+        "file": "data\\sql_test.nv",
+        "start": 784
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 792,
+        "file": "data\\sql_test.nv",
+        "start": 791
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 8607,
+        "file": "data\\sql_test.nv",
+        "start": 8606
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 8619,
+        "file": "data\\sql_test.nv",
+        "start": 8618
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form",
+      "primary": {
+        "end": 8637,
+        "file": "data\\sql_test.nv",
+        "start": 8636
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)",
+      "primary": {
+        "end": 2995,
+        "file": "data\\sql_test.nv",
+        "start": 2994
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)",
+      "primary": {
+        "end": 405,
+        "file": "data\\sql_test.nv",
+        "start": 404
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)",
+      "primary": {
+        "end": 5662,
+        "file": "data\\sql_test.nv",
+        "start": 5661
+      }
+    },
+    {
+      "code": "E_NOVAC_SUBSET",
+      "message": "outside the subset: a record constructor is compiled only as a binding initializer, a call argument, the body of a match arm, the tail of a value body or the right side of `=` -- other positions are not compiled yet (E2, the records/sums horizon)",
+      "primary": {
+        "end": 5680,
+        "file": "data\\sql_test.nv",
+        "start": 5679
+      }
+    }
+  ],
+  "witnesses": [
+    {
+      "after": {
+        "code": "E_NOVAC_SUBSET",
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "primary": {
+          "end": 3001,
+          "file": "data\\sql_test.nv",
+          "start": 2957
+        }
+      },
+      "baseline_fallbacks": [
+        {
+          "code": "E_NOVAC_SUBSET",
+          "primary": {
+            "file": "data\\sql_test.nv",
+            "start": 2957,
+            "end": 2958
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+        }
+      ]
+    },
+    {
+      "after": {
+        "code": "E_NOVAC_SUBSET",
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "primary": {
+          "end": 414,
+          "file": "data\\sql_test.nv",
+          "start": 371
+        }
+      },
+      "baseline_fallbacks": [
+        {
+          "code": "E_NOVAC_SUBSET",
+          "primary": {
+            "file": "data\\sql_test.nv",
+            "start": 371,
+            "end": 372
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+        }
+      ]
+    },
+    {
+      "after": {
+        "code": "E_NOVAC_SUBSET",
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "primary": {
+          "end": 5683,
+          "file": "data\\sql_test.nv",
+          "start": 5595
+        }
+      },
+      "baseline_fallbacks": [
+        {
+          "code": "E_NOVAC_SUBSET",
+          "primary": {
+            "file": "data\\sql_test.nv",
+            "start": 5595,
+            "end": 5596
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+        }
+      ]
+    },
+    {
+      "after": {
+        "code": "E_NOVAC_SUBSET",
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "primary": {
+          "end": 6823,
+          "file": "data\\sql_test.nv",
+          "start": 6811
+        }
+      },
+      "baseline_fallbacks": [
+        {
+          "code": "E_NOVAC_SUBSET",
+          "primary": {
+            "file": "data\\sql_test.nv",
+            "start": 6811,
+            "end": 6812
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+        }
+      ]
+    },
+    {
+      "after": {
+        "code": "E_NOVAC_SUBSET",
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "primary": {
+          "end": 792,
+          "file": "data\\sql_test.nv",
+          "start": 736
+        }
+      },
+      "baseline_fallbacks": [
+        {
+          "code": "E_NOVAC_SUBSET",
+          "primary": {
+            "file": "data\\sql_test.nv",
+            "start": 736,
+            "end": 737
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+        }
+      ]
+    },
+    {
+      "after": {
+        "code": "E_NOVAC_SUBSET",
+        "message": "outside the subset: live interpolation slots in backtick literals are not compiled yet (D467, 274.14 F1); text-only backticks are compiled",
+        "primary": {
+          "end": 8637,
+          "file": "data\\sql_test.nv",
+          "start": 8606
+        }
+      },
+      "baseline_fallbacks": [
+        {
+          "code": "E_NOVAC_SUBSET",
+          "primary": {
+            "file": "data\\sql_test.nv",
+            "start": 8606,
+            "end": 8607
+          },
+          "message": "novac did not parse this -- and it cannot tell whether the form is one it does not read yet or the text is malformed; this is the parser's fallback, narrowed form by form"
+        }
+      ]
+    }
+  ],
+  "raw_full_comparison_sha256": "4b2554b7d8d8dbebf364c518f95790c87e7cc9e576e298795de8a9076749b773",
+  "raw_full_comparison_path": "$SCRATCH\\std-batch-comparison\\comparison.json"
+}

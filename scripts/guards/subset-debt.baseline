@@ -502,6 +502,16 @@ refusals=142
 #   merged tree by the guard: 141 (main after 131) + 3 (134: DEFER_MSG, FN_PARAM_MSG,
 #   FN_FIELD_MSG) + 1 (130) = 145. undated and undated_by_door unchanged by both.
 refusals=145
+# 2026-11-02, task 137: measured revision approved by nova.integrator
+# (crew question qmvyb1r6yeyed, decision "Allow 145 -> 147"). The inventory diff
+# is exactly two dated refusals replacing parser fallback: live backtick slots
+# (274.14 F1), generic/overloaded implicit empty tag args (274.14 F2).
+# Evidence: doc/tasks/137-poluchit-novyy-build-run-pass-na-realnom/evidence/
+# final-string-v4/subset-inventory.json and final-refusal-comparison/before-after.json.
+# The accepted region grows: unchanged string_literals now builds and runs with
+# exact stdout; four prior runnable inputs remain PASS with identical generated C.
+# undated=52 and undated_by_door=67 stay unchanged. No predicate is weakened.
+refusals=147
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

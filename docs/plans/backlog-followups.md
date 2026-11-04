@@ -353,6 +353,7 @@
 
 | Маркер | Суть | Home | Pri |
 |---|---|---|---|
+| `[M-137-time-budget-accounting]` | **OPEN 2026-11-01, решение владельца через интегратора:** после перезапусков утрачен точный учёт активного T/2T задачи 137; календарный промежуток нельзя выдавать за активный, а минуты сами по себе не останавливают содержательную работу. Доработать устойчивый учёт активной работы, ожиданий и рестартов с проверяемым журналом, без обнуления прежних затрат. Условие снятия: после контролируемого рестарта восстановлены накопленные интервалы и остаток бюджета, ожидание машины отделено от активной работы. Harness в 137 не меняется. | floating (учёт времени задач; checkpoint задачи 137) | P2 |
 | `[M-116-openssl-backend]` | Опц. OpenSSL TLS 1.0/1.1 handler (rustls = default); Plan 116 не начат (PLANNED). | plan-116 Followups | P2 |
 | `[M-173-detach-escalate-to-scope]` | `detach` error-policy opt-in `escalate-to-scope` (D414 §2): привязать сироту к enclosing `supervised`-scope → ошибка участвует в §1-precedence вместо LogAndDrop. Нужен scope-handle у detach-примитива + участие в decision-loop. Дефолт LogAndDrop не менять (owner-gated). Checker-enforcement `Detach` + LogAndDrop-дефолт уже сделаны (Ф.3 п.2). | Plan 173 Ф.3 | P3 |
 | `[M-91.fe5-math-time-conformance]` | math (sqrt/ln) есть; Instant/Duration time-API conformance pending. | plan-91 Followups | P2 |

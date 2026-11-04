@@ -21,7 +21,7 @@ import ../tree.{Node, NodeKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, decl_of_ty, field_range_of}
 import ../sem.{raw_frow, no_frow, ctor_field_name}
 // The interpolation slicer comes with the judge moved here on 2026-09-20.
-import ../sem.{interp_slices, subst_type, literal_digits}
+import ../sem.{interp_slices, subst_type, literal_digits, is_backtick_literal}
 import ../sem.{prim_row_of, lit_admits, call_arg_at, raw_row, no_row, CalleeTarget}
 import ../sem.{const_int_value}
 import ../diag.{ice_at}
@@ -540,7 +540,7 @@ fn Checker mut @judge_interp_lit(e Node) -> () {
     // InterpStr node -- a WHOLE literal with a live slot can only be a
     // string nested inside another slot, and that form is refused by name
     // (the I2 chain builds one level).
-    @report_first_leaf_of(kids, NESTED_INTERP_MSG)
+    @report_first_leaf_of(kids, if is_backtick_literal(leaf_text(t)) { BACKTICK_SLOTS_MSG } else { NESTED_INTERP_MSG })
 }
 
 /// The char-literal judge (the char wave). The lexer finds the closing quote

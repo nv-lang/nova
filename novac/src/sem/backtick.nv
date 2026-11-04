@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Java text blocks' incidental indentation, as required by D467 s7.
+// Role: value spelling for text-only backticks; lossless tokens stay untouched.
+// Used by: literal_as_c_text and the string judge.
+// Guarded by: nova test spec_tests — runtime fixture carina_text_backtick_tag.nv;
+// task 137 targeted negative probes cover the refused boundaries.
+module novac.sem
+
+/// The delimiter distinguishes D467's escape alphabet from quoted strings.
+export fn is_backtick_literal(s str) -> bool {
+    s.byte_len() >= 2 && s.bytes()[0] == ('`' as u8)
+}
+
+/// CRLF belongs to the source spelling, not to the value (D467 s7).
+fn backtick_normalized(s str) -> str {
+    consume out = StringBuilder.new()
+    ro b = s.bytes()
+    mut from = 1
+    mut i = 1
+    ro end = b.len() - 1
+    while i < end {
+        if b[i] == 0x0D && i + 1 < end && b[i + 1] == 0x0A {
+            out.append(s[from..i])
+            from = i + 1
+            i += 2
+        } else {
+            i += 1
+        }
+    }
+    out.append(s[from..end])
+    out
+}
+
+/// The width of the run of spaces/tabs that starts the line at `start`.
+fn backtick_indent(b []u8, start int, end int) -> int {
+    mut i = start
+    while i < end && (b[i] == 0x20 || b[i] == 0x09) { i += 1 }
+    i - start
+}
+
+/// A block's closing line participates even when it is whitespace-only.
+fn backtick_dedent(text str) -> str {
+    ro b = text.bytes()
+    if b.len() == 0 || b[0] != 0x0A { return text }
+    mut margin = b.len()
+    mut start = 1
+    mut end = 1
+    while end <= b.len() {
+        if end == b.len() || b[end] == 0x0A {
+            ro indent = backtick_indent(b, start, end)
+            // Content lines and the final (closing) line set the margin;
+            // whitespace-only middle lines do not participate.
+            if start + indent < end || end == b.len() {
+                margin = margin.min(indent)
+            } else {
+                // Whitespace-only line inside the block: skipped; the margin
+                // is decided by lines that carry text or by the closing line.
+            }
+            start = end + 1
+        } else {
+            // Not a line end: the scan advances one byte, nothing to decide.
+        }
+        end += 1
+    }
+    consume out = StringBuilder.new()
+    start = 1
+    end = 1
+    while end <= b.len() {
+        if end == b.len() || b[end] == 0x0A {
+            ro indent = backtick_indent(b, start, end)
+            ro trim = indent.min(margin)
+            // The closing delimiter's whitespace-only line has no content.
+            if end != b.len() || start + indent < end {
+                out.append(text[start + trim..end])
+                if end < b.len() {
+                    out.append("\n")
+                } else {
+                    // The final line is the closing run itself: the text ends
+                    // without an added newline.
+                }
+            } else {
+                // Whitespace-only closing line: contributes no text at all.
+            }
+            start = end + 1
+        } else {
+            // Not a line end: the scan advances one byte, nothing to decide.
+        }
+        end += 1
+    }
+    out
+}
+
+/// C text including quotes. Runs, not single-byte UTF-8 slices: only ASCII
+/// separators split a run, so a multibyte codepoint is never cut in half.
+fn backtick_c_text(s str) -> str {
+    ro text = backtick_dedent(backtick_normalized(s))
+    ro b = text.bytes()
+    consume out = StringBuilder.new()
+    out.append("\"")
+    mut from = 0
+    mut i = 0
+    while i < b.len() {
+        ro c = b[i]
+        if c == 0x5C {
+            out.append(text[from..i])
+            if i + 1 < b.len() && (b[i + 1] == 0x60 || b[i + 1] == 0x5C || b[i + 1] == 0x24) {
+                i += 1
+                if b[i] == 0x5C { out.append("\\\\") } else { out.append(text[i..i + 1]) }
+            } else {
+                out.append("\\\\")
+            }
+            i += 1
+            from = i
+        } else if c == 0x22 || c == 0x0A || c == 0x0D || c == 0x09 || c == 0 {
+            out.append(text[from..i])
+            if c == 0x22 {
+                out.append("\\\"")
+            } else if c == 0x0A {
+                out.append("\\n")
+            } else if c == 0x0D {
+                out.append("\\r")
+            } else if c == 0x09 {
+                out.append("\\t")
+            } else {
+                // c == 0: the only separator left in this branch's condition.
+                out.append("\\000")
+            }
+            i += 1
+            from = i
+        } else {
+            i += 1
+        }
+    }
+    out.append(text[from..])
+    out.append("\"")
+    out
+}
