@@ -2674,6 +2674,18 @@ fn exceeds_multi_tu_threshold(finalized: &str) -> bool {
     finalized.matches(") {").count() > MULTI_TU_FN_COUNT_THRESHOLD
 }
 
+/// Item 126 companion: is this block's trailing expr the bare `None`
+/// identifier? A bare-None branch carries no payload -- the emitter's
+/// Option C type for such a branch is a default guess, not a resolved
+/// type (the checker's join fix unifies it with the other branch's
+/// Option; this mirror handles the emitter's own branch-type choice).
+fn none_lit_tail(b: &Block) -> bool {
+    matches!(
+        b.trailing.as_ref().map(|t| &t.kind),
+        Some(ExprKind::Ident(n)) if n == "None"
+    )
+}
+
 impl CEmitter {
     pub fn new() -> Self {
         Self {
@@ -49202,6 +49214,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
+
     fn emit_if_expr(
         &mut self,
         cond: &Expr,
@@ -49291,6 +49304,44 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let then_is_unit = !then_diverges && then_ty == "nova_unit";
                 let else_is_unit = !else_diverges && else_ty == "nova_unit";
                 if then_is_unit || else_is_unit { "nova_unit".into() } else { chosen }
+            } else {
+                chosen
+            };
+            // [M-172.1-d174] (U.1.3b, 2026-07-02): ПУСТОЙ inferred-тип выбранной
+            // ветки (RecordLit merged-через-import модуля при эмиссии его же
+            // методов — схема фазово не готова) → тип ДРУГОЙ не-расходящейся
+            // ветки (SelfAccess/var_types обычно знает receiver-тип). Пустой
+            // if_ty ломал C (` _nv_if_N;` + `()(x)`-касты).
+            //
+            // [item 126 companion] (owner's word 2026-11-03, release 0.1.3
+            // wave): a BARE `None` literal branch carries no payload -- its C
+            // type (`NovaOpt_nova_int`) is the emitter's default guess. When
+            // the OTHER non-divergent branch carries `NovaOpt_<X>` with a
+            // different inner, the None unifies with any Option -- prefer the
+            // other branch's type. Symmetric. A genuine `Option[int]` branch
+            // (not the None literal) keeps the mismatch refusal -- the
+            // syntactic check is what separates the default guess from a real
+            // type.
+            let then_none_lit = none_lit_tail(then);
+            let else_none_lit = match else_ {
+                Some(ElseBranch::Block(b)) => none_lit_tail(b),
+                Some(ElseBranch::If(e)) => {
+                    matches!(&e.kind, ExprKind::Ident(n) if n == "None")
+                }
+                None => false,
+            };
+            let chosen = if !then_diverges && !else_diverges {
+                if then_none_lit && !else_none_lit && else_ty.starts_with("NovaOpt_")
+                    && then_ty.starts_with("NovaOpt_") && then_ty != else_ty
+                {
+                    else_ty.clone()
+                } else if else_none_lit && !then_none_lit && then_ty.starts_with("NovaOpt_")
+                    && else_ty.starts_with("NovaOpt_") && then_ty != else_ty
+                {
+                    then_ty.clone()
+                } else {
+                    chosen
+                }
             } else {
                 chosen
             };
