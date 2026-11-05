@@ -469,6 +469,7 @@ M-callnorm-free-fn-name-collision
 M-cancellation-test-mono-recursion-overflow
 M-canceltoken-prelude-decl
 M-cap-getter-fluent-alias-false-positive
+M-carina-seed-bootstraps-pinned-tree
 M-cas-return-witnessed-value
 M-channel-real-elem-type-inference
 M-char-blanket-shadowed-by-sig-complete

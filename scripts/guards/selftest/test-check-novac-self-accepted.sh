@@ -3,6 +3,11 @@
 # подложный файл, шов `--from-file` (шапка стража). Швы `--from-file` и
 # `--baseline`.
 export LC_ALL=C
+# Изоляция от окружения вызывающего: дверь novac_bin читает $NOVAC ПЕРВОЙ
+# (lib/novac_bin.py:20), и случай 5 («нет бинаря — вердикта нет») под живым
+# NOVAC из CI-шага превращается в «страж позеленел» — счёт падает 12 -> 11
+# (замер: carina-gate run 41831558002). Прецедент: test-check-novac-bin-door.sh.
+unset NOVAC
 GD="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="$(cd "$GD/../.." && pwd)"
 G="$GD/check-novac-self-accepted.py"

@@ -278,5 +278,13 @@
     "lines_sha256": "fbe6fd8c281bc5573761231824caf03bd09e8dc20b4bee0ff825a3dc62fb1fb6",
     "reason": "Existing Oracle compatibility/bootstrap diagnostic or compiler selector; not a normative expected-behavior judge.",
     "due": "Reclassify or replace before promoting this guard to required CI; preserve separately authorized compatibility tests."
+  },
+  {
+    "path": ".github/workflows/carina-oracle-compat.yml",
+    "pattern": "oracle-build-novac",
+    "count": 1,
+    "lines_sha256": "117f4e684c4f52b51112cb28a4b676d5bca9b8ca6dd47799d86b0466706f7682",
+    "reason": "Task 140: the advisory oracle-compat contour keeps the seven oracle-dependent gate-novac guards running in the open; building novac with the Oracle is their explicit input, identical to the pinned nova-gate.yml row.",
+    "due": "Dies with the contour: when the pinned-seed driver covers the differential and module tests, carina-oracle-compat.yml is deleted wholesale, not edited."
   }
 ]

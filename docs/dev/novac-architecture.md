@@ -2538,6 +2538,79 @@ unsafe в сигнатуре) — снять: балансировать неч�
 компиляции на гейт.
 
 
+## CI-контур (задача 140)
+
+Два workflow, разделённые по отношению к Оракулу; раздел держит механизм
+(`scripts/guards/check-carina-gate-ci.py` с самотестом), не дисциплина.
+
+**Oracle-free контур** — `.github/workflows/carina-gate.yml` (windows-latest, push/PR/расписание).
+Цепочка: checkout main + checkout pinned-дерева (SHA из `docs/dev/carina-seeds/`) →
+`carina-native-build.py fetch-seed` (ассет релиза `carina-v0.2.1`, сверка SHA256) →
+`verify-carina-bootstrap-c.py` (pinned-дерево и stage-a против сида, авторитетный
+верификатор) → `emit` сидом → `libs` → `link` (b1) → `emit` бинарём b1 → побайтовое
+сравнение C stage-1/stage-2 (неподвижная точка самосборки) → `link` (b2) → `smoke` →
+`bash scripts/gate-carina.sh .` с `NOVAC=<b2>`. Ни одной строки cargo/rustup/
+`nova-cli/target`/`novac_find_oracle`/`$ORACLE` — форму держит тот же страж.
+
+**Почему bootstrap идёт по pinned-дереву, а не по HEAD:** сид говорит на
+снимке языка своего поколения; текущий main не собирает ни v0.2.1, ни
+carina-v0.2.2 (замерено 2026-11-04 на обоих: E_NOVAC_SUBSET,
+`std/src/os/os.nv:2537` — extern-тело `host_os` из `std.os`, ограничение
+E2-b2). При этом v0.2.2 эмитит pinned-дерево побайтово так же, как v0.2.1 —
+перепин контура технически чист, но тащит те же константы в
+`nova-driver/src/carina_build.rs` (обязательный контур), поэтому решение о
+перепине — отдельное слово владельца. Компилирует сид — pinned-дерево; судит
+main — текстовый ярус `gate-carina.sh` на checkout HEAD плюс страж дрейфа.
+
+**`scripts/gate-carina.sh`** — oracle-free текстовый ярус: все текстовые
+стражи `gate-novac.sh` одним списком (python — одним процессом через
+`run-guards.py`), плюс собственные `check-carina-gate-ci.py` и
+`check-carina-seed-drift.py`. **Корпусный ярус** (решение владельца
+2026-11-04, owner-decisions.md §1 — модульный уровень без Оракула): девять
+корпусных стражей (self-accepted, no-panic, diag-schema, no-cascade,
+fixture-expect, emission-size, emitted-unique, mangle-fixed-point,
+grammar-fixture-coverage) гоняются с `NOVAC=<b2>` по pinned-дереву
+(`CARINA_CORPUS_ROOT`) — бинарь, корпус и скрипты стражей одного поколения,
+красное здесь = регресс самой Карины (замер 2026-11-04: все девять зелёные в
+pinned-мире). Исключения — данные в шапке скрипта, три класса:
+`EXCLUDED_ORACLE` (7 стражей, живут в oracle-compat), `EXCLUDED_CORPUS`
+(только fuzz-zero-panic: нужен собранный фазз-харнесс `novac/target/`,
+который контур не строит), `EXCLUDED_FULL` (ночной ярус: цена цикла,
+самотест-мутации).
+
+**Advisory-контур** — `.github/workflows/carina-oracle-compat.yml` (ubuntu-latest,
+`continue-on-error` по построению, вердикт джобы всегда зелёный, итог — таблица в
+step summary). Собирает Оракула и novac Оракулом, гоняет семь oracle-стражей:
+oracle-fresh, differential, module-tests, lint, build-clean, cli-surface,
+shell-freshness. Красное здесь — сигнал совместимости, не блокер: рубеж слияния в
+main остаётся `scripts/gate.sh` → `gate-novac.sh`, этот контур его НЕ заменяет.
+Хит `nova build novac` в этом workflow — осознанная строка долга в
+`scripts/guards/carina-oracle-debt.json` (due: контур умирает целиком, когда
+драйвер сида покроет дифференциал и модульные тесты).
+
+**Анти-дрейф:** `check-carina-gate-ci.py` судит обе стороны разбиения — каждый
+страж, вызываемый в `gate-novac.sh`, обязан либо исполняться в `gate-carina.sh`,
+либо лежать ровно в одном EXCLUDED-блоке (протухшее исключение — красное); каждый
+EXCLUDED_ORACLE обязан быть вызван в `carina-oracle-compat.yml` (вынесен — значит
+перенесён, не выброшен); пины сида (`SEED_SOURCE`, `SEED_EXE_SHA256`) сверяются
+между `carina-native-build.py` и `carina_build.rs`.
+
+**Норма от дрейфа (решение владельца 2026-11-04, owner-decisions.md §4) —
+механизмами, не обещаниями:** (1) oracle-free контур выше: сид собирает
+управляемое дерево → b1 → b1 повторно эмитит байт-в-байт → b2 → текстовые
+стражи и смоук; после включения в обязательные любой дрейф управляемого дерева
+от возможностей последнего сида — красный CI на каждом пуше; (2) страж дрейфа
+`check-carina-seed-drift.py`: диф HEAD (novac/src, std/src) против управляемого
+дерева последнего сида публикуется списком и растёт только строками с номером
+задачи (`carina-seed-drift.baseline`), протухшая строка — красная; (3) публикация
+сида — часть приёмки волны, локальные поколения не копятся (carina-v0.2.2
+опубликован 2026-11-04: объединённый бинарь поколения 135, `no_oracle:true`;
+HEAD он не собирает — bootstrap по HEAD ждёт сида, говорящего HEAD); (4) Оракул остаётся в своей будке —
+carina-oracle-compat, измерение совместимости, не инструмент сборки ни в одном
+обязательном гейте; (5) правка novac/std, уводящая управляемое дерево от
+последнего сида без заявленного фоллоу-апа, не проходит review интегратора.
+Разработка novac идёт только поколениями от последнего сида.
+
 ## Связь
 
 - [274](../plans/274-novac-self-hosted-compiler.md) — зонтик, все решения
