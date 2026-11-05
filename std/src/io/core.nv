@@ -174,6 +174,41 @@ export fn write_all[W Write](mut w W, data []u8) -> Result[(), IoError] {
     Ok(())
 }
 
+/// Read one line, up to and including the first `\n`. The newline is
+/// consumed but NOT included in the result; EOF ends the line, and `Ok("")`
+/// means EOF with nothing read. Byte-wise reads (1-byte buffer) keep the
+/// documented fill-semantics `read_in` contract intact -- a 1-byte buffer is
+/// served as soon as one byte arrives, so line input works even against the
+/// fill-only stdio primitive (task-268 carrier: the product read stdin
+/// byte-wise for the same reason). Invalid UTF-8 mid-line → `IoError`
+/// `{InvalidData}`, mirroring `read_to_string`. Rust `BufRead::read_line`.
+#stable(since = "0.1.3")
+export fn read_line[R Read](mut r R) -> Result[str, IoError] {
+    mut line []u8 = []u8.new()
+    mut one []u8 = []u8.new()
+    one.resize(1, 0 as u8)
+    loop {
+        match r.read(one) {
+            Ok(0)  => break
+            Ok(_)  => {
+                ro b = one[0]
+                if b == 0x0A {
+                    break
+                }
+                line.push(b)
+            }
+            Err(e) => {
+                if e.is_interrupted() { continue }
+                return Err(e)
+            }
+        }
+    }
+    match line.to_str() {
+        Ok(s)  => Ok(s)
+        Err(_) => Err(IoError.new(ErrorKind.InvalidData, "read_line"))
+    }
+}
+
 /// Write a `str` to a byte sink as UTF-8 — the explicit bridge from text to the
 /// byte world (no implicit coupling with the `@display` text-sink).
 /// Forwards to `write_all` — the bound is carried through the generic forward.

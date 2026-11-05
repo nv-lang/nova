@@ -56,3 +56,31 @@ test "BufWriter over stdout batches, close flushes to the mock" {
     }
     assert(cap.out_bytes().len() == 7)
 }
+
+test "read_line strips the newline and consumes it" {
+    mut cap = IoCapture.new("line1\nline2\n")
+    ro l1 = with Io = mock_io(cap) {
+        match read_line(stdin()) { Ok(s) => s, Err(_) => "E1" }
+    }
+    assert(l1 == "line1")
+    ro l2 = with Io = mock_io(cap) {
+        match read_line(stdin()) { Ok(s) => s, Err(_) => "E2" }
+    }
+    assert(l2 == "line2")
+}
+
+test "read_line at EOF returns an empty string" {
+    mut cap = IoCapture.new("")
+    ro s = with Io = mock_io(cap) {
+        match read_line(stdin()) { Ok(s) => s, Err(_) => "E" }
+    }
+    assert(s == "")
+}
+
+test "read_line without a trailing newline ends at EOF" {
+    mut cap = IoCapture.new("no-newline")
+    ro s = with Io = mock_io(cap) {
+        match read_line(stdin()) { Ok(s) => s, Err(_) => "E" }
+    }
+    assert(s == "no-newline")
+}
