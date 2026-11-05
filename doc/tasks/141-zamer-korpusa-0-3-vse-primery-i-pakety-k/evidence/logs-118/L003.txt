@@ -1,0 +1,15 @@
+=== BUILD rc=0 (16.7s) ===
+--- stdout ---
+nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$INSTALL argv=["emit", "$WT\\examples\\basics\\assign_door.nv"] seed=carina-b asset_sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832 b1_sha256=d0ab736a04e59dbf66e10ebae17a73ef481a0909b7e2d57110ca29970c3f6460 source_sha=0b01c838b57f4056000eeb46987252e91dcdad71 seed_freshness=verified platform=windows-x86_64 generated_c_sha256=b2abd85770d022a04664a38f4066840200d5bdc0084eebf00806c56112c1a9a4
+nova build native inputs: toolchain=clang mode=Dev runtime_archive=$INSTALL\target\rt-archive-cache\b52ecc009a344b63\libnova_rt.lib runtime_sha256=778927d439b1818baa7e30807e61883be6fe4cd817a1364696ad7726525f8c23
+nova build: $S\run118\bin\L003.exe binary_sha256=de38be0350f4c5dd72ee75ec4a0e4b4815293a7f76b7ca4399eafc38209cd397
+--- stderr ---
+carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report
+carina-gate verify-seed PASS: oracle-a windows-x86_64 sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832 source=0b01c838b57f4056000eeb46987252e91dcdad71 compiler=oracle:0b01c838b57f4056000eeb46987252e91dcdad71
+
+=== RUN rc=0 ===
+--- stdout ---
+2
+8
+w
+--- stderr ---

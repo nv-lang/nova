@@ -1,0 +1,7 @@
+=== BUILD rc=1 (9.2s) ===
+--- stdout ---
+--- stderr ---
+carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report
+carina-gate verify-seed PASS: oracle-a windows-x86_64 sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832 source=0b01c838b57f4056000eeb46987252e91dcdad71 compiler=oracle:0b01c838b57f4056000eeb46987252e91dcdad71
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\patterns.nv","start":763,"end":767},"message":"a bare `None` here has no type to take: it stands for an Option only where a return type says which one (`-> Option[int]`, as a tail or a `return` operand) -- a typed binding or a later assignment is not compiled yet (E2-b3)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\tour\\patterns.nv","start":823,"end":826},"message":"outside the subset: the head of this `for` is neither a vector `[]T` nor an iterator (a type with `next() -> Option[T]`, D58) -- a collection reached through `iter()` first is not compiled yet (274.7 B12)","poisoned_by":null}

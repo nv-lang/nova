@@ -1,0 +1,6 @@
+=== BUILD rc=1 (9.5s) ===
+--- stdout ---
+--- stderr ---
+carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report
+carina-gate verify-seed PASS: oracle-a windows-x86_64 sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832 source=0b01c838b57f4056000eeb46987252e91dcdad71 compiler=oracle:0b01c838b57f4056000eeb46987252e91dcdad71
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_SUBSET","severity":"error","primary":{"file":"$WT\\examples\\effects\\spawn_demo.nv","start":2264,"end":2272},"message":"unknown name: nothing with this name is bound at this point","poisoned_by":null}

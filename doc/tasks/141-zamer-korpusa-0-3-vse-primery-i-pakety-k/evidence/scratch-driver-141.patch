@@ -1,0 +1,46 @@
+diff --git a/nova-driver/src/carina_build.rs b/nova-driver/src/carina_build.rs
+index eeda266ca..6b93dc94f 100644
+--- a/nova-driver/src/carina_build.rs
++++ b/nova-driver/src/carina_build.rs
+@@ -16,11 +16,14 @@ use std::path::{Path, PathBuf};
+ use std::process::{Command, Output};
+ use std::time::Duration;
+
+-const SEED_SOURCE: &str = "3729abcce42ec2d94efc898ec6eafe91ff6210d5";
+-const SEED_ZIP_SHA256: &str = "7e8264fd7b72d4005ca9bde585a6a732d3e7d6c248b65fd5787cd4a766e69cdb";
+-const SEED_EXE_SHA256: &str = "824bf597f8f073c68961df8b824ef5d4e72c4b463c47b727a4e121716f6996f4";
+-const SEED_ASSET: &str = "nova-carina-0.2.1-windows-x86_64.zip";
+-const SEED_URL: &str = "https://github.com/nv-lang/nova/releases/download/carina-v0.2.1/nova-carina-0.2.1-windows-x86_64.zip";
++// task 141, LOCAL scratch driver only: pins point at the LOCAL, unpublished
++// oracle-built Carina from HEAD 0b01c838b (stage oracle-a, generation-norm
++// deviation recorded in the task report). Official SEED_* on main untouched.
++const SEED_SOURCE: &str = "0b01c838b57f4056000eeb46987252e91dcdad71";
++const SEED_ZIP_SHA256: &str = "f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832";
++const SEED_EXE_SHA256: &str = "d0ab736a04e59dbf66e10ebae17a73ef481a0909b7e2d57110ca29970c3f6460";
++const SEED_ASSET: &str = "nova-carina-0.3.0-141head-windows-x86_64.zip";
++const SEED_URL: &str = "https://github.com/nv-lang/nova/releases/download/carina-v0.3.0-141head-local/nova-carina-0.3.0-141head-windows-x86_64.zip";
+ const DRIVER_STAMP: &str = "NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1";
+
+ #[allow(clippy::too_many_arguments)]
+@@ -579,6 +582,12 @@ fn prepare_seed(repo: &Path) -> Result<Seed> {
+             "windows-x86_64",
+             "--expected-seed-source-revision",
+             SEED_SOURCE,
++            // task 141, LOCAL scratch driver only: the measurement seed is an
++            // oracle-built Carina from HEAD (stage oracle-a); the reason is
++            // announced to the verifier on every run.
++            "--allow-oracle-stage-a",
++            "--oracle-reason",
++            "task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report",
+         ])
+         .current_dir(repo)
+         .output()
+@@ -589,7 +598,7 @@ fn prepare_seed(repo: &Path) -> Result<Seed> {
+     }
+
+     let unpacked = cache.join("unpacked");
+-    let exe = unpacked.join("nova-carina-0.2.1-windows-x86_64/novac.exe");
++    let exe = unpacked.join("nova-carina-0.3.0-141head-windows-x86_64/novac.exe");
+     if !exe.is_file() {
+         let command = format!(
+             "Expand-Archive -LiteralPath '{}' -DestinationPath '{}' -Force",

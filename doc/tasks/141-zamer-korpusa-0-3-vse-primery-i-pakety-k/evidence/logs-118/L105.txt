@@ -1,0 +1,7 @@
+=== BUILD rc=1 (9.0s) ===
+--- stdout ---
+--- stderr ---
+carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report
+carina-gate verify-seed PASS: oracle-a windows-x86_64 sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832 source=0b01c838b57f4056000eeb46987252e91dcdad71 compiler=oracle:0b01c838b57f4056000eeb46987252e91dcdad71
+nova: Carina B1 emit failed (exit 1): {"id":"d0","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\tour\\consume_tour.nv","start":946,"end":951},"message":"outside the subset: `defer` is not compiled yet -- running the body at scope exit, LIFO, on every way out (D90) is the effects/consume horizon's debt (E2)","poisoned_by":null}
+{"id":"d1","code":"E_NOVAC_LANG","severity":"error","primary":{"file":"$WT\\examples\\tour\\consume_tour.nv","start":1010,"end":1015},"message":"outside the subset: `defer` is not compiled yet -- running the body at scope exit, LIFO, on every way out (D90) is the effects/consume horizon's debt (E2)","poisoned_by":null}

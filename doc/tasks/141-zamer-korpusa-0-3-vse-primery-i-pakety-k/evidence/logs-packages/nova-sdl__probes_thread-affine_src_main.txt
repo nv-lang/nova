@@ -1,0 +1,7 @@
+=== BUILD rc=1 (1.1s) ===
+--- stdout ---
+--- stderr ---
+nova: dependency resolution (nova.lock.toml): резолв версий git-зависимостей:
+  clone git-зависимости `https://github.com/nv-lang/nova-sdl`: `git clone --bare --quiet https://github.com/nv-lang/nova-sdl $NOVA_HOME\git\db\nova-sdl-a2973d2f83a91d08.git` завершился с ошибкой:
+  remote: Repository not found.
+fatal: repository 'https://github.com/nv-lang/nova-sdl/' not found
