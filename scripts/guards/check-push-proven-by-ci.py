@@ -84,6 +84,9 @@ NAME = "check-push-proven-by-ci"
 REQUIRED = [
     "nova-gate", "crate-tests", "nova-lint", "nova-test-regression",
     "contracts-crosscheck", "contracts-z3", "nova-doc",
+    # Carina's oracle-free contour (task 140, integrator decision 2026-11-05):
+    # main moves only to a commit the seed-based self-hosted gate has judged.
+    "carina-gate",
 ]
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 ACCEPTED = os.path.join(ROOT, "scripts", "guards", "ci-accepted-red.list")

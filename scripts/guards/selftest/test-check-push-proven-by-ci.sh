@@ -48,7 +48,7 @@ ok()  { PASS=$((PASS+1)); echo "  ok   $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL $1" >&2; }
 
 SHA=1111111111111111111111111111111111111111
-WFS="nova-gate crate-tests nova-lint nova-test-regression contracts-crosscheck contracts-z3 nova-doc"
+WFS="nova-gate crate-tests nova-lint nova-test-regression contracts-crosscheck contracts-z3 nova-doc carina-gate"
 
 # runs <file> <wf:status:conclusion:id>... — прогоны на SHA; неназванные воркфлоу
 # получают зелёный прогон, `-` в поле conclusion значит null, `none` в status —
@@ -156,10 +156,13 @@ run_case() {
 echo "== ядро =="
 acc
 runs "$TMP/green.json"
-run_case "все обязательные зелёные -> ok" 0 "ok: 7/7" "$TMP/green.json"
+run_case "все обязательные зелёные -> ok" 0 "ok: 8/8" "$TMP/green.json"
 
 runs "$TMP/missing.json" "contracts-z3:none:-:0"
 run_case "нет прогона одного воркфлоу -> FAIL" 1 "contracts-z3: no run" "$TMP/missing.json"
+
+runs "$TMP/missing-carina.json" "carina-gate:none:-:0"
+run_case "нет прогона carina-gate -> FAIL" 1 "carina-gate: no run" "$TMP/missing-carina.json"
 
 runs "$TMP/progress.json" "crate-tests:in_progress:-:7"
 run_case "прогон ещё идёт -> FAIL (ждать)" 1 "still in_progress" "$TMP/progress.json"
@@ -261,7 +264,7 @@ runs "$TMP/nojobs.json" "nova-doc:completed:failure:503"
 run_case "прогон красен, красных заданий не названо -> FAIL" 1 "cannot tell what failed" "$TMP/nojobs.json"
 
 runs "$TMP/newer-green.json" "nova-lint:completed:failure:504" "nova-lint:completed:success:505"
-run_case "судится НОВЕЙШИЙ прогон: красный, затем зелёный -> ok" 0 "ok: 7/7" "$TMP/newer-green.json"
+run_case "судится НОВЕЙШИЙ прогон: красный, затем зелёный -> ok" 0 "ok: 8/8" "$TMP/newer-green.json"
 
 runs "$TMP/newer-running.json" "nova-lint:completed:success:506" "nova-lint:queued:-:507"
 run_case "судится новейший: зелёный, затем в очереди -> FAIL" 1 "still queued" "$TMP/newer-running.json"
