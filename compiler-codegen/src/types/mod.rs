@@ -25287,6 +25287,28 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 // Обе ветки не расходятся:
                 let is_unit = |t: &TypeRef| matches!(ResolvedType::from_type_ref(t), ResolvedType::Unit);
+                // Item 126: a BARE `None` literal branch carries no payload —
+                // its inferred `Option[int]` is the checker's default guess,
+                // not a type. When the other branch resolves to `Option[X]`,
+                // the if's type is `Option[X]` (a bare None unifies with any
+                // Option). Syntactic detection: the branch's trailing expr is
+                // the bare `None` identifier (not a genuine `Option[int]`
+                // value, which keeps the mismatch refusal).
+                let bare_none_tail = |b: &crate::ast::Block| -> bool {
+                    matches!(
+                        b.trailing.as_ref().map(|t| &t.kind),
+                        Some(crate::ast::ExprKind::Ident(n)) if n == "None"
+                    )
+                };
+                let bare_none_else = |eb: &crate::ast::ElseBranch| -> bool {
+                    match eb {
+                        crate::ast::ElseBranch::Block(b) => bare_none_tail(b),
+                        crate::ast::ElseBranch::If(e) => matches!(
+                            &e.kind,
+                            crate::ast::ExprKind::Ident(n) if n == "None"
+                        ),
+                    }
+                };
                 match (&then_t, &else_t) {
                     // Ровно одна — unit, другая — value: D275 unit-доминирование
                     // ([M-codegen-fluent-tail-if-unify]) → весь if = unit.
@@ -25298,6 +25320,23 @@ impl<'a> TypeCheckCtx<'a> {
                     // Обе разрешились И совпали → этот тип.
                     (Some(tt), Some(te))
                         if ResolvedType::from_type_ref(tt) == ResolvedType::from_type_ref(te) =>
+                    {
+                        Some(tt.clone())
+                    }
+                    // Item 126: одна ветка — голый `None` литерал (дефолтная
+                    // догадка `Option[int]`), другая — `Option[X]` → if имеет
+                    // тип `Option[X]`.
+                    (Some(tt), Some(te))
+                        if bare_none_tail(then)
+                            && matches!(ResolvedType::from_type_ref(te),
+                                ResolvedType::Named { name, .. } if name.starts_with("Option") || name.starts_with("NovaOpt")) =>
+                    {
+                        Some(te.clone())
+                    }
+                    (Some(tt), Some(te))
+                        if bare_none_else(eb)
+                            && matches!(ResolvedType::from_type_ref(tt),
+                                ResolvedType::Named { name, .. } if name.starts_with("Option") || name.starts_with("NovaOpt")) =>
                     {
                         Some(tt.clone())
                     }
