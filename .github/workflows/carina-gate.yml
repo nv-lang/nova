@@ -16,14 +16,11 @@ name: carina-gate
 
 on:
   push:
-    branches: [main, master]
-    paths:
-      - 'novac/**'
-      - 'std/**'
-      - 'spec_tests/**'
-      - 'scripts/**'
-      - 'docs/dev/carina-seeds/**'
-      - '.github/workflows/carina-gate.yml'
+    # Required for main moves (check-push-proven-by-ci, integrator decision
+    # 2026-11-05): like the other required workflows, candidates are judged
+    # on integrate/**, so no paths filter — a docs-only candidate still needs
+    # a carina-gate verdict on its SHA.
+    branches: [main, master, integrate, 'integrate/**']
   pull_request:
   workflow_dispatch:
   schedule:
