@@ -1,0 +1,26 @@
+// EXPECT_STDOUT x x
+//
+// Item 126 (crew-harness spike `if_none_option_str`): an `if` whose one
+// branch is the bare `None` literal and the other is `Some` of a text,
+// bound by `ro` without a type, used to be typed `Option[int]` in the
+// `None` branch and `Option[str]` in the other BY THE CODE GENERATOR
+// (CC-FAIL assigning 'NovaOpt_nova_int' from incompatible type
+// 'NovaOpt_nova_str'). Root: the checker's bare-`None` inference defaults
+// to `Option[int]` (a guess, not a type), and the if-join could not unify
+// the branches. The join now unifies a bare-`None` branch with the other
+// branch's `Option[X]`.
+
+module standalone.if_none_option_str_infer
+
+type Ev { name str, request Option[str] }
+
+fn make(flag bool) -> Ev {
+    ro request = if flag { None } else { Some("agent-1") }
+    Ev { name: "x", request }
+}
+
+fn main() {
+    ro e1 = make(true)
+    ro e2 = make(false)
+    println("${e1.name} ${e2.name}")
+}
