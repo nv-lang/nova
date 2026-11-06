@@ -1,0 +1,6 @@
+// The two-levels-under-the-source-root module (item 25): the folder
+// `nested_module` holds no .nv of its own; the module lives in
+// `nested_module/inner/inner.nv`.
+module nested_module_two_levels.nested_module.inner
+
+export fn value() -> int { 25 }

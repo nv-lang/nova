@@ -1,0 +1,16 @@
+// EXPECT_STDOUT v =25
+//
+// Item 25 (canopus spike `nested_module`): a module in a folder TWO levels
+// under the source root (no .nv in the first folder) did not resolve --
+// the import failed and the product had to keep its modules one level
+// deep. On the current toolchain the import, the call and the output all
+// resolve. This pin is the evidence the product's ORACLE-WORKAROUND(25)
+// notes (src/acp/README.md, src/pg/README.md) are removable against this
+// release -- the removal goes through the product's acceptance.
+module nested_module_two_levels.driver
+
+import ./nested_module.inner
+
+fn main() {
+    println("v =", inner.value())
+}
