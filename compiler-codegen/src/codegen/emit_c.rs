@@ -48744,7 +48744,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .effect_schemas
             .get("Io")
             .ok_or_else(|| "print/println: the `Io` effect is not in this CU \
-                            (std/io/console.nv must be in the compilation)".to_string())?;
+                            (std/src/io/console.nv must be in the compilation)".to_string())?;
         let mut param_note: Option<String> = None;
         let mut dispatch: Option<String> = None;
         for (mangled, (param_tys, _ret)) in eff_schema.iter() {
