@@ -212,3 +212,15 @@ call resolution (types/mod.rs; novac-сторона синхронно при с
 После фикса — пин fn_name_two_modules коммитится зелёным, метка
 ORACLE-WORKAROUND(49) в canopus (src/server/hub.nv:230) снимается против
 релиза через их acceptance.
+
+## 2026-11-06, ночь (8) — пункт 9 (item 25): половина жива
+
+Пин (закоммичен, зелёный): spec_tests/conformance/nested_module_two_levels/ —
+модуль в ДВУХ уровнях под корнем (nested_module/inner/inner.nv, в первой
+папке нет .nv) — РАБОТАЕТ в форме ОТНОСИТЕЛЬНОГО импорта `./nested_module.inner`
+(импорт, вызов, вывод корректны). Но АБСОЛЮТНАЯ форма
+`import nested_module_two_levels.nested_module.inner` того же модуля — НЕ
+резолвится (cannot find module). Итого item 25 жив наполовину: дефект в
+абсолютной резолюции путей вложенных модулей (семья item 49 — резолюция имён/
+путей программы). Относительная форма — канонический маршрут (const_peer_group
+прецедент). Фикс абсолютной резолюции — вместе с item 49 (одна семья).
