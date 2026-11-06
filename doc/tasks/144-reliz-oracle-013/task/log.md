@@ -194,3 +194,21 @@ var_types (уже есть, [M-detach-consume-match-arm-capture-lost]); для
 fiber-захватов — тот же перевод с макросов на прямые ссылки через ctx-структуру.
 Обязателен A/B: батарея consume-фикстур (conformance/consume_fixtures/*,
 detach-consume формы из волны 0.1.2).
+
+## 2026-11-06, ночь (7) — пункт 8 (item 49): ВОСПРОИЗВЕДЁН, корень локализован
+
+Пин-репро (локально, не закоммичен — красный): spec_tests/conformance/
+fn_name_two_modules/{driver,def_mod}.nv (раскладка как const_peer_group:
+каталог = программа, ./def_mod.{count_of} относительный импорт). Точно по
+спайку task 114: вызов `begin(2)` driver-модуля резолвится в ПРИВАТНУЮ
+generic `begin[T]` чужого модуля → «cannot infer type argument T (returned
+only — turbofish required)». Имена функций глобальны программе даже для
+приватных чужих (семья items 9/14/21/39/43).
+
+План фикса (как для прода): резолюция свободных вызовов в чекере —
+модуль-локальные объявления выигрывают у чужих; приватные чужие имена
+невидимы вовсе (импортируется только экспортированное). Место: free-fn
+call resolution (types/mod.rs; novac-сторона синхронно при самосборке).
+После фикса — пин fn_name_two_modules коммитится зелёным, метка
+ORACLE-WORKAROUND(49) в canopus (src/server/hub.nv:230) снимается против
+релиза через их acceptance.
