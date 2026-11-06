@@ -120,3 +120,25 @@ E_UNDECLARED_TRANSITIVE_EFFECT (без флага — D62 правило 1, не
 - interp-канал: interp/stdlib.rs:52-79 print/println Native через
   OUTPUT_CAPTURE (:13-24) — направить через Io-механику интерпа.
 - Канал f1_expr (:61538): println|print|assert -> "nova_unit" — синхронизировать.
+
+## 2026-11-06, ночь (3) — пункт 4: ЯДРО ЗАВЕРШЕНО (495a2fb84), 0 регрессий
+
+Сделано: синтез println через emit_interpolated_str + диспетчер Nova_Io_write_out
+(schema-keyed, не хардкод); снос make_print_call/infer_print_helper (~77 LOC);
+prelude импортирует std.io (прецедент char/defaults/math); сигнатуры print/
+println + Io; пин print_io_lowering.nv (EXPECT_STDOUT x3, все примитивы,
+no-separator семантика документации подтверждена).
+
+Верификация: conformance 498 PASS (2 пре-существующих красных, бazель идентичен),
+nova_tests 1 пре-существующий, std/src 82 PASS (2 пре-существующих, bazель
+идентичен). f64-паритет — интерполяционный движок (Plan 208), пин подтверждает.
+
+Решения в рамках пункта (инженерные, не спек):
+- Interp-канал: print/println в интерпретаторе остаётся на OUTPUT_CAPTURE
+  (capture = честный мок doc-тестов); полное Io-диспетчерство в интерпретаторе —
+  отдельная подсистема (машинерии эффектов в интерпе нет), зафиксировано как
+  хвост пункта 4. Поведение doc-фикстур не меняется.
+- expect_output-фикстуры (effects: []) не затронуты (interp-канал не менялся).
+
+Хвосты пункта 4: Io-сигнатурная волна по корпусу (примеры/тесты репо под
+--strict-effects; canopus 8 мест — через их acceptance); interp-Io подсистема.
