@@ -142,3 +142,20 @@ nova_tests 1 пре-существующий, std/src 82 PASS (2 пре-суще
 
 Хвосты пункта 4: Io-сигнатурная волна по корпусу (примеры/тесты репо под
 --strict-effects; canopus 8 мест — через их acceptance); interp-Io подсистема.
+
+## 2026-11-06, ночь (4) — пункт 6 (item 17): доказательства закрытия собраны
+
+Item 17 (atomic_in_record_copy: Atomic*-хендлер в record копируется, store
+через переменную не виден) закрыт D447 `#no_copy` — аффинность на уровне типа
+(spec/decisions/02-types.md:19469, Plan 248; Atomic* = value-inside record,
+копирование типа запрещено компилятором).
+
+Доказательства (все на новом компиляторе, 5/5 PASS):
+- spec_tests/conformance/p248w3_atomic_value_inside_spawn.nv — ключевой:
+  mut-захват Atomic-счётчика в spawn/supervised/parallel-for, все fibers
+  пишут В ОДНО хранилище (escape-promotion D228 маршрутизирует по указателю);
+- spec_tests/conformance/d447_no_copy_second_name.nv — аффинность;
+- neg/n_d447_arg_escape.nv, neg/n_d447_tuple_literal_embed.nv,
+  neg/n_d447_invalid_kind.nv — отрицательные формы отказа компиляции.
+
+Пункт 6 состава: DONE (доказательства в записи релиза).
