@@ -159,3 +159,15 @@ Item 17 (atomic_in_record_copy: Atomic*-хендлер в record копируе�
   neg/n_d447_invalid_kind.nv — отрицательные формы отказа компиляции.
 
 Пункт 6 состава: DONE (доказательства в записи релиза).
+
+## 2026-11-06, ночь (5) — пункт 5 (item 16): естественный repro НЕ воспроизводится; пин собран
+
+`b = b.bump(5)` (assign-back fleeting-ref в value-record) и цепочки
+`b.bump(1).bump(2).n` на текущем тулчейне компилируются и мутируют ЕДИНОЕ
+хранилище переменной (повторный assign-back после цепочки — 8+5=13). Отказ
+«a pointer assigned to a value» ушёл (вероятно, Plan 184 fleeting-refs).
+По правилу владельца пункт НЕ исключается: собран пин
+spec_tests/conformance/standalone/fluent_assign_back.nv (3 EXPECT_STDOUT) —
+доказательство снимаемости метки ORACLE-WORKAROUND(16) в canopus
+(src/acp/link.nv:198) против этого релиза; снятие — через их acceptance.
+Пункт 5 состава: DONE (пин + запись).
