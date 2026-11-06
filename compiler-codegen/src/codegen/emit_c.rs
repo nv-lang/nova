@@ -49215,6 +49215,86 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
 
+    /// Shared if/else C-type DECISION pipeline — the single authority both
+    /// consumers go through:
+    ///   * the value emitter (`emit_if_expr`, the if-temp's C type), and
+    ///   * the storage probe (`infer_expr_c_type` Channel 6j, a Let
+    ///     initializer's declared C var type).
+    /// The two used to be hand-maintained copies; each divergence between them
+    /// is a CC-FAIL class (2026-07-04 lift; item 126: the copy in 6j missed
+    /// the bare-None reconciliation and `ro x = if c { None } else { Some(s) }`
+    /// declared `NovaOpt_nova_int` storage for a `NovaOpt_nova_str` value).
+    ///
+    /// Pipeline (in order): Plan 125 divergence-aware pick → D275
+    /// unit-domination (statement-position coercion) → item 126 bare-None
+    /// reconciliation (a bare `None` branch's `NovaOpt_nova_int` is the
+    /// emitter's default GUESS; the other non-divergent branch's
+    /// `NovaOpt_<X>` wins, symmetric) → [M-172.1-d174] empty-pick fallback.
+    /// Returns `(chosen, non_divergent_branch_tys)`; the Result-arm
+    /// combination stays with the caller (6j combines inline, emit_if_expr
+    /// defers to the U.4.4 atom consume — different mechanisms by design).
+    fn if_branch_chosen_c_type(
+        &self,
+        then: &Block,
+        else_: Option<&ElseBranch>,
+        then_diverges: bool,
+        then_ty: &str,
+        else_diverges: bool,
+        else_ty: &str,
+        dbg_tag: &str,
+    ) -> (String, Vec<String>) {
+        let mut caps: Vec<String> = Vec::new();
+        if !then_diverges { caps.push(then_ty.to_string()); }
+        if !else_diverges { caps.push(else_ty.to_string()); }
+        // Plan 125: divergence-aware pick.
+        let mut chosen = if then_diverges { else_ty.to_string() } else { then_ty.to_string() };
+        // [M-codegen-fluent-tail-if-unify] (2026-06-14): D275 unit-domination.
+        if chosen != "nova_unit" {
+            let then_is_unit = !then_diverges && then_ty == "nova_unit";
+            let else_is_unit = !else_diverges && else_ty == "nova_unit";
+            if then_is_unit || else_is_unit {
+                chosen = "nova_unit".into();
+            }
+        }
+        // [item 126 companion] (owner's word 2026-11-03, release 0.1.3 wave):
+        // a BARE `None` literal branch carries no payload -- its C type
+        // (`NovaOpt_nova_int`) is the emitter's default guess. When the OTHER
+        // non-divergent branch carries `NovaOpt_<X>` with a different inner,
+        // the None unifies with any Option -- prefer the other branch's type.
+        // Symmetric. A genuine `Option[int]` branch (not the None literal)
+        // keeps the mismatch refusal -- the syntactic check is what separates
+        // the default guess from a real type.
+        let then_none_lit = none_lit_tail(then);
+        let else_none_lit = match else_ {
+            Some(ElseBranch::Block(b)) => none_lit_tail(b),
+            Some(ElseBranch::If(e)) => matches!(&e.kind, ExprKind::Ident(n) if n == "None"),
+            None => false,
+        };
+        if !then_diverges && !else_diverges {
+            if then_none_lit && !else_none_lit && else_ty.starts_with("NovaOpt_")
+                && then_ty.starts_with("NovaOpt_") && then_ty != else_ty
+            {
+                chosen = else_ty.to_string();
+            } else if else_none_lit && !then_none_lit && then_ty.starts_with("NovaOpt_")
+                && else_ty.starts_with("NovaOpt_") && then_ty != else_ty
+            {
+                chosen = then_ty.to_string();
+            }
+        }
+        // [M-172.1-d174] (U.1.3b, 2026-07-02): an EMPTY picked type (RecordLit
+        // merged-through-import module during its own method emission) -> the
+        // other non-divergent branch's type. An empty if_ty broke the C.
+        if chosen.is_empty() {
+            if !then_diverges && !then_ty.is_empty() {
+                chosen = then_ty.to_string();
+            } else if !else_diverges && !else_ty.is_empty() {
+                chosen = else_ty.to_string();
+            }
+        }
+        self.debug_if_infer_125(dbg_tag, then_diverges, then_ty, else_ty, &chosen);
+        (chosen, caps)
+    }
+
     fn emit_if_expr(
         &mut self,
         cond: &Expr,
@@ -49280,88 +49360,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 None => (false, "nova_unit".into()),
             };
-            if !then_diverges { cap_branch_tys.push(then_ty.clone()); }
-            if !else_diverges { cap_branch_tys.push(else_ty.clone()); }
-            let chosen = if then_diverges {
-                // Use else-branch's inferred type.
-                else_ty.clone()
-            } else {
-                then_ty.clone()
-            };
-            // [M-codegen-fluent-tail-if-unify] (2026-06-14): mirror emit_match's
-            // unit-domination fallback (lines ~27210-27230). If the chosen type
-            // is a real value type but the OTHER, non-divergent branch yields
-            // nova_unit, the two branches are type-incompatible AND the if is in
-            // discard/statement position — coerce the WHOLE if to nova_unit
-            // (values dropped) rather than emit `tmp(Vec*) = NOVA_UNIT;` which is
-            // a C type mismatch → CC-FAIL. This bites fluent self-return tails
-            // (`-> @`, e.g. `v.push(1)` typed Nova_Vec*) sitting in one if-branch
-            // while the sibling branch yields unit. Gated on chosen != nova_unit
-            // (don't touch the common case) and on the OTHER branch being
-            // non-divergent (a divergent sibling must NOT force unit — that is
-            // existing Plan 125 behavior and must be preserved).
-            let chosen = if chosen != "nova_unit" {
-                let then_is_unit = !then_diverges && then_ty == "nova_unit";
-                let else_is_unit = !else_diverges && else_ty == "nova_unit";
-                if then_is_unit || else_is_unit { "nova_unit".into() } else { chosen }
-            } else {
-                chosen
-            };
-            // [M-172.1-d174] (U.1.3b, 2026-07-02): ПУСТОЙ inferred-тип выбранной
-            // ветки (RecordLit merged-через-import модуля при эмиссии его же
-            // методов — схема фазово не готова) → тип ДРУГОЙ не-расходящейся
-            // ветки (SelfAccess/var_types обычно знает receiver-тип). Пустой
-            // if_ty ломал C (` _nv_if_N;` + `()(x)`-касты).
-            //
-            // [item 126 companion] (owner's word 2026-11-03, release 0.1.3
-            // wave): a BARE `None` literal branch carries no payload -- its C
-            // type (`NovaOpt_nova_int`) is the emitter's default guess. When
-            // the OTHER non-divergent branch carries `NovaOpt_<X>` with a
-            // different inner, the None unifies with any Option -- prefer the
-            // other branch's type. Symmetric. A genuine `Option[int]` branch
-            // (not the None literal) keeps the mismatch refusal -- the
-            // syntactic check is what separates the default guess from a real
-            // type.
-            let then_none_lit = none_lit_tail(then);
-            let else_none_lit = match else_ {
-                Some(ElseBranch::Block(b)) => none_lit_tail(b),
-                Some(ElseBranch::If(e)) => {
-                    matches!(&e.kind, ExprKind::Ident(n) if n == "None")
-                }
-                None => false,
-            };
-            let chosen = if !then_diverges && !else_diverges {
-                if then_none_lit && !else_none_lit && else_ty.starts_with("NovaOpt_")
-                    && then_ty.starts_with("NovaOpt_") && then_ty != else_ty
-                {
-                    else_ty.clone()
-                } else if else_none_lit && !then_none_lit && then_ty.starts_with("NovaOpt_")
-                    && else_ty.starts_with("NovaOpt_") && then_ty != else_ty
-                {
-                    then_ty.clone()
-                } else {
-                    chosen
-                }
-            } else {
-                chosen
-            };
-            // [M-172.1-d174] (U.1.3b, 2026-07-02): ПУСТОЙ inferred-тип выбранной
-            // ветки (RecordLit merged-через-import модуля при эмиссии его же
-            // методов — схема фазово не готова) → тип ДРУГОЙ не-расходящейся
-            // ветки (SelfAccess/var_types обычно знает receiver-тип). Пустой
-            // if_ty ломал C (` _nv_if_N;` + `()(x)`-касты).
-            let chosen = if chosen.is_empty() {
-                if !then_diverges && !then_ty.is_empty() {
-                    then_ty.clone()
-                } else if !else_diverges && !else_ty.is_empty() {
-                    else_ty.clone()
-                } else {
-                    chosen
-                }
-            } else {
-                chosen
-            };
-            self.debug_if_infer_125("emit_if_expr", then_diverges, &then_ty, &else_ty, &chosen);
+            // The decision pipeline (divergence-aware pick, D275 unit-
+            // domination, item 126 bare-None reconciliation, d174 empty
+            // fallback) lives in the SHARED helper — the storage probe
+            // (infer_expr_c_type Channel 6j) goes through the same one.
+            let (chosen, caps) = self.if_branch_chosen_c_type(
+                then, else_, then_diverges, &then_ty, else_diverges, &else_ty, "emit_if_expr",
+            );
+            cap_branch_tys = caps;
             chosen
         };
         // Plan 172.1 U.4.4/U.4.5 (emit_if_expr result_ty CONSUME): the checker's If-expr atom
@@ -64574,8 +64580,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Channel 6j (2026-07-04): value-form if-с-else — ДОСЛОВНЫЙ подъём
         // legacy If-арма (divergence-aware + D275 unit-домминация; вызывался
-        // из emit_if_expr — IF-WHO факт). Byte-identical; sub-вопросы идут
-        // через dispatcher (каналы детей работают).
+        // из emit_if_expr — IF-WHO факт). Sub-вопросы идут через dispatcher
+        // (каналы детей работают). Решающий конвейер — ОБЩИЙ helper
+        // `if_branch_chosen_c_type` (тот же, что у emit_if_expr): копии
+        // расходились дважды, каждая расходимость — класс CC-FAIL (item 126:
+        // в этой копии не было bare-None реконсиляции, и `ro x = if c { None }
+        // else { Some(s) }` объявлял хранилище NovaOpt_nova_int под значением
+        // NovaOpt_nova_str).
         if let ExprKind::If { else_: if_else @ Some(_), then: if_then, .. } = &expr.kind {
             let then_diverges = self.block_trailing_diverges(if_then);
             // #1657: each branch tail is typed with the branch's own lets
@@ -64593,28 +64604,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 ),
                 None => (false, "nova_unit".into()),
             };
-            let chosen = if then_diverges { else_ty.clone() } else { then_ty.clone() };
-            let chosen = if chosen != "nova_unit" {
-                let then_is_unit = !then_diverges && then_ty == "nova_unit";
-                let else_is_unit = !else_diverges && else_ty == "nova_unit";
-                if then_is_unit || else_is_unit { "nova_unit".into() } else { chosen }
-            } else {
-                chosen
-            };
+            let (chosen, branch_tys) = self.if_branch_chosen_c_type(
+                if_then, if_else.as_ref(), then_diverges, &then_ty, else_diverges, &else_ty,
+                "ch6j_If",
+            );
             // Plan 180 Ф.6: Result-branch reconciliation (mirror of emit_if_expr /
             // the match path) — `if … { Ok(V) } else { Err(..) }` yields the full
             // `Result[OK, ERR]` only by combining the two half-stub branches.
             // Split+combine the ALREADY-computed branch types (no re-inference).
-            {
-                let mut branch_tys: Vec<String> = Vec::new();
-                if !then_diverges { branch_tys.push(then_ty.clone()); }
-                if !else_diverges { branch_tys.push(else_ty.clone()); }
-                if let Some(rec) = self.combine_result_arm_types(&branch_tys) {
-                    self.debug_if_infer_125("ch6j_If", then_diverges, &then_ty, &else_ty, &rec);
-                    return rec;
-                }
+            if let Some(rec) = self.combine_result_arm_types(&branch_tys) {
+                self.debug_if_infer_125("ch6j_If", then_diverges, &then_ty, &else_ty, &rec);
+                return rec;
             }
-            self.debug_if_infer_125("ch6j_If", then_diverges, &then_ty, &else_ty, &chosen);
             return chosen;
         }
         // Channel 6i (2026-07-04): bare `None` в flow-позиции (let без аннотации
