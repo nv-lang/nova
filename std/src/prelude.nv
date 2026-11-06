@@ -75,7 +75,7 @@ import std.runtime.math
 // machinery in every CU that prints -- same compiler-generated-need
 // precedent as char/defaults/math above. Plain import: signatures inline
 // into every module's method_table (auto-available without user import).
-import std.io
+// BISECT-1: the prelude std.io import reverted (toml Linux bisect, task 144)
 
 // Re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +
