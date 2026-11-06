@@ -1,0 +1,119 @@
+n	path	verdict	build_rc	build_s	run_rc	exe_sha256_16	first_stdout	fail_class	fail_first_line	driver_contour
+L001	examples/basics/arithmetic.nv	PASS	0	31.1	0	e1b48ce37eeae619	5! = 120			patched-scratch-driver-141
+L002	examples/basics/array_lit_positions.nv	PASS	0	18.6	0	cf628ce635011ab9	3			patched-scratch-driver-141
+L003	examples/basics/assign_door.nv	PASS	0	16.7	0	de38be0350f4c5dd	2			patched-scratch-driver-141
+L004	examples/basics/char_literal.nv	PASS	0	16.8	0	4cf5d06e37971aec	1			patched-scratch-driver-141
+L005	examples/basics/char_non_ascii.nv	PASS	0	16.3	0	7d71e2d2d4541e0a	2			patched-scratch-driver-141
+L006	examples/basics/coalesce.nv	PASS	0	16.3	0	1fe2a72939625b0a	20			patched-scratch-driver-141
+L007	examples/basics/ctor_nested_effect_once.nv	PASS	0	16.6	0	1d2693b8d29ef2b4	t2			patched-scratch-driver-141
+L008	examples/basics/demo.nv	FAIL	1	11.5				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L009	examples/basics/destructure_record.nv	PASS	0	16.6	0	80b10a6b0cfa76f7	99			patched-scratch-driver-141
+L010	examples/basics/enum_value.nv	PASS	0	16.4	0	d29e6f30d134e42b	1			patched-scratch-driver-141
+L011	examples/basics/for_call_effect_once.nv	PASS	0	17.6	0	65e6d12243bc7642	100			patched-scratch-driver-141
+L012	examples/basics/for_call_head.nv	PASS	0	17.6	0	b146a5cec0794e4f	3			patched-scratch-driver-141
+L013	examples/basics/for_name_head.nv	PASS	0	16.3	0	5b9a69756955e5e7	4			patched-scratch-driver-141
+L014	examples/basics/forward_type_ref.nv	PASS	0	17.0	0	a0b9dc9f7c66aaad	9			patched-scratch-driver-141
+L015	examples/basics/handed_free_fn.nv	PASS	0	18.4	0	d22b33fe0c1eaa66	true			patched-scratch-driver-141
+L016	examples/basics/hello.nv	PASS	0	16.9	0	ea02a2cc4a99c684	Hello, Nova!			patched-scratch-driver-141
+L017	examples/basics/hex_bytes.nv	PASS	0	15.8	0	0667ae48ee0353c8	255			patched-scratch-driver-141
+L018	examples/basics/if_let_some.nv	PASS	0	16.0	0	221737f804727796	9			patched-scratch-driver-141
+L019	examples/basics/iflet_else.nv	PASS	0	16.2	0	6fbb2ef5acd95021	9			patched-scratch-driver-141
+L020	examples/basics/interp_display.nv	PASS	0	15.6	0	b7bcf71254bc0e75	p Pt end			patched-scratch-driver-141
+L021	examples/basics/interp_expr.nv	PASS	0	15.6	0	f5915626c994f89c	m=10 tw=8 fld=5 sum=5 lim=9			patched-scratch-driver-141
+L022	examples/basics/interp_families.nv	PASS	0	15.9	0	33b052c19712c412	int 42 f64 2.5 bool true char z str str			patched-scratch-driver-141
+L023	examples/basics/interp_name.nv	PASS	0	14.9	0	34f1ba56c3e366ed	hi world, n=42!			patched-scratch-driver-141
+L024	examples/basics/leading_zero_literal.nv	PASS	0	14.8	0	06b59c1f49b1440c	123			patched-scratch-driver-141
+L025	examples/basics/match_block_arm.nv	PASS	0	14.2	0	dc54bf6c73744237	1			patched-scratch-driver-141
+L026	examples/basics/match_demo.nv	PASS	0	16.4	0	2b14d703f303f186	circle area = 12.56			patched-scratch-driver-141
+L027	examples/basics/match_disj_alternative_path.nv	PASS	0	14.4	0	4689b8f95497765c	1			patched-scratch-driver-141
+L028	examples/basics/match_disj_payload.nv	PASS	0	14.8	0	8a1011d2b76e41bb	1			patched-scratch-driver-141
+L029	examples/basics/match_stmt.nv	PASS	0	14.6	0	fe9127c0d9fdd346	something			patched-scratch-driver-141
+L030	examples/basics/method_overload_pick.nv	PASS	0	15.4	0	16fb78bd89e4aa0e	15			patched-scratch-driver-141
+L031	examples/basics/module_const.nv	PASS	0	16.0	0	1402595f48506790	7			patched-scratch-driver-141
+L032	examples/basics/named_tuple.nv	PASS	0	14.9	0	4c1f3286282d493e	1			patched-scratch-driver-141
+L033	examples/basics/neg_overflow_panics.nv	PASS	0	13.9	101	7d3e74aa2846e90a				patched-scratch-driver-141
+L034	examples/basics/newtype_compound_carrier.nv	PASS	0	14.0	0	9136e971de5ba23e	3.75			patched-scratch-driver-141
+L035	examples/basics/option_ctor.nv	PASS	0	13.9	0	062e210e9440f0df	3			patched-scratch-driver-141
+L036	examples/basics/prims_widths.nv	PASS	0	13.8	0	9b311e282d9c5f81	i8 3			patched-scratch-driver-141
+L037	examples/basics/println_arg_effect_order.nv	PASS	0	14.5	0	6c23a8474a664ec4	tick			patched-scratch-driver-141
+L038	examples/basics/priv_type.nv	PASS	0	14.4	0	82f954a54ce10dc8	42			patched-scratch-driver-141
+L039	examples/basics/realtime_attr.nv	PASS	0	13.7	0	60dc987ae12b8564	42			patched-scratch-driver-141
+L040	examples/basics/record_slice_field.nv	PASS	0	14.3	0	3599786ed3b0e6f2	bag			patched-scratch-driver-141
+L041	examples/basics/records.nv	PASS	0	14.6	0	f1eb4570946ba633	p.x = 1, p.y = 2			patched-scratch-driver-141
+L042	examples/basics/requires_gate.nv	PASS	0	14.5	0	192ae9c540c18199	4			patched-scratch-driver-141
+L043	examples/basics/requires_string_guard.nv	PASS	0	13.8	0	c6516687f1dc88db	1			patched-scratch-driver-141
+L044	examples/basics/requires_violation_names_line.nv	PASS	0	13.4	101	91aa248a7b171c77				patched-scratch-driver-141
+L045	examples/basics/self_match.nv	PASS	0	14.0	0	de5bab0a50f23d31	warning			patched-scratch-driver-141
+L046	examples/basics/shared_variant.nv	PASS	0	13.8	0	9c8b50842b604a0a	color-red			patched-scratch-driver-141
+L047	examples/basics/str_eq.nv	PASS	0	13.1	0	648397fd4787e8b9	true			patched-scratch-driver-141
+L048	examples/basics/string_literals.nv	PASS-NEW	0	13.3	0	ec0d86effaa76bc5	hello Nova			patched-scratch-driver-141
+L049	examples/basics/strings.nv	PASS	0	13.0	0	17735a2d3428a68a	len = 12			patched-scratch-driver-141
+L050	examples/basics/tail_call.nv	PASS	0	13.6	0	828d1ce4188cdec4	42			patched-scratch-driver-141
+L051	examples/basics/target_row.nv	PASS	0	13.7	0	d28c4d67252ba8bd	3.5			patched-scratch-driver-141
+L052	examples/basics/tuple_ctor_effect_order.nv	PASS	0	13.5	0	751c8be831bf20fd	101			patched-scratch-driver-141
+L053	examples/basics/tuple_destructure_call.nv	PASS	0	13.3	0	86c8212a05af0f64	7			patched-scratch-driver-141
+L054	examples/basics/tuple_forward_component.nv	PASS	0	13.6	0	41ae970edaf0f4f5	2			patched-scratch-driver-141
+L055	examples/basics/tuple_mixed_pair_typedef.nv	PASS	0	13.2	0	25ecdc80f547ba3f	1.5			patched-scratch-driver-141
+L056	examples/basics/tuple_pair_projection.nv	PASS	0	13.6	0	0843aa4998a25565	1			patched-scratch-driver-141
+L057	examples/basics/tuple_return_projection.nv	PASS	0	13.1	0	bdd3999469d17f78	1			patched-scratch-driver-141
+L058	examples/basics/tuple_stmt_dropped.nv	PASS	0	14.2	0	98e5d175c7959483	1			patched-scratch-driver-141
+L059	examples/basics/variant_qualified_ctor.nv	PASS	0	14.2	0	c64667dd5f706926	7			patched-scratch-driver-141
+L060	examples/basics/vec_cap.nv	PASS	0	13.7	0	4eeac25f5521f0f5	2			patched-scratch-driver-141
+L061	examples/basics/vec_len.nv	PASS	0	13.9	0	a3e1e752a0c1d836	3			patched-scratch-driver-141
+L062	examples/effects/effects.nv	FAIL	1	8.9				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L063	examples/effects/effects_d61.nv	FAIL	1	9.3				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L064	examples/effects/serde_fs_build.nv	FAIL	1	10.1				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L065	examples/effects/spawn_demo.nv	FAIL	1	9.5				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L066	examples/ffi/ptr_basics.nv	FAIL	1	8.8				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L067	examples/ffi/sqlite_mini.nv	FAIL	1	8.9				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L068	examples/flagship/aggregator/regressions/const_receiver_generic_ext_ice/const_receiver_generic_ext_ice.nv	FAIL	1	8.8				E_NOVAC_LANG	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L069	examples/flagship/aggregator/regressions/errorkind_variant_arity_collision/errorkind_variant_arity_collision.nv	FAIL	1	8.7				E_NOVAC_LANG	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L070	examples/flagship/aggregator/regressions/interp_to_str_fallback_valuerecord_recv/interp_to_str_fallback_valuerecord_recv.nv	FAIL	1	9.7				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L071	examples/flagship/aggregator/regressions/monotonic_now_bare_binding/monotonic_now_bare_binding.nv	FAIL	1	9.7				E_NOVAC_LANG	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L072	examples/flagship/aggregator/regressions/nested_spawn_scope_var/nested_spawn_scope_var.nv	FAIL	1	13.1				LINK-NO-MAIN	nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$S\install141 argv=["emit", "$WT\\examples\\flagship\\aggregator\\regressions\\nested_spawn_scope_var\\nested_spawn_scope_var.nv"] seed=carina-b asset_sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa8124	patched-scratch-driver-141
+L073	examples/flagship/aggregator/regressions/serde_encode_pointer_op/serde_encode_pointer_op.nv	FAIL	1	9.3				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L074	examples/flagship/aggregator/regressions/spawn_capture_value_struct/spawn_capture_value_struct.nv	FAIL	1	8.8				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L075	examples/flagship/aggregator/regressions/spawn_throw_multifield_payload/spawn_throw_multifield_payload.nv	FAIL	1	8.8				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L076	examples/flagship/aggregator/src/api/report_json.nv	FAIL	1	8.1				E_NOVAC_SUBSET	nova build program: 2 source file(s) staged under $S\install141\target/carina-build\report_json.11916.src	patched-scratch-driver-141
+L077	examples/flagship/aggregator/src/api/report_json_test.nv	FAIL	1	7.7				E_NOVAC_SUBSET	nova build program: 3 source file(s) staged under $S\install141\target/carina-build\report_json_test.67148.src	patched-scratch-driver-141
+L078	examples/flagship/aggregator/src/app/aggregate.nv	FAIL	1	8.0				E_NOVAC_SUBSET	nova build program: 12 source file(s) staged under $S\install141\target/carina-build\aggregate.94848.src	patched-scratch-driver-141
+L079	examples/flagship/aggregator/src/app/aggregate_test.nv	FAIL	1	8.2				E_NOVAC_SUBSET	nova build program: 13 source file(s) staged under $S\install141\target/carina-build\aggregate_test.87360.src	patched-scratch-driver-141
+L080	examples/flagship/aggregator/src/app/emit.nv	FAIL	1	8.1				E_NOVAC_SUBSET	nova build program: 12 source file(s) staged under $S\install141\target/carina-build\emit.44580.src	patched-scratch-driver-141
+L081	examples/flagship/aggregator/src/app/live.nv	FAIL	1	8.0				E_NOVAC_SUBSET	nova build program: 12 source file(s) staged under $S\install141\target/carina-build\live.40584.src	patched-scratch-driver-141
+L082	examples/flagship/aggregator/src/app/live_test.nv	FAIL	1	8.0				E_NOVAC_SUBSET	nova build program: 13 source file(s) staged under $S\install141\target/carina-build\live_test.37144.src	patched-scratch-driver-141
+L083	examples/flagship/aggregator/src/app/scenarios.nv	FAIL	1	8.1				E_NOVAC_SUBSET	nova build program: 12 source file(s) staged under $S\install141\target/carina-build\scenarios.90292.src	patched-scratch-driver-141
+L084	examples/flagship/aggregator/src/domain/domain.nv	FAIL	1	9.5				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L085	examples/flagship/aggregator/src/main.nv	FAIL	1	15.9				E_NOVAC_SUBSET	nova build program: 60 source file(s) staged under $S\install141\target/carina-build\main.83020.src	patched-scratch-driver-141
+L086	examples/flagship/http_proxy_chain/src/config.nv	FAIL	1	7.8				E_NOVAC_SUBSET	nova build program: 7 source file(s) staged under $S\install141\target/carina-build\config.62724.src	patched-scratch-driver-141
+L087	examples/flagship/http_proxy_chain/src/http.nv	FAIL	1	7.4				E_NOVAC_SUBSET	nova build program: 7 source file(s) staged under $S\install141\target/carina-build\http.59416.src	patched-scratch-driver-141
+L088	examples/flagship/http_proxy_chain/src/main.nv	FAIL	1	7.4				E_NOVAC_SUBSET	nova build program: 7 source file(s) staged under $S\install141\target/carina-build\main.56288.src	patched-scratch-driver-141
+L089	examples/flagship/http_proxy_chain/src/relay.nv	FAIL	1	7.5				E_NOVAC_SUBSET	nova build program: 7 source file(s) staged under $S\install141\target/carina-build\relay.49016.src	patched-scratch-driver-141
+L090	examples/flagship/http_proxy_chain/src/upstream.nv	FAIL	1	7.6				E_NOVAC_SUBSET	nova build program: 7 source file(s) staged under $S\install141\target/carina-build\upstream.58692.src	patched-scratch-driver-141
+L091	examples/flagship/http_proxy_chain/src/upstream_socks5.nv	FAIL	1	7.8				E_NOVAC_SUBSET	nova build program: 7 source file(s) staged under $S\install141\target/carina-build\upstream_socks5.70460.src	patched-scratch-driver-141
+L092	examples/getting_started.nv	FAIL	1	9.1				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L093	examples/mini_aggregator.nv	FAIL	1	9.2				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L094	examples/net/echo_client.nv	FAIL	1	9.8				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L095	examples/net/echo_server.nv	FAIL	1	9.6				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L096	examples/os/agent_runner.nv	FAIL	1	10.2				E_NOVAC_LANG	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L097	examples/os/pty_session.nv	FAIL	1	9.7				E_NOVAC_LANG	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L098	examples/plan110/ffi_sqlite_consumable.nv	FAIL	1	9.4				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L099	examples/real_world/orm_decorators.nv	FAIL	1	9.5				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L100	examples/real_world/orm_demo.nv	FAIL	1	9.1				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L101	examples/tls/echo_client.nv	FAIL	1	7.5				E_NOVAC_SUBSET	nova build program: 8 source file(s) staged under $S\install141\target/carina-build\echo_client.97024.src	patched-scratch-driver-141
+L102	examples/tls/echo_server.nv	FAIL	1	8.1				E_NOVAC_SUBSET	nova build program: 8 source file(s) staged under $S\install141\target/carina-build\echo_server.83072.src	patched-scratch-driver-141
+L103	examples/tour/collections_tour.nv	FAIL	1	9.8				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L104	examples/tour/concurrency.nv	FAIL	1	10.3				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L105	examples/tour/consume_tour.nv	FAIL	1	9.0				E_NOVAC_LANG	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L106	examples/tour/effects_tour.nv	FAIL	1	9.7				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L107	examples/tour/errors.nv	FAIL	1	9.4				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L108	examples/tour/ffi_tour.nv	FAIL	1	9.8				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L109	examples/tour/greeter/core.nv	FAIL	1	11.5				LINK-NO-MAIN	nova build program: 2 source file(s) staged under $S\install141\target/carina-build\core.73752.src	patched-scratch-driver-141
+L110	examples/tour/greeter/loud.nv	FAIL	1	11.3				LINK-NO-MAIN	nova build program: 2 source file(s) staged under $S\install141\target/carina-build\loud.82668.src	patched-scratch-driver-141
+L111	examples/tour/hello.nv	PASS	0	14.0	0	1bc93a7135293a1b	Hello, Nova! count=1, add(2,3)=5			patched-scratch-driver-141
+L112	examples/tour/methods.nv	PASS	0	14.0	0	59a8b2993ffe0871	counter after two inc = 2			patched-scratch-driver-141
+L113	examples/tour/modules_tour.nv	FAIL	1	7.7				E_NOVAC_SUBSET	nova build program: 3 source file(s) staged under $S\install141\target/carina-build\modules_tour.91100.src	patched-scratch-driver-141
+L114	examples/tour/patterns.nv	FAIL	1	9.2				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L115	examples/tour/strings_tour.nv	FAIL	1	9.5				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L116	examples/tour/types.nv	PASS	0	14.3	0	523eada664fe90d8	p = (1, 2)			patched-scratch-driver-141
+L117	examples/typed_pointers/basic_pointer.nv	FAIL	1	9.4				E_NOVAC_SUBSET	carina-gate: NOTICE — temporary Oracle stage A: task 141: oracle-built Carina from HEAD 0b01c838b for the 0.3 distance measurement; generation-norm deviation recorded in the task report	patched-scratch-driver-141
+L118	examples/typed_pointers/unsafe_fn_keyword.nv	FAIL	1	13.2				LINK-NO-MAIN	nova build seed: driver_stamp=carina-b1-build-v1 NOVA_CARINA_DRIVER_STAMP=carina-b1-build-v1 cwd=$S\install141 argv=["emit", "$WT\\examples\\typed_pointers\\unsafe_fn_keyword.nv"] seed=carina-b asset_sha256=f2647039711838bb4b8854d7621f42e47303d5a105cce89400daa81243f23832 b1_sha256=d0ab736a04e59dbf66e10ebae17a73	patched-scratch-driver-141
