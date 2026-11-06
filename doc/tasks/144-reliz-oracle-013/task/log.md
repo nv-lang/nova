@@ -269,3 +269,45 @@ NOVA_DIAG_ITEM19_R3=1; инварианты accounting: gopark-enter ==
 gopark-returned + G3-fastpath; каждый goready-R3-latch потребляется той же
 эпохой. ЗАКРЕПИТЬ: скрипт 6-way нагрузки (в истории не зафиксирован — только
 числа в коммитах). Отсутствует tmp_f2_design.json (ссылка nova_sched.h:169).
+
+## 2026-11-07 (2) — пункт 11 (items 14/21/22): дизайн-проход завершён
+
+Карта пространств C: single-CU; value-record юзера = NovaValue_<Name> из
+голого имени (emit_value_record_type :19063; fwd-decl :7287 тоже голый);
+heap/sum — Nova_<Name>; эффекты NovaVtable_<Name>/_nova_handler_ из голого
+имени (:18729+, коллизии не проверяются вовсе); free-fn — модульно-квалифицированы;
+методы Nova_<T>_method_<m> из голого recv (латентный гэп дизамбигуации символов).
+
+Механизм D381 ([M-sync-crossmodule-samename-type-collision], :6263-6460):
+type_def_modules -> colliding_type_names -> def_type_base/ref_type_base
+(Nova_std_io_ErrorKind). Свойство: CU без коллизий = байт-идентичный C.
+record_def (:6305-6347) ЗАКРЫВАЕТ оси value-record/NamedTuple/Effect/Protocol/
+генерики («distinct axis — followup») и RUNTIME_DEFINED_TYPES — потому
+юзер Output (value-record) + std.os Output (proc.nv:140 value-record) оба
+невидимы → тихий дубль typedef NovaValue_Output → incomplete type (item 14).
+
+РЕШЕНИЕ (вариант A): расширить record_def.qualifiable на value-records и
+NamedTuple; механизм D381 переиспользуется целиком (def_base уже протянут
+в emit_value_record_type :18519/:18535). Точки: record_def kinds, fwd-decl
+:7286-7296 через def_type_base, value_struct_field_tys/type_aliases ключи
+остаются голыми (конвенция), mono-путь NovaValue_{short}____args — qualified
+base. RUNTIME_DEFINED_TYPES/BUILTIN/A4_RUNTIME_ABI_SUMS — frozen (не трогать).
+Blast radius точечный; бесколлизионные CU байт-идентичны.
+Отклонены: B (сменить префикс всем — ломает ABI нейминг всех программ),
+C (реестр занятых + суффиксы — недетерминизм порядка эмиссии).
+
+СОПУТСТВУЮЩИЕ АТОМЫ: (1) эффекты/протоколы — квалификация NovaVtable_/
+_nova_handler_/NovaBox_ по модулю для коллидирующих (Fail/Time в nova_rt
+frozen); (2) ЧЕКЕР: program-global таблица типов → module-scoped — без него
+items 21/22/30/37-40 не проходятся даже с уникальным C (падают ДО C:
+E_NO_STATIC_METHOD, E_MISSING_FIELD_IN_LITERAL, E7301) — ЭТА ЖЕ семья, что
+item 49 (модуль-локальная резолюция имён); (3) методные символы коллидирующих
+типов через ref_type_base.
+
+Пины (7, перечислены в карте): user_output_vs_std_os (14), std_os_output
+(21, two-module), pg_event (22), pg_polaris_message (30), user_type_child
+(40), same_value_record_two_modules (новая ось A), ErrorKind-регрессия +
+байт-дифф бесколлизионного дерева. Спайк repro_output_c_collision (9b6ccd3f)
+на диске/в истории canopus НЕ найден — формы восстановлены по эквивалентным
+repro (repro_acp/user_output_vs_std_os, repro_engine/std_os_output,
+repro_pg_event/pg_event).
