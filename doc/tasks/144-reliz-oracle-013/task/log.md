@@ -171,3 +171,26 @@ spec_tests/conformance/standalone/fluent_assign_back.nv (3 EXPECT_STDOUT) —
 доказательство снимаемости метки ORACLE-WORKAROUND(16) в canopus
 (src/acp/link.nv:198) против этого релиза; снятие — через их acceptance.
 Пункт 5 состава: DONE (пин + запись).
+
+## 2026-11-06, ночь (6) — пункт 7 (item 18): ВОСПРОИЗВЕДЁН, корень локализован
+
+Минимальное репро (локально, /tmp/probe/n18.nv): consume-биндинг `tx`
+(`consume tx = mk(11)`, тип consume value) + record с полем `tx` + тело
+`spawn consume tx { ... m.tx ... }` → CC-FAIL: `no member named
+'_consume_tx_0' in 'struct Nova_Marks'`.
+
+Корень: эмиссия consume-биндинга = C-препроцессорный макрос:
+- NovaValue_Pipe _consume_tx_0 = _c->tx; #define tx _consume_tx_0
+  (emit_c.rs:35376, consume-scope);
+- слой fiber-capture: #define {cap} (_c->{cap}) (emit_c.rs:14131).
+Макрос переписывает КАЖДЫЙ токен `tx` после #define — включая поле `m.tx`
+(лексер C не знает про `.`-члены). Репро-фикстура пока НЕ закоммичена (красный
+пин ломает гейт): фикс компилятора и пин идут одним коммитом.
+
+План фикса (как для прода): убрать текстово-макросный механизм привязки имени
+биндинга к C-локалу. Эмитить локал с исходным именем (C-блочная областность
+легально тенит вложенные скоупы; -Wno-everything), сохранить save/restore
+var_types (уже есть, [M-detach-consume-match-arm-capture-lost]); для
+fiber-захватов — тот же перевод с макросов на прямые ссылки через ctx-структуру.
+Обязателен A/B: батарея consume-фикстур (conformance/consume_fixtures/*,
+detach-consume формы из волны 0.1.2).
