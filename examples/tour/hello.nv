@@ -5,7 +5,7 @@ module tour.hello
 // Types are usually inferred; write them explicitly when it helps a reader.
 fn add(a int, b int) -> int => a + b
 
-fn main() {
+fn main() Io {
     ro name = "Nova"                 // inferred: str
     mut count int = 0                // explicit type, still inferred-friendly
     count += 1

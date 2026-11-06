@@ -19,7 +19,7 @@ fn tag(parts []str, args []str) -> str {
     sb
 }
 
-fn main() {
+fn main() Io {
     ro name = "Nova"
 
     // 1. A double-quoted string, with `${}` substituting a value.

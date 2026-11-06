@@ -20,7 +20,7 @@ fn first[T](xs []T) -> Option[T] {
     if xs.len() == 0 { None } else { Some(xs[0]) }
 }
 
-fn main() {
+fn main() Io {
     ro p = Point { x: 1.0, y: 2.0 }
     println("p = (${p.x}, ${p.y})")
 

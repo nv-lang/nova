@@ -9,7 +9,7 @@ fn Tally @absorb(x int) -> int => @n + x
 
 fn Tally @absorb(s str) -> int => @n + 90
 
-fn main() {
+fn main() Io {
     ro t = Tally { n: 10 }
     println("${t.absorb(5)}")
     println("${t.absorb("abc")}")

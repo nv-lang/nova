@@ -10,6 +10,6 @@ fn wrap(x int) -> int {
     double(x)
 }
 
-fn main() {
+fn main() Io {
     println(wrap(21))
 }

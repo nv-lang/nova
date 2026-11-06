@@ -28,7 +28,7 @@ const MESSAGE = "hello from nova, over tls"
 
 fn server_ca() -> []u8 => embed("certs/localhost_cert.pem")
 
-fn main() {
+fn main() Io {
     with Net = real_net() {
         ro addr = SocketAddr.loopback(PORT as int)
         ro cfg = ClientConfig.new("localhost")

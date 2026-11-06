@@ -18,7 +18,7 @@ import std.fs.{read, real_fs}
 #impl(Serialize)
 type Probe { a int, name str }
 
-fn main() Fs Os -> () {
+fn main() Fs Os Io -> () {
     with Fs = real_fs() {
         // A real fs call keeps io's ErrorKind sum in the CU (the collision
         // partner of serde's DeErrorKind.Other); the file need not exist.

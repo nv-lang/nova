@@ -15,7 +15,7 @@ fn idu16(x u16) -> u16 => x
 fn idi64(x i64) -> i64 => x
 fn idf32(x f32) -> f32 => x
 
-fn main() {
+fn main() Io {
     ro n = 42
     ro half = 2.5
     ro yes = true

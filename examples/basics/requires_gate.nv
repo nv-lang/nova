@@ -12,7 +12,7 @@ fn third(n int) -> int
     n / 3
 }
 
-fn main() {
+fn main() Io {
     println(half(8))
     println(third(9))
 }

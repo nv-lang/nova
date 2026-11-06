@@ -4,7 +4,7 @@ fn two() -> (int, int) {
     (1, 2)
 }
 
-fn main() {
+fn main() Io {
     ro t = two()
     println(t.0)
     println(t.1)

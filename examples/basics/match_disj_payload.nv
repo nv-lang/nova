@@ -9,7 +9,7 @@ fn kind(s Shape) -> int {
     }
 }
 
-fn main() {
+fn main() Io {
     println(kind(Line(5)))
     println(kind(Rect(1, 2)))
 }

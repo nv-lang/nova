@@ -85,7 +85,7 @@ const UPSTREAM_CONNECT_TIMEOUT_MS int = 15000
 // timeouts on the established tunnel" — accepted for an example; a
 // production bridge would want idle timeouts here too).
 
-fn main() Net Os Time Upstream -> () {
+fn main() Net Os Time Upstream Io -> () {
     with Os = real_os(), Net = real_net() {
         ro cfg = load_config()
         consume listener = TcpListener.bind(SocketAddr.loopback(cfg.listen_port))!!

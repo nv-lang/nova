@@ -1,6 +1,6 @@
 module basics.for_name_head
 
-fn main() {
+fn main() Io {
     ro xs = []int.of(4, 6)
     for x in xs {
         println(x)

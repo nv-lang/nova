@@ -13,7 +13,7 @@ fn name_of(n int) -> str {
     }
 }
 
-fn main() {
+fn main() Io {
     ro k = 1
     match k {
         0 => println("nothing")

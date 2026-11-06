@@ -1,6 +1,6 @@
 module basics.if_let_some
 
-fn main() {
+fn main() Io {
     ro xs = [5, 9]
     if Some(v) = xs.get(1) {
         println(v)

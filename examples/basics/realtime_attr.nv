@@ -12,7 +12,7 @@ fn doubled(x int) -> int => x * 2
 #realtime
 fn tripled(x int) -> int => x * 3
 
-fn main() {
+fn main() Io {
     println(doubled(21))
     println(tripled(14))
 }

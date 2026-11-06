@@ -17,7 +17,7 @@ fn parse_two(a str, b str) -> Result[int, ParseErr] {
     Ok(x + y)
 }
 
-fn main() {
+fn main() Io {
     match parse_two("3", "4") {
         Ok(sum)  => println("sum = ${sum}")
         Err(_e)  => println("parse failed")

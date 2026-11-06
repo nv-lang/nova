@@ -17,7 +17,7 @@ fn count_three() Counter -> int {
     a + b + c
 }
 
-fn main() {
+fn main() Io {
     // `with Handler = effect X { ... } { body }` substitutes a concrete
     // handler for the duration of `body`. Swap the handler in tests
     // (e.g. a deterministic fake) without touching `count_three`.

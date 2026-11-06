@@ -13,7 +13,7 @@ type Bag {
 
 fn count_of(xs []int) -> int => xs.len()
 
-fn main() {
+fn main() Io {
     println(count_of([3, 4, 5]))
     ro b = Bag { xs: [7, 8], tag: "bag" }
     println(b.tag)

@@ -12,7 +12,7 @@ fn twice(v int) -> int => v * 2
 
 fn wrap(s str) -> str => s
 
-fn main() {
+fn main() Io {
     ro p = Pt { n: 5 }
     ro i = 2
     println("m=${p.dbl()} tw=${twice(4)} fld=${p.n} sum=${i + 3} lim=${LIM}")

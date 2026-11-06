@@ -27,7 +27,7 @@ fn Box @size() -> int => @items.len()
 
 fn sum_sizes[T Sized](a T, b T) -> int => a.size() + b.size()
 
-fn main() {
+fn main() Io {
     mut c = Counter { n: 0 }
     c.inc()
     c.inc()

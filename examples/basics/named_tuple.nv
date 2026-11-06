@@ -7,7 +7,7 @@ type Pair(x int, y int)
 
 type Complex(re f64 = 0.0, im f64 = 0.0)
 
-fn main() {
+fn main() Io {
     ro p = Pair(1, 2)
     println(p.x)
     println(p.y)

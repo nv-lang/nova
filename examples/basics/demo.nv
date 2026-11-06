@@ -8,7 +8,7 @@ type User {
     role str
 }
 
-fn main() {
+fn main() Io {
     // 1. Создание record + field punning
     ro id = 42
     ro alice = User { id, name: "alice", role: "user" }

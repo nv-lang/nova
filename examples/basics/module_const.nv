@@ -13,7 +13,7 @@ const LIMIT = 7
 const GREETING = "hi"
 export const TYPED int = 8
 
-fn main() {
+fn main() Io {
     println(LIMIT)
     println(GREETING)
     println(TYPED)

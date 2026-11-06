@@ -16,7 +16,7 @@ import std.net.{SocketAddr, TcpListener, real_net}
 
 const PORT u16 = 7777
 
-fn main() {
+fn main() Io {
     with Net = real_net() {
         ro addr = SocketAddr.loopback(PORT as int)
 

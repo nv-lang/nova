@@ -73,7 +73,7 @@ fn resolve_addr(port int) Os -> SocketAddr =>
 // connection is handed to an orphan fiber via `detach consume`.
 // Admission control: an `AtomicInt` permit counter caps concurrent
 // connections — over budget the connection is closed immediately.
-fn main() Time Detach {
+fn main() Time Detach Io {
     // Flat `with Os = ..., Net = ...` is equivalent to nested `with`
     // blocks, but clearer in the first example a reader sees.
     with Os = real_os(), Net = real_net() {

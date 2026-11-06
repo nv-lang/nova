@@ -8,6 +8,6 @@ fn tag(s str) -> int
     1
 }
 
-fn main() {
+fn main() Io {
     println(tag("yes"))
 }

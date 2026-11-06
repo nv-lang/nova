@@ -15,7 +15,7 @@ module basics.tuple_forward_component
 // ("this type form is not compiled yet"). So no carrier can reach that today,
 // and this one pins the direction that is reachable.
 
-fn main() {
+fn main() Io {
     ro i = Inner { v: 7 }
     ro p = (i, 2)
     println(p.1)

@@ -8,7 +8,7 @@ module tour.ffi_tour
 // even though both are `void*` on the C side.
 type FileHandle { ro value *() }
 
-fn main() {
+fn main() Io {
     // NULL literal — bitwise-zero opaque pointer.
     ro nothing *() = (0 as *())
 

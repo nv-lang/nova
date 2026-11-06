@@ -10,7 +10,7 @@
 
 module basics.vec_cap
 
-fn main() {
+fn main() Io {
     ro xs = [7, 8]
     println(xs.len())
     println(xs.cap())

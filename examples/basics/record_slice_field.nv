@@ -9,7 +9,7 @@ type Bag {
     tag str
 }
 
-fn main() {
+fn main() Io {
     ro v = [7, 8]
     ro b = Bag { xs: v, tag: "bag" }
     println(b.tag)

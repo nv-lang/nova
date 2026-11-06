@@ -6,7 +6,7 @@ module basics.handed_free_fn
 
 import std.encoding.utf16.{is_high_surrogate, is_low_surrogate, decode_surrogate_pair}
 
-fn main() {
+fn main() Io {
     println(is_high_surrogate(0xD800))
     println(is_low_surrogate(0xD800))
     println(is_low_surrogate(0xDC00))

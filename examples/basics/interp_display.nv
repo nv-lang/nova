@@ -12,7 +12,7 @@ fn Pt @display(mut f Fmt) -> () {
     f.write("Pt".bytes())
 }
 
-fn main() {
+fn main() Io {
     ro p = Pt { n: 7 }
     println("p ${p} end")
     println("${p}${p}")

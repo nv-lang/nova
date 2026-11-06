@@ -7,7 +7,7 @@ fn pick(n int) -> int {
     }
 }
 
-fn main() {
+fn main() Io {
     println(pick(0))
     println(pick(9))
 }

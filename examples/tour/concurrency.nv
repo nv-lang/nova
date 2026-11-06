@@ -40,7 +40,7 @@ fn fan_out(latencies []int, deadline Monotonic) Time -> []str {
     outcomes
 }
 
-fn main() Time {
+fn main() Time Io {
     ro latencies []int = [10, 20, 300]   // ms; last one misses the budget
     ro t0 = Monotonic.now()
     ro deadline = t0 + 60.to_millis()

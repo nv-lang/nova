@@ -10,7 +10,7 @@
 
 module basics.str_eq
 
-fn main() {
+fn main() Io {
     ro a = "hello"
     ro b = "hello"
     ro c = "world"

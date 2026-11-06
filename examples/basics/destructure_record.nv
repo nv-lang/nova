@@ -27,13 +27,13 @@ type Box value {
     h int
 }
 
-fn mk() -> Point {
+fn mk() Io -> Point {
     println(99)
     ro p = Point { x: 1, y: 2 }
     return p
 }
 
-fn main() -> () {
+fn main() Io -> () {
     // WHOLE field list, and the scrutinee is a call: `99` prints once.
     ro { x, y } = mk()
     println(x)

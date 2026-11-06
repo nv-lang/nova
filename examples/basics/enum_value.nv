@@ -11,7 +11,7 @@ fn label(k Kind) -> int {
     }
 }
 
-fn main() {
+fn main() Io {
     println(label(Kind.Dot))
     println(label(Dash))
 }

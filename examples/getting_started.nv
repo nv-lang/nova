@@ -79,7 +79,7 @@ fn checkout(items []Item, d Discount) Audit -> int {
 // 1. fn main — wires everything together with a real in-memory handler.
 // ---------------------------------------------------------------------------
 
-fn main() {
+fn main() Io {
     println("Nova — getting started")
 
     // Build a small cart (records).

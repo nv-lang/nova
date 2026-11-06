@@ -9,7 +9,7 @@ fn tag(n int) -> int {
     }
 }
 
-fn main() {
+fn main() Io {
     println(0123)
     println(0100 + 1)
     println(tag(10))

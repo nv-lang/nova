@@ -13,7 +13,7 @@ fn count_three() Counter -> int {
     a + b + c
 }
 
-fn main() {
+fn main() Io {
     // Простой handler — closure захватывает mutable переменную.
     mut state = 0
     with Counter = effect Counter {

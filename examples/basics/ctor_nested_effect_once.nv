@@ -9,7 +9,7 @@ type Pt {
     b int
 }
 
-fn tick(n int) -> int {
+fn tick(n int) Io -> int {
     println("t", n)
     n
 }
@@ -22,6 +22,6 @@ fn tally(p Pt) -> int {
     p.a + p.b
 }
 
-fn main() {
+fn main() Io {
     println(tally(Pt { a: 1, b: take(Inner { m: tick(2) }) }))
 }

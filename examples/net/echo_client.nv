@@ -15,7 +15,7 @@ import std.net.{SocketAddr, TcpStream, real_net}
 const PORT u16 = 7777
 const MESSAGE = "hello from nova"
 
-fn main() {
+fn main() Io {
     with Net = real_net() {
         ro addr = SocketAddr.loopback(PORT as int)
         supervised {

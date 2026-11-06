@@ -7,7 +7,7 @@ module tour.modules_tour
 
 import nova_examples.tour.greeter.{greet, shout}
 
-fn main() {
+fn main() Io {
     ro g = greet("Nova")
     println(g.text)
     println(shout(g))

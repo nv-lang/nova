@@ -16,7 +16,7 @@ fn area(s Shape) -> f64 => match s {
     Square(a) => a * a
 }
 
-fn main() {
+fn main() Io {
     println("describe(0)=${describe(0)} describe(5)=${describe(5)} describe(-3)=${describe(-3)}")
     println("area(Circle(2.0))=${area(Circle(2.0))}")
 

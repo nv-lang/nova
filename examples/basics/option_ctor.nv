@@ -23,7 +23,7 @@ fn boxed(f bool) -> Option[Box] {
     None
 }
 
-fn main() {
+fn main() Io {
     if Some(v) = pick(true) {
         println(v)
     } else {

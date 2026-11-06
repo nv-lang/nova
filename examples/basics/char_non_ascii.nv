@@ -12,7 +12,7 @@ module basics.char_non_ascii
 
 fn width(c char) -> int => 1
 
-fn main() {
+fn main() Io {
     ro cyr = 'у'
     ro lat = 'y'
     println(width(cyr) + width(lat))

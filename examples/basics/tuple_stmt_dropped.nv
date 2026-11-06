@@ -1,11 +1,11 @@
 module basics.tuple_stmt_dropped
 
-fn tick(n int) -> int {
+fn tick(n int) Io -> int {
     println(n)
     n
 }
 
-fn main() {
+fn main() Io {
     ro a = 1
     (tick(a), tick(2))
 }

@@ -11,7 +11,7 @@ fn nl(c char) -> int {
     if c == '\n' { 7 } else { 8 }
 }
 
-fn main() {
+fn main() Io {
     ro c = 'x'
     println(tag(c))
     println(tag('A'))

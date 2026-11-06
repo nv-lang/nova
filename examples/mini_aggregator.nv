@@ -51,7 +51,7 @@ fn fan_out(latencies []int, deadline Monotonic) Time -> []str =>
         probe(ms, deadline)
     }
 
-fn main() Time {
+fn main() Time Io {
     ro latencies []int = [20, 40, 60, 80, 300, 800]   // мс; последние два не успеют
     ro t0 Monotonic = Monotonic.now()
     ro deadline Monotonic = t0 + BUDGET_MS.to_millis()   // одна абсолютная точка на всех

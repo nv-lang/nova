@@ -1,6 +1,6 @@
 module basics.tuple_pair_projection
 
-fn main() {
+fn main() Io {
     ro t = (1, 2)
     println(t.0)
     println(t.1)

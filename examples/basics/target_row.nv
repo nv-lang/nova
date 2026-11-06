@@ -9,7 +9,7 @@ type Meters f64
 
 fn idu8(a u8) -> u8 => a
 
-fn main() {
+fn main() Io {
     mut x = 1.5
     x += 2
     println(x)

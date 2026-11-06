@@ -8,7 +8,7 @@
 
 module effects.spawn_demo
 
-fn main() {
+fn main() Io {
     // Простое spawn внутри supervised: fiber вычисляет, результат через
     // #share-примитив.
     mut r1 = AtomicInt.new(0)

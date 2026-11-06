@@ -24,7 +24,7 @@ fn count_three() Counter -> int {
     a + b + c
 }
 
-fn main() {
+fn main() Io {
     // Базовый случай: handler с состоянием через return
     mut state = 0
     with Counter = effect Counter {

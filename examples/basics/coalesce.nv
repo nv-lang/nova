@@ -5,7 +5,7 @@
 // yet, measured 2026-09-02, so a carrier must not use them).
 module basics.coalesce
 
-fn main() {
+fn main() Io {
     ro xs = []int.of(10, 20, 30)
     println(xs.get(1) ?? 0)
     println(xs.get(9) ?? 0)

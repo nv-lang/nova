@@ -2,7 +2,7 @@ module basics.println_arg_effect_order
 
 type Pt { n int }
 
-fn tick(n int) -> int {
+fn tick(n int) Io -> int {
     println("tick")
     n
 }
@@ -11,6 +11,6 @@ fn grab(p Pt) -> int {
     p.n
 }
 
-fn main() {
+fn main() Io {
     println("head", grab(Pt { n: tick(1) }))
 }

@@ -9,6 +9,6 @@ fn half(n int) -> int
     n / 2
 }
 
-fn main() {
+fn main() Io {
     println(half(0))
 }

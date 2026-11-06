@@ -23,7 +23,7 @@ type Point value {
     y int
 }
 
-fn main() {
+fn main() Io {
     ro b = Boxed { node: Node { n: 9 } }
     println(b.node.n)
     ro i = Inline { at: Point { x: 4, y: 7 } }

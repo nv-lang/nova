@@ -11,7 +11,7 @@ export fn Sev @sev_text() -> str {
     }
 }
 
-fn main() {
+fn main() Io {
     ro s = Sev.WarningSev
     println(s.sev_text())
     println(Sev.ErrorSev.sev_text())

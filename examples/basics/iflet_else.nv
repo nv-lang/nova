@@ -6,7 +6,7 @@ module basics.iflet_else
 
 fn first(xs Vec[int]) -> Option[int] => xs.get(0)
 
-fn show(o Option[int]) -> () {
+fn show(o Option[int]) Io -> () {
     if Some(v) = o {
         println(v)
     } else {
@@ -14,7 +14,7 @@ fn show(o Option[int]) -> () {
     }
 }
 
-fn pick(xs Vec[int]) -> int {
+fn pick(xs Vec[int]) Io -> int {
     if Some(v) = first(xs) {
         return v
     } else {
@@ -23,7 +23,7 @@ fn pick(xs Vec[int]) -> int {
     0
 }
 
-fn main() {
+fn main() Io {
     ro xs = [5, 9]
     show(xs.get(1))
     show(xs.get(7))

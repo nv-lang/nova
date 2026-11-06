@@ -23,7 +23,7 @@ fn name_f(f Fruit) -> str {
     }
 }
 
-fn main() {
+fn main() Io {
     println(name_c(Color.Red))
     println(name_f(Fruit.Red))
     println(name_c(Color.Green))

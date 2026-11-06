@@ -2,6 +2,6 @@
 
 module basics.hello
 
-fn main() {
+fn main() Io {
     println("Hello, Nova!")
 }

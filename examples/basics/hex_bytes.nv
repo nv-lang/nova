@@ -7,7 +7,7 @@ const MASK = 0xFF
 /// A line feed, as std's json.nv spells its B_* consts.
 const LINE_FEED = 0x0A
 
-fn main() -> () {
+fn main() Io -> () {
     println(MASK)
     println(LINE_FEED)
     println(0x7FFFFFFFFFFFFFFF)

@@ -14,7 +14,7 @@ fn fib(n int) -> int {
     fib(n - 1) + fib(n - 2)
 }
 
-fn main() {
+fn main() Io {
     println("5! = ", factorial(5))
     println("fib(10) = ", fib(10))
     mut sum = 0

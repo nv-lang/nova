@@ -1,12 +1,12 @@
 module basics.for_call_effect_once
 
-fn tick() -> []int {
+fn tick() Io -> []int {
     println(100)
     ro v = []int.of(1, 2)
     v
 }
 
-fn main() {
+fn main() Io {
     for x in tick() {
         println(x)
     }

@@ -19,7 +19,7 @@ fn Resource consume @close() -> () { () }
 
 fn make(id int) -> Resource => { id }
 
-fn main() {
+fn main() Io {
     // `defer { ... }` runs at scope exit, LIFO for multiple defers.
     {
         defer { println("first defer registered, runs LAST") }

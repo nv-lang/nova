@@ -39,7 +39,7 @@ fn div_u32(a u32, b u32) -> u32 => a / b
 fn rem_u32(a u32, b u32) -> u32 => a % b
 fn div_uint(a uint, b uint) -> uint => a / b
 
-fn main() {
+fn main() Io {
     println("i8 ", add_i8(1, 2))
     println("i16 ", add_i16(100, 200))
     println("i32 ", add_i32(1000, 2000))

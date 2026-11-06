@@ -27,7 +27,7 @@ fn show(s Sig) -> int {
     }
 }
 
-fn main() {
+fn main() Io {
     println(show(from_int(7)))
     println(show(from_int(0)))
     println(show(bare(5)))

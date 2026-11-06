@@ -8,7 +8,7 @@ export type Counter priv {
     n int
 }
 
-fn main() {
+fn main() Io {
     ro c = Counter { n: 41 }
     println(c.n + 1)
 }

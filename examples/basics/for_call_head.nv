@@ -5,7 +5,7 @@ fn mk() -> []int {
     v
 }
 
-fn main() {
+fn main() Io {
     for x in mk() {
         println(x)
     }
