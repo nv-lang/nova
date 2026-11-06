@@ -33,3 +33,29 @@ items с метками: 19. Определения пунктов волны: 1
 (src/acp/link.nv), 17 atomic_in_record_copy (там же, закрыт D447),
 18 consume_capture_vs_field (там же), 20 output_over_4k (src/acp/README.md),
 25 nested_module (README x2), 49 fn_name_two_modules (src/server/hub.nv).
+
+## 2026-11-06, поздний вечер — пункт 3 (126-остаток): корень + полный фикс
+
+Корень (вскрытие): форма `ro x = if c { None } else { Some(s) }` эмитируется
+ДВУМЯ независимыми выводами C-типа: value-сторона (emit_if_expr, несла
+item-126 реконсиляцию с 4b257806a) и storage-сторона (infer_expr_c_type
+Channel 6j — probe типа Let-инициализатора, НЕ несла). Копии расходились уже
+дважды (публикация 2026-07-04 это фиксировала комментарием). Итог:
+`NovaOpt_nova_int request = <NovaOpt_nova_str>` → CC-FAIL. Пин при закрытии
+142 зелёным end-to-end не прогонялся (только nova check + unit).
+
+Фикс (как для прода): общий helper `if_branch_chosen_c_type` в emit_c.rs —
+единый решающий конвейер для ОБОИХ потребителей: Plan 125 divergence-aware →
+D275 unit-доминирование → item 126 bare-None реконсиляция (симметрично) →
+d174 empty-fallback. Probe веток остался на вызовах (branch_trailing_c_type_
+with_locals vs block_tail_c_type — разные overlay-карты, слияние отдельно);
+Result-комбинация у вызывающих (6j inline, emit_if_expr через U.4.4).
+
+Верификация: пин if_none_option_str_infer.nv — GREEN end-to-end (nova test);
+io-mock GREEN; conformance 498 PASS (1 флаки-красный m2217_22 под нагрузкой
+чужой батареи — соло PASS на том же бинаре, дважды). Коммит на ветке
+fix/item126-emitter-infer (c02019bae + фикс), юнит-батарея запущена.
+
+Этап 0 попутно: carina-gate круга 2 починен (baseline rows task 145 для
+дрейфа read_line; сид перебазируется после релиза). CI независимо подтвердил
+находку: nova-gate круга 2 красный ровно на этом пине на кандидате c02019bae.
