@@ -89,6 +89,13 @@ GONE=$(comm -13 "$TMP/now.txt" "$TMP/base.txt")
 
 if [ -n "$NEWLY" ]; then
     echo "$NEWLY" | sed 's/^/    НОВЫЙ ОТКАЗ: /' >&2
+    # Диагностичность (задача 144): имя без сообщения гоняет Linux<->Windows
+    # пинг-понг по пустому месту — новый отказ печатает свою строку исхода
+    # (обрезанную), чтобы корень был виден из лога CI без локального прогона.
+    while IFS= read -r failing; do
+        [ -z "$failing" ] && continue
+        strip "$TMP/run.log" | grep -aE "^($FAIL_LABELS)[[:space:]]+${failing}( |$)" | cut -c1-400 | sed 's/^/    > /' >&2
+    done <<< "$NEWLY"
     echo "check-std-test-baseline: отказ, которого нет в базе (подмена или регресс)" >&2
     exit 1
 fi
