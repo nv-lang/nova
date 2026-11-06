@@ -234,3 +234,38 @@ output_over_4k_drain.nv (закоммичен) — доказательство 
 ORACLE-WORKAROUND(20) в canopus (src/acp/README.md: «Two units, short test
 names»). Случай «бинарь запущен вручную с piped-и-непрочитанным stdout» —
 семантика OS-пайпа (любой язык), не дефект Nova. Пункт 10 состава: DONE.
+
+## 2026-11-07 — пункт 12 (item 19-к3): дизайн-проход завершён, решение выбрано
+
+Механизм: G1 = слепой SEQ_CST store `park_state=WAIT` в nova_gopark
+(nova_sched.h:311) затирает латч R3 (`NIL->READY`, :253-259), выигранный
+waker'ом в окне «gopark-enter .. G1» (трасса b7bf05ee8: pred-recheck
+промахнулся по CLOSED, вытеснение, goready латчит READY на NIL, G1 затирает,
+G3 CAS READY->DISPATCHED фейлится на собственном WAIT → вечный mco_yield).
+Slot-Dekker (mark_slot/CLOSED) замыкается честно — дыра на стыке slot-протокола
+и co-латча.
+
+Отклонённый минимальный фикс (b7bf05ee8): G1=xchg(WAIT) с потреблением READY
+как fastpath — hang ушёл, но 5 segfaults/18 loaded runs: STALE READY прошлой
+транзакции (опоздавший waker латчит NIL->READY на УЖЕ бегущем fiber) превращал
+одноразовый park в skip → double-run → UAF.
+
+РЕШЕНИЕ (рекомендация дизайн-прохода): 64-бит слово `park_state|epoch` —
+пер-fiber монотонный epoch, инкремент на каждый gopark-вход:
+- G1 = xchg(WAIT|epoch): READY|same-epoch → валидный fastpath (потребить);
+  READY|stale-epoch → отбросить (лечит segfault-причину);
+- R3 (waker) = CAS NIL|e -> READY|e — в чужой эпохе CAS fail, безопасно;
+- конец ожидания = store(NIL|epoch+1, RELEASE).
+Стоимость: ноль доп. атомиков (G1 и так xchg), изменения в 3 точках
+nova_sched.h + хелперы fibers.h (:2091 полe до 64 бит — ЗЕРКАЛО в codegen
+SpawnCtx_N обязателен, fibers.h:2087-2090 дисциплина) + диагностические
+load-сайты (:2602/:3100/:3130/:877) на unpack-хелпер. R2/R4, каналы,
+sync_*, net — бит-в-бит. 32-бит цели: двухсловный CAS-цикл. Страховка:
+fs.c:115 bare-park перевести на park_until с предикатом.
+
+Верификация: A/B (A=blind store, B=epoch) ≥30 loaded runs каждая под 6-way
+нагрузкой, 400-раундовый spike item19_child_pipes_exit (база 6d88dc484),
+NOVA_DIAG_ITEM19_R3=1; инварианты accounting: gopark-enter ==
+gopark-returned + G3-fastpath; каждый goready-R3-latch потребляется той же
+эпохой. ЗАКРЕПИТЬ: скрипт 6-way нагрузки (в истории не зафиксирован — только
+числа в коммитах). Отсутствует tmp_f2_design.json (ссылка nova_sched.h:169).
