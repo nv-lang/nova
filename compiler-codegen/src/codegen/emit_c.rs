@@ -35334,7 +35334,19 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 }
                 let scope_id = self.defer_block_counter;
                 self.defer_block_counter += 1;
-                let c_binding = format!("_consume_{}_{}", binding, scope_id);
+                // Item 18 (canopus spike `consume_capture_vs_field`): the
+                // binding's C local used to be `_consume_{name}_{scope_id}`
+                // mapped to the source name by a PREPROCESSOR MACRO
+                // (`#define tx _consume_tx_0`) -- and a C macro rewrites
+                // EVERY token, including a field access `m.tx` of the same
+                // name inside the scope body (CC-FAIL: no member named
+                // '_consume_tx_0' in 'struct Nova_Marks'). The local now
+                // carries the (mangled) source name itself: plain C block
+                // scoping shadows nested/sibling scopes legally, the body's
+                // `tx` resolves to the local, and `m.tx` stays the field.
+                // The var_types save/restore below keeps the type registry
+                // honest (same contract as the old #undef).
+                let c_binding = Self::mangle_field_name(&binding);
                 // Strip Nova_ prefix + pointer star for symbol/label resolution.
                 let type_name = self.debt_strip_nova_trim_start(&init_c_type);
                 // Plan 201: value-record (`consume value`, C-тип NovaValue_<T>)
@@ -35372,8 +35384,22 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.line(&format!("/* Plan 173 Ф.2.B3-merge: consume {} = ... {{ ... }} */", binding));
                 self.line("{");
                 self.indent += 1;
-                self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
-                self.line(&format!("#define {} {}", Self::mangle_field_name(&binding), c_binding));
+                // Item 18 companion: when the init expression IS the
+                // same-named binding (the re-consume shape
+                // `consume s = ...; consume s { ... }` over a Plan 217
+                // function-scope hoist of the same source name), a direct
+                // `T s = s;` self-initializes (the new local shadows the
+                // outer before the initializer reads it). Read the outer
+                // value into a temp FIRST, then declare the local from it.
+                if init_c_code == c_binding {
+                    let init_tmp = self.fresh_tmp_named("consume_init");
+                    self.line(&format!("{} {} = {};", init_c_type, init_tmp, init_c_code));
+                    self.line(&format!("{} {} = {};", init_c_type, c_binding, init_tmp));
+                } else {
+                    self.line(&format!("{} {} = {};", init_c_type, c_binding, init_c_code));
+                }
+                // (the #define/#undef macro pair is gone: item 18 -- the macro
+                // rewrote same-name field tokens; see the c_binding note above)
                 // Register binding's C type for downstream member/method dispatch
                 // (var_types drives `r.field` → `r->field` on pointer types).
                 // [M-detach-consume-match-arm-capture-lost] (wave 0.1.2, bug
@@ -35584,7 +35610,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // re-throws to the caller (leave-compose longjmp).
                 self.leave_defer_scope(consume_block_id);
 
-                self.line(&format!("#undef {}", Self::mangle_field_name(&binding)));
                 // [M-detach-consume-match-arm-capture-lost]: restore, not
                 // remove — see the paired save at the scope's var_types
                 // insert above for the full root-cause.

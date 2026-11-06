@@ -1,0 +1,6 @@
+// The folder-module peer of inner.nv: a helper subdirectory must be a
+// folder-module (>= 2 peer files) for the corpus walker to treat it as a
+// library unit instead of a test entry.
+module nested_module_two_levels.nested_module.inner
+
+export fn double(v int) -> int { v * 2 }

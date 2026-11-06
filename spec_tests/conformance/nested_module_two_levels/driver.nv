@@ -1,4 +1,4 @@
-// EXPECT_STDOUT v =25
+// EXPECT_STDOUT v =25 d =42
 //
 // Item 25 (canopus spike `nested_module`): a module in a folder TWO levels
 // under the source root (no .nv in the first folder) did not resolve --
@@ -12,5 +12,5 @@ module nested_module_two_levels.driver
 import ./nested_module.inner
 
 fn main() {
-    println("v =", inner.value())
+    println("v =", inner.value(), " d =", inner.double(21))
 }
