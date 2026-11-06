@@ -89,3 +89,34 @@ print/println несут Io в сигнатуре; эргономика чере
    тесты репо); expect_output-фикстуры (effects: [] → Io).
 5. Пины: behavior-changes таблицы §5 (юзер-тип → честная ошибка, char →
    UTF-8, мульти-арг → один write), f64/f32 байт-паритет Ф.0-3.
+
+## 2026-11-06, ночь (2) — пункт 4: шаг 1 (сигнатуры) верифицирован; карта emit-машинерии
+
+Шаг 1 (сигнатуры print/println + Io в prelude/runtime.nv) — в рабочем дереве
+fix/println-io-effect, НЕ закоммичен до перевода emit-пути. Верификация:
+`--strict-effects` ловит `fn main() { println("x") }` как
+E_UNDECLARED_TRANSITIVE_EFFECT (без флага — D62 правило 1, не ошибка);
+энфорс-механика чекера (check_callee_effects читает callee.effects) — ноль
+правок. /tmp-копии используют ДРУГУЮ std — проверять только из репо.
+
+Карта emit-машинерии (для Ф.1-Ф.2):
+- Сносимое: intercept emit_c.rs:40993 -> emit_println/make_print_call/
+  infer_print_helper (:48638-48743, ~190 LOC) -> 6 rt-хелперов nova_print_*.
+- Замена: emit_interpolated_str(&[InterpStrPart]) -> Result<String,String>
+  (:49710) возвращает nova_str; parts = аргументы (spec None/Display) + Lit
+  "\n" для println; пины честной E_INTERP_NO_DISPLAY вместо %lld-мусора.
+- Диспетчер эффекта: оп-вызов = vtable-слот `_nova_handler_Io` ->
+  `NovaVtable_Io*`->op; ленивый D431-дефолт — inline
+  `if (!_nova_handler_X) { _nova_handler_X = ctor(); }` перед vtable-вызовом
+  (генерит emit_effect_type per-op wrapper; default_handler_fns :2396).
+  B11ac (:62777) — рет-инференс vtable-вызова по effect_schemas.
+- Вывод ret у Io.write_out: Result[int, IoError] — в синтезе println
+  результат игнорируется (statement-position), но должен корректно
+  материализоваться (mirror Stdout @write).
+- Дизайн-инвариант (урок item 126): НЕ дублировать per-op wrapper руками в
+  emit_println — либо синтез AST-вызова (ExprKind::Path(["Io","write_out"]),
+  прецедент CODEGEN-SYNTHESIZED узлов :62228), либо вынести общий хелпер
+  диспетчера оп-вызова. Копии расходятся.
+- interp-канал: interp/stdlib.rs:52-79 print/println Native через
+  OUTPUT_CAPTURE (:13-24) — направить через Io-механику интерпа.
+- Канал f1_expr (:61538): println|print|assert -> "nova_unit" — синхронизировать.
