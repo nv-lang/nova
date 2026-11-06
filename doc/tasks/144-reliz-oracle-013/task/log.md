@@ -59,3 +59,33 @@ fix/item126-emitter-infer (c02019bae + фикс), юнит-батарея зап
 Этап 0 попутно: carina-gate круга 2 починен (baseline rows task 145 для
 дрейфа read_line; сид перебазируется после релиза). CI независимо подтвердил
 находку: nova-gate круга 2 красный ровно на этом пине на кандидате c02019bae.
+
+## 2026-11-06, ночь — пункт 4 (print/println → Io): спек-решение владельца
+
+Канон (проверен): spec/effects.md:201 (Io = stdin/stdout/stderr); syntax.md:1681
+и effects.md:348 [D431] — ОБА примера спеки ставят Io в сигнатуру функции,
+вызывающей println; эргономика — D431 #default_handler (real_io() уже в
+std/src/io/console.nv — канонический дефолт готов). Research-док
+docs/dev/research/2026-08-01-println-on-nv.md (ЗАМОРОЖЕН → GO).
+
+РЕШЕНИЕ ВЛАДЕЛЬЦА (06.11.2026, этот чат): вариант (б) — канон-точно:
+print/println несут Io в сигнатуре; эргономика через #default_handler;
+мокабельность with Io = mock_io(...). Спрошено через выбор (а/б/в), выбран (б).
+
+Ф.0-пины 4-5 (spread в println; голый println()): закрываю СОХРАНЕНИЕМ
+статус-кво (spread остаётся Err, println() = голый newline) — это фиксация
+текущего задокументированного поведения, не новое спек-решение.
+
+План реализации (Ф.1-Ф.2 по доку + (б)):
+1. std/src/prelude/runtime.nv: сигнатуры print/println + Io (extern "nova";
+   EffectItem — ребёнок FnDecl, парсер принимает; энфорс чекера проверить).
+2. emit_c.rs: intercept (40993) сохраняется, emit меняется: синтез
+   InterpStrPart-списка → emit_interpolated_str (честная E_INTERP_NO_DISPLAY
+   вместо %lld-мусора) → ОДИН dispatch Io.write_out(s.bytes()).
+   Peephole §6: единственный str-арг — без StringBuilder. Канал f1_expr
+   (61538) синхронизировать. Spread — оставить Err.
+3. interp/stdlib.rs: print/println через Io-механику интерпа (capture).
+4. Энфорс-волна: сигнатуры с println получают Io (canopus 8 мест, примеры,
+   тесты репо); expect_output-фикстуры (effects: [] → Io).
+5. Пины: behavior-changes таблицы §5 (юзер-тип → честная ошибка, char →
+   UTF-8, мульти-арг → один write), f64/f32 байт-паритет Ф.0-3.
