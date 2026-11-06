@@ -1,0 +1,31 @@
+// EXPECT_STDOUT n =5
+// EXPECT_STDOUT chain =8
+// EXPECT_STDOUT reassign =13
+//
+// Item 16 (canopus spike `fluent_assign_back`): the fluent mutators of a
+// VALUE record (`mut @m(k int) -> @` -- mutate in place, return the
+// fleeting Self ref) used to refuse the assign-back form
+// (`b = b.bump(5)`: "a pointer assigned to a value"). On the current
+// toolchain the assign-back compiles and the mutation lands on the
+// VARIABLE's storage (the ref aliases it), chaining works, and a second
+// assign-back after a chained call keeps one single storage. This pin is
+// the evidence the canopus ORACLE-WORKAROUND(16) mark (src/acp/link.nv:
+// the result dropped, setters called bare) is removable against this
+// release -- the removal itself goes through the product's acceptance.
+module spec_tests.conformance.standalone.fluent_assign_back
+
+fn main() {
+    mut b = BVal { n: 0 }
+    b = b.bump(5)
+    println("n =", b.n)
+    println("chain =", b.bump(1).bump(2).n)
+    b = b.bump(5)
+    println("reassign =", b.n)
+}
+
+type BVal { n int }
+
+export fn BVal mut @bump(k int) -> @ {
+    self.n += k
+    self
+}
