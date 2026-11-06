@@ -8,5 +8,5 @@ peer-файлами CU; std-типы не участвуют, коллизия �
 оба типа манглятся NovaValue_Output → struct одного теряется (incomplete).
 Фикс = снять exclusion value-record оси + D381-квалификация по модулям;
 blast radius: ABI-нейминг, обязателен байт-дифф на бесколлизионных деревьях.
-Спайк: /d/Sources/crew-harness/spikes/env/repro_output_c_collision/
+Спайк: spikes/env/repro_output_c_collision/ (product repo: canopus)
 (закоммичен 9b6ccd3f в 268-линии). Полный бриф — wave-status.md.
