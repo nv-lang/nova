@@ -24854,8 +24854,27 @@ impl<'a> TypeCheckCtx<'a> {
             return None;
         }
         let owners = self.variant_owners.get(name)?;
-        let [owner] = owners.as_slice() else { return None };
+        let owner = match owners.as_slice() {
+            [single] => single,
+            // Item 49/29 family (task 144, module-local wins): several sums
+            // declare the variant name -- prefer the one the CURRENT FILE
+            // declares (enter_file/file_local_types, No. 705 mechanism), so a
+            // leaked same-name variant (e.g. io's ErrorKind.UnexpectedEof
+            // reaching every module through the prelude std.io import) does
+            // not strip a module of its own variant. No current-file owner ->
+            // ambiguous, as before.
+            multi => self.prefer_file_local_variant_owner(multi)?,
+        };
         self.variant_ctor_type(owner, name, args, scope, span)
+    }
+
+    /// Among `owners` (type names owning a same-name variant), the one the
+    /// CURRENT file itself declares, when `enter_file` is active. None when
+    /// no file is set or the file declares none of them.
+    fn prefer_file_local_variant_owner<'b>(&self, owners: &'b [String]) -> Option<&'b String> {
+        let fid = self.current_file.get()?;
+        let locals = self.file_local_types.get(&fid)?;
+        owners.iter().find(|o| locals.contains_key(*o))
     }
 
     fn variant_ctor_type(&self, sum: &str, variant: &str, args: &[CallArg], scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {
@@ -28800,7 +28819,7 @@ impl<'a> TypeCheckCtx<'a> {
     /// -- a sum cannot be record-built, so the unrelated type must not decide
     /// the literal's reading.
     fn bare_record_variant_owner(&self, name: &str) -> Option<String> {
-        let mut owner: Option<&String> = None;
+        let mut owners: Vec<&String> = Vec::new();
         for (tn, td) in self.types.iter() {
             if let TypeDeclKind::Sum(vs) = &td.kind {
                 if td.generics.is_empty()
@@ -28808,14 +28827,24 @@ impl<'a> TypeCheckCtx<'a> {
                         .iter()
                         .any(|v| v.name == name && matches!(v.kind, SumVariantKind::Record(_)))
                 {
-                    if owner.is_some() {
-                        return None;
-                    }
-                    owner = Some(tn);
+                    owners.push(tn);
                 }
             }
         }
-        owner.cloned()
+        match owners.len() {
+            1 => Some(owners[0].clone()),
+            // Item 49/29 family (task 144, module-local wins): several sums own
+            // a same-name Record variant -- prefer the one the CURRENT file
+            // declares (see prefer_file_local_variant_owner); io's leaked
+            // ErrorKind.UnexpectedEof must not strip toml of its own
+            // ParseTomlError.UnexpectedEof. No current-file owner -> ambiguous,
+            // as before.
+            _ => self
+                .prefer_file_local_variant_owner(
+                    &owners.iter().map(|o| (*o).clone()).collect::<Vec<_>>(),
+                )
+                .cloned(),
+        }
     }
 
     /// Returns `true` if `expr` is an access path that goes through a readonly field,
