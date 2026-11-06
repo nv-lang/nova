@@ -69,6 +69,14 @@ import std.runtime.char
 // C-function-name хардкода.
 import std.runtime.math
 
+// print/println (task 144 item 4, owner decision 2026-11-06) lower onto the
+// `Io` effect (std.io console: the effect type, the D431 `#default_handler`
+// `real_io()`, the mockable `mock_io`). The print path NEEDS the Io
+// machinery in every CU that prints -- same compiler-generated-need
+// precedent as char/defaults/math above. Plain import: signatures inline
+// into every module's method_table (auto-available without user import).
+import std.io
+
 // Re-export error types из std.prelude.errors.
 // RuntimeError (6 variants) + ReadBufferError (1 variant) +
 // RuntimeNoneError (unit-type — ошибка `Option!!` на None). Type

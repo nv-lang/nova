@@ -1,0 +1,18 @@
+// EXPECT_STDOUT hello
+// EXPECT_STDOUT x =42 f =3.14 b =true c =A
+// EXPECT_STDOUT end
+//
+// Pin: print/println lowered onto the Io effect (task 144 item 4, owner
+// decision 2026-11-06 variant (b) canon-exact). One write per call through
+// the D431 default handler (real_io); parity with interpolation rendering
+// (Plan 208 devirt display) for every primitive kind. Before the wave:
+// nova_print_* helpers direct to C stdout; user types printed %lld-garbage.
+module spec_tests.conformance.standalone.print_io_lowering
+
+type Pt { x int, y int }
+
+fn main() {
+    println("hello")
+    println("x =", 42, " f =", 3.14, " b =", true, " c =", 'A')
+    println("end")
+}

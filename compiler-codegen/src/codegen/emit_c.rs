@@ -48632,114 +48632,115 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         Ok(format!("{}({})", func_c, arg_strs.join(", ")))
     }
 
+    /// `println(a, b)` / `print(a, b)` lowering — the print/println → Io
+    /// wave (task 144 item 4; owner decision 2026-11-06, variant (б)
+    /// canon-exact: the effect is DECLARED on the prelude signatures, the
+    /// handler is provisioned by D431 `#default_handler`).
+    ///
+    /// Synthesis (research docs/dev/research/2026-08-01-println-on-nv.md §3,
+    /// путь A): the args become the parts of ONE interpolated string
+    /// (reusing `emit_interpolated_str` wholesale — honest
+    /// `E_INTERP_NO_DISPLAY` for user types instead of the old
+    /// `%lld`-garbage fallback), and the result goes out through the SAME
+    /// per-op dispatch helper `emit_effect_type` generated for
+    /// `Io.write_out` (lazy D431 default + nv_panic guard — no machinery
+    /// duplicated here; the item-126 lesson: hand copies drift).
+    ///
+    /// Peepholes (research §6): a single str-typed arg skips the
+    /// StringBuilder allocation entirely; literal-only args fold into one
+    /// `nova_str_of` constant.
+    ///
+    /// `spread (...)` stays an error (F.0 pin 4: status-quo preserved).
     fn emit_println(&mut self, args: &[CallArg], newline: bool) -> Result<String, String> {
-        // We emit a statement-expression block that prints each arg.
-        // Since emit_expr returns a C expression, we use a GNU statement-expr ({ ... value })
-        // or just emit statements and return NOVA_UNIT.
-        // Strategy: emit print calls as statements, capture in tmp.
-        let tmp = self.fresh_tmp_named("println");
-        self.line(&format!("nova_unit {};", tmp));
-        self.line("{");
-        self.indent += 1;
         for call_arg in args {
-            // Plan 14 Ф.6: print/println всё ещё special-case;
-            // spread в нём пока не поддержан (отдельная задача).
+            // Plan 14 Ф.6: spread в print/println не поддержан (F.0 pin 4).
             if call_arg.is_spread() {
                 return Err("spread (...) в println/print пока не поддержан".into());
             }
-            let arg = call_arg.expr();
-            let val = self.emit_expr(arg)?;
-            // Detect type by AST node to pick correct print helper
-            let print_call = self.make_print_call(arg, &val)?;
-            self.line(&format!("{};", print_call));
         }
-        if newline {
-            self.line("nova_print_newline();");
+        // Peephole 1: a single str-typed argument (println only prepends
+        // nothing — the newline is folded as a second write or into the SB
+        // below). One arg + str type → its emitted value IS the text.
+        let single_str = if args.len() == 1 {
+            let t = self.infer_expr_c_type(args[0].expr());
+            t == "nova_str"
+        } else {
+            false
+        };
+        // The whole text to write out, as a `nova_str` C value.
+        let text: String = if single_str && !newline {
+            self.emit_expr(args[0].expr())?
+        } else {
+            // Peephole 2: literal-only parts fold without a StringBuilder.
+            let mut parts: Vec<InterpStrPart> = Vec::with_capacity(args.len() + 1);
+            let mut all_lit = true;
+            for call_arg in args {
+                match call_arg.expr().kind {
+                    ExprKind::StrLit(ref s) => {
+                        parts.push(InterpStrPart::Lit(s.clone()));
+                    }
+                    _ => {
+                        all_lit = false;
+                        parts.push(InterpStrPart::Expr {
+                            expr: Box::new(call_arg.expr().clone()),
+                            spec: crate::ast::FormatSpec::None,
+                        });
+                    }
+                }
+            }
+            if newline {
+                parts.push(InterpStrPart::Lit("\n".into()));
+            }
+            if all_lit {
+                // Fold the literals into ONE C string constant.
+                let folded: String = parts
+                    .iter()
+                    .map(|p| match p {
+                        InterpStrPart::Lit(s) => s.as_str(),
+                        _ => "",
+                    })
+                    .collect();
+                let escaped = Self::escape_c_str(&folded);
+                format!(
+                    "nova_str_of((const uint8_t*)\"{}\", {})",
+                    escaped,
+                    folded.len()
+                )
+            } else {
+                self.emit_interpolated_str(&parts)?
+            }
+        };
+        // The print core: ONE dispatch through the `Io.write_out` op —
+        // look up the mangled dispatch helper from the effect schema
+        // (mirror of B11ac; never hardcode the name — the schema owns it).
+        let eff_schema = self
+            .effect_schemas
+            .get("Io")
+            .ok_or_else(|| "print/println: the `Io` effect is not in this CU \
+                            (std/io/console.nv must be in the compilation)".to_string())?;
+        let mut param_note: Option<String> = None;
+        let mut dispatch: Option<String> = None;
+        for (mangled, (param_tys, _ret)) in eff_schema.iter() {
+            // write_out has exactly one param: the []u8 byte vec.
+            if mangled.starts_with("write_out")
+                && param_tys.len() == 1
+            {
+                param_note = Some(param_tys[0].clone());
+                dispatch = Some(format!("Nova_Io_{}", mangled));
+                break;
+            }
         }
-        // Registry 221.1 #1655: the call's output reaches the fd now, not at exit
-        // (C's stdout is fully buffered when redirected; see `nova_print_end`).
-        self.line("nova_print_end();");
-        self.indent -= 1;
-        self.line("}");
-        self.line(&format!("{} = NOVA_UNIT;", tmp));
+        let dispatch =
+            dispatch.ok_or_else(|| "print/println: `Io.write_out` not found in the \
+                                     effect schema of this CU".to_string())?;
+        let _ = param_note; // the []u8 repr is owned by Nova_str_method_bytes
+        let bytes = format!("Nova_str_method_bytes({})", text);
+        // Statement-position dispatch: the Result[int, IoError] heap value
+        // is dropped (GC-managed) — printing discards the write count.
+        self.line(&format!("{}({});", dispatch, bytes));
+        let tmp = self.fresh_tmp_named("println");
+        self.line(&format!("nova_unit {} = NOVA_UNIT;", tmp));
         Ok(tmp)
-    }
-
-    fn make_print_call(&self, expr: &Expr, val: &str) -> Result<String, String> {
-        // Use AST-level type info to pick the right print function.
-        // Without a full type system, we use best-effort heuristics.
-        let helper = self.infer_print_helper(expr);
-        Ok(format!("{}({})", helper, val))
-    }
-
-    fn infer_print_helper(&self, expr: &Expr) -> &'static str {
-        // Plan 62.B.bis Ф.0 / Plan 67 (converged 2026-05-18):
-        // Унифицируем dispatch через `infer_expr_c_type` — единый source of
-        // truth для return-type inference. До рефактора `infer_print_helper`
-        // дублировал narrow subset из `infer_expr_c_type` (IntLit/StrLit/
-        // Ident-var/Member-record-schema/Call-method-hardcoded-list/
-        // Call-Ident-fn_ret-cache), что приводило к Plan 67 silent-wrong-output
-        // bug: `println(str.from(factorial(5)))` эмитил `nova_print_int(
-        // nova_int_to_str(...))` потому что Member-func (`str.from`) не
-        // распознавался — fallback на `nova_print_int` дал invalid C.
-        //
-        // После рефактора любой паттерн, который `infer_expr_c_type` умеет
-        // (static methods `str.from`, method chains, if-expr, match-expr,
-        // generic mono return, external_registry, etc.) автоматически
-        // получает корректный print helper. ~75 LOC → ~25 LOC, DRY.
-        //
-        // Plan 67 AD2 — unknown-type fallback preserved: дефолт
-        // `nova_print_int` сохраняет current behavior (`%lld` cast'нется в
-        // garbage если actual type не int — это же поведение что и до).
-        //
-        // AD3 (Plan 67): char literals print as UTF-8 (not code-point int).
-        // Plan 70.3 introduced distinct `nova_char` typedef — для char-typed
-        // variables (не literal) `infer_expr_c_type` возвращает "nova_char"
-        // и текущая логика falls through к `nova_print_int` (prints code-point
-        // через %lld). Полный UTF-8 print для char-var deferred.
-        if matches!(&expr.kind, ExprKind::CharLit(_)) {
-            return "nova_print_char";
-        }
-        let c_ty = self.infer_expr_c_type(expr);
-        match c_ty.as_str() {
-            "nova_str"                                      => "nova_print_str",
-            "nova_bool"                                     => "nova_print_bool",
-            // Реестр №944. Ветка добавлена; комментарий AD3 выше объявлял её
-            // отложенной («Полный UTF-8 print для char-var deferred»), и отсрочка
-            // стоила ровно того, что цена такой отсрочки обычно и есть: `ro a = 'A';
-            // println(a)` печатал `65`. Помощник `nova_print_char` существовал всё это
-            // время и уже брал `nova_int` с кодовой точкой — литерал через него и шёл
-            // (ветка `CharLit` выше), — так что не хватало ровно одной строки разбора.
-            //
-            // ЗАМЕР 2026-09-05, из-за которого это перестало быть отсрочкой: одно и то
-            // же значение печаталось ЧЕТЫРЬМЯ путями и расходилось. `a.to_str()` → `A`,
-            // `"${a}"` → `A`, `Vec[char]` в интерполяции → `Vec[A, B]`, а прямой
-            // `println(a)` → `65`. Три двери из четырёх согласны; расходилась самая
-            // частая — первая строка, которую человек пишет на новом языке.
-            "nova_char"                                     => "nova_print_char",
-            // Plan 180: f32 prints via its OWN f32-precise formatter — lumping
-            // it with f64 widened to double, which the now-faithful
-            // nova_print_f64 would render with the f32→f64 mantissa tail
-            // (3.14159f → "3.141590118408203" instead of "3.14159").
-            "nova_f32"                                      => "nova_print_f32",
-            "nova_f64"                                      => "nova_print_f64",
-            // [M-u64-uint-to-str-prints-signed] (ICE-пачка п.9): `uint`/`u64`
-            // are FULL-WIDTH (`uintptr_t`) — a value with the high bit set
-            // has no signed-int equivalent, so it must print via the
-            // dedicated unsigned helper (`%llu`), never `nova_print_int`
-            // (`%lld` on a bit-reinterpreted negative). The C type strings
-            // ACTUALLY produced for `uint`/`u64` are `"uint64_t"`/
-            // `"nova_uint"` (see `type_ref_to_c`) — the narrower unsigned
-            // widths (u8/u16/u32) stay on `nova_print_int` below: their max
-            // value fits well inside signed int64 range, no sign-bit
-            // collision possible.
-            "uint64_t" | "nova_uint"                         => "nova_print_uint",
-            // Signed/unsigned integer widths — все cast'ятся в long long
-            // через nova_print_int signature.
-            "nova_int" | "nova_i8" | "nova_i16" | "nova_i32" | "nova_i64"
-            | "nova_u8" | "nova_u16" | "nova_u32" | "nova_u64" => "nova_print_int",
-            _                                               => "nova_print_int", // conservative fallback
-        }
     }
 
     // ---- if expression ----

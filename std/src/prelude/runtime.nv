@@ -64,6 +64,12 @@ extern "nova" fn assert(cond bool, msg str) -> ()
 /// Prints all arguments to stdout without a separator and without a
 /// trailing newline. Accepts heterogeneous args (int / str / bool / f64 / mixed).
 ///
+/// Effect: `Io` (canon: spec/syntax.md:1681, spec/effects.md:348 [D431] --
+/// both spec examples annotate the println-calling fn with `Io`). The
+/// HANDLER is provisioned ambiently by the D431 `#default_handler`
+/// (`real_io()` in std/io/console.nv) unless the program installs its own
+/// (`with Io = mock_io(cap) { ... }` captures stdout in tests).
+///
 /// # Examples
 /// ```nova
 /// print("hello")              // → "hello"
@@ -71,10 +77,13 @@ extern "nova" fn assert(cond bool, msg str) -> ()
 /// print("a=", 1, " b=", true) // → "a=1 b=true"
 /// ```
 #stable(since = "0.1")
-extern "nova" fn print(...items []any) -> ()
+extern "nova" fn print(...items []any) Io -> ()
 
 /// Prints all arguments to stdout + a trailing newline ('\n'). Identical
 /// to `print(...)`, plus a line feed at the end.
+///
+/// Effect: `Io` -- same contract as `print` (owner decision 2026-11-06,
+/// variant (б) canon-exact; task 144 journal).
 ///
 /// # Examples
 /// ```nova
@@ -83,7 +92,7 @@ extern "nova" fn print(...items []any) -> ()
 /// println("count=", n, " total=", sum)              // mixed-type ok
 /// ```
 #stable(since = "0.1")
-extern "nova" fn println(...items []any) -> ()
+extern "nova" fn println(...items []any) Io -> ()
 
 /// Suppressed errors that accompanied the last caught error.
 /// A cleanup failure during propagation does NOT replace the primary —
