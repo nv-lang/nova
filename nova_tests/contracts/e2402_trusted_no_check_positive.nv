@@ -12,7 +12,7 @@ type Log effect {
 test "#trusted handler с complex body компилируется без ошибок" {
     mut buf = 0
     with #trusted Log = effect Log {
-        Write(msg) {
+        Write(msg) -> () {
             if msg > 0 {
                 buf = msg
             } else if msg < -100 {
@@ -21,7 +21,7 @@ test "#trusted handler с complex body компилируется без оши�
                 buf = 0
             }
         }
-        last() => buf
+        last() -> int => buf
     } {
         Log.Write(42)
         assert(Log.last() == 42)

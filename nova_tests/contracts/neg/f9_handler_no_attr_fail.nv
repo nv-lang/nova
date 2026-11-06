@@ -15,8 +15,8 @@ type Db effect {
 test "handler без attribute → error" {
     mut store = 0
     with Db = effect Db {
-        SetBalance(id, amount) { store = amount }
-        balance(id) => store
+        SetBalance(id, amount) -> () { store = amount }
+        balance(id) -> int => store
     } {
         Db.SetBalance(1, 100)
     }

@@ -12,8 +12,8 @@ type Db5 effect {
 test "trusted handler for axiom-bearing effect type-checks" {
     mut store = 0
     with #trusted Db5 = effect Db5 {
-        SetBalance(id, amount) { store = amount }
-        balance(id) => store
+        SetBalance(id, amount) -> () { store = amount }
+        balance(id) -> int => store
     } {
         Db5.SetBalance(1, 100)
         assert(Db5.balance(1) == 100)

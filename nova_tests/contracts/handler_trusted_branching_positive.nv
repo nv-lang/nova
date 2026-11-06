@@ -11,12 +11,12 @@ type Db9 effect {
 test "handler с branching под #trusted компилируется" {
     mut store = 0
     with #trusted Db9 = effect Db9 {
-        SetBalance(id, amount) {
+        SetBalance(id, amount) -> () {
             if amount >= 0 {
                 store = amount  // branching — trusted, не проверяется
             }
         }
-        balance(id) => store
+        balance(id) -> int => store
     } {
         Db9.SetBalance(1, 42)
         assert(Db9.balance(1) == 42)

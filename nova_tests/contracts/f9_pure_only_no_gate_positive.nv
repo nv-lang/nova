@@ -12,8 +12,8 @@ type Db6 effect {
 test "no gate without axiom" {
     mut store = 0
     with Db6 = effect Db6 {
-        SetBalance(id, amount) { store = amount }
-        balance(id) => store
+        SetBalance(id, amount) -> () { store = amount }
+        balance(id) -> int => store
     } {
         Db6.SetBalance(1, 42)
         assert(Db6.balance(1) == 42)

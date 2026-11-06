@@ -12,8 +12,8 @@ type Counter4 effect {
 test "#trusted handler passes gate" {
     mut n = 0
     with #trusted Counter4 = effect Counter4 {
-        Increment() { n = n + 1 }
-        value() => n
+        Increment() -> () { n = n + 1 }
+        value() -> int => n
     } {
         Counter4.Increment()
         Counter4.Increment()

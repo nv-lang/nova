@@ -18,7 +18,7 @@ fn check3() -> int
 
 test "static axiom Unknown → W2402" {
     with #verify Counter10 = effect Counter10 {
-        value() => 1
+        value() -> int => 1
     } {
         assert(check3() == 42)
     }

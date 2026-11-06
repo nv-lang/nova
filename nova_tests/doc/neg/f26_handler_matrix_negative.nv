@@ -15,8 +15,8 @@ type Store effect {
 fn broken_handler_user() -> int {
     mut s = 0
     with #trusted Store = effect Store {
-        Set(v) { s = v }
-        get() => s
+        Set(v) -> () { s = v }
+        get() -> int => s
     } {
         Store.Set(missing_fn_qwerty(1))
         Store.get()

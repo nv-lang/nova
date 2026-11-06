@@ -12,8 +12,8 @@ type Store3 effect {
 test "handler verification после handler_exec.rs split работает" {
     mut s = 0
     with #trusted Store3 = effect Store3 {
-        Set(v) { s = v }
-        get() => s
+        Set(v) -> () { s = v }
+        get() -> int => s
     } {
         Store3.Set(7)
         assert(Store3.get() == 7)

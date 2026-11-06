@@ -17,12 +17,12 @@ type Db effect {
 test "handler с branching под #verify даёт E2402" {
     mut store = 0
     with #verify Db = effect Db {
-        SetBalance(id, amount) {
+        SetBalance(id, amount) -> () {
             if amount >= 0 {
                 store = amount  // branching — V1 не поддерживает
             }
         }
-        balance(id) => store
+        balance(id) -> int => store
     } {
         Db.SetBalance(1, 42)
         assert(Db.balance(1) == 42)

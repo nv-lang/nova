@@ -13,8 +13,8 @@ type Counter5 effect {
 test "#verify handler с тривиальным static axiom компилируется" {
     mut n = 0
     with #verify Counter5 = effect Counter5 {
-        Increment() { n = n + 1 }
-        value() => 0
+        Increment() -> () { n = n + 1 }
+        value() -> int => 0
     } {
         Counter5.Increment()
         assert(Counter5.value() == 0)

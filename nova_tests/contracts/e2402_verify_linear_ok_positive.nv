@@ -10,7 +10,7 @@ type Flag2 effect {
 
 test "static axiom verification под #verify компилируется" {
     with #verify Flag2 = effect Flag2 {
-        enabled() => false
+        enabled() -> bool => false
     } {
         assert(Flag2.enabled() == false)
     }

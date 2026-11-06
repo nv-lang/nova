@@ -15,8 +15,8 @@ type Db10 effect {
 test "post action view symbolic exec" {
     mut store = 0
     with #verify Db10 = effect Db10 {
-        SetBalance(id, amount) { store = amount }
-        balance(id) => store
+        SetBalance(id, amount) -> () { store = amount }
+        balance(id) -> int => store
     } {
         Db10.SetBalance(1, 42)
         assert(Db10.balance(1) == 42)
