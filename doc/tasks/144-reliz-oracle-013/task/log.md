@@ -311,3 +311,24 @@ item 49 (модуль-локальная резолюция имён); (3) ме�
 на диске/в истории canopus НЕ найден — формы восстановлены по эквивалентным
 repro (repro_acp/user_output_vs_std_os, repro_engine/std_os_output,
 repro_pg_event/pg_event).
+
+## 2026-11-07 (3) — пункт 7 (item 18): ФИКС ЗАВЕРШЁН (f486cac72)
+
+Локал consume-биндинга несёт исходное (мангленное) имя; пара #define/#undef
+удалена. Две тонкости, найденные A/B:
+1. Символы машинерии (_defer_<name>_active и пр.) уже были shadow-based по
+   дизайну (Plan 253.4, решение владельца 2026-08-08) — не тронуты.
+2. Plan 217 function-scope хойст одноимённого биндинга давал
+   само-инициализацию (T s = s;) в re-consume форме (m548) — init теперь
+   двухшаговый (temp-first).
+
+Верификация: repro-пин GREEN (captured =11 field =7); m548 (re-consume
+disarm) PASS; a_q3 (multivar LIFO cleanup) PASS; conformance 500 PASS
+(красные = 2 пре-существующих + красный-по-дизайну пин item 49 + TIMEOUT
+pos_fibers_per_worker_concurrent — флак под нагрузкой, соло PASS).
+Попутно: helper-подкаталог item 25 оформлен folder-module (2 peers) по
+конвенции энумератора корпуса.
+
+Хвост item 18: fiber-capture слой (#define {cap} (_c->{cap}) в
+handler/fiber ctx) — ОТДЕЛЬНЫЙ слой, в repro не участвует; перевод его на
+прямые ссылки — отдельно (не блокирует item 18).
