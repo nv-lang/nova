@@ -354,3 +354,23 @@ items 21/22/29/30, toml-коллизию, и легализует прелюди
 Состояние кандидата: f486cac72 (item 18 фикс) + журналы выложены в
 integrate (круг 7). Прелюдийный import std.io остаётся в HEAD (495a2fb84) —
 после чекер-хирургии toml_test должен позеленеть без откатов.
+
+## 2026-11-07 (5) — пункт 8 (item 49): фикс резолюции готов; вскрыт латентный дефект-эхо
+
+ФИКС (в дереве): generic_overload_mono.rs + гейт emit_call (~48412) —
+`resolved_callee_is_concrete(name, call_id)`: если канал чекера
+(resolved_callees) указывает на КОНКРЕТНУЮ декларацию имени, у которого есть
+и generic, mono-арм не перехватывает вызов (голый fallback
+mono_fn_decls — last-registration-wins — монотипизировал ЧУЖУЮ generic).
+Турбофиш-ошибка ушла, своя begin выбирается.
+
+ВСкрылось эхо (раньше маскировалось ранним абортом кодгена): в turbofish-
+вызове `begin[int](n)` внутри count_of эмитится МЁРТВЫЙ erased-generic
+thunk (NovaClos_ii, C-строки ~2408-2415 артефакта: _nv_tmp_1 нигде не
+читается), тело танка зовёт БАЗОВЫЙ символ
+nova_fn_..def_mod5begin, который никогда не определён (у generic только
+mono-инстансы) → link error. Две линии для добивки: (а) кто эмитит
+func-ident как value в turbofish-вызове (подозреваемые: fn_ret_-кэш в
+var_types + is_user_fn-арм :36577), (б) танк для generic должен таргетить
+mono-инстанс, а не базу (emit_free_fn_value, decl_module_symbol.rs:153).
+ПИН fn_name_two_modules НЕ коммичится до добивки (красный линк).

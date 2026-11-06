@@ -21750,6 +21750,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             .unwrap_or(false)
     }
 
+
     /// Plan 63 Fix F+: get C-name of callee for fn_result_ok_inner_types lookup.
     /// Plan 81 Ф.6: C-имя символа пользовательской свободной функции.
     ///
@@ -48410,7 +48411,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         let (mono_fn_name_opt, turbofish_type_refs): (Option<String>, Vec<crate::ast::TypeRef>) =
             match &func.kind {
                 ExprKind::Ident(name) if self.generic_fns.contains(name.as_str())
-                    && !self.facetb_file_local_concrete_overload(caller_fid, name) =>
+                    && !self.facetb_file_local_concrete_overload(caller_fid, name)
+                    && !self.resolved_callee_is_concrete(name, Some(call_id)) =>
                 {
                     (Some(name.clone()), vec![])
                 }

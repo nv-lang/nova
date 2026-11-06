@@ -47,6 +47,29 @@ impl CEmitter {
         self.generic_overloads.by_name.get(name).filter(|d| d.len() > 1).map(|d| d.as_slice())
     }
 
+    /// Item 49 (canopus spike `fn_name_two_modules`, task 144): true when the
+    /// checker resolved `call_id` to a CONCRETE (non-generic) declaration of a
+    /// name that also has a generic somewhere else in the CU. The bare-name
+    /// (file-oblivious) `generic_fns`/`mono_fn_decls` machinery must not
+    /// hijack the call into the mono arm: the bare fallback
+    /// (`mono_fn_decl_for_call`'s `mono_fn_decls.get(name)`) is
+    /// last-registration-wins and would monomorphize a FOREIGN same-named
+    /// generic (`begin[T]`, returned-only T) instead of the caller's own
+    /// concrete `begin` the checker already picked (No. 534 module-local
+    /// shadowing). When the resolved span is none of the generic declarations
+    /// of the name, the concrete free-fn path (`free_fn_c_name_at_call`, the
+    /// same channel) owns the call. Absent channel entry -> false -> today's
+    /// behavior byte-identical.
+    pub(super) fn resolved_callee_is_concrete(&self, name: &str, call_id: Option<ExprId>) -> bool {
+        let Some(sp) = call_id.and_then(|id| self.resolved_callees.get(&id).copied()) else {
+            return false;
+        };
+        match self.generic_overloads.by_name.get(name) {
+            Some(decls) => !decls.iter().any(|d| d.span == sp),
+            None => true,
+        }
+    }
+
     /// The FnDecl to monomorphize for the call `call_id` to generic `name`: the
     /// declaration the checker resolved the call to when the name has several
     /// generic declarations; else the caller file's own `priv(file)` generic
