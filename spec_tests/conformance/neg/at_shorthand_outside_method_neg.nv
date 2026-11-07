@@ -15,6 +15,7 @@ module neg.at_shorthand_outside_method_neg
 type Pos { line int }
 
 fn free_getter(p Pos) -> int {
+    // nova:expect E_SELF_OUTSIDE_METHOD -- `@line` names the method receiver, but a free fn has none; the shorthand is legal only inside `fn T @m`
     p.line + @line
 }
 

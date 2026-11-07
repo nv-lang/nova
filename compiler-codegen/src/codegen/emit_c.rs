@@ -48748,12 +48748,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// StringBuilder allocation entirely; literal-only args fold into one
     /// `nova_str_of` constant.
     ///
-    /// `spread (...)` stays an error (F.0 pin 4: status-quo preserved).
+    /// `spread (...)` stays an error (F.0 pin 4: status-quo preserved). [INV-TODO: No. 1962]
     fn emit_println(&mut self, args: &[CallArg], newline: bool) -> Result<String, String> {
         for call_arg in args {
-            // Plan 14 Ф.6: spread в print/println не поддержан (F.0 pin 4).
+            // Plan 14 Ф.6: spread в print/println не поддержан (F.0 pin 4, task 144). [INV-TODO: №1962]
             if call_arg.is_spread() {
-                return Err("spread (...) в println/print пока не поддержан".into());
+                return Err("spread (...) в println/print: not supported (task 144 F.0 pin 4)".into());
             }
         }
         // Peephole 1: a single str-typed argument (println only prepends
