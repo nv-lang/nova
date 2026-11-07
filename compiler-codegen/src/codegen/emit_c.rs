@@ -39054,7 +39054,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         .trim_end_matches('*')
                         .trim()
                         .to_string();
-                    let operand_has = !operand_sum.is_empty()
+                    // Option/Result operands keep the dedicated derivation:
+                    // their NPO/mono layouts have no own tag enums (a
+                    // NovaOpt_nova_int schema in the registry would otherwise
+                    // yield NOVA_TAG_NovaOpt_nova_int_Some, never emitted --
+                    // p1487 regression of this very fix). Mirrors the
+                    // checker's channel exclusion for Option/Result.
+                    let is_builtin_sum = operand_sum == "Option"
+                        || operand_sum == "Result"
+                        || operand_sum.starts_with("NovaOpt_")
+                        || operand_sum.starts_with("NovaRes_");
+                    let operand_has = !is_builtin_sum
+                        && !operand_sum.is_empty()
                         && self.sum_schema_registry
                             .lookup_sum_schema(&operand_sum)
                             .map(|e| e.variants.iter().any(|v| v.variant_name == variant_name))
