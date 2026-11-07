@@ -667,3 +667,24 @@ pattern_cond.
 После фикса: mini GREEN → toml_test GREEN → conformance → круг CI →
 ПУШ MAIN → остальной состав по картам (49-эхо, 14/21/22 вариант A,
 19-к3 epoch-латч, interp).
+
+## 2026-11-07 (20) — toml третье звено: точное состояние последней мили
+
+Проба pattern_cond (diag): variant=UnexpectedEof scr=_nv_scr_105
+scr_ty="Nova_ErrorKind*" — внутренний cond получил ВНЕШНИЙ scr-темп,
+зарегистрированный биндером как Nova_ErrorKind* (first-wins при
+ПРИВЯЗКЕ: вариант UnexpectedEof есть и у ErrorKind). Моя попытка
+NovaRes-шага в pattern_cond (gate scr_ty.is_empty) не сработала — scr_ty
+НЕ пуст, он ОТРАВЛЕН на этапе биндинга. Попытка откатена (не коммичена).
+
+ТОЧНЫЙ ФИКС (следующая сессия, один узел): найти в pattern_bind_typed /
+emit_match-binding место, где темп payload Result-арма регистрируется в
+var_types (сейчас: chain scr_base → канал №279 (Result исключён) →
+find_variant first-wins → ErrorKind), и заменить first-wins на
+novares_ok_err(scr_ty) → сторона Ok/Err → desanitize_pointer_id → сумма
+(NovaRes-манглинг несёт ОБА payload-типа; хелперы существуют,
+:58283/:58818). После регистрации верным типом цепь pattern_cond
+(scr_ty-authoritative, №567) сработает сама. Верификация: mini GREEN →
+toml_test GREEN → conformance (с осторожностью: канал №279 мог
+зависеть от старой регистрации — полная батарея обязательна) → круг CI
+→ пуш main. Плюс: is-фикс (a9a80fdcc) и хендлер-параметр остаются.
