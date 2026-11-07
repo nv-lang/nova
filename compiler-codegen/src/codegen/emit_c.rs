@@ -7358,15 +7358,18 @@ impl CEmitter {
                                         // type -- plan110's next error after the
                                         // synthesized def). Identical values when
                                         // the module DOES emit (overwrite, no-op).
-                                        let mut schema = HashMap::new();
-                                        let mut ctys: Vec<String> = Vec::new();
-                                        for (fname, fty) in &fl {
-                                            schema.insert(fname.clone(), fty.clone());
-                                            ctys.push(fty.clone());
-                                        }
-                                        self.record_schemas.insert(t.name.clone(), schema);
-                                        self.value_struct_field_tys.insert(
-                                            format!("NovaValue_{}", t.name), ctys);
+                                        // NB: NO record_schemas / value_struct_field_tys
+                                        // pre-fill at all: (a) the by-ref classification
+                                        // pre-pass expects value_struct_field_tys filled by
+                                        // the owning pass; (b) the pre-pass resolves complex
+                                        // field types (Option[fn-newtype]) through the
+                                        // err_no_int fallback -> a WRONG early schema entry,
+                                        // and insert-if-absent then BLOCKED the authoritative
+                                        // emit_value_record_type fill -- the aggregator
+                                        // flagship regression (MethodRouter.fallback typed
+                                        // nova_int in its eq fn, correct in later emitters).
+                                        // The [at-let] fallback and the finalize synthesis
+                                        // read peer_value_record_fields directly.
                                         self.peer_value_record_fields.insert(t.name.clone(), fl);
                                     }
                                 }
