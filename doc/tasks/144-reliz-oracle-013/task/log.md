@@ -803,3 +803,27 @@ NovaValue_IoError) + novac-gate (Карина, вне критериев Ора�
 Верификация: plan110 build+run (9.7s); conformance 501 PASS / 2
 известных + известный supervised-park TIMEOUT-флак (соло PASS);
 toml/print_io_lowering зелёные. Кандидат b5b3aef3d на CI.
+
+## 2026-11-08 — РЕЛИЗ ВЫПУЩЕН: oracle-v0.1.3
+
+Тег oracle-v0.1.3 на c9e1fcffe (CI: 10/10 оракульских ярусов зелёные;
+единственный красный — novac-gate Карины, исключён словом владельца
+2026-11-02, пуш main с NOVA_PUSH_UNPROVEN "#1963" + NOVA_SKIP_CI_CHECK=1).
+
+GitHub Release создан (pre-release, заголовок "Nova Oracle 0.1.3
+(alpha)"), 4 актива:
+- nova-oracle-0.1.3-windows-x86_64.zip — SmokeTest PASSED (hello из
+  чистой папки);
+- nova-oracle-0.1.3-linux-x86_64.tar.gz — docker smoke "Hello from
+  Linux Nova 0.1.3" (через новый print-путь Io!);
+- nova-oracle-0.1.3-src.tar.gz (git archive с тега);
+- SHA256SUMS.
+
+Notes: состав + раздел «Latent compiler defects surfaced by the wave»
+(5 багов + №1962 + №1963 с реестровыми ссылками) + known limitations
+(дизайн-проходы 14/21/22 и 19-к3 завершены, реализации — первые
+кандидаты следующего цикла; item-49 эхо-хвост; interp-хвост).
+
+ЗАДАЧА 144 ЗАКРЫТА. Хвосты (все задокументированы): item 49
+эхо-танк, реализации 14/21/22 (вариант A) и 19-к3 (epoch-латч) по
+готовым картам, interp-эффекты, Карина shell.tpl.c её циклом.
