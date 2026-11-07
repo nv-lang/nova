@@ -708,3 +708,28 @@ first-wins). ПОЧЕМУ None post-wave: resolved_types вызова to_toml н
 Верификация прежняя: mini → toml_test → conformance → CI → пуш main.
 Диаг-хвост: убрать NOVA_DIAG_TOML_CHANNEL-печати из types/mod.rs при
 финале (сейчас откатлены вместе с試 attempt).
+
+## 2026-11-07 (22) — HANDOFF: toml третье звено (точное состояние последней мили)
+
+ЧТО УЖЕ РАБОТАЕТ (в ветке, 07382e13c):
+- :81 ассерт toml_test ЗЕЛЁНЫЙ (NovaRes Err-payload recovery в
+  pattern_bind_typed record-variant сайте — recovery по root-переменной
+  скрутини через novares_ok_err + desanitize).
+- Хендлер-параметр и is-оператор — зелёные (сессией ранее).
+- Windows-проба mini: "caught Eof at line1" — payload верный.
+
+ЧТО ОСТАЛОСЬ (одно звено): тест :121 — `r = with Fail = |e| interrupt
+Some(e) {...}` → `match r { Some(UnexpectedEof{..}) ... }` — C:
+`_nv_scr_2071.value->tag == NOVA_TAG_ErrorKind_UnexpectedEof` (чужой тег;
+scr_ty р-локаля = NovaOpt_Nova_ParseTomlError_p — т.е. эмит-путь для
+NOVAOpt-payload Some-армов строит cond ВНЕ pattern_cond (трейс
+pattern_cond её НЕ видит) и вне record-variant сайта (там NovaRes-рекавери
+вставлен)). Найти сайт: gated-трейс NOVA_DIAG_TOML_PC уже в коде
+(07382e13c); у собранного C искать функцию, содержащую строку 17046
+артефакта, и сверить с emit-деревом. Фикс — зеркальный: payload-сумма из
+NovaOpt_-мангля + desanitize (хелперы :58283/:58818), variant-check по
+реестру.
+
+БАТАРЕИ: conformance 501/3 известных; examples 102 сборка=база, 100/102
+запуск=база; claude-limits сборка+запуск+72/72 тестов; neg
+at_shorthand (№1962) зелёный.
