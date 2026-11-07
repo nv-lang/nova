@@ -54441,9 +54441,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let variant_name = path.last().cloned().unwrap_or_default();
                 // Determine the sum type name: explicit path or look up in schemas
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
-    if std::env::var("NOVA_DIAG_TOML_PC").is_ok() {
-        if let Some(v) = path.last() { eprintln!("[toml-pc] v={} scr_ty={:?} scr={}", v, scr_ty, scr); }
-    }
                 let type_name = if path.len() > 1 {
                     // [M-sync-crossmodule…] (D381): an explicit `Sum.Variant`
                     // pattern names the sum by its (possibly bare) simple segment;
@@ -54729,16 +54726,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let sum_type_name = match &owner_sum_base {
                         Some(base) => base.clone(),
                         None => {
-                            if std::env::var("NOVA_DIAG_TOML_PC").is_ok() {
-                                let as_is_d = scr_ty.trim_end_matches('*').trim().to_string();
-                                let stripped_d = Self::debt_strip_nova_prefix(&as_is_d).trim().to_string();
-                                eprintln!("[toml-bind] variant={} as_is={} stripped={} schemas={} registry={} find_compat={} tn_path={}",
-                                    variant_name, as_is_d, stripped_d,
-                                    self.sum_schemas.contains_key(&stripped_d),
-                                    self.sum_schema_registry.lookup_sum_schema(&stripped_d).is_some(),
-                                    self.sum_schema_registry.find_variant_compat(&variant_name).map(|(s, _)| s).unwrap_or_default(),
-                                    type_name_from_path);
-                            }
                             // Scrutinee-first (item 48). The tag constant form
                             // follows the DECLARED name: a mono'd generic sum's
                             // tag carries the full C name
@@ -54799,9 +54786,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                         .trim_end_matches('.').trim();
                                     self.var_types.get(root).cloned().and_then(|outer| {
                                         let sani = outer.trim_end_matches('*').trim();
+                                        // Normalize the mangled payload to the registry's
+                                        // bare Nova name: NovaOpt_Nova_ParseTomlError_p ->
+                                        // Nova_ParseTomlError_p -> ParseTomlError. (The
+                                        // desanitize_pointer_id helper returns a C pointer
+                                        // form Nova_ParseTomlError* -- NOT a registry key.)
                                         let sum = sani.strip_prefix("NovaOpt_")
-                                            .and_then(|s| self.desanitize_pointer_id(s))
-                                            .unwrap_or_else(|| sani.strip_prefix("NovaOpt_").unwrap_or(sani).to_string());
+                                            .map(|sx| {
+                                                sx.strip_prefix("Nova_").unwrap_or(sx)
+                                                    .trim_end_matches("_p")
+                                                    .to_string()
+                                            })
+                                            .unwrap_or_else(|| sani.to_string());
                                         self.sum_schema_registry
                                             .lookup_sum_schema(&sum)
                                             .filter(|e| e.variants.iter().any(|v| v.variant_name == *type_name_from_path))
