@@ -14296,7 +14296,21 @@ impl<'a> TypeCheckCtx<'a> {
             ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::BoolLit(_)
             | ExprKind::StrLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
             | ExprKind::HexBlobLit(_) | ExprKind::NullPtrLit
-            | ExprKind::Ident(_) | ExprKind::Path(_) | ExprKind::SelfAccess => {}
+            | ExprKind::Ident(_) | ExprKind::Path(_) => {}
+            // Task 144 (the `@`-shorthand defect): `@`/`@field` is the
+            // RECEIVER of the enclosing METHOD (`fn T @m`). In a FREE
+            // function there is no receiver -- the checker used to accept it
+            // silently and the emitter emitted an undeclared `nova_self`
+            // (CC-FAIL `use of undeclared identifier`). Honest diagnostic.
+            ExprKind::SelfAccess => {
+                if self.current_recv_type.borrow().is_none() {
+                    errors.push(Diagnostic::new(
+                        "[E_SELF_OUTSIDE_METHOD] `@` вне метода: шортхенд receiver'а                          (`@`/`@поле`) легален только внутри `fn T @метод` — в свободной                          функции receiver'а нет. Подсказка: объявите метод (`fn T @имя`),                          либо передайте значение параметром."
+                            .to_string(),
+                        e.span,
+                    ));
+                }
+            }
         }
     }
 
@@ -16659,6 +16673,21 @@ impl<'a> TypeCheckCtx<'a> {
                 // two different user enums sharing a variant name), so it
                 // stays out of the way of the builtin paths entirely.
                 if path.len() == 1 {
+                    if std::env::var("NOVA_DIAG_TOML_CHANNEL").is_ok() {
+                        let scr_desc = match scrutinee_ty {
+                            Some(crate::ast::TypeRef::Named { path: sp, generics, .. }) => {
+                                let g: Vec<String> = generics.iter().map(|gg| match gg {
+                                    crate::ast::TypeRef::Named { path: gp, .. } => gp.join("."),
+                                    _ => "prim".to_string(),
+                                }).collect();
+                                format!("{}<{}>", sp.join("."), g.join(", "))
+                            }
+                            Some(_) => "nonnamed".to_string(),
+                            None => "NONE".to_string(),
+                        };
+                        let vn = path.last().cloned().unwrap_or_default();
+                        eprintln!("[toml-chan] scr={} variant={}", scr_desc, vn);
+                    }
                     if let Some(TypeRef::Named { path: sp, generics, .. }) = scrutinee_ty {
                         let sum_name = sp.last().map(|s| s.as_str()).unwrap_or("");
                         let variant = path[0].as_str();

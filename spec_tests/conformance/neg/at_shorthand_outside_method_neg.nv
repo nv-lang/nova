@@ -1,0 +1,23 @@
+// EXPECT_COMPILE_ERROR E_SELF_OUTSIDE_METHOD
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Task 144 (registry No. 1962): `@`/`@field` is the RECEIVER of the
+// enclosing METHOD (`fn T @m`). In a FREE function there is no receiver --
+// the checker used to accept `@line` silently (f1_expr treated SelfAccess
+// as a pass-through) and the emitter emitted a read through the hardcoded
+// `nova_self` symbol, which no such function declares (CC-FAIL `use of
+// undeclared identifier 'nova_self'`). The honest diagnostic
+// E_SELF_OUTSIDE_METHOD names the two legal moves: declare a method, or
+// pass the value as a parameter.
+
+module neg.at_shorthand_outside_method_neg
+
+type Pos { line int }
+
+fn free_getter(p Pos) -> int {
+    p.line + @line
+}
+
+fn main() {
+    println("v =", free_getter(Pos { line: 1 }))
+}
