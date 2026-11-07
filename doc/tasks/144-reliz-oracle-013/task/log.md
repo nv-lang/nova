@@ -594,3 +594,24 @@ H-UNKNOWN → match падает в `_` → оба ассерта toml.
 хендлер-литералов (:13347 handler_id; ClosureLight-каналы). Кандидат
 в состав 0.1.3 как самостоятельный фикс (Fail-хендлеры — ядро).
 Repro: /tmp/probe/tomldiag (standalone, детерминированный).
+
+## 2026-11-07 (17) — toml: третье звено локализовано ТОЧНО (свежий C)
+
+Mini's match (C, строки ~10400): Result тип ВЕРНЫЙ
+(NovaRes_Nova_TomlValue_p_Nova_ParseTomlError_p), внешний тег Err верный,
+но ВНУТРЕННИЙ тег: `_nv_scr_1112->payload.Err._0->tag ==
+NOVA_TAG_ErrorKind_UnexpectedEof` — ЧУЖАЯ константа.
+
+⇒ Паттерн-цепь pattern_cond (scr_ty → канал №279 → first-wins) промахнулась
+двумя ПЕРВЫМИ ступенями: scr_ty темпа payload Err зарегистрирован
+ПЕРВО-wins'ом при ПРИВЯЗКЕ (UnexpectedEof → ErrorKind после утечки — у
+ErrorKind ЕСТЬ одноимённый вариант, поэтому scr_has_variant=TRUE и
+авторитетная цепь честно вернула отравленный scr_ty). Канал №279 не
+спасает (не вызывается — scr_ty «сработал»).
+
+ФИКС (следующий шаг, по существу): привязка payload результата в
+pattern_bind_typed / match-binding обязана брать тип Err-payload из
+ОБЪЯВЛЕННОГО типа скрутини (Result[_, ParseTomlError] известен!), а не
+first-wins по имени варианта. Это то же семейство «модуль-локальное/объявленное
+побеждает first-wins». После фикса: mini зелёный → toml_test зелёный →
+круг CI → пуш main.
