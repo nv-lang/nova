@@ -54441,6 +54441,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let variant_name = path.last().cloned().unwrap_or_default();
                 // Determine the sum type name: explicit path or look up in schemas
                 let scr_ty = self.var_types.get(scr).cloned().unwrap_or_default();
+    if std::env::var("NOVA_DIAG_TOML_PC").is_ok() {
+        if let Some(v) = path.last() { eprintln!("[toml-pc] v={} scr_ty={:?} scr={}", v, scr_ty, scr); }
+    }
                 let type_name = if path.len() > 1 {
                     // [M-sync-crossmodule…] (D381): an explicit `Sum.Variant`
                     // pattern names the sum by its (possibly bare) simple segment;
@@ -54726,6 +54729,16 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     let sum_type_name = match &owner_sum_base {
                         Some(base) => base.clone(),
                         None => {
+                            if std::env::var("NOVA_DIAG_TOML_PC").is_ok() {
+                                let as_is_d = scr_ty.trim_end_matches('*').trim().to_string();
+                                let stripped_d = Self::debt_strip_nova_prefix(&as_is_d).trim().to_string();
+                                eprintln!("[toml-bind] variant={} as_is={} stripped={} schemas={} registry={} find_compat={} tn_path={}",
+                                    variant_name, as_is_d, stripped_d,
+                                    self.sum_schemas.contains_key(&stripped_d),
+                                    self.sum_schema_registry.lookup_sum_schema(&stripped_d).is_some(),
+                                    self.sum_schema_registry.find_variant_compat(&variant_name).map(|(s, _)| s).unwrap_or_default(),
+                                    type_name_from_path);
+                            }
                             // Scrutinee-first (item 48). The tag constant form
                             // follows the DECLARED name: a mono'd generic sum's
                             // tag carries the full C name
@@ -54744,10 +54757,104 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             {
                                 stripped
                             } else {
-                                self.sum_schema_registry
-                                    .find_variant_compat(&type_name_from_path)
-                                    .unwrap()
-                                    .0
+                                // Task 144 (toml): an EMPTY scr_ty means the
+                                // scr is an INLINE payload expression of an
+                                // outer Result match (`...->payload.Err._0`) --
+                                // no var_types entry. Recover the payload sum
+                                // from the outer Result's own C type (the root
+                                // variable carries the full NovaRes mangling)
+                                // instead of the registry's order-dependent
+                                // first-wins (which flipped to io's
+                                // ErrorKind.UnexpectedEof once the prelude
+                                // std.io import re-ordered the CU).
+                                let recovered = if scr_ty.is_empty()
+                                    && scr.contains("payload.Err._0")
+                                {
+                                    let root = scr.split("->").next().unwrap_or(scr).trim();
+                                    self.var_types.get(root).cloned().and_then(|outer| {
+                                        self.novares_ok_err(&outer).and_then(|(_, err_c)| {
+                                            let sum = self
+                                                .desanitize_pointer_id(&err_c)
+                                                .unwrap_or_else(|| {
+                                                    err_c.trim_end_matches('*')
+                                                        .strip_prefix("Nova_")
+                                                        .unwrap_or_else(|| err_c.trim_end_matches('*'))
+                                                        .to_string()
+                                                });
+                                            self.sum_schema_registry
+                                                .lookup_sum_schema(&sum)
+                                                .filter(|e| e.variants.iter().any(|v| v.variant_name == *type_name_from_path))
+                                                .map(|_| sum)
+                                        })
+                                    })
+                                } else if scr_ty.is_empty()
+                                    && (scr.contains("->value") || scr.contains(".value"))
+                                {
+                                    // The Option (NPO) twin: `Some(UnexpectedEof { .. })`
+                                    // over `NovaOpt_ParseTomlError` -- the payload sum
+                                    // rides the root's NovaOpt_ mangling.
+                                    let root = scr.split("->value").next().unwrap_or(scr)
+                                        .split(".value").next().unwrap_or(scr)
+                                        .trim()
+                                        .trim_end_matches('.').trim();
+                                    self.var_types.get(root).cloned().and_then(|outer| {
+                                        let sani = outer.trim_end_matches('*').trim();
+                                        let sum = sani.strip_prefix("NovaOpt_")
+                                            .and_then(|s| self.desanitize_pointer_id(s))
+                                            .unwrap_or_else(|| sani.strip_prefix("NovaOpt_").unwrap_or(sani).to_string());
+                                        self.sum_schema_registry
+                                            .lookup_sum_schema(&sum)
+                                            .filter(|e| e.variants.iter().any(|v| v.variant_name == *type_name_from_path))
+                                            .map(|_| sum)
+                                    })
+                                } else {
+                                    // Task 144 (toml, the Option/NPO twin):
+                                    // derive the candidate sum from EITHER the
+                                    // scr_ty itself (NovaOpt_ParseTomlError_p)
+                                    // OR the root variable of a
+                                    // `.value`/`->value` payload access. The
+                                    // legacy strip-Nova_ yields a garbage key
+                                    // (Opt_Nova...) and falls to the
+                                    // order-dependent first-wins.
+                                    let candidate: Option<String> =
+                                        if scr_ty.starts_with("NovaOpt_") {
+                                            Some(scr_ty.trim_end_matches('*').trim().to_string())
+                                        } else if scr.contains(".value")
+                                            || scr.contains("->value")
+                                        {
+                                            let root = scr
+                                                .split("->value").next().unwrap_or(scr)
+                                                .split(".value").next().unwrap_or(scr)
+                                                .trim().trim_end_matches('.').trim();
+                                            self.var_types.get(root).cloned().map(|t| {
+                                                t.trim_end_matches('*').trim().to_string()
+                                            })
+                                        } else {
+                                            None
+                                        };
+                                    candidate.and_then(|sani| {
+                                        let sum = sani.strip_prefix("NovaOpt_")
+                                            .and_then(|sani2| self.desanitize_pointer_id(sani2))
+                                            .unwrap_or_else(|| {
+                                                sani.strip_prefix("NovaOpt_").unwrap_or(&sani).to_string()
+                                            });
+                                        self.sum_schema_registry
+                                            .lookup_sum_schema(&sum)
+                                            .filter(|e| e.variants.iter().any(|v| v.variant_name == *type_name_from_path))
+                                            .map(|_| sum)
+                                    })
+                                    .or_else(|| {
+                                        self.sum_schema_registry
+                                            .find_variant_compat(&type_name_from_path)
+                                            .map(|(s, _)| s)
+                                    })
+                                };
+                                recovered.unwrap_or_else(|| {
+                                    self.sum_schema_registry
+                                        .find_variant_compat(&type_name_from_path)
+                                        .unwrap()
+                                        .0
+                                })
                             }
                         }
                     };
