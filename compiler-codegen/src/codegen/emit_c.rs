@@ -786,6 +786,24 @@ pub struct CEmitter {
     /// untouched renderer functions — only the DECISION of when each node's
     /// already-rendered text is allowed to appear is unified.
     pending_value_nodes: Vec<(String, Vec<String>, String)>,
+    /// Task 144 (plan110/novac anti-rot kin): field list (mangled name, C
+    /// type) of every PEER value-record, captured by the forward-decl
+    /// pre-pass -- the full struct def is normally emitted by
+    /// `emit_value_record_type` when the DECLARING module's items emit, but
+    /// a CU that only NAMES the type through an Option/Result typedef (the
+    /// prelude std.io import made `IoError` such a name in EVERY CU) never
+    /// emits that module's items, and the lazy NovaOpt typedef embeds the
+    /// value-record BY VALUE -> "field has incomplete type" (registry kin
+    /// of the No. 139 unified-defs work; synthesized only when missing).
+    peer_value_record_fields: HashMap<String, Vec<(String, String)>>,
+    /// Task 144: the Nova names whose full value-record struct def is
+    /// already claimed by `emit_value_record_type` -- guards the
+    /// finalize-time synthesis against double definition in normal CUs.
+    value_record_def_emitted: HashSet<String>,
+    /// Task 144: the finalize-time synthesized defs, spliced into the
+    /// __VALUE_RECORD_DEFS__ block (before the by-value NovaOpt/NovaRes
+    /// typedefs that need them).
+    synthesized_value_defs: String,
     /// File-scope lambda implementations (structs + function bodies). Flushed before fn definitions.
     lambda_impls: String,
     indent: usize,
@@ -2705,6 +2723,9 @@ impl CEmitter {
             user_type_fwd_decls: String::new(),
             value_record_defs_buf: String::new(),
             pending_value_nodes: Vec::new(),
+            peer_value_record_fields: HashMap::new(),
+            value_record_def_emitted: HashSet::new(),
+            synthesized_value_defs: String::new(),
             lambda_impls: String::new(),
             indent: 0,
             unsafe_depth: 0,
@@ -7305,6 +7326,51 @@ impl CEmitter {
                                 t.name.clone(),
                                 format!("NovaValue_{}", t.name));
                             self.value_record_names.insert(t.name.clone());
+                            // Task 144: capture the fields for the finalize-time
+                            // missing-def synthesis (see the field doc). A peer
+                            // whose items DO emit later claims the def first and
+                            // the synthesis stays silent -- byte-identical for
+                            // every CU that already worked.
+                            if let TypeDeclKind::Record(fields) = &t.kind {
+                                if !self.peer_value_record_fields.contains_key(&t.name) {
+                                    let mut fl: Vec<(String, String)> = Vec::new();
+                                    if fields.is_empty() {
+                                        fl.push(("_empty_value_record_marker".into(), "char".into()));
+                                    } else {
+                                        for f in fields {
+                                            if let Ok(fc) = self.type_ref_to_c(&f.ty) {
+                                                fl.push((Self::mangle_field_name(&f.name), fc));
+                                            } else {
+                                                fl.clear();
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if !fl.is_empty() {
+                                        // Also pre-register the field registries
+                                        // (the same maps emit_value_record_type
+                                        // fills when the declaring module emits):
+                                        // body-emission inference (`@field` on a
+                                        // value-record receiver, the field_cache
+                                        // `ro _at_<F> = @<F>` hoist) reads them,
+                                        // and an empty entry emits a broken
+                                        // declaration (`_at_op = ...` with no
+                                        // type -- plan110's next error after the
+                                        // synthesized def). Identical values when
+                                        // the module DOES emit (overwrite, no-op).
+                                        let mut schema = HashMap::new();
+                                        let mut ctys: Vec<String> = Vec::new();
+                                        for (fname, fty) in &fl {
+                                            schema.insert(fname.clone(), fty.clone());
+                                            ctys.push(fty.clone());
+                                        }
+                                        self.record_schemas.insert(t.name.clone(), schema);
+                                        self.value_struct_field_tys.insert(
+                                            format!("NovaValue_{}", t.name), ctys);
+                                        self.peer_value_record_fields.insert(t.name.clone(), fl);
+                                    }
+                                }
+                            }
                         } else {
                             // [M-sync-crossmodule…] fwd-decl must match the qualified
                             // definition base for a colliding heap record.
@@ -9497,13 +9563,74 @@ impl CEmitter {
         // at the ORIGINAL `__VALUE_RECORD_DEFS__` position — the earliest
         // safe point, before tuples/NovaOpt/NovaRes/generic-instances all
         // still need it to have already run.
+        //
+        // Task 144: synthesize the FULL struct def for a peer value-record
+        // that a lazy NovaOpt/NovaRes typedef embeds BY VALUE while the
+        // DECLARING module's items never emit in this CU (the prelude
+        // std.io import made `IoError` such a name everywhere; plan110's
+        // sqlite example: "field has incomplete type 'NovaValue_IoError'").
+        // Only for names the pre-pass captured AND whose def was never
+        // claimed -- normal CUs are byte-identical (the claimed set keeps
+        // the synthesis silent there).
+        {
+            let scan = |buf: &str, out: &mut Vec<String>| {
+                let mut i = 0;
+                while let Some(p) = buf[i..].find("NovaValue_") {
+                    let start = i + p + "NovaValue_".len();
+                    let end = buf[start..]
+                        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                        .map(|e| start + e)
+                        .unwrap_or(buf.len());
+                    out.push(buf[start..end].to_string());
+                    i = end;
+                }
+            };
+            let opt_buf = self.novaopt_typedefs_buf.borrow().clone();
+            let res_buf = self.novares_typedefs_buf.borrow().clone();
+            let mut names: Vec<String> = Vec::new();
+            scan(&opt_buf, &mut names);
+            scan(&res_buf, &mut names);
+            // Erased GENERIC bases (`NovaValue_VecIter` -- the by-value
+            // receiver of an erased method stub) never appear in the
+            // opt/res buffers; scan the emitted text itself for the
+            // remaining missing by-value names.
+            scan(&self.out.clone(), &mut names);
+            names.sort();
+            names.dedup();
+            let missing: Vec<(String, &Vec<(String, String)>)> = names
+                .into_iter()
+                .filter(|n| !self.value_record_def_emitted.contains(n))
+                .filter_map(|n| self.peer_value_record_fields.get(&n).map(|fl| (n, fl)))
+                .collect();
+            if !missing.is_empty() {
+                let mut synth = String::new();
+                for (n, fl) in &missing {
+                    synth.push_str(&format!(
+                        "/* Task 144: synthesized def -- a peer value-record named \
+                         through an Option/Result typedef whose declaring module \
+                         is not emitted in this CU. */\nstruct NovaValue_{} {{\n", n));
+                    for (fname, fty) in fl.iter() {
+                        synth.push_str(&format!("    {} {};\n", fty, fname));
+                    }
+                    synth.push_str("};\n");
+                    // Claim it: this same finalize never synthesizes twice.
+                    self.value_record_def_emitted.insert(n.clone());
+                }
+                self.synthesized_value_defs = synth;
+            }
+        }
         let vr_defs = self.render_unified_value_types();
-        let vr_replacement = if vr_defs.is_empty() {
+        // Task 144: prepend the finalize-time synthesized defs (peer
+        // value-records named through Option/Result typedefs whose declaring
+        // module is not emitted) -- they must precede the by-value
+        // NovaOpt/NovaRes typedefs spliced further down.
+        let synth_defs = std::mem::take(&mut self.synthesized_value_defs);
+        let vr_replacement = if vr_defs.is_empty() && synth_defs.is_empty() {
             String::new()
         } else {
             format!("/* Value-record / generic-instance / tuple / fixed-array struct \
                      definitions (complete, topologically sorted — реестр 221.1 №139 \
-                     Round 3): */\n{}", vr_defs)
+                     Round 3): */\n{}{}", synth_defs, vr_defs)
         };
         self.out = self.out.replace("/*__VALUE_RECORD_DEFS__*/", &vr_replacement);
 
@@ -19330,6 +19457,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.pending_value_nodes.push((
             format!("NovaValue_{}", name), field_c_tys.clone(), combined,
         ));
+        // Task 144: claim the def so the finalize-time synthesis for
+        // by-value NovaOpt/NovaRes payloads never double-defines it.
+        self.value_record_def_emitted.insert(name.to_string());
         self.record_schemas.insert(name.to_string(), schema);
         // Value-type alias: Named{Vec3} → "NovaValue_Vec3" (no pointer).
         self.type_aliases.insert(name.to_string(), format!("NovaValue_{}", name));
@@ -33666,7 +33796,45 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 let ty_c_probe = if let Some(ty) = &decl.ty {
                     self.type_ref_to_c(ty)
                 } else {
-                    Ok(self.infer_expr_c_type(&decl.value))
+                    let inferred = self.infer_expr_c_type(&decl.value);
+                    // Task 144 (plan110 kin): a field_cache-hoisted
+                    // `ro _at_<F> = @<F>` let on a VALUE-RECORD receiver can
+                    // infer EMPTY when the receiver's declaring module is
+                    // not emitted in this CU (the peer pre-pass knows the
+                    // schema, but the Member chain still misses). An empty
+                    // type emits a broken declaration (`_at_op = ...` with
+                    // no type). Derive the field type directly from the
+                    // receiver's registered schema before giving up.
+                    let inferred = if inferred.is_empty() {
+                        if let ExprKind::Member { obj, name } = &decl.value.kind {
+                            if matches!(obj.kind, ExprKind::SelfAccess) {
+                                let recv_c = self.var_types.get("nova_self").cloned()
+                                    .unwrap_or_default();
+                                let stripped = recv_c
+                                    .trim_start_matches("const ").trim()
+                                    .trim_end_matches('*').trim()
+                                    .to_string();
+                                let struct_name = Self::debt_strip_nova_value_tuple_prefix_or_empty(&stripped)
+                                    .trim_end_matches('*').trim().to_string();
+                                let base = struct_name.split("____").next()
+                                    .unwrap_or(&struct_name).to_string();
+                                // record_schemas is bare-name-keyed and can be
+                                // last-write-clobbered by a same-named record
+                                // (No. 696 class); peer_value_record_fields is
+                                // captured per-peer with a contains-guard -- trust
+                                // it FIRST for this recovery.
+                                let hit = self.peer_value_record_fields.get(&struct_name)
+                                    .or_else(|| self.peer_value_record_fields.get(&base))
+                                    .and_then(|fl| fl.iter().find(|(n, _)| n == name.as_str()).map(|(_, t)| t.clone()))
+                                    .or_else(|| self.record_schemas.get(&struct_name)
+                                        .or_else(|| self.record_schemas.get(&base))
+                                        .and_then(|schema| schema.get(name.as_str()).cloned()))
+                                    .unwrap_or_default();
+                                hit
+                            } else { String::new() }
+                        } else { String::new() }
+                    } else { inferred };
+                    Ok(inferred)
                 };
                 for (name, old) in _overlay_saved.drain(..).rev() {
                     match old {
