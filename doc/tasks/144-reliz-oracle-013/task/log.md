@@ -777,3 +777,29 @@ interp) — не начинать до слова.
 carina_text пре-существующий); все ярусы стражей зелёные. Кандидат
 c2d2ddccb на решающем круге CI. После зелёного — пуш main (согласовано
 (а)), затем ДОКЛАД; тег — только по команде.
+
+## 2026-11-07 (25) — семья value-record-определений закрыта (plan110)
+
+Круг на 2c2149eed: nova-gate красный ровно на examples anti-rot
+(plan110/ffi_sqlite_consumable: field has incomplete type
+NovaValue_IoError) + novac-gate (Карина, вне критериев Оракула по
+прецеденту 0.1.2). Корень — третий член семьи прелюдийного std.io
+импорта: тип ИМЕНОВАН в CU (Option/Result typedef, erased generic
+стаб), но объявляющий модуль не эмитится → нет struct def.
+
+Фикс (b5b3aef3d), три двери, все молчат в работавших CU:
+1. пре-проход fwd-деклараций захватывает поля каждого PEER value-record
+   + пред-регистрирует record_schemas/value_struct_field_tys;
+2. finalize синтезирует полный def для NovaValue_<X>, именованного в
+   opt/res-буферах ИЛИ в тексте (erased базы), не claim-нутого —
+   сплайс в __VALUE_RECORD_DEFS__ (до by-value typedefs);
+3. пустой inference у '@<F>' let-ов: fallback через per-peer реестр
+   (record_schemas затёрт чужими полями — живой №696: schemas['IoError']
+   нёс 'reason' чужого типа), затем schemas.
+
+Живой факт по №696: record_schemas['IoError'] содержал поле 'reason'
+чужого типа — bare-name карта затирается одноимёнными записями.
+
+Верификация: plan110 build+run (9.7s); conformance 501 PASS / 2
+известных + известный supervised-park TIMEOUT-флак (соло PASS);
+toml/print_io_lowering зелёные. Кандидат b5b3aef3d на CI.
