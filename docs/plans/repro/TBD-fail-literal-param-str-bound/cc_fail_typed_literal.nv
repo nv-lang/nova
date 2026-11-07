@@ -1,0 +1,17 @@
+// EXPECT_STDOUT caught-same
+module scratch.probe6m
+
+type DbErr enum SameAccount | Other(str)
+
+fn transfer(a int, b int) Fail[DbErr] -> int {
+    if a == b { throw SameAccount }
+    a + b
+}
+
+test "probe-typed-literal" {
+    ro same = with Fail[DbErr] = effect Fail[DbErr] { fail(e) -> never { interrupt e is SameAccount } } {
+        transfer(1, 1)
+        false
+    }
+    if same { println("caught-same") } else { println("WRONG") }
+}

@@ -1,0 +1,19 @@
+module repro.crash_literal_record_param
+
+type DbErr { msg str }
+
+fn transfer(a int, b int) Fail[DbErr] -> int {
+    if a == b { throw DbErr { msg: "same account" } }
+    a + b
+}
+
+test "record param wrapped in Err via interrupt — runtime crash" {
+    ro r = with Fail[DbErr] = effect Fail { fail(e) -> never { interrupt Err(e) } } {
+        ro x = transfer(1, 1)
+        Ok(x)
+    }
+    match r {
+        Ok(_)  => println("ok path")
+        Err(e) => println("err: ${e.msg}")
+    }
+}

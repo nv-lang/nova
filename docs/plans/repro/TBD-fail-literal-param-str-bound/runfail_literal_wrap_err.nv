@@ -1,0 +1,22 @@
+module scratch.probe6h
+
+type DbErr enum SameAccount | Other(str)
+
+fn transfer(a int, b int) Fail[DbErr] -> int {
+    if a == b { throw SameAccount }
+    a + b
+}
+
+test "probe-bind-then-assert" {
+    ro r = with Fail[DbErr] = effect Fail { fail(e) -> never { interrupt Err(e) } } {
+        ro x = transfer(1, 1)
+        Ok(x)
+    }
+    match r {
+        Ok(_)  => assert(false)
+        Err(e) => {
+            ro ok = e is SameAccount
+            assert(ok)
+        }
+    }
+}

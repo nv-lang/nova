@@ -1,0 +1,20 @@
+// EXPECT_STDOUT same account caught
+module scratch.probe6n
+
+type DbErr enum SameAccount | Other(str)
+
+fn transfer(a int, b int) Fail[DbErr] -> int {
+    if a == b { throw SameAccount }
+    a + b
+}
+
+test "probe-lambda-err-wrap" {
+    ro r = with Fail[DbErr] = |e| interrupt Err(e) {
+        transfer(1, 1)
+        Ok(0)
+    }
+    match r {
+        Err(SameAccount) => println("same account caught")
+        _                => println("WRONG")
+    }
+}
