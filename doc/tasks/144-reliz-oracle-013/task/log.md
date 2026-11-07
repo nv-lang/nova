@@ -525,3 +525,26 @@ peer: НЮАНС — extension `str @to_toml()` не виден peer-файлу 
 регистрацию extension-метода (export-форма на месте; возможно импорты
 toml.nv отвалились при переименовании модуля). Инструментировать после
 починки видимости; println в /tmp-копии доступен.
+
+## 2026-11-07 (14) — toml: цепочка проб сузила корень до хендлера interrupt
+
+Плэйбук-пробы (standalone-копия, panic-дискриминаторы):
+1. parse_basic_string ВЫЗЫВАЕТСЯ (DIAG-pbs-enter).
+2. Её C-код КОРРЕКТЕН: nova_make_ParseTomlError_UnexpectedEof(nova_self->line),
+   err-проверка (opt_eq) и _nova_throw_typed — всё правильное.
+3. Match-сторона: FELL-THROUGH (arm1 не срабатывает); `e is UnexpectedEof`
+   → IS-NOT-EOF — пойманный Err НЕ UnexpectedEof.
+4. Значит искажение МЕЖДУ throw и match: to_toml = `with Fail[ParseTomlError] =
+   |e| interrupt Err(e) { ... }` — путь |e| → interrupt → Err(e) → Result —
+   ПОДПОЗРЕВАЕМЫЙ: payload e в interrupt Err(e) (D65-механика interrupt из
+   Fail-хендлера). Следующая проба: дискриминировать payload хендлера
+   (interrupt Err(...) с маркерным значением? или is-проба НА хендлерном e
+   внутри to_toml до interrupt).
+
+Примечание: probe с `Some(UnexpectedEof { line: @line })` дал D52-отказ
+(шортхенд обязателен) — канон подтверждён. Проба @-шортхенда в
+изолированном методе дала CC-FAIL nova_self (отдельный находка —
+@-шортхенд в variant-литерале внутри метода эмитит несуществующий
+nova_self в НЕ-томл контексте; в toml-контексте self-символ другой,
+компилируется, но семантика под вопросом) — задокументировано как
+отдельный кандидат-дефект.
