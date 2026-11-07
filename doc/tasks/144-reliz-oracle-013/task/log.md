@@ -574,3 +574,23 @@ payload → оба match'а падают в `_`), и Windows-пре-сущест
 сигнатуру + throw_typed store (маршаллинг), найти рассинхрон; это
 компиляторный дефект D65-машинерии, кандидат в состав 0.1.3 как
 самостоятельный фикс (Fail-хендлеры — ядро языка).
+
+## 2026-11-07 (16) — toml КОРЕНЬ В C: fail-op хендлера типизирован nova_str
+
+Артефакт mini (probe_tomldiag_mini.c):
+- `_nova_handler_lit_2_impl_Fail_fail(void* _ctx, nova_str e)` — параметр
+  payload хендлер-литерала `|e|` ЭМИТИТСЯ КАК nova_str (строка!);
+- `throw_typed_ParseTomlError` кладёт `Nova_ParseTomlError*`.
+
+⇒ Хендлер-литерал `|e|` в `with Fail[E] = |e| ...` получил параметр
+ДЕФОЛТНОЙ догадки (nova_str — семья ClosureLight 6h «params=nova_int
+дефолт без контекста»), вместо payload типа E из with-контекста. Throw
+кладёт ParseTomlError*, хендлер читает как str → тег мусорный →
+H-UNKNOWN → match падает в `_` → оба ассерта toml.
+
+КОРЕНЬ (компиляторный, D65-машина): типирование параметра хендлер-
+литерала из expected Fail[E] payload — канал должен течь из with-
+заголовка в closure-параметры литерала. Фикс-локус: эмиссия/чекер
+хендлер-литералов (:13347 handler_id; ClosureLight-каналы). Кандидат
+в состав 0.1.3 как самостоятельный фикс (Fail-хендлеры — ядро).
+Repro: /tmp/probe/tomldiag (standalone, детерминированный).
