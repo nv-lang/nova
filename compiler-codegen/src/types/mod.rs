@@ -16673,21 +16673,6 @@ impl<'a> TypeCheckCtx<'a> {
                 // two different user enums sharing a variant name), so it
                 // stays out of the way of the builtin paths entirely.
                 if path.len() == 1 {
-                    if std::env::var("NOVA_DIAG_TOML_CHANNEL").is_ok() {
-                        let scr_desc = match scrutinee_ty {
-                            Some(crate::ast::TypeRef::Named { path: sp, generics, .. }) => {
-                                let g: Vec<String> = generics.iter().map(|gg| match gg {
-                                    crate::ast::TypeRef::Named { path: gp, .. } => gp.join("."),
-                                    _ => "prim".to_string(),
-                                }).collect();
-                                format!("{}<{}>", sp.join("."), g.join(", "))
-                            }
-                            Some(_) => "nonnamed".to_string(),
-                            None => "NONE".to_string(),
-                        };
-                        let vn = path.last().cloned().unwrap_or_default();
-                        eprintln!("[toml-chan] scr={} variant={}", scr_desc, vn);
-                    }
                     if let Some(TypeRef::Named { path: sp, generics, .. }) = scrutinee_ty {
                         let sum_name = sp.last().map(|s| s.as_str()).unwrap_or("");
                         let variant = path[0].as_str();

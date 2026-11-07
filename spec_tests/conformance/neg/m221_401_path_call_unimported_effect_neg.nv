@@ -36,6 +36,15 @@
 
 module neg.m221_401_path_call_unimported_effect_neg
 
-fn main() Io -> () {
-    ro _a = Io.write_out("")
+// Task 144 carrier swap: the original `Io.write_out("")` WITHOUT
+// `import std.io` no longer exercises this class -- the print/println->Io
+// wave made the prelude import std.io, so `Io` is present in EVERY
+// compile unit and the call compiles. The class itself (a Path call to a
+// genuinely UNIMPORTED effect must yield the honest E_CODEGEN_TYPE_UNKNOWN,
+// never the old internal-error panic) is re-pinned on `Fs.read`, which no
+// prelude import provides. nova:expect E_CODEGEN_TYPE_UNKNOWN -- the
+// carrier names no imported receiver; the honest coded error (not a panic)
+// is the pin.
+fn main() {
+    ro _a = Fs.read("/nonexistent-probe-path")
 }

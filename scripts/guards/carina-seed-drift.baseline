@@ -86,5 +86,6 @@ std/src/prelude.nv # task 144 (print/println -> Io: prelude imports std.io - see
 std/src/prelude/runtime.nv # task 144 (print/println carry Io in signature - seed re-pins after the release)
 std/src/io/core.nv # task 145 (read_line, item 31 - seed re-pins after the release)
 std/src/io/d322_io_mock_test.nv # task 145 (read_line mock battery - seed re-pins after the release)
+std/src/io/error.nv # task 144 (n96 fix: the prelude io import leaked the local named base; renamed kind_text - seed re-pins after the release)
 std/src/os/ffi.nv # task 140 (initial drift at carina-v0.2.1)
 std/src/os/os.nv # task 140 (initial drift at carina-v0.2.1)
