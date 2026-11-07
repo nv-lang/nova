@@ -548,3 +548,29 @@ toml.nv отвалились при переименовании модуля). 
 nova_self в НЕ-томл контексте; в toml-контексте self-символ другой,
 компилируется, но семантика под вопросом) — задокументировано как
 отдельный кандидат-дефект.
+
+## 2026-11-07 (15) — toml КОРЕНЬ СУЖЕН: payload Fail-хендлера чужого типа
+
+Цепочка проб (standalone-копия, panic-дискриминаторы):
+1. parse_basic_string вызывается, его C корректен (ctor/eq/throw — проверены
+   по C-артефакту), throw_typed(ParseTomlError*) выполняется.
+2. Match: FELL-THROUGH; `e is UnexpectedEof` → IS-NOT-EOF.
+3. Хендлер `with Fail[ParseTomlError] = |e| ...`: payload e не соответствует
+   НИ ОДНОМУ варианту ParseTomlError (H-UNKNOWN) — payload ЧУЖОГО ТИПА.
+
+⇒ КОРЕНЬ: механизм доставки payload Fail-хендлеру (D65/D13 fail-frame →
+handler-literal fail-op) доставляет значение НЕ того типа: throw_typed
+кладёт ParseTomlError*, хендлер читает не то (боксинг/маршаллинг
+рассинхронизированы: сигнатура fail-op vs содержимое fail-frame).
+Repro: standalone (toml.nv-копия + mini.nv) на Windows, ДЕТЕРМИНИРОВАННО,
+вне toml-контекста воспроизводится shape'ом throw-в-with → match.
+
+Это ОБЪЯСНЯЕТ всё: оба ассерта toml (парсер возвращает Err с чужим
+payload → оба match'а падают в `_`), и Windows-пре-существенность
+(дефект в fail-машинерии, не в toml). Linux-флип вторичен (CU-порядок
+мог маскировать/раскрывать — неважно, корень один).
+
+Следующий шаг: C-артефакт mini — inspect handler-literal fail-op
+сигнатуру + throw_typed store (маршаллинг), найти рассинхрон; это
+компиляторный дефект D65-машинерии, кандидат в состав 0.1.3 как
+самостоятельный фикс (Fail-хендлеры — ядро языка).
