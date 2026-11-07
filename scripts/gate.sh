@@ -1361,6 +1361,10 @@ step loop "лицензионная гигиена (манифесты объя�
 guard "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
 
+step loop "печатаемая версия релиза совпадает с тегом (урок перевыпуска 0.1.3)"
+guard "$ROOT/scripts/guards/check-binary-version.sh" "$ROOT" \
+    || fail "Cargo-версия/печать бинаря разошлась с тегом oracle-v*"
+
 step loop "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
 guard "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"

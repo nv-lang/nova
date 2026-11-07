@@ -485,10 +485,16 @@ fn main() {
         Push-Location $ProjectDir
         try {
             Write-Host "--- nova --version (распакованный бинарь) ---"
-            & (Join-Path $InstallDir "nova.exe") --version
+            $PrintedVersion = & (Join-Path $InstallDir "nova.exe") --version
             if ($LASTEXITCODE -ne 0) {
                 throw "SmokeTest FAIL: nova --version, exit=$LASTEXITCODE"
             }
+            # Урок перевыпуска 0.1.3: бинари печатали 0.1.0 в архиве 0.1.3
+            # (Cargo-версия не бампалась). Печать обязана равняться $Version.
+            if ("$PrintedVersion" -ne "nova $Version") {
+                throw "SmokeTest FAIL: архив $Version, а бинарь печатает '$PrintedVersion' (Cargo-версия не бампнута — класс перевыпуска 0.1.3)"
+            }
+            Write-Host "версия в архиве совпадает: $PrintedVersion"
 
             Write-Host "--- nova build hello.nv (из чистого проекта, env указывает на распакованный std/nova_rt/gc) ---"
             & (Join-Path $InstallDir "nova.exe") build hello.nv
