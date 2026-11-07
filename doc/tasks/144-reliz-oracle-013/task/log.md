@@ -448,3 +448,30 @@ bisect/toml-no-prelude-import остаётся как доказательств
 println НЕТ вовсе — так что гипотеза 2, если подтвердится, будет означать
 «сигнатуры Io меняют Fail-сцену глобально», и чиниться по существу в
 механике effect-строк. Бисект-3 (эмиссия) — если 2 не подтвердит.
+
+## 2026-11-07 (10) — toml: КОРЕНЬ НАЙДЕН (эмит-сторона, first-wins владелец варианта)
+
+Эксперименты на Windows (точка-проба по плейбуку §2.5/№17, наконец-то):
+- Минимальная форма match над Fail-вызовом — ЗЕЛЕНАЯ на текущем дереве.
+- toml_test:81 ВСТАВКА ВЕТОК меняет исход: 2 ветки (arm1 + `_`) — arm1 НЕ
+  срабатывает → assert(false); 4 ветки — arm1 срабатывает верно.
+- ЧИСТАЯ ПАРА (бинарь+дерево до волны) + вариант B (4 ветки): :81 ЗЕЛЕЕТ —
+  баг формы СТАРЫЙ (пре-волна); Windows-красный томl — он же.
+- Волна (прелюдийный import std.io) добавила io.ErrorKind.UnexpectedEof в
+  CU → порядок регистрации в sum_schema_registry.variant_to_sum сменился →
+  first-wins (find_variant_v2/find_variant_compat) на Linux отдал ЧУЖОГО
+  владельца → тег arm1 сравнивается не с тем → fall to `_`.
+
+КОРЕНЬ: эмит-сторона резолвит владельца варианта паттерна first-wins по
+глобальному реестру, вместо КОНТЕКСТА (expected sum из scrutinee
+Result[_, ParseTomlError]). Комментарий D381 в sum_schema_registry.rs:264
+сам говорит: «len() >= 2 → ambiguous → disambiguated by call-site context
+(the expected/return sum) rather than find_variant_v2's first-wins» — но
+путь match-arm этим правилом не пользуется.
+
+ФИКС (следующий шаг): в резолюции payload-варианта match-arms предпочесть
+expected sum (канал/scrutinee) до first-wins; кандидаты-сайты: emit_c.rs
+:5026 (types_get-дверь), :24058, :35982 (комментарий уже признаёт
+«may pick the WRONG sum»). Зеркало кейстона на эмит-стороне. После фикса:
+пины fn_name_two_modules + toml-восстановление в базу стража НЕ требуется
+(toml зелёный = страж зелёный), пуш main.
