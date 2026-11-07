@@ -115,8 +115,13 @@ export fn kind_from_errno(code int) -> ErrorKind {
 /// operation and raw OS code when present.
 #stable(since = "0.1")
 export fn IoError @to_str() -> str {
-    ro base = kind_to_str(@kind)
-    ro withop = if @op.is_empty() { base } else { "${base} (${@op})" }
+    // The local's name is collision-proofed: a plain `base` here leaks into
+    // the flat CU-wide var_types once the prelude imports std.io (task 144)
+    // and last-write-wins clobbers any user fn/local of the same name (n96:
+    // `ro h Hnd = base` emitted as an undeclared local read). Same class and
+    // same remedy as the retry.nv priv-field fix (be17edaed kin).
+    ro kind_text = kind_to_str(@kind)
+    ro withop = if @op.is_empty() { kind_text } else { "${kind_text} (${@op})" }
     if @raw_os != 0 {
         "${withop} [os ${@raw_os}]"
     } else {

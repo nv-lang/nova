@@ -16707,9 +16707,19 @@ impl<'a> TypeCheckCtx<'a> {
                             // type came from a declared signature, and a SUM-name
                             // collision (D381) qualifies refs on the emit side
                             // independently.
-                            let visible = self.types_get_here(sum_name).or_else(|| {
-                                self.types.get(sum_name).copied()
-                            });
+                            // №705 (bare-type-lookups ratchet): the global
+                            // types map collides last-write-wins across
+                            // modules -- do not read it bare. Route through
+                            // the file-aware door with the current file: it
+                            // sees BOTH the file's own declarations and the
+                            // per-file overlay of every declaring file
+                            // (imported ParseTomlError included), without a
+                            // new bare-reader face of the №696/№729 class.
+                            let visible = self
+                                .current_file
+                                .get()
+                                .and_then(|fid| self.types_get_for_file(sum_name, fid))
+                                .or_else(|| self.types_get_here(sum_name));
                             visible.and_then(|td| {
                                 if let TypeDeclKind::Sum(variants) = &td.kind {
                                     variants.iter().any(|v| v.name == variant)
