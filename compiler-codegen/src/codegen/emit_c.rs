@@ -1538,6 +1538,16 @@ pub struct CEmitter {
     /// { return nova_fn_<name>(args); }`). Дедупликация — несколько
     /// references к одной fn делят один thunk.
     emitted_fn_thunks: HashSet<String>,
+    /// Task 144 item "toml" (D65 machinery): the payload C-type of the
+    /// Fail[E] whose with-binding is being emitted RIGHT NOW (set around the
+    /// handler-expression emission by emit_with, from the with-header's
+    /// `Fail[ParseTomlError]` generics). The handler-literal param loop reads
+    /// it for an UNANNOTATED `|e|` Fail arm: the Fail vtable slot is erased
+    /// to nova_str (effects.h), so without this the param is the default
+    /// guess and the body reads a STRING while `throw` stores the TYPED
+    /// pointer -- the handler sees a wrong-typed payload (toml: both asserts
+    /// false). Mirrors Plan 61 F.3's annotated path; None otherwise.
+    expected_fail_payload: Option<String>,
     /// Plan 14 Ф.2: SOURCE names of consts with runtime init (init ordering + a fast pre-check).
     /// Whether a READ is lazy is NOT decided by this set -- see `lazy_const_syms` (#1158).
     lazy_consts: HashSet<String>,
@@ -2817,6 +2827,7 @@ impl CEmitter {
             user_fn_variadic: HashSet::new(),
             suppress_variadic_routing: false,
             emitted_fn_thunks: HashSet::new(),
+            expected_fail_payload: None,
             lazy_consts: HashSet::new(), pending_assoc_consts: Vec::new(), local_frames: Vec::new(), capture_scope: Default::default(), discard_id: None, lazy_const_syms: HashSet::new(), module_value_tys: HashMap::new(),
             pending_const_inits: Vec::new(),
             record_field_fn_sigs: HashMap::new(),
@@ -12738,6 +12749,18 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // литералом для эффектов с одной операцией. Десугаризуем
             // ClosureLight/ClosureFull в синтетический HandlerLit
             // перед emit_expr.
+            // Task 144 (D65 machinery): publish the with-header's Fail[E]
+            // payload C-type for the handler-literal param loop (an
+            // UNANNOTATED `|e|` arm must not fall back to the erased nova_str
+            // slot while `throw` stores the typed pointer). Save/restore --
+            // bindings are processed in order, each with its own effect.
+            let fail_payload_save = self.expected_fail_payload.take();
+            if let TypeRef::Named { path, generics, .. } = &binding.effect {
+                if path.last().map_or(false, |s| *s == "Fail") && generics.len() == 1 {
+                    self.expected_fail_payload =
+                        self.type_ref_to_c(&generics[0]).ok();
+                }
+            }
             let handler_val = if let Some((effect_path, lit_expr)) =
                 self.desugar_handler_lambda(&binding.effect, &binding.handler)?
             {
@@ -12746,6 +12769,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             } else {
                 self.emit_expr(&binding.handler)?
             };
+            self.expected_fail_payload = fail_payload_save;
             // [M-property-testing-rot] (Plan 172.13 батч 3) — GC ROOT PIN: the
             // installed handler value must be held in a STACK local for the
             // block's lifetime, not ONLY in the thread-local
@@ -13762,8 +13786,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let mut saved_fail_e_entries: Vec<(String, Option<String>)> = Vec::new();
             if eff == "Fail" {
                 for (i, p) in m.params.iter().enumerate() {
-                    if let Some(annotated_ty) = &p.ty {
-                        if let Ok(annot_c) = self.type_ref_to_c(annotated_ty) {
+                    // Task 144 (D65 machinery): an UNANNOTATED `|e|` arm under
+                    // `with Fail[E] = ...` inherits E from the with-header
+                    // (expected_fail_payload, set by emit_with) -- same typed
+                    // treatment as the explicit-annotation path below. The
+                    // Fail vtable slot is erased nova_str, but `throw` stores
+                    // the TYPED pointer in the fail-frame, so the erased slot
+                    // reads garbage (toml: the handler saw a wrong-typed
+                    // payload and both asserts fired). A with header without a
+                    // concrete E (bare `Fail`) keeps the erased legacy path.
+                    let inferred_c: Option<String> = match &p.ty {
+                        Some(ty) => self.type_ref_to_c(ty).ok(),
+                        None => self.expected_fail_payload.clone(),
+                    };
+                    {
+                        if let Some(annot_c) = inferred_c {
                             if annot_c != "nova_str" {
                                 // Register typed binding.
                                 let pname = p.name.clone();
@@ -39002,10 +39039,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     _ => return Err("`is` expects a variant name (e.g. `x is Some`)".into()),
                 };
                 // Find the sum-type that owns this variant.
-                // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
-                let (sum_type, _fields) = self.sum_schema_registry.find_variant_compat(&variant_name)
-                    .ok_or_else(|| format!("`is {}` — unknown variant", variant_name))?;
+                // Task 144 (toml): the OPERAND's C type is AUTHORITATIVE --
+                // mirror of pattern_cond's scr_ty chain. A bare variant name
+                // may collide across sums (io's ErrorKind.UnexpectedEof vs a
+                // user's ParseTomlError.UnexpectedEof), and find_variant_compat
+                // is FIRST-WINS: the winner flips with CU registration order
+                // (the prelude std.io import re-ordered it), the tag constant
+                // comes out of the WRONG sum, and the check never fires. When
+                // the operand's own sum declares the variant, it wins; the
+                // registry stays the fallback for unknown operands.
                 let inner_ty = self.infer_expr_c_type(inner);
+                let (sum_type, _fields) = {
+                    let operand_sum = Self::debt_strip_nova_prefix(&inner_ty)
+                        .trim_end_matches('*')
+                        .trim()
+                        .to_string();
+                    let operand_has = !operand_sum.is_empty()
+                        && self.sum_schema_registry
+                            .lookup_sum_schema(&operand_sum)
+                            .map(|e| e.variants.iter().any(|v| v.variant_name == variant_name))
+                            .unwrap_or(false);
+                    if operand_has {
+                        (operand_sum, Vec::new())
+                    } else {
+                        self.sum_schema_registry.find_variant_compat(&variant_name)
+                            .ok_or_else(|| format!("`is {}` — unknown variant", variant_name))?
+                    }
+                };
                 let inner_c = self.emit_expr(inner)?;
                 // Tag access depends on layout:
                 //   NovaOpt_nova_int (Option) → value-struct, dot accessor
