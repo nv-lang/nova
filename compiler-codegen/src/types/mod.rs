@@ -16666,7 +16666,22 @@ impl<'a> TypeCheckCtx<'a> {
                             && sum_name != "Option"
                             && sum_name != "Result"
                         {
-                            self.types_get_here(sum_name).and_then(|td| {
+                            // The sum must be VISIBLE to the pattern's file --
+                            // declared there OR imported (toml_test matches on
+                            // `ParseTomlError` declared in the IMPORTED toml
+                            // module; types_get_here is file-local only, so the
+                            // channel stayed silent and the emitter fell to the
+                            // registry's first-wins -- which the prelude std.io
+                            // import (task 144) re-ordered, handing the tag to
+                            // io's ErrorKind.UnexpectedEof). The global slot is
+                            // sound as the visibility fallback: the scrutinee
+                            // type came from a declared signature, and a SUM-name
+                            // collision (D381) qualifies refs on the emit side
+                            // independently.
+                            let visible = self.types_get_here(sum_name).or_else(|| {
+                                self.types.get(sum_name).copied()
+                            });
+                            visible.and_then(|td| {
                                 if let TypeDeclKind::Sum(variants) = &td.kind {
                                     variants.iter().any(|v| v.name == variant)
                                         .then(|| sum_name.to_string())
