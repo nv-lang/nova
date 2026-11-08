@@ -1920,8 +1920,8 @@
 #   while the oracle keeps source bytes; un-named edge of D467 §7, filed by the
 #   measurement itself). Measured: rows 1869 -> 1870, max 1960 -> 1961,
 #   duplicates 0.
-rows=1872
-max=1963
+rows=1873
+max=1964
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

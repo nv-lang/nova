@@ -1365,6 +1365,10 @@ step loop "печатаемая версия релиза совпадает с 
 guard "$ROOT/scripts/guards/check-binary-version.sh" "$ROOT" \
     || fail "Cargo-версия/печать бинаря разошлась с тегом oracle-v*"
 
+step loop "спутниковые пакеты проходят тесты тулчейном монорепы (свип владельца 2026-11-08)"
+guard --deadline 3600 "$ROOT/scripts/guards/check-packages-sweep.sh" "$ROOT" \
+    || fail "пакеты nova-* падают на этом тулчейне (свип: см. вывод стража)"
+
 step loop "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
 guard "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"
