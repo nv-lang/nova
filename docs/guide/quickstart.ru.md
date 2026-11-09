@@ -20,8 +20,8 @@ Nova — компилируемый язык: `nova build` превращает 
 
 ## Установка (Windows x64)
 
-1. Скачайте [`nova-oracle-0.1.0-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-windows-x86_64.zip)
-   из [релиза Oracle 0.1.0](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0) и
+1. Скачайте [`nova-oracle-0.1.3-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.3/nova-oracle-0.1.3-windows-x86_64.zip)
+   из [релиза Oracle 0.1.3](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.3) и
    распакуйте куда угодно, например в `C:\nova`.
 2. В сессии PowerShell, из папки, куда вы распаковали архив, выполните
    **dot-source** скрипта настройки (ведущее `. ` важно — без него переменные
@@ -43,7 +43,7 @@ Nova — компилируемый язык: `nova build` превращает 
 
    ```powershell
    nova --version
-   # nova 0.1.0
+   # nova 0.1.3
    ```
 
 4. Вам также понадобится C-компилятор на машине — Nova компилирует в C, а не
@@ -53,9 +53,9 @@ Nova — компилируемый язык: `nova build` превращает 
 
 ### Установка (Linux)
 
-В Oracle 0.1.0 есть готовый архив для Linux x86_64:
-[`nova-oracle-0.1.0-linux-x86_64.tar.gz`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-linux-x86_64.tar.gz).
-Полный список опубликованных файлов — в [релизе Oracle 0.1.0](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0).
+В Oracle 0.1.3 есть готовый архив для Linux x86_64:
+[`nova-oracle-0.1.3-linux-x86_64.tar.gz`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.3/nova-oracle-0.1.3-linux-x86_64.tar.gz).
+Полный список опубликованных файлов — в [релизе Oracle 0.1.3](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.3).
 Если вы предпочитаете сборку из исходников, см. [docs/guide/linux-build.md](linux-build.md).
 
 Отдельный [релиз Carina 0.2.0](https://github.com/nv-lang/nova/releases/tag/carina-v0.2.0)

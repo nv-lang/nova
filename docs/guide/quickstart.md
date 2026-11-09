@@ -15,8 +15,8 @@ are the two commands you'll use.
 
 ## Install (Windows x64)
 
-1. Download [`nova-oracle-0.1.0-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-windows-x86_64.zip)
-   from the [Oracle 0.1.0 release](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0) and
+1. Download [`nova-oracle-0.1.3-windows-x86_64.zip`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.3/nova-oracle-0.1.3-windows-x86_64.zip)
+   from the [Oracle 0.1.3 release](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.3) and
    unzip it anywhere, e.g. `C:\nova`.
 2. In a PowerShell session, from the folder you unzipped into, **dot-source**
    the setup script (the leading `. ` matters — without it the environment
@@ -38,7 +38,7 @@ are the two commands you'll use.
 
    ```powershell
    nova --version
-   # nova 0.1.0
+   # nova 0.1.3
    ```
 
 4. You also need a C compiler on your machine — Nova compiles to C, not
@@ -48,9 +48,9 @@ are the two commands you'll use.
 
 ### Install (Linux)
 
-Oracle 0.1.0 has a prebuilt Linux x86_64 archive:
-[`nova-oracle-0.1.0-linux-x86_64.tar.gz`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.0/nova-oracle-0.1.0-linux-x86_64.tar.gz).
-See the [Oracle 0.1.0 release](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.0)
+Oracle 0.1.3 has a prebuilt Linux x86_64 archive:
+[`nova-oracle-0.1.3-linux-x86_64.tar.gz`](https://github.com/nv-lang/nova/releases/download/oracle-v0.1.3/nova-oracle-0.1.3-linux-x86_64.tar.gz).
+See the [Oracle 0.1.3 release](https://github.com/nv-lang/nova/releases/tag/oracle-v0.1.3)
 for the published assets. To build from source instead, see
 [docs/guide/linux-build.md](linux-build.md).
 
