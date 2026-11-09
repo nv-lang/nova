@@ -24913,7 +24913,21 @@ impl<'a> TypeCheckCtx<'a> {
     fn prefer_file_local_variant_owner<'b>(&self, owners: &'b [String]) -> Option<&'b String> {
         let fid = self.current_file.get()?;
         let locals = self.file_local_types.get(&fid)?;
-        owners.iter().find(|o| locals.contains_key(*o))
+        // SAME-FILE TIE (nova-postgres regression, registry No. 1964 kin):
+        // when SEVERAL owners of the variant live in the current file
+        // (PgEvent and its TEMP-DIAG twin Event2 in one session.nv), an
+        // arbitrary `find`-first pick cuts off the expected-type context
+        // (the call-arg knew []PgEvent) and E7301s the wrong owner.
+        // Prefer a file-local owner ONLY when it is the UNIQUE local one;
+        // a tie stays ambiguous -- the expected-type channel decides.
+        let mut hit: Option<&'b String> = None;
+        for o in owners {
+            if locals.contains_key(o) {
+                if hit.is_some() { return None; }
+                hit = Some(o);
+            }
+        }
+        hit
     }
 
     fn variant_ctor_type(&self, sum: &str, variant: &str, args: &[CallArg], scope: &HashMap<String, TypeRef>, span: Span) -> Option<TypeRef> {

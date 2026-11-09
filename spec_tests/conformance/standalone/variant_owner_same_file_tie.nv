@@ -1,0 +1,26 @@
+// EXPECT_STDOUT len =1
+//
+// Registry No. 1964 kin (nova-postgres regression): when SEVERAL owners of
+// a variant live in the SAME file (PgEvent and its diagnostic twin), the
+// module-local preference must NOT pick one arbitrarily -- the expected-type
+// context of the call (the []PgEvent push target) decides. Before the fix,
+// an arbitrary find-first pick cut the context off and E7301'd the twin.
+module standalone.variant_owner_same_file_tie
+
+type PgEvent enum
+    | Row { values int }
+    | Complete { tag str }
+
+type TwinEvent enum
+    | Row { values int }
+    | Complete { tag str }
+
+fn push(mut events []PgEvent) -> () {
+    events.push(Complete { tag: "x" })
+}
+
+fn main() {
+    mut events []PgEvent = []PgEvent.new()
+    push(events)
+    println("len =", events.len())
+}
