@@ -841,3 +841,23 @@ Notes: состав + раздел «Latent compiler defects surfaced by the wav
 SHA256SUMS обновлены. В notes — блок Re-issued с объяснением и
 указанием, что новые суммы авторитетны. Урок в память: версия бинаря —
 часть релизного чек-листа, бамп в том же коммите-волне, что и релиз.
+
+## 2026-11-09 — ВТОРОЙ ПЕРЕВЫПУСК 0.1.3: postgres-регресс (№1964 хвост)
+
+Свип пакетов (страж №1964) поймал регресс кейстоуна: nova-postgres
+PASS на 0.1.2 → E7301 на 0.1.3 (session.nv: PgEvent + TEMP-DIAG двойник
+Event2 в ОДНОМ файле, оба с Complete; find-first локальный пик брал
+двойника, отрезая expected-тип контекст []PgEvent). Минимальное репро
+подтверждено (PASS на 0.1.2, FAIL на 0.1.3).
+
+ФИКС (64f82b6db, ветка fix/pg-same-file-tie): prefer_file_local_
+variant_owner применяет локальное предпочтение ТОЛЬКО при УНИКАЛЬНОМ
+локальном владельце; ничья остаётся двусмысленной — решает expected-тип.
+Пин variant_owner_same_file_tie.nv. Верификация: репро GREEN, полный
+nova-postgres PASS 1/0, ключевые пины (toml, print_io, n96, at_shorthand)
+GREEN, conformance 502/2 известных.
+
+ПЕРЕВЫПУСК: main 64f82b6db запушен, тег oracle-v0.1.3 перенесён force
+(94db2f984 → 64f82b6db), все 4 актива пересобраны и заменены --clobber
+(win SmokeTest PASSED; linux docker: nova --version=0.1.3 + hello
+через print-путь), SHA256SUMS обновлены, notes — блок о двух перевыпусках.
