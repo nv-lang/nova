@@ -1361,14 +1361,6 @@ step loop "лицензионная гигиена (манифесты объя�
 guard "$ROOT/scripts/guards/check-license-hygiene.sh" "$ROOT" \
     || fail "манифест без лицензии либо вендоренный подмодуль без уведомления"
 
-step loop "печатаемая версия релиза совпадает с тегом (урок перевыпуска 0.1.3)"
-guard "$ROOT/scripts/guards/check-binary-version.sh" "$ROOT" \
-    || fail "Cargo-версия/печать бинаря разошлась с тегом oracle-v*"
-
-step loop "спутниковые пакеты проходят тесты тулчейном монорепы (свип владельца 2026-11-08)"
-guard --deadline 3600 "$ROOT/scripts/guards/check-packages-sweep.sh" "$ROOT" \
-    || fail "пакеты nova-* падают на этом тулчейне (свип: см. вывод стража)"
-
 step loop "язык манифестов (nova.toml / nova.lock.toml — по-английски, норма 2026-08-10)"
 guard "$ROOT/scripts/guards/check-manifest-language.sh" "$ROOT" \
     || fail "кириллица в манифесте пакета"
@@ -1463,6 +1455,14 @@ if body_runs; then
     guard "$ROOT/scripts/guards/check-binary-not-busy.sh" "$ROOT" \
         || fail "общий бинарь занят чужим прогоном — сборка упала бы через минуту с чужой причиной (№1098)"
     ( cd "$ROOT/nova-cli" && cargo build --release ) || fail "cargo build"
+    # №1964: оба стража судят собранный бинарь — им нужен nova, поэтому они
+    # в ярусе push ПОСЛЕ сборки, а не в текстовом loop-ярусе (на CI там бинаря
+    # нет — страж краснел «нет собранного nova», что по правилу яруса читается
+    # как «шаг ничего не доказал»).
+    guard "$ROOT/scripts/guards/check-binary-version.sh" "$ROOT" \
+        || fail "Cargo-версия/печать бинаря разошлась с тегом oracle-v*"
+    guard --deadline 3600 "$ROOT/scripts/guards/check-packages-sweep.sh" "$ROOT" \
+        || fail "пакеты nova-* падают на этом тулчейне (свип: см. вывод стража)"
     NOVA="$ROOT/nova-cli/target/release/nova.exe"
     # Имя бинаря зависит от платформы, и до 2026-08-22 здесь стояло только
     # `nova.exe`: на Linux шаг падал бы «nova.exe not found» на успешно

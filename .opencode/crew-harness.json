@@ -9,7 +9,7 @@
   ],
   "worktrees": "worktrees",
   "worktree_name": "{repo}-{n}-{slug}",
-  "branch_name": "task/{n}-{slug}",
+  "branch_name": "t{n}-{slug}",
   "target_branch": "main",
   "reviewer": "acceptor",
   "cleanup": "local+remote",
@@ -57,12 +57,12 @@
     {
       "id": "gate",
       "required": true,
-      "text": "вердикт гейта — CI на кандидате integrate/t<N> (nova-gate, слово владельца 2026-10-07: гейты отданы GitHub CI); локально scripts/gate.sh и scripts/gate-novac.sh не гонять; красный CI — доработка"
+      "text": "вердикт гейта — CI на кандидате integrate/t<N> (nova-gate, слово владельца 2026-10-07: гейты отданы GitHub CI); локально `scripts/gate.sh` и `scripts/gate-novac.sh` не гонять; красный CI — доработка"
     },
     {
       "id": "ci",
       "required": true,
-      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в integrate/t<N>; python scripts/guards/check-push-proven-by-ci.py <полный хеш> — ok; порядок приёмки (precheck, замок, accept) — crew_help, раздел ПРИЁМКА; в отчёт — строка LANDED task=#N main=…"
+      "text": "CI на кандидате зелёный: кандидат (свежий main + ветка задачи) запушен в `integrate/t<N>`; `python scripts/guards/check-push-proven-by-ci.py <полный хеш>` — ok; порядок приёмки (precheck, замок, accept) — `crew_help`, раздел ПРИЁМКА; в отчёт — строка `LANDED task=#N main=…`"
     },
     {
       "id": "commits",
@@ -82,7 +82,7 @@
     "acceptor": 4
   },
   "machine_slots": 1,
-  "inflight_limit": 7,
+  "inflight_limit": 5,
   "heavy_commands": [
     "gate.sh",
     "gate-novac.sh",
@@ -115,19 +115,19 @@
     },
     "codex": {
       "heavy": {
-        "model": "openai/gpt-6-astra#medium",
+        "model": "openai/gpt-6-astra",
         "context": 525000,
         "input": 461000,
         "output": 128000
       },
       "medium": {
-        "model": "openai/gpt-6.1-sol#medium",
+        "model": "openai/gpt-6.1-sol",
         "context": 525000,
         "input": 461000,
         "output": 128000
       },
       "light": {
-        "model": "openai/gpt-6-luna#medium",
+        "model": "openai/gpt-6-luna",
         "context": 525000,
         "input": 461000,
         "output": 128000
@@ -223,28 +223,10 @@
         "family": "kimi",
         "tier": "task"
       }
-    },
-    "kimi-codex": {
-      "develop": {
-        "family": "kimi",
-        "tier": "task"
-      },
-      "develop_accept": {
-        "family": "codex",
-        "tier": "medium"
-      },
-      "plan": {
-        "family": "kimi",
-        "tier": "task"
-      },
-      "plan_accept": {
-        "family": "codex",
-        "tier": "medium"
-      }
     }
   },
-  "profile_set": "kimi",
-  "tier_max": "medium",
+  "profile_set": "codex",
+  "tier_max": "light",
   "accepted_slot": "free",
   "merge_precheck": "required"
 }
