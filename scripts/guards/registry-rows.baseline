@@ -1922,9 +1922,10 @@
 #   duplicates 0.
 # 2026-11-10, zz146 sum-lift fix: row 1965 added (repro reconstructed from carrier evidence; pin sum_lift_self_recursive_payload.nv).
 # 2026-11-10, reg 1966: oracle №1647 regression row (variant-by-expect for builtin sums).
-rows=1875
+# 2026-11-11, reg 1967: ICE 812 + unit-variant generic-sum mono route verified closed (pin added).
+rows=1876
 
-max=1966
+max=1967
 
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
