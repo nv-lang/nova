@@ -55,6 +55,14 @@ export type NodeKind enum
     /// kind would make every EffectOp reader ask the parent first, which is
     /// the confusion the registry filler and the checker both avoid this way.
     | HandlerOp
+    /// A closure-light literal (D22): `|params| expr` or `|params| { ... }` --
+    /// untyped identifier params (or `_`), NO `=>`, no types/effects/return
+    /// type; the signature comes from the CONTEXT (the supervised-value wave:
+    /// `on_timeout:` gives `fn(TimeoutError) -> T`). Contextual like HandlerLit:
+    /// NOT in `is_expr_kind`, typed only by the doors that admit the form with
+    /// a known signature (`@type_closure_lit`); everywhere else refused by name.
+    /// Children: Pipe leaf, one Ident leaf per param, Pipe leaf, body (expr or Block).
+    | ClosureLit
     | File
     | ModuleDecl
     | FnDecl
@@ -75,13 +83,14 @@ export type NodeKind enum
     /// A handler-installation statement: `with Fs = h, Os = h2 { body }`
     /// (D61; wave 274.11 Э.4). Contextual word, not a lexer keyword.
     | WithStmt
-    /// A SUPERVISION statement: `supervised { body }` (D13; wave 274.11
-    /// Э.7 item 4). Contextual word like `with`: the door is spelling +
-    /// shape, and a statement beginning `supervised {` can only be this
-    /// form. Parsed and typed this wave; EMISSION (fibers, the failure
-    /// delivery to `on_child_fail`, the §7 line as BEHAVIOUR) is the E4
-    /// emit wave's honest debt -- an emitter ice before that machinery
-    /// lands is the accepted answer, not a silent drop.
+    /// A SUPERVISION statement/value: `supervised { body }` or
+    /// `supervised(timeout: d, on_timeout: |e| fallback) { body }` (D13;
+    /// wave 274.11 Э.7 item 4; the supervised-VALUE wave: D414 §4, D449).
+    /// Contextual word like `with`: the door is spelling + shape. As a VALUE
+    /// (tail of a value body, or an initializer) its type is the body's tail
+    /// type POST-JOIN; `on_timeout` (D449) is a closure-light returning that
+    /// same type, called instead of throwing Fail[TimeoutError]. Children:
+    /// the `supervised` word leaf, optional `(` NamedArg* `)`, body Block last.
     | SupervisedStmt
     /// A SPAWN statement: `spawn { body }` (D13's structured concurrency
     /// pair; wave 274.11 Э.7 item 4). Same contextual discipline as

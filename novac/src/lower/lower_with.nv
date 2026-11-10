@@ -71,3 +71,38 @@ fn Lowerer mut @lower_supervised(st Node) -> () {
     @lower_block_stmts_fn(body, false)
     @ir.end_supervised(at)
 }
+
+/// A supervised VALUE body's NON-TAIL statements (supervised-value wave, D414
+/// §4): every statement of the block except the last, which is the construct's
+/// value and is placed POST-JOIN by the emitter (`@emit_supervised_value`), in
+/// a builder of its own. The scope is pushed WITHOUT a `ScopeOpen` statement
+/// (`@push_sup_scope`): the emitter prints the queue and the join itself, while
+/// the body's `spawn`s still find `q` as their innermost scope (`@spawn_site`).
+/// An early `return`/`break` INSIDE a supervised value body is outside this wave
+/// -- the statement form and the carried value bodies have none.
+fn Lowerer mut @lower_sup_body_non_tail(body Node, q int) -> () {
+    ro at = @ir.push_sup_scope(q)
+    ro kids = branch_children(body)
+    mut last_branch = -1
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {}
+            Branch { .. } => { last_branch = j }
+        }
+        j += 1
+    }
+    mut j = 0
+    for c in kids {
+        match c {
+            Leaf(_) => {} // the block's own braces -- trivia carriers, not statements
+            Branch { .. } => {
+                // The last statement is the value; the emitter places it after
+                // the join, so only the statements before it are lowered here.
+                if j != last_branch { @lower_stmt(c) }
+            }
+        }
+        j += 1
+    }
+    @ir.pop_sup_scope(at)
+}

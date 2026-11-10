@@ -174,6 +174,7 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
                           lo: Lowerer { ctx, out, ir: FnBuilder.new(no_ty()) },
                           lit_tmp: lt, body: StringBuilder.new(), hlits: []Node.new(), cur_lit: 0 - 1,
                           spawns: []Node.new(), cur_spawn: 0 - 1,
+                          closures: []Node.new(), cur_closure: 0 - 1,
                           // NAMED explicitly, and the reason is registry #901:
                           // the ORACLE accepts a constructor that omits a field
                           // and zero-fills it in silence, so a field forgotten
@@ -202,6 +203,10 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
     e.emit_handler_protos()
     e.collect_spawns(file)
     e.emit_spawn_protos()
+    // Closure-light literals (supervised-value wave, D22): the `on_timeout:`
+    // handler's body/context prototypes before the functions that build it.
+    e.collect_closures(file)
+    e.emit_closure_protos()
     // The structs of the generic records the unit's own instances use
     // (274.11 E.10 step 4d), before any prototype names them.
     if !program {
@@ -228,6 +233,7 @@ export fn emit_unit(file Node, ctx Ctx, out CheckOut, reach Reach, insts []Insta
     }
     e.emit_handler_ops()
     e.emit_spawn_fns()
+    e.emit_closure_fns()
     e.emit_module_value_inits()
     ro init = e.module_value_init_calls()
     // The blobs `embed` named (D412), before every function that reads them.

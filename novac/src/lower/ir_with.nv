@@ -139,6 +139,25 @@ export fn FnBuilder mut @end_supervised(at int) -> ()
     ro _ = @scopes.pop()
 }
 
+/// Push a `supervised` scope onto the stack WITHOUT opening it: the
+/// supervised-value wave (D414 §4) lowers a value body into a builder of its
+/// own, and the emitter lays the queue (`ScopeOpen`) down itself, so this door
+/// records the scope for `spawn` dispatch only. The body's `spawn`s must still
+/// find `q` as their innermost supervised scope (`@spawn_site`).
+export fn FnBuilder mut @push_sup_scope(q int) -> int {
+    @scopes.push(WithScope { swaps: []HandlerSwap.new(), frame: 0 - 1, @loops, sup: q })
+    @scopes.len() - 1
+}
+
+/// Pop a scope pushed by `@push_sup_scope` WITHOUT joining it: the emitter
+/// prints the join (`nova_supervised_run`) itself. The twin of `@end_supervised`
+/// minus the `ScopeJoin` statement.
+export fn FnBuilder mut @pop_sup_scope(at int) -> ()
+    requires @scopes.len() - 1 == at, "lower: a supervised value scope popped out of order"
+{
+    ro _ = @scopes.pop()
+}
+
 /// A `spawn` statement: handed to the innermost `supervised` of this body.
 export fn FnBuilder mut @spawn_site(node NodeId) -> () {
     mut q = 0 - 1

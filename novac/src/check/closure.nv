@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/closure.nv -- the CLOSURE-LIGHT typist (D22), the
+// supervised-value wave's contextual literal.
+//
+// Donor: none -- the form is the language's own (D22); the body-typing
+//   discipline is the handler-op typist's (check/handler.nv), reused door
+//   for door so a closure body judges `return` and its tail exactly as a fn
+//   body does -- one return discipline, not a closure-flavoured copy.
+// Role: layer 7 (check) -- types `|params| body` against a signature the
+//   CONTEXT gives (the supervised-value wave: `on_timeout:` of a `supervised`
+//   value, `fn(TimeoutError) -> T`). The literal carries no types of its own
+//   (D22): params are bare names, the result is the context's.
+// Used by: check/with_typing.nv (@type_supervised_value types the on_timeout
+//   closure here). The subset walk admits the form only in that slot
+//   (closure_pos, check/check.nv); @type_expr refuses it by name elsewhere.
+// Guarded by: check-novac-file-size.py, pipeline/concurrency_test.nv.
+//
+// A co-equal file of module `novac.check` (folder = one module), cut by
+// MEANING under decision 12: handler.nv judges the literal that carries
+// effect-op declarations, this one the literal that carries a single body
+// under a contextual signature.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind, no_node}
+import ../sem.{branch_children, leaf_text, leaf_kind, closure_param_count, ParamMode}
+import ../types.{TyId, is_ty}
+
+/// ONE closure-light literal against the signature the context gives. `sig`
+/// is a `TkFn` term (types.nv `@fn_type`): the head is the arity, the args
+/// carry the params in order with the RESULT LAST (`@arg(sig, arity)`). The
+/// params bind read-only (D22: a closure captures primitives by copy, objects
+/// by managed ref; a `mut` capture shares a slot -- the capture-mark stack
+/// records it, exprs.nv's Name arm, exactly as a handler op's captures). The
+/// body is judged against the result through the fn body's own doors
+/// (`@ret_expect` / `@tail_value_body` / `@judge_return`), saved and restored
+/// so the enclosing fn's return expectation survives -- the handler-op
+/// precedent, door for door.
+fn Checker mut @type_closure_lit(e Node, sig TyId) -> () {
+    ro kids = branch_children(e)
+    // SILENT-OK: a literal with no body is the parser's recovery marker in a
+    // shape the walk already reported -- nothing to type against the sig.
+    if kids.len() < 2 { return }
+    ro before = @out.len()
+    ro body = kids[kids.len() - 1]
+    // `arg_count` is the FULL args length (params + result, types.nv `@intern`
+    // sets `arg_cnt: args.len()`); the head is the arity. So the param count is
+    // `arg_count - 1` and the result sits at that index -- the mangle.nv TkFn
+    // reader's own arithmetic (`arity = arg_count(t) - 1`, result `arg(t, arity)`).
+    ro arity = @ctx.tys.arg_count(sig) - 1
+    ro result = @ctx.tys.arg(sig, arity)
+    ro pcnt = closure_param_count(e)
+    if pcnt != arity {
+        @report_first_leaf_of(kids, "a closure literal takes ${arity} parameter(s) here -- the context's signature is `fn(...) -> ...` with ${arity}, and this one writes ${pcnt} (D22: a closure's signature comes from its context, the supervised-value wave)")
+        return
+    }
+    // THE CAPTURE MARK (E.9 step 3's discipline): every binding that exists
+    // now is outside this literal, so a read of one from the body is a
+    // capture, recorded by exprs.nv's Name arm against this owner.
+    @cap_marks.push(@scope.row_count())
+    @cap_owners.push(e.id_of())
+    ro pmark = @scope.mark()
+    // The params ride the children between the pipes: Ident leaves in order,
+    // Comma leaves skipped, the closing Pipe and the body excluded. `_` binds
+    // nothing (D22's wildcard param); a named one takes the sig's param type.
+    mut pi = 0
+    mut i = 1
+    while i < kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
+            ro pname = leaf_text(c)
+            if pname != "_" {
+                @scope.bind(pname, @ctx.tys.arg(sig, pi), ParamMode.ModeRo)
+            } else {
+                // The wildcard param: a position with no binding.
+            }
+            pi += 1
+        } else {
+            // A Comma separator or the closing Pipe leaf.
+        }
+        i += 1
+    }
+    ro saved_ret = @ret_expect
+    ro saved_tail = @tail_value_body
+    ro saved_unit = @ret_unit
+    ro saved_ro = @ret_ro
+    @ret_ro = false
+    @ret_expect = result
+    @ret_unit = @returns_unit(result)
+    if body.kind_of() == NodeKind.Block {
+        // The closure writes no `-> T` (D22), so `value_body_of` -- which reads
+        // a written RetType -- cannot mark the tail; the result decides: a
+        // value result makes the block's tail the returned value, a unit
+        // result demands none. The fn body's own tail door does the judging.
+        if @ret_unit {
+            @tail_value_body = no_node()
+        } else {
+            @tail_value_body = body.id_of()
+        }
+        @type_block(body)
+    } else {
+        ro bmark = @out.len()
+        @type_tail_value(body)
+        if @out.len() == bmark {
+            @judge_return(body, @tail_type_of(body))
+        } else {
+            // Refused while typing: the walk already spoke.
+        }
+    }
+    @ret_expect = saved_ret
+    @tail_value_body = saved_tail
+    @ret_unit = saved_unit
+    @ret_ro = saved_ro
+    @scope.release(pmark)
+    ro _ = @cap_marks.pop()
+    ro _ = @cap_owners.pop()
+    if @out.len() == before {
+        // The literal's own type IS the context's signature: a closure value
+        // carries `fn(TimeoutError) -> T`, the term the emitter spells as a
+        // `NovaClosBase*` (mangle.nv's TkFn layout, the interop precedent).
+        @record(e, sig)
+    } else {
+        // SILENT-OK: the body refused itself; a second word about its type
+        // would be the second death over one cause.
+    }
+}

@@ -950,15 +950,19 @@ fn Lowerer mut @lower_value_source(e Node, ty TyId) -> Option[Local] {
 
 /// Whether a block's last statement is its VALUE: an expression, a positional
 /// record, a tail `if`, or a match the checker typed (an untyped tail match is
-/// a statement whose arms leave through `return`, 274.5 wave B9).
+/// a statement whose arms leave through `return`, 274.5 wave B9). A supervised
+/// value (D414 §4) is the same typed-tail shape: its body tail is the construct's
+/// type when the checker typed it, and the bare statement form records none.
 fn Lowerer @tail_places_value(c Node) -> bool {
     ro k = c.kind_of()
     // An `if let` places a value only when the checker TYPED it as one --
     // the same test the tail match takes, and for the same reason: the
     // statement spelling of both shapes leaves through `return`, and asking
-    // the node's kind alone cannot tell the two apart.
+    // the node's kind alone cannot tell the two apart. A supervised value is
+    // the third member: the statement form (no recorded type) stays a
+    // statement, the value form places its body's tail.
     is_value_tail_kind(k) || k == NodeKind.IfStmt ||
-        ((k == NodeKind.MatchExpr || k == NodeKind.IfLet) &&
+        ((k == NodeKind.MatchExpr || k == NodeKind.IfLet || k == NodeKind.SupervisedStmt) &&
             is_ty(@out.type_if_known(c.id_of())))
 }
 

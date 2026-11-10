@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module supervised_value.pos_1
+
+import std.time.duration
+
+fn within_budget() -> int {
+    supervised(timeout: 30.to_seconds(), on_timeout: |_e| -1) {
+        spawn { 5.to_millis().sleep() }
+        7
+    }
+}
+
+fn timed_out() -> int {
+    supervised(timeout: 100.to_millis(), on_timeout: |_e| -1) {
+        spawn { 5000.to_millis().sleep() }
+        99
+    }
+}
+
+fn main() Io -> () {
+    println(within_budget())
+    println(timed_out())
+}

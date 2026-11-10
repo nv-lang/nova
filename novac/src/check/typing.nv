@@ -551,6 +551,23 @@ fn Checker mut @type_block(b Node) -> () {
                     i += 1
                     continue
                 }
+                if i == tail_at && c.kind_of() == NodeKind.SupervisedStmt {
+                    // THE TAIL `supervised` IS A VALUE (the supervised-value
+                    // wave, D414 §4): its type is the body's tail POST-JOIN,
+                    // recorded by its own door; the return judge compares it
+                    // with the fn's declared return exactly as a tail match.
+                    ro smark = @out.len()
+                    @value_expect = @ret_expect
+                    @type_supervised_value(c)
+                    @value_expect = no_ty()
+                    if @out.len() == smark {
+                        @judge_return(c, @chan.type_if_known(c.id_of()))
+                    } else {
+                        // Refused inside the door, by name: nothing to add.
+                    }
+                    i += 1
+                    continue
+                }
                 if i == tail_at && is_expr_kind(c.kind_of()) {
                     // ANY OTHER EXPRESSION TAIL of a value body (a name, a
                     // literal, an operator, a field) is the returned value too

@@ -288,6 +288,19 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
         // SILENT-OK: typed and bound above, so this branch is fully decided
         return
     }
+    // A SUPERVISED VALUE initializer (supervised-value wave): not in
+    // is_expr_kind, so its own door types it; the bind takes the recorded
+    // type, and a refusal (which records nothing) binds the name poisoned.
+    if ik == NodeKind.SupervisedStmt {
+        @type_supervised_value(init)
+        ro st_t = @chan.type_if_known(init.id_of())
+        if !is_ty(st_t) {
+            @bind_poisoned(vname, kids)
+            return
+        }
+        @scope.bind(vname, st_t, bind_mode_at(kids))
+        return
+    }
     // A HANDLER LITERAL routes explicitly, the TupleExpr precedent exactly:
     // not in is_expr_kind (E.5 defers first-class handler values), so the
     // general path never sees it, and the fallthrough's `type_of` would

@@ -112,13 +112,14 @@ fn block_terminates(b Node) -> bool {
 }
 
 /// Whether `n` holds a `break` aimed at the loop AROUND it (274.7 B10): nested loops
-/// take their own `break`s, and a handler op's body is another function.
+/// take their own `break`s, and a handler op's or closure-light's body is another
+/// function (D22: a `break` inside a closure aims at a loop inside it, not this one).
 fn breaks_out(n Node) -> bool {
     match n {
         Leaf(_) => false
         Branch { kind, children, .. } => {
             if kind == NodeKind.LoopCtl { return loop_ctl_is_break(n) }
-            if kind == NodeKind.ForStmt || kind == NodeKind.WhileStmt || kind == NodeKind.HandlerOp {
+            if kind == NodeKind.ForStmt || kind == NodeKind.WhileStmt || kind == NodeKind.HandlerOp || kind == NodeKind.ClosureLit {
                 return false
             }
             for c in children {
@@ -546,6 +547,12 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
         // without a value") on the same byte -- measured on the hunt's
         // hl-block-tail probe, two diagnostics for one literal.
         if k == NodeKind.HandlerLit { return }
+        // A SUPERVISED tail is a value on the same terms (the supervised-value
+        // wave, D414 §4): its type is the body's tail POST-JOIN, judged by
+        // `@type_supervised_value` -- a body without a value tail is refused
+        // THERE, by its own name, not here as "ends without a value" (the
+        // Index/HandlerLit precedent: the door that owns the answer speaks).
+        if k == NodeKind.SupervisedStmt { return }
         @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
         return
     }
@@ -632,12 +639,13 @@ fn Checker mut @report_if_explicit_self_return(fk []Node) -> () {
 }
 
 /// Refuse every `return @` under `n` -- but not inside a body that is ANOTHER
-/// function's: a handler operation, a handler literal, a spawned fiber (D13).
+/// function's: a handler operation, a handler literal, a closure-light (D22),
+/// a spawned fiber (D13).
 fn Checker mut @reject_return_self_in(n Node) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
-            if kind == NodeKind.HandlerOp || kind == NodeKind.HandlerLit || kind == NodeKind.SpawnStmt {
+            if kind == NodeKind.HandlerOp || kind == NodeKind.HandlerLit || kind == NodeKind.SpawnStmt || kind == NodeKind.ClosureLit {
                 // SILENT-OK: a nested function's `return` is its own, not this method's.
                 return
             }

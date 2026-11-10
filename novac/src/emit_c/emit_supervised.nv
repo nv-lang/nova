@@ -1,0 +1,188 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Kotlin's `withTimeout` (the deadline covers the whole block, D442) and
+//   Koka's structured scope (children joined at the end); the C PROTOCOL is the
+//   runtime's ABI (the fiber queue, the fail frames, the early-deadline arm) --
+//   novac repeats it as interop, exactly as `emit_spawn.nv` repeats the spawn
+//   protocol. The reference for the SHAPE is the oracle's own output
+//   (`oracle-pos_1.c`, measured 2026-11-10): a result slot before the block,
+//   the queue, the deadline combined in, the body's non-tail inside a guard, the
+//   join with the active scope restored, the tail value POST-JOIN, and the
+//   `on_timeout:` closure called on a timeout instead of rethrowing
+//   `Fail[TimeoutError]` (D449).
+// Role: emission of the SUPERVISED VALUE (supervised-value wave, D414 §4/D449).
+//   The lowering hands the body's non-tail statements to a builder of its own
+//   (`@lower_sup_body_non_tail`) and the tail value to another; this file prints
+//   both inline, between the guard and the join, and answers the result slot's
+//   C name as the construct's value.
+// Used by: emit_place.nv (`build_value`, the SupervisedStmt arm).
+// Guarded by: check-novac-differential.sh over novac/fixtures/supervised_value.
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{SUPERVISOR_EFFECT}
+import ../sem.{branch_children, leaf_text, effect_slot_c, c_type}
+import ../types.{TyId}
+import ../lower.{FnBuilder, Terminator, BlockId}
+
+/// The last Branch child's index in a block's children, or -1 for a block of
+/// leaves only. The tail value is the last Branch (the source's last statement).
+fn last_branch_idx(kids []Node) -> int {
+    mut at = 0 - 1
+    mut i = 0
+    for c in kids {
+        if c.kind_of() != NodeKind.LeafNode { at = i } else {
+            // A brace or another leaf: not a statement.
+        }
+        i += 1
+    }
+    at
+}
+
+/// The VALUE of a supervised scope (D414 §4, D449). Emits, in order: the result
+/// slot, the scope's fiber queue with the deadline combined in, the handler
+/// closure as the shell's `NovaClosBase*`, the timeout guard, the body's
+/// non-tail statements inside a fail-frame guard, the join (children run to the
+/// end, the active scope restored), the body's tail value POST-JOIN, and -- a
+/// timeout that is not the deadline's -- the `on_timeout:` closure called with
+/// the `TimeoutError` payload, or `nova_rethrow_scope` of `Fail[TimeoutError]`
+/// when there is no handler. Answers the slot's C name.
+fn Emitter mut @emit_supervised_value(e Node, ty TyId) -> str {
+    ro kids = branch_children(e)
+    ro body = kids[kids.len() - 1]
+    // Which named argument is the deadline and which the handler: an index,
+    // -1 for absent -- a Node has no "none" sentinel (`no_node` is a NodeId).
+    mut timeout_at = 0 - 1
+    mut ot_at = 0 - 1
+    mut ci = 0
+    for c in kids {
+        if c.kind_of() == NodeKind.NamedArg {
+            ro ak = branch_children(c)
+            if ak.len() >= 3 {
+                ro aname = leaf_text(ak[0])
+                if aname == "timeout" || aname == "deadline" {
+                    timeout_at = ci
+                } else if aname == "on_timeout" {
+                    ot_at = ci
+                } else {
+                    // `cancel:` was refused by the checker; nothing else is read here.
+                }
+            } else {
+                // A malformed named argument: the checker refused it already.
+            }
+        } else {
+            // The body, or the scope's own leaves: not a named argument.
+        }
+        ci += 1
+    }
+    ro u = @fresh_uniq()
+    ro res = "_novac_supres${u}"
+    ro ret_c = c_type(@ctx, ty)
+    @body.append("    ${ret_c} ${res};\n")
+    @body.append("    {\n")
+    // The scope's queue: its supervisor flag, the deadline combined into the
+    // monotonic clock. The name `_novac_q<u>` is the one a `spawn` of the body
+    // reads back through `@spawn_queue` (the body's scope number is `u` too).
+    @body.append("        NovaFiberQueue _novac_q${u} = {0};\n")
+    @body.append("        nova_scope_init(&_novac_q${u});\n")
+    @body.append("        _novac_q${u}.has_supervisor = (${effect_slot_c(SUPERVISOR_EFFECT)} != NULL);\n")
+    if timeout_at >= 0 {
+        ro timeout_node = branch_children(kids[timeout_at])[2]
+        @body.append("        _novac_q${u}.deadline_ns = nova_deadline_combine(_novac_q${u}.deadline_ns, time_monotonic_ns() + (int64_t)(")
+        @emit_expr(timeout_node)
+        @body.append(").nanos);\n")
+    } else {
+        // No deadline to enforce (the statement form's shape; a value form
+        // always carries one, the checker can require it below if it must).
+    }
+    mut has_ot = false
+    if ot_at >= 0 {
+        has_ot = true
+        ro ot_node = branch_children(kids[ot_at])[2]
+        ro clos = @closure_clos_value(ot_node)
+        @body.append("        void* _novac_sot${u} = (void*)((void*)(${clos}));\n")
+    } else {
+        // No handler: a timeout rethrows `Fail[TimeoutError]` (D449).
+    }
+    @body.append("        NovaFiberQueue* _novac_sqprev${u} = _nova_active_scope;\n")
+    @body.append("        NovaFailFrame _novac_sotf${u};\n")
+    @body.append("        nova_fail_push(&_novac_sotf${u});\n")
+    @body.append("        if (setjmp(_novac_sotf${u}.jmp) == 0) {\n")
+    @body.append("            void* _novac_sedl${u} = nova_scope_arm_early_deadline(&_novac_q${u});\n")
+    @body.append("            NovaFailFrame _novac_sg${u};\n")
+    @body.append("            nova_fail_push(&_novac_sg${u});\n")
+    @body.append("            if (setjmp(_novac_sg${u}.jmp) == 0) {\n")
+    @emit_sup_body(body, u)
+    @body.append("                NOVA_UNIT;\n")
+    @body.append("                nova_fail_pop();\n")
+    @body.append("            } else {\n")
+    @body.append("                nova_fail_pop();\n")
+    @body.append("                nova_scope_disarm_early_deadline(_novac_sedl${u});\n")
+    @body.append("                nova_rethrow_scope(_novac_sg${u}.error_msg.ptr, _novac_sg${u}.error_kind, _novac_sg${u}.error_user_payload, _novac_sg${u}.error_user_type_id, _novac_sg${u}.error_suppressed);\n")
+    @body.append("            }\n")
+    @body.append("            nova_scope_disarm_early_deadline(_novac_sedl${u});\n")
+    @body.append("            nova_supervised_run(&_novac_q${u});\n")
+    @body.append("            _nova_active_scope = _novac_sqprev${u};\n")
+    @emit_sup_tail(res, body, ty)
+    @body.append("            nova_fail_pop();\n")
+    @body.append("        } else {\n")
+    @body.append("            nova_fail_pop();\n")
+    @body.append("            _nova_active_scope = _novac_sqprev${u};\n")
+    if has_ot {
+        // D449 fixes the handler's one parameter: `TimeoutError`. The shell's
+        // payload is its pointer, so the ABI cast is exact.
+        @body.append("            if (_novac_sotf${u}.error_user_type_id == NOVA_TID_USER_TimeoutError) {\n")
+        @body.append("                ${res} = ((${ret_c}(*)(void*, Nova_TimeoutError*))(((NovaClosBase*)(_novac_sot${u}))->fn))(((NovaClosBase*)(_novac_sot${u}))->env, (Nova_TimeoutError*)(_novac_sotf${u}.error_user_payload));\n")
+        @body.append("            } else {\n")
+        @body.append("                nova_rethrow_scope(_novac_sotf${u}.error_msg.ptr, _novac_sotf${u}.error_kind, _novac_sotf${u}.error_user_payload, _novac_sotf${u}.error_user_type_id, _novac_sotf${u}.error_suppressed);\n")
+        @body.append("            }\n")
+    } else {
+        @body.append("            nova_rethrow_scope(_novac_sotf${u}.error_msg.ptr, _novac_sotf${u}.error_kind, _novac_sotf${u}.error_user_payload, _novac_sotf${u}.error_user_type_id, _novac_sotf${u}.error_suppressed);\n")
+    }
+    @body.append("        }\n")
+    @body.append("    }\n")
+    res
+}
+
+/// The body's NON-TAIL statements, lowered into a builder of their own and
+/// printed inline. The builder is finished at a join block that is NOT printed
+/// (`@print_chain` stops at it), so its `Return` never lands; the scope number
+/// `u` is the one pushed, so a `spawn` here hands its fiber to `_novac_q<u>`.
+fn Emitter mut @emit_sup_body(body Node, u int) -> () {
+    ro saved = @lo.ir
+    @lo.ir = FnBuilder.new(@ctx.prims.unit_id)
+    @lo.lower_sup_body_non_tail(body, u)
+    ro j = @lo.ir.reserve()
+    @lo.ir.seal(@lo.ir.current(), Terminator.Goto(j))
+    @lo.ir.seal(j, Terminator.Return)
+    ro f = @lo.ir.finish()
+    mut printed = []bool.new()
+    for _ in 0..f.blocks.len() { printed.push(false) }
+    @print_chain(f, BlockId(0), j, false, printed)
+    @lo.ir = saved
+}
+
+/// The body's TAIL value, lowered into a temporary of its own builder and
+/// printed POST-JOIN, then copied into `res`. A Block, a `match`, an `if`, a
+/// call or a literal all go through the one `@lower_place` door. The tail
+/// builder's join-return is not printed either.
+fn Emitter mut @emit_sup_tail(res str, body Node, ty TyId) -> () {
+    ro kids = branch_children(body)
+    ro tail_at = last_branch_idx(kids)
+    assert(tail_at >= 0, "emit: a supervised value body with no value tail reached the emitter")
+    ro tail = kids[tail_at]
+    ro saved = @lo.ir
+    @lo.ir = FnBuilder.new(ty)
+    ro t = @lo.ir.temp(ty)
+    @lo.lower_place(tail, t)
+    ro tname = @lo.ir.decl_of(t).name
+    ro j = @lo.ir.reserve()
+    @lo.ir.seal(@lo.ir.current(), Terminator.Goto(j))
+    @lo.ir.seal(j, Terminator.Return)
+    ro f = @lo.ir.finish()
+    mut printed = []bool.new()
+    for _ in 0..f.blocks.len() { printed.push(false) }
+    @print_chain(f, BlockId(0), j, false, printed)
+    @lo.ir = saved
+    @body.append("            ${res} = ${tname};\n")
+}

@@ -654,6 +654,28 @@ fn concurrent_mut_capture_msg(name str) -> str =>
 /// (D474 section 0, the closure scheme) is the handler-value wave's.
 const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compiled only as a `with` binding's handler or a local binding's initializer (`ro h = effect E { ... }`) that captures no `mut` binding -- a handler value in any other position, and a held one whose `mut` capture would be an address into its frame, is not compiled yet (E4, boundary E.5 of plan 274.11)"
 
+/// A closure-light literal (D22) outside a context that gives it a signature
+/// (the supervised-value wave): `@type_closure_lit` types it only where the
+/// signature is known -- `on_timeout:` of a `supervised` value, `fn(TimeoutError)
+/// -> T`. The HandlerLit gate's own discipline (registry 1312): the walk admits
+/// the form only where a typist judges it, and names the position elsewhere.
+const CLOSURE_LIT_POSITION_MSG = "outside the subset: a closure literal (`|params| ...`) is compiled only where its signature is given by the context -- `on_timeout:` of a `supervised` value (D22, D449); a closure in any other position is not compiled yet (E5, handler values)"
+
+/// `supervised(cancel: tok)` (D441 cancellation): the supervised-value wave
+/// compiles `timeout:`/`on_timeout:` (D442/D449), not cancellation -- refused
+/// by name rather than silently dropped (the carrier relay.nv writes it).
+const SUPERVISED_CANCEL_MSG = "outside the subset: `supervised(cancel: ...)` is not compiled yet -- cancellation (D441) is a later wave; this one compiles `timeout:` and `on_timeout:` (E4, the concurrency horizon of plan 274.11)"
+
+/// D449: an `on_timeout:` handler requires a deadline (`timeout:` or
+/// `deadline:`) -- without one there is no timeout to handle
+/// (E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE).
+const SUPERVISED_ON_TIMEOUT_NO_DEADLINE_MSG = "`on_timeout:` needs a deadline: add `timeout:` (or `deadline:`) to the `supervised` -- a handler with no timeout to handle is refused (D449, E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE)"
+
+/// A `supervised` standing as a VALUE whose body produces no tail value: the
+/// construct's type is the body's tail type POST-JOIN (D414 §4), and a body
+/// that ends in a statement has none to give.
+const SUPERVISED_VALUE_NO_TAIL_MSG = "a `supervised` used as a value needs a body that ends in a value -- its type is the body's tail type after the join (D414 §4); this body ends without one (the supervised-value wave, plan 274.11)"
+
 /// `break` or `continue` with no loop around it (274.7 wave B10): a language error --
 /// the jump has no target. A handler op's body counts as its own function.
 const LOOP_CTL_OUTSIDE_MSG = "`break` and `continue` stand only inside the body of a `for` or `while` loop -- there is no loop around this one"

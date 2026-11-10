@@ -483,9 +483,10 @@ fn Checker mut @flow_nested(n Node, mut fl ConsumeFlow) -> () {
 }
 
 /// The bodies that do not run where they are written: a `spawn`'s (another fiber,
-/// D13) and a handler's (run when its operation is performed).
+/// D13), a handler's (run when its operation is performed) and a closure-light's
+/// (D22; the supervised-value wave's `on_timeout:` runs when the deadline passes).
 fn runs_elsewhere(k NodeKind) -> bool =>
-    k == NodeKind.SpawnStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp
+    k == NodeKind.SpawnStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp || k == NodeKind.ClosureLit
 
 /// One child of a branch, a loop or a nested block: a block is a list of
 /// statements, and anything else -- a statement or a condition -- is judged as one
@@ -574,7 +575,7 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
 /// handler, and an assignment (branches, loops and blocks have their own paths).
 fn is_compound_kind(k NodeKind) -> bool =>
     k == NodeKind.WithStmt || k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt ||
-    k == NodeKind.AssignStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp
+    k == NodeKind.AssignStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp || k == NodeKind.ClosureLit
 
 /// The kinds that NAME a value where it lives rather than produce one: a name, `@`,
 /// a field, an element. Using one is a view; moving out of one is what step 1 does

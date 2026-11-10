@@ -15,12 +15,12 @@ module novac.check
 
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
-import ../builtins.{TypeKind}
+import ../builtins.{TypeKind, TIMEOUT_ERROR_TYPE}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text}
 import ../sem.{leaf_kind}
 import ../sem.{ty_source_name, decl_of_ty}
-import ../types.{TyId, is_ty}
+import ../types.{TyId, is_ty, no_ty}
 
 /// Type a `with` statement (E4 wave, 274.11): the effect bindings resolve, the
 /// handler value is judged against the effect, and the body is a block.
@@ -202,15 +202,49 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
     // { spawn { ... } }`. Each is its keyword leaf plus ONE body
     // Block, and the body is typed as an ORDINARY block -- D439
     // (direct blocking ops in a supervised body) is explicitly not
-    // this task, per the plan record. No value semantics: the
-    // statement's type is nobody's question (Outcome/T are later
-    // stages). The parser's door guarantees the body brace, so the
-    // short shape is a broken invariant, not a form: the P17 assert
-    // says typing does not re-report what a malformed arm would mean.
+    // this task, per the plan record. The parser's door guarantees the
+    // body brace, so the short shape is a broken invariant, not a form.
     ro skids = branch_children(st)
     if skids.len() < 2 {
         assert(@out.len() > 0, "check: a malformed supervised/spawn reached typing with no refusal")
         return
+    }
+    // THE NAMED ARGUMENTS in statement position (supervised-value wave):
+    // `cancel:` (D441) is a later wave -- refused by name, never silently
+    // dropped (relay.nv's `supervised(cancel: tok)` is the carrier). An
+    // `on_timeout:` makes the construct a VALUE (D449: the handler produces
+    // the result), so even with the value discarded it goes to the value
+    // door, which types the body tail and the handler against one type.
+    mut has_ot = false
+    for c in skids {
+        if c.kind_of() != NodeKind.NamedArg { continue }
+        ro ak = branch_children(c)
+        if ak.len() < 3 { continue }
+        ro aname = leaf_text(ak[0])
+        if aname == "cancel" {
+            @report_first_leaf_of(ak, SUPERVISED_CANCEL_MSG)
+            return
+        } else if aname == "on_timeout" {
+            has_ot = true
+        } else {
+            // timeout/deadline/unknown: typed below (or by the value door).
+        }
+    }
+    if has_ot {
+        @type_supervised_value(st)
+        // SILENT-OK: the value door typed the body tail and the handler; the
+        // statement discards the result it recorded.
+        return
+    }
+    // No handler: the deadline expressions are values the emitter reads, so
+    // their callees must be reached (a `100.to_millis()` left untyped vanishes
+    // from mono's reach). The body stays an ORDINARY block -- no value tail is
+    // demanded of the statement form (std's `supervised(timeout:) { spawn }`).
+    for c in skids {
+        if c.kind_of() != NodeKind.NamedArg { continue }
+        ro ak = branch_children(c)
+        if ak.len() < 3 { continue }
+        @type_expr(ak[2])
     }
     ro sbody = skids[skids.len() - 1]
     if sbody.kind_of() == NodeKind.Block {
@@ -226,5 +260,130 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
         // A missing body is the parser's error node, reported by the
         // shape walk's generic Err arm, `@report_err_branch`
         // (check/rules.nv:791, called from check/check.nv:185).
+    }
+}
+
+/// Type a `supervised` standing as a VALUE (the supervised-value wave: D414
+/// §4, D442, D449): the tail of a value body, or a binding initializer. The
+/// construct's type is the BODY's tail type POST-JOIN -- the body runs to a
+/// value, the scope joins its spawned fibers, and that value is the result.
+/// `on_timeout:` (D449) is a closure-light returning that SAME type, called
+/// instead of throwing `Fail[TimeoutError]` when the deadline passes; its one
+/// parameter is `TimeoutError`. `cancel:` (D441) is a later wave -- refused by
+/// name here, not silently dropped. The body is typed through the fn body's
+/// own tail door (`@tail_value_body`), so a tail call/match/if/literal is
+/// judged exactly as a fn body judges it; the enclosing return expectation is
+/// saved and restored around the body and the closure alike.
+fn Checker mut @type_supervised_value(st Node) -> () {
+    ro skids = branch_children(st)
+    if skids.len() < 2 {
+        assert(@out.len() > 0, "check: a malformed supervised reached typing with no refusal")
+        return
+    }
+    ro sbody = skids[skids.len() - 1]
+    if sbody.kind_of() != NodeKind.Block {
+        // A missing body is the parser's marker; the walk named it.
+        return
+    }
+    // THE NAMED ARGUMENTS (D442/D449): `timeout:`/`deadline:` give the
+    // deadline, `on_timeout:` the handler, `cancel:` is out of wave. The
+    // timeout expression is typed like any value (a Duration the emitter
+    // reads); the handler is typed below, against the body's own type.
+    mut has_deadline = false
+    mut ot_at = 0 - 1
+    mut i = 0
+    for c in skids {
+        if c.kind_of() != NodeKind.NamedArg {
+            i += 1
+            continue
+        }
+        ro ak = branch_children(c)
+        if ak.len() < 3 {
+            i += 1
+            continue
+        }
+        ro aname = leaf_text(ak[0])
+        if aname == "timeout" || aname == "deadline" {
+            has_deadline = true
+            @type_expr(ak[2])
+        } else if aname == "on_timeout" {
+            ot_at = i
+        } else if aname == "cancel" {
+            @report_first_leaf_of(ak, SUPERVISED_CANCEL_MSG)
+            return
+        } else {
+            // An unknown named argument: resolution owns the question of
+            // which names a form takes; the value is typed so its own
+            // refusals surface, and the emitter reads only what it knows.
+            @type_expr(ak[2])
+        }
+        i += 1
+    }
+    // THE BODY AS A VALUE: its tail is the construct's type. The fn body's
+    // tail door types it (a tail call records its callee, a tail literal takes
+    // the expectation); `@sup_depth` admits the `spawn` the body writes.
+    ro saved_tail = @tail_value_body
+    @tail_value_body = sbody.id_of()
+    @sup_depth += 1
+    @type_block(sbody)
+    @sup_depth -= 1
+    @tail_value_body = saved_tail
+    ro bkids = branch_children(sbody)
+    ro tail_at = last_branch_of(bkids)
+    mut body_ty = no_ty()
+    if tail_at >= 0 {
+        ro tail = bkids[tail_at]
+        body_ty = @chan.type_if_known(tail.id_of())
+        if !is_ty(body_ty) {
+            body_ty = type_of(tail, @ctx, @scope, @chan)
+        } else {
+            // The tail door recorded it.
+        }
+    } else {
+        // A body of leaves only: no value tail.
+    }
+    if !is_ty(body_ty) {
+        @report_first_leaf_of(skids, SUPERVISED_VALUE_NO_TAIL_MSG)
+        return
+    }
+    // THE on_timeout HANDLER (D449): a closure returning the body's type, its
+    // one parameter TimeoutError. A handler with no deadline is refused -- there
+    // is no timeout to handle. The signature is interned through the one fn-type
+    // door (params in order, result LAST); the closure typist binds the param
+    // and judges the body against the result, exactly as a handler op does.
+    if ot_at >= 0 {
+        if !has_deadline {
+            @report_first_leaf_of(branch_children(skids[ot_at]), SUPERVISED_ON_TIMEOUT_NO_DEADLINE_MSG)
+            return
+        }
+        ro te_ty = timeout_error_ty(@ctx)
+        ro sig = @ctx.tys.fn_type([]TyId.of(te_ty, body_ty))
+        ro ot_expr = branch_children(skids[ot_at])[2]
+        if ot_expr.kind_of() == NodeKind.ClosureLit {
+            @type_closure_lit(ot_expr, sig)
+        } else {
+            // D449's handler is a closure-light this wave; a named fn value
+            // would need the first-class closure machinery E.5 defers. Typed
+            // so its own refusals surface, then named for the position.
+            @type_expr(ot_expr)
+            @report_first_leaf_of(branch_children(skids[ot_at]), CLOSURE_LIT_POSITION_MSG)
+            return
+        }
+    } else {
+        // No handler: a timeout throws Fail[TimeoutError] outward (D449), the
+        // construct still has the body's type.
+    }
+    @record(st, body_ty)
+}
+
+/// The prelude's TimeoutError term (D449), resolved from the handed std
+/// interface like every other prelude type -- the shell carries
+/// `Nova_TimeoutError`, the registry carries the declaration. `no_ty()` when
+/// the interface did not hand it: the closure param then binds poisoned and
+/// its reads refuse by name, never a silent guess (the #652 class).
+fn timeout_error_ty(ctx Ctx) -> TyId {
+    match ctx.defs.type_decl(TIMEOUT_ERROR_TYPE) {
+        None => no_ty()
+        Some(d) => ctx.types[raw_decl(d)].ty_id
     }
 }

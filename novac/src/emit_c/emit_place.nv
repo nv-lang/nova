@@ -535,6 +535,13 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
         // here, before the line that reads the table pointer.
         return Some(@emit_handler_lit(e))
     }
+    if k == NodeKind.SupervisedStmt {
+        // A supervised VALUE (supervised-value wave, D414 §4/D449): the
+        // queue, the guard, the body, the join and the `on_timeout:` call are
+        // printed here, into a result slot this door declares; the slot's NAME
+        // is the value the reading line takes.
+        return Some(@emit_supervised_value(e, ty))
+    }
     @hoist_array_lits(e)
     None
 }

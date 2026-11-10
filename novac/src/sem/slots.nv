@@ -667,3 +667,28 @@ export fn whilelet_init_at(kids []Node) -> int => 3
 
 /// The slot of the loop body block.
 export fn whilelet_body_at(kids []Node) -> int => 4
+
+/// The param count of a ClosureLit (D22, the supervised-value wave): the Ident
+/// leaves between the two Pipe leaves (a Comma separator is not a param), or 0
+/// for the `||` form (ONE PipePipe leaf, no params). The body is the LAST child
+/// (a Branch), never counted -- the loop stops before it. Allocates nothing:
+/// the typist and the emitter both ask it, and a vector per query would turn
+/// the hot path into the allocation П18 forbids.
+#realtime nogc
+export fn closure_param_count(n Node) -> int {
+    ro kids = branch_children(n)
+    if kids.len() < 2 { return 0 }
+    if leaf_kind(kids[0]) == TokenKind.PipePipe { return 0 }
+    mut cnt = 0
+    mut i = 1
+    while i < kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
+            cnt += 1
+        } else {
+            // A Comma separator or the closing Pipe leaf: not a parameter.
+        }
+        i += 1
+    }
+    cnt
+}

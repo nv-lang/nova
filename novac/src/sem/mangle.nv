@@ -362,14 +362,13 @@ fn c_layout(ctx Ctx, t TyId) -> CLayout {
                 ro under = c_type(ctx, ctx.tys.arg(t, 0))
                 return CLayout { base: if ctx.tys.ptr_is_mut(t) { under } else { "const ${under}" }, by_ptr: true }
             }
-            // A FUNCTION type has no C layout yet (task 134): the term exists
-            // so a closure-parameter SIGNATURE reads (std's map_err), and no
-            // VALUE of it is ever emitted while the checker refuses closure
-            // literals -- reaching here means that refusal was bypassed, which
-            // is an ice, not a spelling to invent.
-            TkFn => { ice_at(
-                "novac/src/sem/mangle.nv:370",
-                "mangle: c_type of a FUNCTION type -- a fn-typed value reached emission past the closure refusal (task 134)") }
+            // A FUNCTION type is the runtime's closure pointer (the
+            // supervised-value wave, D22/D449): `NovaClosBase*` -- INTEROP, the
+            // shell's `{ void* fn; void* env; }` (nova_rt.h), the same shape a
+            // handler value takes (`NovaVtable_E*` above). A closure-light
+            // literal of `on_timeout:` carries one; the term existed before
+            // this wave only so a closure-parameter SIGNATURE could read.
+            TkFn => { return CLayout { base: "NovaClosBase", by_ptr: true } }
         }
     }
     ice_at("novac/src/sem/mangle.nv:375", "mangle: type id outside the registry — no silent int default (#652 class)")

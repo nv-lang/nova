@@ -23,7 +23,7 @@ const MAX_NESTING_DEPTH = 512
 
 import ../lex.{Token, TokenKind, brace_delta, paren_delta}
 import ../tree.{Node, NodeKind, BinOp, is_binop, bin_op_of, is_unop}
-import ../builtins.{EFFECT_MARKER}
+import ../builtins.{EFFECT_MARKER, SUPERVISED_WORD}
 
 
 /// Binding power of a binary operator: the DECISION decides, not the token.
@@ -566,6 +566,23 @@ fn Cursor mut @atom() -> Node {
         // handler rule accepted the debris silently (the exact silence this
         // wave ends).
         return @handler_lit()
+    }
+    if @peek() == TokenKind.Pipe || @peek() == TokenKind.PipePipe {
+        // A CLOSURE-LIGHT literal (D22): `|params| expr` / `|params| { ... }`
+        // / `|| expr`. A leading `|` is unambiguous -- a binary `|` needs a
+        // left operand the climb has already read, so an atom starting with
+        // a pipe can only be this form. The signature comes from the context
+        // that admits it (the supervised-value wave: `on_timeout:`); the
+        // checker refuses it by name everywhere else.
+        return @closure_lit()
+    }
+    if @peek_ident(SUPERVISED_WORD) &&
+        (@peek(skip: 1) == TokenKind.LBrace || @peek(skip: 1) == TokenKind.LParen) {
+        // SUPERVISED in VALUE position (`ro res = supervised(timeout: d,
+        // on_timeout: |e| f) { ... }`, std's own supervised_on_timeout_test):
+        // the SAME reader as the statement door, the if-let-value precedent
+        // -- one node shape, position decides value-ness.
+        return @supervised_form()
     }
     if @peek() == TokenKind.IntLit || @peek() == TokenKind.FloatLit || @peek() == TokenKind.StrLit ||
        @peek() == TokenKind.CharLit {

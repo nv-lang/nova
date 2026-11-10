@@ -94,7 +94,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                      arg_pos bool = false, index_pos bool = false,
                      arm_pos bool = false, handler_param bool = false,
                      handler_pos bool = false, if_branch bool = false,
-                     if_tail bool = false, scrut_pos bool = false) -> () {
+                     if_tail bool = false, scrut_pos bool = false, closure_pos bool = false) -> () {
     match n {
         Leaf(t) => @report_if_error_token(t)
         Branch { kind, children, .. } => {
@@ -601,6 +601,17 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // WithStmt/HandlerLit arms above.
                     @loop_depth = 0
                 }
+                ClosureLit => {
+                    // Contextual (D22): `@type_closure_lit` judges it where a
+                    // signature is known (the supervised-value wave's
+                    // `on_timeout:`); the HandlerLit gate's own shape -- one
+                    // flag computed where the position is, a named refusal
+                    // elsewhere (registry 1312's lesson).
+                    if !closure_pos {
+                        @report_first_leaf_of(children, CLOSURE_LIT_POSITION_MSG)
+                        return
+                    }
+                }
                 SupervisedStmt => {
                     // READ and TYPED (E4 wave, 274.11 Э.7 item 4): the
                     // statement's own door -- typing the body block --
@@ -800,36 +811,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                 }
                 LeafNode | File | ModuleDecl | IfStmt => {}
                 AssignStmt => {
-                    // THE RIGHT SIDE OF A PLAIN `=` IS A VALUE POSITION for a
-                    // record constructor (registry #TBD, the record-position
-                    // wave): the store prints its source through the same
-                    // inline door an initializer's own constructor takes, and
-                    // the carriers are novac's own (`fx.ops[oi] = EffectOpSig
-                    // { .. }` and six more). ONLY the plain `=` and ONLY the
-                    // constructor -- a compound `op=` has no record meaning,
-                    // and opening init_pos for the whole right side would wave
-                    // a `match` through to a store that cannot lay its blocks
-                    // down. An `if` joins the constructor, and on ANY assign
-                    // op: `ints += if t.kind == ... { 1 } else { 0 }` is four
-                    // of the if-value wave's carriers, and a compound store
-                    // spells its source exactly where a plain one spells it.
-                    // Everything else is walked exactly as before.
-                    //
-                    // AN ARRAY LITERAL JOINS THE CONSTRUCTOR on the plain `=`
-                    // (registry 221.1 #1457): `@cur = []Stmt.new()`,
-                    // `pending = []str.new()`. The store builds it through the
-                    // same `@build_value` door (emit_place.nv), whose
-                    // `ArrayLit` arm was already there -- only this gate was
-                    // closed.
-                    mut ai = 0
-                    for c in children {
-                        @walk(c, init_pos: ai == 2 &&
-                                     ((leaf_kind(children[1]) == TokenKind.Assign &&
-                                       (c.kind_of() == NodeKind.RecordCtor ||
-                                        c.kind_of() == NodeKind.ArrayLit)) ||
-                                      c.kind_of() == NodeKind.IfExpr || c.kind_of() == NodeKind.MatchExpr))
-                        ai += 1
-                    }
+                    // The right-side-of-`=` position rule lives in
+                    // check/walk_assign.nv (decision 12's by-meaning cut).
+                    @walk_assign(children)
                     return
                 }
                 FieldAccess | CtorField | CtorSpread => {}
@@ -962,6 +946,11 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       if_branch: value_if && c.kind_of() == NodeKind.Block,
                       if_tail: at == if_tail_at,
                       scrut_pos: kind == NodeKind.MatchExpr && at == 1,
+                      // THE `on_timeout:` CLOSURE SLOT (supervised-value wave):
+                      // a NamedArg of a SupervisedStmt hands its value child
+                      // (slot 2) the closure position -- the HandlerLit/WithStmt
+                      // discipline, one flag computed where the position is.
+                      closure_pos: (kind == NodeKind.SupervisedStmt && c.kind_of() == NodeKind.NamedArg) || (kind == NodeKind.NamedArg && closure_pos && at == 2),
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is

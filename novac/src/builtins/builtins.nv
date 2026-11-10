@@ -152,6 +152,11 @@ export const CLEANUP_METHOD = "cleanup"
 /// D432: the type of `@cleanup`'s one parameter, and the variant a normal exit
 /// passes (std's prelude, `ScopeOutcome enum Success | ...`).
 export const SCOPE_OUTCOME_TYPE = "ScopeOutcome"
+/// The prelude's timeout error (`std/src/prelude/errors.nv`): D449 gives the
+/// `on_timeout:` closure its one parameter `TimeoutError { deadline_ns i64 }`.
+/// The shell carries `Nova_TimeoutError`; the name resolves from the handed
+/// std interface like every other prelude type (the supervised-value wave).
+export const TIMEOUT_ERROR_TYPE = "TimeoutError"
 export const SCOPE_OUTCOME_SUCCESS = "Success"
 /// The outcome of an exit that leaves with an error: `?` over a `Result` at `Err(e)` (D314
 /// amended 2026-10-03), its payload the error boxed into `any`.

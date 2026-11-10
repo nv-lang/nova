@@ -1,0 +1,204 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Go's closure conversion -- a function of its own plus an environment
+//   struct, shared variables by address -- and the handler-literal emission
+//   (`emit_handler.nv`) this file deliberately mirrors, so the two share one
+//   shape: a body function, a context type only when it captures, a value the
+//   runtime calls through.
+// Role: emission of a CLOSURE-LIGHT literal `|params| body` (D22, the
+//   supervised-value wave): a body function of its own
+//   (`novac_lambda_<tag><N>_body`), its context type (`novac_cenv_<tag><N>`,
+//   only when it captures), and the shell's `NovaClosBase` value -- a static
+//   singleton when it captures nothing (the oracle's shape, measured in
+//   `oracle-pos_1.c`), the environment and the closure built where it stands
+//   otherwise. The one carrier this wave emits is the `on_timeout:` handler
+//   (D449); the form is general, so a capture and a body of either shape (a
+//   Block or an expression) are handled here, not at the call site.
+// Used by: emit_c.nv (around the file's functions), emit_supervised.nv (the
+//   `on_timeout:` value), emit_handler.nv (`@owner_captures`).
+// Guarded by: check-novac-differential.sh over novac/fixtures/supervised_value
+//   (the capture-less path, byte for byte with the oracle's runtime output).
+
+module novac.emit_c
+
+import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
+import ../sem.{branch_children, leaf_text, leaf_kind, file_decls, decl_fn_row}
+import ../sem.{c_type, c_ident, is_unit_ty}
+import ../lower.{FnBuilder}
+
+/// Every closure-light literal of the functions mono reached, in the order of
+/// the file -- the index is the closure's C number. A literal of an unreached
+/// function is not emitted: its body's callees were never marked.
+fn Emitter mut @collect_closures(file Node) -> () {
+    for c in file_decls(file) {
+        if c.kind_of() != NodeKind.FnDecl { continue }
+        match decl_fn_row(c, @ctx) {
+            None => continue
+            Some(row) => {
+                if !@has_selected_fn(row) { continue }
+                if !@reach.has(row) { continue }
+                collect_closure_nodes(c, @closures)
+            }
+        }
+    }
+}
+
+/// The closure literals under `n`, pre-order.
+fn collect_closure_nodes(n Node, mut out []Node) -> () {
+    if n.kind_of() == NodeKind.LeafNode { return }
+    if n.kind_of() == NodeKind.ClosureLit {
+        out.push(n)
+    } else {
+        // Not a closure itself; one may stand below it.
+    }
+    for c in branch_children(n) {
+        collect_closure_nodes(c, out)
+    }
+}
+
+/// A closure's C number -- its index among the collected ones.
+fn Emitter @closure_number(lit Node) -> int {
+    mut found = 0 - 1
+    for i in 0..@closures.len() {
+        if @closures[i].id_of() == lit.id_of() { found = i }
+    }
+    assert(found >= 0, "emit: a closure literal outside the reached functions reached the emitter")
+    found
+}
+
+/// The closure's parameter NAMES -- the Ident leaves before the body (`_`
+/// lexes as an Ident). The body is the LAST child, never a parameter; the
+/// `||` form (ONE PipePipe leaf) has none. Allocates, so it lives here and not
+/// beside the typist's `#realtime` counter (`closure_param_count`, sem).
+fn closure_param_names(lit Node) -> []str {
+    mut out = []str.new()
+    ro kids = branch_children(lit)
+    if kids.len() < 2 { return out }
+    if leaf_kind(kids[0]) == TokenKind.PipePipe { return out }
+    mut i = 1
+    while i < kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
+            out.push(leaf_text(c))
+        } else {
+            // A Comma separator or the closing Pipe leaf: not a parameter.
+        }
+        i += 1
+    }
+    out
+}
+
+/// The C spelling of a closure parameter's name: the source name, except a
+/// discard `_` (which the body can never read) gets a unique placeholder so a
+/// multi-`_` signature is not a C redeclaration.
+fn closure_c_param(pname str, i int) -> str =>
+    if pname == "_" { "_novac_unused${i}" } else { c_ident(pname) }
+
+/// For each closure: its body's prototype, and -- capture-less -- the env and
+/// closure singletons the shell calls through (the oracle's shape). A capturing
+/// literal gets only the context typedef: its env is built where it stands.
+fn Emitter mut @emit_closure_protos() -> () {
+    for n in 0..@closures.len() {
+        ro lit = @closures[n]
+        ro sig = @out.type_of(lit.id_of())
+        ro arity = @ctx.tys.arg_count(sig) - 1
+        ro ret = @ctx.tys.arg(sig, arity)
+        ro params = closure_param_names(lit)
+        @body.append("static ${c_type(@ctx, ret)} novac_lambda_${@tag}${n}_body(void* _env_ptr")
+        mut i = 0
+        while i < arity {
+            ro pn = if i < params.len() { closure_c_param(params[i], i) } else { "_novac_p${i}" }
+            @body.append(", ${c_type(@ctx, @ctx.tys.arg(sig, i))} ${pn}")
+            i += 1
+        }
+        @body.append(");\n")
+        ro caps = @out.captures_of(lit.id_of())
+        if caps.len() > 0 {
+            @body.append("typedef struct {\n")
+            for c in caps {
+                ro star = if c.by_ref { "*" } else { "" }
+                @body.append("    ${c_type(@ctx, c.type_id)}${star} ${c_ident(c.name)};\n")
+            }
+            @body.append("} novac_cenv_${@tag}${n};\n")
+        } else {
+            // Capture-less (D474 case 2, the oracle's `nova_lambda_0_*`): a
+            // dummy env and the two module singletons -- one value, shared.
+            @body.append("typedef struct { int _dummy; } novac_lambda_${@tag}${n}_env;\n")
+            @body.append("static novac_lambda_${@tag}${n}_env novac_lambda_${@tag}${n}_env_singleton = { 0 };\n")
+            @body.append("static NovaClosBase novac_lambda_${@tag}${n}_clos_singleton = { (void*)novac_lambda_${@tag}${n}_body, (void*)&novac_lambda_${@tag}${n}_env_singleton };\n")
+        }
+    }
+}
+
+/// The closure body functions, after the file's functions (a body may call
+/// them). Each is lowered through the one body door into a builder of its own,
+/// with the context cast back to its type when the literal captures.
+fn Emitter mut @emit_closure_fns() -> () {
+    for n in 0..@closures.len() {
+        @emit_closure_fn(n)
+    }
+}
+
+/// One closure body function: the signature, the context, the lowered body.
+fn Emitter mut @emit_closure_fn(n int) -> () {
+    ro lit = @closures[n]
+    ro sig = @out.type_of(lit.id_of())
+    ro arity = @ctx.tys.arg_count(sig) - 1
+    ro ret = @ctx.tys.arg(sig, arity)
+    ro params = closure_param_names(lit)
+    ro caps = @out.captures_of(lit.id_of())
+    ro kids = branch_children(lit)
+    ro body = kids[kids.len() - 1]
+    @body.append("static ${c_type(@ctx, ret)} novac_lambda_${@tag}${n}_body(void* _env_ptr")
+    mut i = 0
+    while i < arity {
+        ro pn = if i < params.len() { closure_c_param(params[i], i) } else { "_novac_p${i}" }
+        @body.append(", ${c_type(@ctx, @ctx.tys.arg(sig, i))} ${pn}")
+        i += 1
+    }
+    @body.append(") {\n")
+    if caps.len() > 0 {
+        @body.append("    novac_cenv_${@tag}${n}* _novac_cap = (novac_cenv_${@tag}${n}*)_env_ptr;\n")
+    } else {
+        @body.append("    (void)_env_ptr;\n")
+    }
+    ro saved = @lo.ir
+    @lo.ir = FnBuilder.new(ret)
+    @cur_closure = n
+    if body.kind_of() == NodeKind.Block {
+        @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
+    } else {
+        @lo.lower_place(body, @lo.ir.ret_place())
+    }
+    @lo.ir.end_body()
+    @print_body(@lo.ir.finish())
+    @cur_closure = 0 - 1
+    @lo.ir = saved
+    @body.append("}\n")
+}
+
+/// The `NovaClosBase*` value of a closure, built where it stands (D22). The
+/// caller wraps it in the `void*` the runtime takes. Capture-less: the module
+/// singleton (the oracle's single shared value). Capturing: the environment and
+/// the closure allocated at the site, the captures filled from here -- the same
+/// source door a handler literal uses (`@capture_source`: `mut` by address,
+/// the rest by copy).
+fn Emitter mut @closure_clos_value(lit Node) -> str {
+    ro n = @closure_number(lit)
+    ro caps = @out.captures_of(lit.id_of())
+    if caps.len() == 0 {
+        return "&novac_lambda_${@tag}${n}_clos_singleton"
+    } else {
+        // A capturing literal: the environment and the closure in fresh names.
+    }
+    ro v = "_novac_cl${@fresh_uniq()}"
+    ro cx = "novac_cenv_${@tag}${n}"
+    @body.append("    ${cx}* ${v}_env = (${cx}*)nova_alloc(sizeof(${cx}));\n")
+    for c in caps {
+        @body.append("    ${v}_env->${c_ident(c.name)} = ${@capture_source(c)};\n")
+    }
+    @body.append("    NovaClosBase* ${v} = (NovaClosBase*)nova_alloc(sizeof(NovaClosBase));\n")
+    @body.append("    ${v}->fn = (void*)novac_lambda_${@tag}${n}_body;\n")
+    @body.append("    ${v}->env = (void*)${v}_env;\n")
+    v
+}
