@@ -1,0 +1,12 @@
+module std.unicode
+
+test "graphemes: count leaves the iterator available for traversal" {
+    ro iter = "a👩‍💻b".graphemes()
+    assert(iter.count() == 3)
+    mut seen = 0
+    for cluster in iter {
+        if seen == 1 { assert(cluster == "👩‍💻") }
+        seen += 1
+    }
+    assert(seen == 3)
+}

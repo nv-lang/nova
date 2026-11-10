@@ -434,13 +434,21 @@ export fn real_fs() -> Effect[Fs] {
 
 /// Read the whole file at `path` into a `[]u8` (Go `os.ReadFile`). Opens,
 /// reads to EOF, and always closes; a close error surfaces if the read was OK.
+/// The temporary read buffer defaults to 8192 bytes.
 /// (Read loop inlined over `File` — avoids the effectful-generic forward path.)
 #stable(since = "0.1")
-export fn read(path Path) Fs -> Result[[]u8, IoError] {
+export fn read(path Path, buffer_size int = 8192) Fs -> Result[[]u8, IoError] {
+    if buffer_size <= 0 { return Err(IoError.new(ErrorKind.InvalidInput, "read: buffer_size must be positive")) }
     consume f = match File.open(path) { Ok(consume x) => x, Err(e) => return Err(e) }
-    mut out []u8 = []u8.new()
+    ro capacity = if buffer_size == 8192 { 0 } else {
+        match f.metadata() {
+            Ok(meta) if meta.is_file() => meta.len()
+            _ => 0
+        }
+    }
+    mut out []u8 = []u8.new(cap: capacity)
     mut chunk []u8 = []u8.new()
-    chunk.resize(8192, 0 as u8)
+    chunk.resize(buffer_size, 0 as u8)
     mut rerr Option[IoError] = None
     loop {
         match f.read(chunk) {
