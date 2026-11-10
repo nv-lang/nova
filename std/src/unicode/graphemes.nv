@@ -158,15 +158,8 @@ export fn GraphemesIter @iter() -> GraphemesIter => @
 // Number of grapheme clusters remaining. O(n). Non-mutating: iterates a value
 // copy (GraphemesIter is a `value` record), so safe on a temporary.
 export fn GraphemesIter @count() -> int {
-    mut it = @
     mut c = 0
-    mut going = true
-    while going {
-        match it.next() {
-            Some(_) => { c += 1 }
-            None => { going = false }
-        }
-    }
+    for _ in @ { c += 1 }
     c
 }
 
