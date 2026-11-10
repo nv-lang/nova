@@ -796,6 +796,10 @@ pub struct CEmitter {
     /// value-record BY VALUE -> "field has incomplete type" (registry kin
     /// of the No. 139 unified-defs work; synthesized only when missing).
     peer_value_record_fields: HashMap<String, Vec<(String, String)>>,
+    /// NovaValue_Output road (2026-11-11): simple name → the collision-aware
+    /// C struct base (`std_os_Output` for a colliding peer, else the bare
+    /// name) the Task-144 synthesized def and every qualified reference spell.
+    peer_value_record_c_base: HashMap<String, String>,
     /// Task 144: the Nova names whose full value-record struct def is
     /// already claimed by `emit_value_record_type` -- guards the
     /// finalize-time synthesis against double definition in normal CUs.
@@ -803,7 +807,6 @@ pub struct CEmitter {
     /// Task 144: the finalize-time synthesized defs, spliced into the
     /// __VALUE_RECORD_DEFS__ block (before the by-value NovaOpt/NovaRes
     /// typedefs that need them).
-    synthesized_value_defs: String,
     /// File-scope lambda implementations (structs + function bodies). Flushed before fn definitions.
     lambda_impls: String,
     indent: usize,
@@ -1484,6 +1487,15 @@ pub struct CEmitter {
     /// primitive receiver (e.g. `i64`) satisfies it — see `protocols_match`
     /// at the Plan 164 Ф.3 guard call site.
     type_set_members: HashMap<String, Vec<String>>,
+    /// NovaValue_Output road (2026-11-11): for a COLLIDING type name, the
+    /// (name, module-path-joined) pairs whose declaration is a VALUE record.
+    /// The flat type_aliases/value_record_names registration is skipped for
+    /// colliding names (a bare key clobbered other modules' same-named
+    /// types), so the per-file lowering needs this map to spell a bare name
+    /// as `NovaValue_{qualified}` (value-record view) vs `Nova_{base}*`
+    /// (sum / heap-record view).
+    type_def_value_record_kinds: std::collections::HashSet<(String, String)>,
+
     /// Maps local variable name → (param_c_types, return_c_type) for function-typed parameters.
     /// Used to emit proper function pointer calls for `body(args)` where body is a fn param.
     fn_param_sigs: HashMap<String, (Vec<String>, String)>,
@@ -2724,8 +2736,8 @@ impl CEmitter {
             value_record_defs_buf: String::new(),
             pending_value_nodes: Vec::new(),
             peer_value_record_fields: HashMap::new(),
+            peer_value_record_c_base: HashMap::new(),
             value_record_def_emitted: HashSet::new(),
-            synthesized_value_defs: String::new(),
             lambda_impls: String::new(),
             indent: 0,
             unsafe_depth: 0,
@@ -2838,6 +2850,8 @@ impl CEmitter {
             synthesizing_default_methods: HashSet::new(),
             type_impl_protocols: HashMap::new(),
             type_set_members: HashMap::new(),
+            type_def_value_record_kinds: std::collections::HashSet::new(),
+
             fn_param_sigs: HashMap::new(),
             fn_newtype_sigs: HashMap::new(),
             unanno_light_clos: HashMap::new(),
@@ -5382,7 +5396,37 @@ impl CEmitter {
                 let is_generic_template_with_args =
                     !args.is_empty() && self.generic_type_templates.contains_key(&full);
                 if !is_generic_template_with_args {
-                    if let Some(aliased_c) = self.type_aliases.get(&full).cloned() {
+                    // NovaValue_Output road (2026-11-11): a COLLIDING name never
+                    // reads the flat alias — one bare key cannot represent several
+                    // modules' same-named types. The per-file view decides the
+                    // spelling: a value-record view is `NovaValue_{ref_type_base}`;
+                    // any other view (sum, heap record) falls through to the
+                    // default arm, which already spells `Nova_{ref_type_base}*`.
+                    if self.colliding_type_names.contains(name) {
+                        let view_module: Vec<String> = self
+                            .current_emit_file_id
+                            .and_then(|fid| {
+                                self.file_type_module.get(&(fid, name.to_string())).cloned()
+                            })
+                            .or_else(|| (!module.is_empty()).then(|| module.to_vec()))
+                            .unwrap_or_default();
+                        let view_is_vr = if view_module.is_empty() {
+                            self.type_def_value_record_kinds
+                                .iter()
+                                .any(|(n, _)| n == name)
+                        } else {
+                            self.type_def_value_record_kinds.contains(&(
+                                name.to_string(),
+                                view_module.join("_"),
+                            ))
+                        };
+                        if view_is_vr {
+                            return Ok(format!(
+                                "NovaValue_{}",
+                                self.ref_type_base(name, module)
+                            ));
+                        }
+                    } else if let Some(aliased_c) = self.type_aliases.get(&full).cloned() {
                         return Ok(aliased_c);
                     }
                 }
@@ -6334,7 +6378,11 @@ impl CEmitter {
             // fallback is never even consulted for byte-identical output.
             let mut type_def_files: HashMap<String, HashMap<Vec<String>, Vec<String>>> =
                 HashMap::new();
-            let record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| -> bool {
+            // NovaValue_Output road (2026-11-11): value-record (name, module)
+            // pairs, collected here and drained into the kind map after the
+            // scan loops (the closure captures locals, not self).
+            let mut value_kinds: Vec<(String, Vec<String>)> = Vec::new();
+            let mut record_def = |td: &TypeDecl, mods: &mut HashMap<String, BTreeSet<Vec<String>>>, m: &[String]| -> bool {
                 // Collision-qualify concrete (non-generic) nominal types with a
                 // POINTER `Nova_<name>*` struct/tag identity used uniformly at
                 // def+ref without alias indirection: Sum and HEAP Record. Value-
@@ -6362,16 +6410,32 @@ impl CEmitter {
                     (&td.kind, td.allocation),
                     (TypeDeclKind::Record(_), crate::ast::AllocKind::Heap)
                 );
+                // NovaValue_Output road (2026-11-11, task 143 brief): VALUE
+                // records join the collision set — a user heap-sum `Output` next
+                // to std.os's value-record `Output` made the Task-144 pre-pass
+                // flat-register `type_aliases["Output"] = "NovaValue_Output"`,
+                // and EVERY bare `Output` reference in the CU (the user file's
+                // own sum included) lowered through it: `match o` over a plain
+                // struct (".tag" CC-FAIL). The def side was already
+                // collision-aware (`def_type_base`); the ref side now follows.
+                let value_record = matches!(
+                    (&td.kind, td.allocation),
+                    (TypeDeclKind::Record(_), crate::ast::AllocKind::Value)
+                );
                 let plain_newtype = matches!(td.kind, TypeDeclKind::Newtype(_))
                     && !Self::debt_is_runtime_backed_newtype(td.name.as_str());
                 let qualifiable = matches!(td.kind, TypeDeclKind::Sum(_))
                     || heap_record
+                    || value_record
                     || plain_newtype;
                 if qualifiable
                     && td.generics.is_empty()
                     && !RUNTIME_DEFINED_TYPES.contains(&td.name.as_str())
                 {
                     mods.entry(td.name.clone()).or_default().insert(m.to_vec());
+                    if value_record {
+                        value_kinds.push((td.name.clone(), m.to_vec()));
+                    }
                     true
                 } else {
                     false
@@ -6402,6 +6466,9 @@ impl CEmitter {
                         }
                     }
                 }
+            }
+            for (n, m) in value_kinds {
+                self.type_def_value_record_kinds.insert((n, m.join("_")));
             }
             // Colliding = simple name declared in ≥2 distinct modules.
             for (name, mods) in &type_def_modules {
@@ -7290,8 +7357,17 @@ impl CEmitter {
                     if let TypeDeclKind::Record(_) = &t.kind {
                         use crate::ast::AllocKind;
                         if matches!(t.allocation, AllocKind::Value) {
-                            self.type_aliases.insert(
-                                t.name.clone(), format!("NovaValue_{}", t.name));
+                            // NovaValue_Output road (2026-11-11): a COLLIDING
+                            // value-record must not flat-register its alias — the
+                            // bare key would clobber every OTHER module's same-named
+                            // type (a user heap-sum `Output` lowered to the std
+                            // record). Colliding names resolve per-file through
+                            // ref_type_base/def_type_base; the def side registers
+                            // its own qualified alias at emit time.
+                            if !self.colliding_type_names.contains(&t.name) {
+                                self.type_aliases.insert(
+                                    t.name.clone(), format!("NovaValue_{}", t.name));
+                            }
                             self.value_record_names.insert(t.name.clone());
                         }
                     }
@@ -7316,15 +7392,24 @@ impl CEmitter {
                         // definition) для value-records.
                         use crate::ast::AllocKind;
                         if matches!(t.allocation, AllocKind::Value) {
+                            // NovaValue_Output road (2026-11-11): the fwd decl and
+                            // the synth-def name must use the SAME collision-aware
+                            // base the def side (def_type_base) uses, or a colliding
+                            // value-record's forward typedef and its synthesized body
+                            // name two different structs.
+                            let vr_def_base =
+                                self.def_type_base(&t.name, t.span.file_id);
                             self.user_type_fwd_decls.push_str(&format!(
-                                "typedef struct NovaValue_{0} NovaValue_{0};\n", t.name));
+                                "typedef struct NovaValue_{0} NovaValue_{0};\n", vr_def_base));
                             // Pre-register type_alias so type_ref_to_c returns
                             // the correct value type (not Nova_X*) when called
                             // from emit_effect_type or other pre-body passes that
                             // run before emit_value_record_type fills the alias.
-                            self.type_aliases.insert(
-                                t.name.clone(),
-                                format!("NovaValue_{}", t.name));
+                            if !self.colliding_type_names.contains(&t.name) {
+                                self.type_aliases.insert(
+                                    t.name.clone(),
+                                    format!("NovaValue_{}", t.name));
+                            }
                             self.value_record_names.insert(t.name.clone());
                             // Task 144: capture the fields for the finalize-time
                             // missing-def synthesis (see the field doc). A peer
@@ -7371,6 +7456,10 @@ impl CEmitter {
                                         // The [at-let] fallback and the finalize synthesis
                                         // read peer_value_record_fields directly.
                                         self.peer_value_record_fields.insert(t.name.clone(), fl);
+                                        // the C base the synthesized def (and every
+                                        // qualified reference) must spell for this peer
+                                        self.peer_value_record_c_base
+                                            .insert(t.name.clone(), vr_def_base);
                                     }
                                 }
                             }
@@ -9602,40 +9691,85 @@ impl CEmitter {
             names.dedup();
             let missing: Vec<(String, &Vec<(String, String)>)> = names
                 .into_iter()
-                .filter(|n| !self.value_record_def_emitted.contains(n))
+                // NovaValue_Output road (2026-11-11): the def side claims its
+                // QUALIFIED base (def_type_base); a colliding peer whose module
+                // DOES emit has its def under that key, so the flat-name miss
+                // below must not synthesize a duplicate body.
+                .filter(|n| {
+                    !self.value_record_def_emitted.contains(n)
+                        && !self
+                            .peer_value_record_c_base
+                            .get(n)
+                            .map(|b| self.value_record_def_emitted.contains(b))
+                            .unwrap_or(false)
+                })
                 .filter_map(|n| self.peer_value_record_fields.get(&n).map(|fl| (n, fl)))
                 .collect();
             if !missing.is_empty() {
-                let mut synth = String::new();
+                // NovaValue_Output road (packages sweep 2026-11-11): the
+                // synthesized defs used to be concatenated in name order and
+                // PREPENDED to the topologically-sorted vr section - so a
+                // synthesized record whose field embeds another value record
+                // BY VALUE (`NovaValue_Output { NovaValue_ExitStatus status;
+                // .. }` with ExitStatus emitted later in the sorted section)
+                // landed BEFORE its own dependency: CC-FAIL "field has
+                // incomplete type". They are now ordinary NODES of the SAME
+                // topological graph render_unified_value_types runs right
+                // below - one sort, one window; a synth whose dependency is
+                // itself synthesized sorts after it, and a vr record that
+                // embeds a synthesized name sorts after the synth. Deps are
+                // the by-value NovaValue_/NovaTuple_ field types (pointer
+                // fields carry no edge - fwd decl suffices).
                 for (n, fl) in &missing {
-                    synth.push_str(&format!(
+                    // NovaValue_Output road (2026-11-11): a colliding peer's
+                    // synthesized def spells the QUALIFIED base (matching the fwd
+                    // decl and the qualified references), never the flat name.
+                    let vr_base = self
+                        .peer_value_record_c_base
+                        .get(n)
+                        .cloned()
+                        .unwrap_or_else(|| n.clone());
+                    let deps: Vec<String> = fl
+                        .iter()
+                        .map(|(_, fty)| fty.trim().to_string())
+                        .filter(|fty| {
+                            (fty.starts_with("NovaValue_") || fty.starts_with("NovaTuple_"))
+                                && !fty.ends_with('*')
+                        })
+                        .collect();
+                    let mut text = format!(
                         "/* Task 144: synthesized def -- a peer value-record named \
                          through an Option/Result typedef whose declaring module \
-                         is not emitted in this CU. */\nstruct NovaValue_{} {{\n", n));
+                         is not emitted in this CU. */\nstruct NovaValue_{} {{\n", vr_base);
                     for (fname, fty) in fl.iter() {
-                        synth.push_str(&format!("    {} {};\n", fty, fname));
+                        text.push_str(&format!("    {} {};\n", fty, fname));
                     }
-                    synth.push_str("};\n");
+                    text.push_str("};\n");
+                    self.pending_value_nodes
+                        .push((format!("NovaValue_{}", vr_base), deps, text));
                     // Claim it: this same finalize never synthesizes twice.
                     self.value_record_def_emitted.insert(n.clone());
                 }
-                self.synthesized_value_defs = synth;
             }
         }
+                // Task 144 synthesis now feeds pending_value_nodes (see above), so
+        // render_unified_value_types orders the synthesized defs INSIDE the
+        // same topological section; they still precede the by-value
+        // NovaOpt/NovaRes typedefs spliced further down, because this whole
+        // section is spliced at the earliest marker.
         let vr_defs = self.render_unified_value_types();
-        // Task 144: prepend the finalize-time synthesized defs (peer
-        // value-records named through Option/Result typedefs whose declaring
-        // module is not emitted) -- they must precede the by-value
-        // NovaOpt/NovaRes typedefs spliced further down.
-        let synth_defs = std::mem::take(&mut self.synthesized_value_defs);
-        let vr_replacement = if vr_defs.is_empty() && synth_defs.is_empty() {
+        let vr_replacement = if vr_defs.is_empty() {
             String::new()
         } else {
-            format!("/* Value-record / generic-instance / tuple / fixed-array struct \
-                     definitions (complete, topologically sorted — реестр 221.1 №139 \
-                     Round 3): */\n{}{}", synth_defs, vr_defs)
+            let _ = &vr_defs;
+            format!(
+                "/* Value-record / generic-instance / tuple / fixed-array struct \
+                 definitions (complete, topologically sorted — реестр 221.1 №139 \
+                 Round 3): */\n{}",
+                vr_defs
+            )
         };
-        self.out = self.out.replace("/*__VALUE_RECORD_DEFS__*/", &vr_replacement);
+self.out = self.out.replace("/*__VALUE_RECORD_DEFS__*/", &vr_replacement);
 
         // Plan 14 Ф.1: splice NovaOpt_<T> typedefs в позицию маркера.
         // К этому моменту все type_ref_to_c-вызовы (включая в bodies)
@@ -53312,15 +53446,36 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     "nova_str {} = nova_str_of((const uint8_t*)({}), (int64_t)({}));",
                     tmp, ptr_val, len_val));
                 self.var_types.insert(tmp.clone(), "nova_str".into());
-            } else if !self.record_schemas.contains_key(&struct_name) {
-                // Unknown struct (e.g. generic type not monomorphized) — emit null stub
-                // Evaluate field expressions for side effects but discard
+            } else if !self.record_schemas.contains_key(&struct_name)
+                && !self.peer_value_record_fields.contains_key(&struct_name)
+                && !(self.colliding_type_names.contains(&struct_name)
+                    && self.current_emit_file_id
+                        .and_then(|fid| {
+                            self.file_type_module.get(&(fid, struct_name.clone()))
+                        })
+                        .map(|m| {
+                            self.type_def_value_record_kinds
+                                .contains(&(struct_name.clone(), m.join("_")))
+                        })
+                        .unwrap_or(false))
+            {
+                // Unknown struct (e.g. generic type not monomorphized) — emit null stub.
+                // NovaValue_Output road (2026-11-11): a PEER value-record whose declaring
+                // module never emits in this CU (std.os Output behind `import std.os`) is
+                // NOT unknown — the Task-144 fwd pre-pass captured its fields
+                // (peer_value_record_fields), and the synthesized def now sorts inside the
+                // unified vr section. A record LITERAL of that shape fell here and emitted
+                // `void* tmp = NULL; /* unknown type Output */`, which then fed a
+                // NovaRes_.._Ok(void*) — CC-FAIL. The stub now fires only when the name is
+                // neither a schema'd record nor a captured peer.
                 for f in fields {
                     if let Some(v) = &f.value { let _ = self.emit_expr(v)?; }
                 }
                 self.line(&format!("void* {} = NULL; /* unknown type {} */", tmp, struct_name));
                 self.var_types.insert(tmp.clone(), "void*".into());
-            } else if self.value_record_names.contains(&struct_name) {
+            } else if self.value_record_names.contains(&struct_name)
+                || self.peer_value_record_fields.contains_key(&struct_name)
+            {
                 // Plan 127 Ф.3: consume the transient heap-promote signal
                 // set by emit_let when escape analysis flagged the enclosing
                 // binding. If matched (signal type-name == struct_name),
@@ -53335,14 +53490,27 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                     None => false,
                 };
+                // NovaValue_Output road (2026-11-11): the emitted struct name for
+                // a COLLIDING value-record is the per-file qualified base (the
+                // def side spelled `NovaValue_{def_base}`); a non-colliding name
+                // keeps the flat spelling byte-identically.
+                let vr_struct_c = if self.colliding_type_names.contains(&struct_name)
+                {
+                    format!(
+                        "NovaValue_{}",
+                        self.ref_type_base(struct_name.as_str(), &[])
+                    )
+                } else {
+                    format!("NovaValue_{}", struct_name)
+                };
                 if heap_promote {
                     // Plan 127 Ф.3: heap allocation path для AllocKind::
                     // ValueHeapPromoted. Layout: `NovaValue_X*` = pointer
                     // to heap-allocated `NovaValue_X` struct (reuses
                     // existing typedef). Same field access: `tmp->f = v;`.
                     self.line(&format!(
-                        "NovaValue_{0}* {1} = (NovaValue_{0}*)nova_alloc(sizeof(NovaValue_{0}));",
-                        struct_name, tmp
+                        "{vr_struct_c}* {tmp} = ({vr_struct_c}*)nova_alloc(sizeof({vr_struct_c}));",
+                        vr_struct_c = vr_struct_c, tmp = tmp
                     ));
                     for f in fields {
                         if f.is_spread {
@@ -53351,8 +53519,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("*{} = *{};", tmp, src));
                             }
                         } else {
-                            let field_ty = self.record_schemas.get(&struct_name)
-                                .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                            let field_ty = self
+                                .record_schemas.get(&struct_name)
+                                .and_then(|s| s.get(&f.name))
+                                .cloned()
+                                .or_else(|| {
+                                    // peer-record fallback: the Task-144 capture is the
+                                    // schema for a record whose module never emits here
+                                    self.peer_value_record_fields.get(&struct_name).and_then(
+                                        |fl| {
+                                            fl.iter().find(|(n, _)| n == &f.name)
+                                                .map(|(_, t)| t.clone())
+                                        },
+                                    )
+                                })
+                                .unwrap_or_default();
                             let val = if let Some(v) = &f.value {
                                 self.emit_record_field_value(v, &field_ty)?
                             } else {
@@ -53369,11 +53550,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    self.var_types.insert(tmp.clone(), format!("NovaValue_{}*", struct_name));
+                    self.var_types.insert(tmp.clone(), format!("{}*", vr_struct_c));
                 } else {
                     // Plan 124.8 V2 (D226): value-record stack init.
                     // Emit `NovaValue_X tmp; tmp.f1 = v1; tmp.f2 = v2;` — no heap alloc.
-                    self.line(&format!("NovaValue_{} {};", struct_name, tmp));
+                    self.line(&format!("{} {};", vr_struct_c, tmp));
                     for f in fields {
                         if f.is_spread {
                             if let Some(src_expr) = &f.value {
@@ -53381,8 +53562,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                                 self.line(&format!("{} = {};", tmp, src));
                             }
                         } else {
-                            let field_ty = self.record_schemas.get(&struct_name)
-                                .and_then(|s| s.get(&f.name)).cloned().unwrap_or_default();
+                            let field_ty = self
+                                .record_schemas.get(&struct_name)
+                                .and_then(|s| s.get(&f.name))
+                                .cloned()
+                                .or_else(|| {
+                                    // peer-record fallback: the Task-144 capture is the
+                                    // schema for a record whose module never emits here
+                                    self.peer_value_record_fields.get(&struct_name).and_then(
+                                        |fl| {
+                                            fl.iter().find(|(n, _)| n == &f.name)
+                                                .map(|(_, t)| t.clone())
+                                        },
+                                    )
+                                })
+                                .unwrap_or_default();
                             let val = if let Some(v) = &f.value {
                                 self.emit_record_field_value(v, &field_ty)?
                             } else {
@@ -53399,7 +53593,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             }
                         }
                     }
-                    self.var_types.insert(tmp.clone(), format!("NovaValue_{}", struct_name));
+                    self.var_types.insert(tmp.clone(), vr_struct_c.clone());
                 }
             } else {
                 // Plain record struct (heap-allocated, GC-managed) — хранилище
