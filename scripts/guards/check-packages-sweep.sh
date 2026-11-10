@@ -52,9 +52,12 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
         skipped=$((skipped+1)); continue
     fi
     rc=0
-    out=$(cd "$pkg_dir" && timeout 600 "$BIN" test src 2>&1) || rc=$?
+    # nova-polaris (2026-11-10): ws_upgrade needs a real-socket deadline - the
+    # suite is 50/50 PASS at --timeout 600; the runner default (116s) killed
+    # it under full-suite contention, which read as a package FAIL.
+    out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 2>&1) || rc=$?
     if [ "$rc" -eq 124 ]; then
-        echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 600с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
+        echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 900с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
         failed=$((failed+1)); continue
     fi
     line=$(printf '%s\n' "$out" | grep -aE '^PASS: ' | tail -1)
