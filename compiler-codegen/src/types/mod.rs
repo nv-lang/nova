@@ -23294,6 +23294,57 @@ impl<'a> TypeCheckCtx<'a> {
     /// fallback re-checks candidates via `assignable_direct` only (never
     /// `assignable` again), so a chain (int→UserId→Wrapper) is NOT
     /// auto-wrapped; only the single declared wrapper is.
+    /// №1647: `expr` is a bare variant-ctor call (`Ok(3)`, `Err(e)`, `Some(x)`)
+    /// and `expected` — after peeling view-wrappers — is `Option[T]` /
+    /// `Result[T,E]` declaring a same-named variant of the call's arity.
+    /// `Some(("Result", 1))` = expected names that builtin sum and variant
+    /// index; `None` = not this rule's shape (the caller falls through to the
+    /// existing fallbacks unchanged). A scope local or a free fn of the same
+    /// name is never hijacked (the №979 lesson, mirrored from
+    /// `record_bare_variant_ctor`'s guards).
+    fn expected_builtin_variant_sum(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<(&'static str, usize)> {
+        let ExprKind::Call { func, args, .. } = &expr.kind else { return None };
+        let ExprKind::Ident(name) = &func.kind else { return None };
+        if scope.contains_key(name) {
+            return None;
+        }
+        if self
+            .sig
+            .fn_decls
+            .get(name)
+            .map_or(false, |ov| ov.iter().any(|f| f.receiver.is_none()))
+        {
+            return None;
+        }
+        let mut ty = expected;
+        loop {
+            match ty {
+                TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) | TypeRef::Uninit(inner, _) => {
+                    ty = inner;
+                }
+                _ => break,
+            }
+        }
+        let TypeRef::Named { path, generics, .. } = ty else { return None };
+        let sum = path.last()?.as_str();
+        let (tname, idx, arity, gens): (&'static str, usize, usize, usize) = match (sum, name.as_str()) {
+            ("Option", "Some") => ("Option", 0, 1, 1),
+            ("Option", "None") => ("Option", 1, 0, 1),
+            ("Result", "Ok") => ("Result", 0, 1, 2),
+            ("Result", "Err") => ("Result", 1, 1, 2),
+            _ => return None,
+        };
+        if generics.len() != gens || args.len() != arity {
+            return None;
+        }
+        Some((tname, idx))
+    }
+
     fn assignable(
         &self,
         expr: &Expr,
@@ -23304,6 +23355,22 @@ impl<'a> TypeCheckCtx<'a> {
     ) -> Compat {
         let direct = self.assignable_direct(expr, expected, expr_gs, exp_gs, scope);
         if let Compat::Bad { .. } = &direct {
+            // №1647 (D478 rule 2, oracle regression 0.1.3): a bare
+            // variant-ctor call resolves by the POSITION'S EXPECTED type when
+            // that type is a generic builtin sum (Option/Result) declaring a
+            // same-named variant — BEFORE the file-local sum preference. The
+            // 0.1.3 module-local-wins keystone (`prefer_file_local_variant_
+            // owner`) made a file's own `Ok`/`Err`/`Some` win the inference,
+            // and `Ok(3)` under `-> Result[int, int]` became the file's sum
+            // (E7301), where novac — which implements D478 rule 2 — accepts
+            // (novac-differential red, fixture variant_by_expect/pos_1). The
+            // №658 channel can't serve this: `record_bare_variant_ctor`
+            // returns on non-empty generics and `channel_variant_ctx` declines
+            // generic sums; emit's own Result/Ok/Err special arm already
+            // lowers the call once the checker stops rejecting it.
+            if self.expected_builtin_variant_sum(expr, expected, scope).is_some() {
+                return Compat::Ok;
+            }
             let lookup = |n: &str| self.types_get_here(n).map(|td| td.kind.clone());
             let candidates = single_wrap_candidates(&lookup, expected);
             if !candidates.is_empty() {
