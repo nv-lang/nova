@@ -51,7 +51,12 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
         echo "  SKIP $pkg (нет src/)"
         skipped=$((skipped+1)); continue
     fi
-    out=$(cd "$pkg_dir" && timeout 600 "$BIN" test src 2>&1)
+    rc=0
+    out=$(cd "$pkg_dir" && timeout 600 "$BIN" test src 2>&1) || rc=$?
+    if [ "$rc" -eq 124 ]; then
+        echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 600с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
+        failed=$((failed+1)); continue
+    fi
     line=$(printf '%s\n' "$out" | grep -aE '^PASS: ' | tail -1)
     case "$line" in
         *"FAIL: 0"*)
