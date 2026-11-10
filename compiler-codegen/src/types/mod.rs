@@ -29881,6 +29881,23 @@ fn pick_wrap_candidate<'c>(
     found: &WrapKind,
     lookup: &impl Fn(&str) -> Option<TypeDeclKind>,
 ) -> Option<&'c (WrapTarget, TypeRef)> {
+    // zz146 (registry 221.1): a value of kind Named(X) where X IS the target
+    // type's own name is already of the target type — the single-wrapper lift
+    // must be IDENTITY there, never a wrap. A self-recursive single-field
+    // variant (`S9(ZZVal)` inside `ZZVal` itself) otherwise matches the found
+    // kind EXACTLY and the bare value gets re-wrapped at call-arg/return-tail
+    // positions (`kind(N0)` compiled as `kind(S9(N0))`; a recursive
+    // `norm(inner, x)` became `norm(inner, S9(x))` — the payload never got
+    // peeled, looping forever). One answer for the checker (`assignable`)
+    // and the rewrite pass (`try_wrap_leaf`/`wrap_return_tail`), per #1637.
+    if let WrapKind::Named(n) = found {
+        if candidates
+            .iter()
+            .any(|(t, _)| matches!(t, WrapTarget::SumVariant(tn, _) | WrapTarget::Newtype(tn) if tn == n))
+        {
+            return None;
+        }
+    }
     let kinds: Vec<WrapKind> = candidates.iter().map(|(_, t)| wrap_kind_of(t, lookup, 0)).collect();
     let exact: Vec<usize> = (0..candidates.len()).filter(|&i| kinds[i] == *found).collect();
     match exact.len() {
