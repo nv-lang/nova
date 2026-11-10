@@ -36876,6 +36876,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         return self.emit_expr(&acc);
                     }
                 }
+                // cairo (packages sweep 2026-11-10): `mod.NAME` — a value of a
+                // WHOLE-imported module read through the module prefix
+                // (`import cairo.ffi` … `ffi.ERR_NULL`). The Path fell through
+                // to the synthesized Member chain and emitted an undeclared
+                // local (`ffi->nv_ERR_NULL`). The prefix names an imported
+                // module and the value is a known module value: delegate to
+                // the bare-Ident read of that value — it resolves to the
+                // const's own C symbol (`nv_ERR_NULL`, private/mangled naming
+                // included) through the exact machinery a bare read uses.
+                // Locals keep priority (the block above), and a lowercase
+                // prefix that is neither a local nor an imported module is
+                // untouched.
+                if parts.len() >= 2
+                    && !self.var_types.contains_key(&parts[0])
+                    && self.imported_modules.contains(&parts[0])
+                    && self.module_value_tys.contains_key(&parts[1])
+                {
+                    let bare = Expr::new(ExprKind::Ident(parts[1].clone()), expr.span);
+                    return self.emit_expr(&bare);
+                }
                 // Plan 114.4.1 (D200): associated constants — `Type.NAME`
                 // emitted as `Type_NAME` C-symbol. Symbol present в var_types
                 // если emit_type_decl уже emitted assoc const declaration.
@@ -38181,6 +38201,25 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
 
             ExprKind::Member { obj, name } => {
+                // cairo (packages sweep 2026-11-10): `mod.NAME` — a value of a
+                // WHOLE-imported module read through the module prefix (the
+                // parser gives this Member{Ident(mod), NAME}; the two-segment
+                // Path twin of this door lives in the Path arm below). The
+                // prefix names an imported module, is not a local, and NAME is
+                // a known module value: delegate to the bare-Ident read — it
+                // resolves to the value's own C symbol (private/mangled naming
+                // included) through the exact machinery a bare read uses.
+                if !name.starts_with('@') {
+                    if let ExprKind::Ident(prefix) = &obj.kind {
+                        if !self.var_types.contains_key(prefix)
+                            && self.imported_modules.contains(prefix)
+                            && self.module_value_tys.contains_key(name)
+                        {
+                            let bare = Expr::new(ExprKind::Ident(name.clone()), expr.span);
+                            return self.emit_expr(&bare);
+                        }
+                    }
+                }
                 // №716: `Option[int].None` — безнагрузочный вариант, пришедший
                 // как `Member{Index}` (парсер откатил turbofish, потому что за
                 // `]` не последовала скобка). Снимаем квалификатор и эмитим как
@@ -63598,6 +63637,40 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     }
 
     pub(crate) fn infer_expr_c_type(&self, expr: &Expr) -> String {
+        // №658-channel-first (cairo/text, packages sweep 2026-11-10): for a
+        // bare variant-ctor CALL that the №658 channel resolved by the
+        // position's EXPECTED type, the channel answer outranks EVERY later
+        // channel — resolved_types may carry the module-local-wins type from
+        // the checker's SECOND visit of the same expr (the interp arm re-runs
+        // f1_expr), and emission already builds the ctor from the channel;
+        // typing it from anything else splits one expression into two sums
+        // (`nova_make_runtime_fmt_buf_Align_Left()` into a temp typed
+        // `NovaOpt_Nova_cairo_text_Align_p`). Runs BEFORE all channels; the
+        // same dispatch Channel 6 uses; byte-identical when the channel has
+        // no entry (the entire corpus without colliding sums).
+        if expr.id.is_set() {
+            if let ExprKind::Call { func, args, .. } = &expr.kind {
+                let vname: Option<&str> = match &func.kind {
+                    ExprKind::Ident(n) => Some(n.as_str()),
+                    // the qualified ctor spellings №658 records (Path/Member)
+                    ExprKind::Path(parts) if parts.len() == 2 => Some(parts[1].as_str()),
+                    ExprKind::Member { name, .. } if !name.starts_with('@') => Some(name.as_str()),
+                    _ => None,
+                };
+                if let Some(vname) = vname {
+                    if let Some((tname, _)) = self.channel_variant_ctx(expr.id, vname, args.len()) {
+                        if tname != "Option" && tname != "Result" && tname != "NovaOpt_nova_int" {
+                            if let Some((_, mangled, _)) =
+                                self.try_infer_variant_mono_args(vname, args, Some(expr.id))
+                            {
+                                return format!("{}*", mangled);
+                            }
+                            return self.a4_sum_c_type(&tname);
+                        }
+                    }
+                }
+            }
+        }
         // #1384: a loop's C value is unit, also when the checker types a no-exit loop `never`.
         if matches!(&expr.kind, ExprKind::Loop { .. } | ExprKind::While { .. }) { return "nova_unit".to_string(); }
         // Plan 194 Ф.3 (vrange-роутинг): a bare closed `ExprKind::Range` VALUE
@@ -64597,7 +64670,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Всплывает при inline sync-Nova-body (`self.start_won()`).
                     if name == "self" {
                         if let Some(t) = self.var_types.get("nova_self") {
-                            return t.clone();
+                            // cairo (packages sweep 2026-11-10): the EMIT arm for
+                            // bare `self` dereferences a by-pointer value receiver
+                            // (`(*nova_self)`, mirror of the SelfAccess arm) — this
+                            // INFER twin returned the RAW pointer, so emit_match's
+                            // №1353 value-carrier pass dereferenced the ALREADY
+                            // dereferenced expression: `(*(*nova_self))` —
+                            // CC-FAIL "indirection requires pointer operand" on
+                            // every `match self` in a value-enum method. Same
+                            // fact, two windows (compiler-conventions §0): mirror
+                            // the deref here, and the return-position carve-out
+                            // (172.4 Ф.3 A1: `-> self` emits the pointer) too.
+                            let by_ptr_value = Self::is_value_struct_ptr(&t)
+                                || Self::is_primitive_mut_recv_ptr(&t);
+                            if by_ptr_value && !self.in_recv_ptr_return_position.get() {
+                                return t.trim_end_matches('*').trim().to_string();
+                            }
+                            return t.clone().into();
                         }
                     }
                     // Free-function-as-first-class-value (`ro g = leaf_double`,
@@ -65701,7 +65790,23 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     // Всплывает при inline sync-Nova-body (`self.start_won()`).
                     if name == "self" {
                         if let Some(t) = self.var_types.get("nova_self") {
-                            return t.clone();
+                            // cairo (packages sweep 2026-11-10): the EMIT arm for
+                            // bare `self` dereferences a by-pointer value receiver
+                            // (`(*nova_self)`, mirror of the SelfAccess arm) — this
+                            // INFER twin returned the RAW pointer, so emit_match's
+                            // №1353 value-carrier pass dereferenced the ALREADY
+                            // dereferenced expression: `(*(*nova_self))` —
+                            // CC-FAIL "indirection requires pointer operand" on
+                            // every `match self` in a value-enum method. Same
+                            // fact, two windows (compiler-conventions §0): mirror
+                            // the deref here, and the return-position carve-out
+                            // (172.4 Ф.3 A1: `-> self` emits the pointer) too.
+                            let by_ptr_value = Self::is_value_struct_ptr(&t)
+                                || Self::is_primitive_mut_recv_ptr(&t);
+                            if by_ptr_value && !self.in_recv_ptr_return_position.get() {
+                                return t.trim_end_matches('*').trim().to_string();
+                            }
+                            return t.clone().into();
                         }
                     }
                     // Free-function-as-first-class-value (`ro g = leaf_double`,
