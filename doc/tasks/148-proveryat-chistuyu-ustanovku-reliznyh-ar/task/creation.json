@@ -1,0 +1,18 @@
+{
+  "reason": "После независимого аудита Oracle 0.1.2 владелец согласился добавить в релизный гейт чистую установку Windows/Linux, проверку версии и hello без скрытого кэша. Опубликованный Linux asset не содержит компилятора, Windows --version не соответствует выпуску.",
+  "checked_tasks": [
+    62,
+    91,
+    147
+  ],
+  "why_new": "062 завершила параметризацию Windows packaging для 0.1.0 и default GC, не межплатформенный fail-closed гейт готовых архивов. 091 касалась requires/ensures/invariant Oracle 0.1.0, а не установки. 147 относится к E2E Алулы. Новая проверка архива перед выпуском — отдельный класс и независимая приёмка, не переоткрытие завершённых задач.",
+  "approval": {
+    "id": "9429d8da89362bf0d0dbbc03dc9433c77cb290fbefd209c409b018f8c2ead8ef",
+    "digest": "9429d8da89362bf0d0dbbc03dc9433c77cb290fbefd209c409b018f8c2ead8ef",
+    "session": "ses_efdd2dc2effePXj0L8WPrxkIJN",
+    "form": "frm_canopus_9429d8da89362bf0d0dbbc03dc9433c77cb290fbefd209c409b018f8c2ead8ef",
+    "confirmed_by": "native_owner",
+    "observed": 1794353519584,
+    "evidence": "2442fc4a72fa12f8722b5b1e5f327bb5685ddba13cd2392fba496b416c7e1d76"
+  }
+}
