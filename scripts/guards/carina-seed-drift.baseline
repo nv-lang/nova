@@ -89,3 +89,7 @@ std/src/io/d322_io_mock_test.nv # task 145 (read_line mock battery - seed re-pin
 std/src/io/error.nv # task 144 (n96 fix: the prelude io import leaked the local named base; renamed kind_text - seed re-pins after the release)
 std/src/os/ffi.nv # task 140 (initial drift at carina-v0.2.1)
 std/src/os/os.nv # task 140 (initial drift at carina-v0.2.1)
+std/src/fs/d323_mock_fs_rw_test.nv # task 140 (record the configurable read buffer coverage until the seed re-pins)
+std/src/fs/fs.nv # task 140 (record the configurable read buffer until the seed re-pins)
+std/src/unicode/graphemes.nv # task 140 (record the simplified grapheme count until the seed re-pins)
+std/src/unicode/graphemes_test.nv # task 140 (record the reusable grapheme iterator coverage until the seed re-pins)
