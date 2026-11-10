@@ -19,6 +19,7 @@ import ../builtins.{TypeKind, TIMEOUT_ERROR_TYPE}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text}
 import ../sem.{leaf_kind}
+import ../sem.{is_unit_ty, is_value_tail_kind}
 import ../sem.{ty_source_name, decl_of_ty}
 import ../types.{TyId, is_ty, no_ty}
 
@@ -166,7 +167,13 @@ fn Checker mut @type_spawn_body(skids []Node, st Node, sbody Node) -> () {
     }
     @cap_marks.push(@scope.row_count())
     @cap_owners.push(st.id_of())
+    // A spawn body runs in a NEW FIBER: a `return` written in it leaves THAT
+    // body, not the fn holding the `spawn`, so a split boundary around the
+    // latter does not cross in (remark 6/7, function boundaries).
+    ro saved_split = @sup_split_depth
+    @sup_split_depth = 0
     @type_block(sbody)
+    @sup_split_depth = saved_split
     ro _ = @cap_marks.pop()
     ro _ = @cap_owners.pop()
     for c in @chan.captures_of(st.id_of()) {
@@ -231,7 +238,13 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
         }
     }
     if has_ot {
-        @type_supervised_value(st)
+        // A STATEMENT gives the construct no expectation of its own: the body's
+        // tail decides its type, and the handler is held to that (D449). A stale
+        // expectation left by an enclosing position must not leak in.
+        ro saved_expect = @value_expect
+        @value_expect = no_ty()
+        @type_supervised_value(st, as_value: false)
+        @value_expect = saved_expect
         // SILENT-OK: the value door typed the body tail and the handler; the
         // statement discards the result it recorded.
         return
@@ -274,7 +287,12 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
 /// own tail door (`@tail_value_body`), so a tail call/match/if/literal is
 /// judged exactly as a fn body judges it; the enclosing return expectation is
 /// saved and restored around the body and the closure alike.
-fn Checker mut @type_supervised_value(st Node) -> () {
+///
+/// `as_value` separates the two POSITIONS: `true` for a value (a tail, an
+/// initializer, an argument), where a body without a tail value is refused;
+/// `false` for the statement form that carries a handler, whose body may yield
+/// nothing -- the construct is then UNIT and the handler returns nothing.
+fn Checker mut @type_supervised_value(st Node, as_value bool) -> () {
     ro skids = branch_children(st)
     if skids.len() < 2 {
         assert(@out.len() > 0, "check: a malformed supervised reached typing with no refusal")
@@ -319,32 +337,77 @@ fn Checker mut @type_supervised_value(st Node) -> () {
         }
         i += 1
     }
-    // THE BODY AS A VALUE: its tail is the construct's type. The fn body's
-    // tail door types it (a tail call records its callee, a tail literal takes
-    // the expectation); `@sup_depth` admits the `spawn` the body writes.
+    // THE BODY AS A VALUE: its tail is the construct's type, judged against
+    // the EXPECTATION OF ITS POSITION -- a fn body's declared return, a
+    // written binding type, a call's parameter -- never against whatever
+    // return expectation the enclosing fn happens to leave lying around.
+    // Until the rework `@ret_expect` LEAKED in: `fn f() -> str { ro r =
+    // supervised { ... 42 } ... }` judged the numeric tail against `str` and
+    // refused a correct program (accepted by the oracle; registry 221.1,
+    // supervised-value rework remark 3). The swap is the closure body's own
+    // protocol, and it is restored on the way out, so the enclosing fn's
+    // real return checks are untouched.
+    ro want = @value_expect
+    ro saved_expect = @ret_expect
+    ro saved_unit = @ret_unit
+    ro saved_ro = @ret_ro
     ro saved_tail = @tail_value_body
+    @ret_expect = want
+    @ret_unit = is_ty(want) && is_unit_ty(@ctx, want)
+    @ret_ro = false
     @tail_value_body = sbody.id_of()
     @sup_depth += 1
+    // A `return` in this body cannot leave the enclosing fn: the body is
+    // SPLIT at the join and its exit boundary is a later wave. Refused by
+    // name (typing.nv, RetStmt) rather than emitted as a jump past the
+    // queue's cleanup (remark 6).
+    @sup_split_depth += 1
+    ro bmark = @out.len()
     @type_block(sbody)
+    @sup_split_depth -= 1
     @sup_depth -= 1
     @tail_value_body = saved_tail
+    @ret_ro = saved_ro
+    @ret_unit = saved_unit
+    @ret_expect = saved_expect
+    // A BODY THAT REFUSED ITSELF stops the read below: the tail it leaves is a
+    // node the lattice cannot answer about, and asking anyway is an ice (#902,
+    // the mark rule every other tail entrance in typing.nv keeps). Measured on
+    // `supervised(...) { println("body") }`: the walk refused the tail and this
+    // door still asked `type_of` about it.
+    if @out.len() > bmark {
+        return
+    } else {
+        // Nothing refused: the body's tail is a value to read.
+    }
     ro bkids = branch_children(sbody)
     ro tail_at = last_branch_of(bkids)
     mut body_ty = no_ty()
     if tail_at >= 0 {
         ro tail = bkids[tail_at]
         body_ty = @chan.type_if_known(tail.id_of())
-        if !is_ty(body_ty) {
+        // The tail door records what it decided; a kind it does not type
+        // (a binding, a loop) is asked of `type_of` only when it is a VALUE
+        // tail -- `type_of` would otherwise name the statement's unit and
+        // turn a missing value into a false success. A statement-only call
+        // (`println`) is a STATEMENT: it stays unread, and the body yields
+        // nothing (`tail_is_stmt_only`, tail_rules.nv).
+        if !is_ty(body_ty) && is_value_tail_kind(tail.kind_of()) && !tail_is_stmt_only(tail) {
             body_ty = type_of(tail, @ctx, @scope, @chan)
         } else {
-            // The tail door recorded it.
+            // Recorded by the tail door, or not a value tail at all.
         }
     } else {
         // A body of leaves only: no value tail.
     }
     if !is_ty(body_ty) {
-        @report_first_leaf_of(skids, SUPERVISED_VALUE_NO_TAIL_MSG)
-        return
+        if as_value {
+            @report_first_leaf_of(skids, SUPERVISED_VALUE_NO_TAIL_MSG)
+            return
+        }
+        // The statement form's body may end without a value: the construct
+        // is UNIT and the handler returns nothing.
+        body_ty = @ctx.prims.unit_id
     }
     // THE on_timeout HANDLER (D449): a closure returning the body's type, its
     // one parameter TimeoutError. A handler with no deadline is refused -- there

@@ -1,0 +1,286 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: Kotlin's `withTimeout` (the deadline covers the block) and Koka's
+// structured scope (children joined at the end) -- the SEMANTICS the wave
+// implements (D414 §4, D442, D449); the C protocol is the runtime's own ABI and
+// the tests assert its SHAPE, not a borrowed design. NOT taken: value semantics
+// of `Outcome`/`T` (a later stage), `cancel:` (D441, a later wave).
+// Role: acceptance tests of the supervised-value wave's BOUNDARIES as the
+//   acceptance return (2026-11-10) named them: the body's bindings and a
+//   shadowing one reaching the POST-JOIN tail, the statement form's deadline and
+//   handler, the initializer's own expectation, the unit body that yields no
+//   value, the on_timeout closure's exit discipline, and the cleanup/scope
+//   restore after a timeout. Every refusal here is judged on the CHECK path
+//   (`compile`); every emitter claim on the C text (`compile_to_c`), counted
+//   against a control with no supervised scope -- the shell carries runtime
+//   text of its own, so presence alone proves nothing. The TEXT doors are used,
+//   not `compile_with`: a handed method BODY (the fake `Duration` constructors)
+//   is instantiated only when its declaration text was described, and the
+//   already-parsed door ices on it (measured 2026-11-10).
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; behavior is the differential
+//   guard's (novac/fixtures/supervised_value/pos_*.nv), which links both
+//   binaries. The scope-class positives cannot be fixtures: the ORACLE's own
+//   C does not build them (`use of undeclared identifier`) and prints 8 for the
+//   shadowing one -- registry 221.1, the oracle-defect row.
+// novac/src/pipeline/supervised_value_test.nv -- the supervised value, D414 §4.
+
+module novac.pipeline
+
+
+/// The deadline and the carrier types the wave's arguments need, as the probe
+/// hands them: `Duration` with the two constructors the fixtures write, its
+/// `sleep`, and the prelude's `TimeoutError` (D449's handler parameter). The
+/// mangled names are the real std's -- the shell is the real shell -- so a call
+/// here is link-checked exactly as the fixtures' are. The constructors carry
+/// BODIES: a handed method is callable only through the shell's symbol or as a
+/// unit-made instance (`Ctx @instantiates`), and the shell's probe does not
+/// carry `to_seconds` (measured 2026-11-10 -- every supervised call was
+/// refused as `no to_seconds` while the decls were body-less).
+fn sv_decls() -> []str {
+    mut d = []str.new()
+    d.push("module std.time.duration\nexport type Duration value priv { nanos int }\nexport fn int @to_millis() -> Duration => Duration { nanos: @ * 1000000 }\nexport fn int @to_seconds() -> Duration => Duration { nanos: @ * 1000000000 }\nexport fn Duration @sleep() -> ()\n")
+    d.push("module std.prelude\nexport type TimeoutError value priv { deadline_ns int }\n")
+    d
+}
+
+/// A source text with the wave's fixed prologue, so each test writes only the
+/// shape it judges.
+fn sv(src str) -> str => "import std.time.duration\nfn main() {\n    println(0)\n}\n${src}"
+
+/// The same prologue, but `main` CALLS `f()`: the emitter prints only what is
+/// reachable from `main`, so a C-shape test whose scope never runs emits no
+/// queue at all (measured 2026-11-10 -- `fn f` was pruned and the shape
+/// assertions read an empty program).
+fn svf(src str) -> str => "import std.time.duration\nfn main() {\n    println(f())\n}\n${src}"
+
+/// The index of `needle` in `c`, or -1 -- the order of printed pieces is what
+/// PRE-JOIN/post-join claims are made of.
+fn at(c str, needle str) -> int => c.find(needle) ?? (0 - 1)
+
+test "supervised value: the body's binding and a SHADOWING one reach the tail after the join (scope class, remark 1)" {
+    // The class the acceptance return named (remark 1): the body's non-tail
+    // runs before the join and its TAIL after it (D414 §4), and the tail must
+    // still read the BODY's bindings -- including a binding that shadows an
+    // outer one (`x = 7` outside, `x = 41` inside: the answer is 42, and the
+    // oracle prints 8 because its tail is printed outside the body's block).
+    ro src = svf("fn f() -> int {\n    ro x = 7\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        ro x = 41\n        x + 1\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    ro outer = at(c, "nova_int x = ((nova_int)7LL);")
+    ro inner = at(c, "nova_int x = ((nova_int)41LL);")
+    ro join = at(c, "nova_supervised_run(&_novac_q")
+    ro tail = at(c, "nova_int _novac_l")
+    assert(outer >= 0 && inner >= 0 && join >= 0 && tail >= 0, c)
+    // The body's binding is declared before the join, the tail after it, and
+    // all three stand in the SAME C block -- the outer slot is read by the
+    // consumer after the block closes.
+    assert(outer < inner && inner < join && join < tail, c)
+    assert(c.contains("return _novac_supv"), c)
+}
+
+test "supervised value: a nested supervised INITIALIZER inside the body joins before the outer tail (scope class)" {
+    // The nested-initializer shape of remark 1: an inner scope's value feeds a
+    // binding of the outer body, and the outer tail reads it after the outer
+    // join. Two scope numbers, two joins, each tail after its own.
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        ro x = supervised(timeout: 1.to_seconds(), on_timeout: |_e| -2) { 41 }\n        x + 1\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.matches("nova_scope_init(&_novac_q").len() == 2, c)
+    assert(c.matches("nova_supervised_run(&_novac_q").len() == 2, c)
+    // The inner value lands in its own outer slot, the outer tail reads the
+    // binding that slot initialised.
+    assert(c.matches("_novac_supv").len() >= 2, c)
+    assert(c.contains("nova_int_checked_add(x, ((nova_int)1LL))"), c)
+}
+
+test "supervised value: the tail is printed AFTER the join, and the value read from the outer slot (D414 §4)" {
+    // POSITIVE, the wave's core: the emitted order is body -> join -> tail, and
+    // the enclosing expression reads a slot declared OUTSIDE the block (clang
+    // rejected an inner slot as `use of undeclared identifier`, measured
+    // 2026-11-10).
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        ro x = 41\n        x + 1\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    ro join = at(c, "nova_supervised_run(&_novac_q")
+    ro tail = at(c, "nova_int _novac_l")
+    assert(join >= 0 && tail >= 0 && join < tail, c)
+    ro out = at(c, "nova_int _novac_supv")
+    assert(out >= 0 && out < join, c)
+}
+
+test "supervised STATEMENT with named arguments: the deadline, the handler and the EAGER body reach the C (remark 2)" {
+    // Remark 2: the statement lowering used to drop `timeout:`/`on_timeout:`
+    // silently. Now the named arguments are lowered as an expression
+    // (`@ir.eval`) and the emitter prints the whole protocol: the deadline
+    // combined into the queue, the arm, the handler, the join. The body of a
+    // UNIT construct runs EAGERLY -- before the join, D442's deadline covers
+    // the block -- and the construct has no value slot at all, which is what
+    // makes the eager form the unit-tail exception rather than a value form.
+    // `main` CALLS `g()`: the emitter prints only what is reachable, and a
+    // statement form that never runs would leave nothing to judge.
+    ro src = "import std.time.duration\nfn main() {\n    g()\n}\nfn g() -> () {\n    supervised(timeout: 10.to_millis(), on_timeout: |_e| {\n        println(\"fallback\")\n    }) {\n        spawn { println(\"child\") }\n        println(\"body\")\n    }\n    println(\"after\")\n}"
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.matches("nova_deadline_combine(_novac_q").len() == 1, c)
+    assert(c.matches("nova_scope_arm_early_deadline(&_novac_q").len() == 1, c)
+    // The queue's name is program-only (the shell's scopes are `_nova_scope_q_*`),
+    // so the type-id guard is read AFTER it -- the shell's prelude names the id too.
+    ro q = at(c, "NovaFiberQueue _novac_q")
+    ro guard = at(c, "error_user_type_id == NOVA_TID_USER_TimeoutError")
+    assert(q >= 0 && guard > q, c)
+    // The unit-valued construct declares NO result slot ...
+    assert(!c.contains("_novac_supv"), c)
+    assert(!c.contains("_novac_supres"), c)
+    // ... its handler's result is dropped by a `nova_unit` cast ...
+    assert(c.contains("(void)(((nova_unit(*)(void*, Nova_TimeoutError*))"), c)
+    // ... and the body's own last statement is printed IMMEDIATELY before the
+    // guarded block closes and the join runs: eager, pre-join (D442).
+    assert(c.matches("nova_print_end();\n        nova_fail_pop();").len() >= 1, c)
+    assert(c.contains("fallback"), c)
+}
+
+test "supervised value: a numeric body tail in a `-> str` fn is judged by ITS OWN expectation (remark 3)" {
+    // Remark 3: the body's expectation used to be the ENCLOSING fn's declared
+    // return, so a numeric initializer inside `-> str` was refused as "returns
+    // int from a str fn". The body is judged against its position (here an
+    // untyped binding: its own type), and the enclosing return checks are NOT
+    // weakened -- the control below still refuses an int tail from a str fn.
+    ro ok = sv("fn f() -> str {\n    ro v = supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        1\n    }\n    \"ok\"\n}")
+    ro d1 = compile(ok, sv_decls())
+    assert(d1.len() == 0, messages(d1))
+    ro bad = sv("fn f() -> str {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        1\n    }\n}")
+    ro d2 = compile(bad, sv_decls())
+    assert(d2.len() == 1, messages(d2))
+    assert(d2[0].message.contains("str"), d2[0].message)
+}
+
+test "supervised value: a body that ends in a STATEMENT yields no value -- refused by name (unit-tail class)" {
+    // The class the unit-tail probe exposed: a `println(...)` tail is a
+    // STATEMENT (no registry row), so the body has no value to give and a
+    // VALUE position is refused with the door's own text. The oracle's checker
+    // lets this through and its codegen writes `nova_int t = NOVA_UNIT`
+    // (invalid C) -- registry 221.1, the oracle-defect row.
+    ro src = sv("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| 0) {\n        println(\"body\")\n    }\n}")
+    ro d = compile(src, sv_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("ends without one"), d[0].message)
+}
+
+test "supervised value: a body-local read from the tail of a plain value fn is unchanged by the wave" {
+    // CONTROL for the scope class: the same body shape WITHOUT a supervised
+    // scope compiles and its tail reads the local -- the wave changed the
+    // supervised path, and the ordinary path is the baseline it is read against.
+    ro src = "fn f() -> int {\n    ro x = 41\n    x + 1\n}\nfn main() {\n    println(f())\n}"
+    ro (d, c) = compile_to_c(src, []str.new())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("nova_int_checked_add(x, ((nova_int)1LL))"), c)
+}
+
+test "supervised value: a BARE NAME body tail is a value (found by the scope-class probes)" {
+    // The body's scope is released by the walk before this door reads the tail,
+    // so a tail whose type lived ONLY in that scope (`x`, a bound name) read as
+    // "no value" -- refused where the oracle accepts (measured 2026-11-10). The
+    // walk now records the decided tail type, and the body's binding feeds the
+    // POST-JOIN value: `res = x`.
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        ro x = 41\n        x\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    ro join = at(c, "nova_supervised_run(&_novac_q")
+    ro read = at(c, " = _novac_l")
+    ro bind = at(c, "nova_int x = ((nova_int)41LL);")
+    assert(join >= 0 && read > join && bind >= 0 && bind < join, c)
+}
+
+test "on_timeout closure: an EMPTY non-unit body is refused by name (remark 4)" {
+    // Remark 4: an empty block body of a non-unit handler was accepted and the
+    // emitted C function fell off its end. The closure body now follows the fn
+    // body's own rule (`@report_if_block_tail_has_no_value`) with the
+    // closure's own text: the result comes from the context, so the fn's
+    // "declares a return type" wording would name a declaration the closure
+    // never writes.
+    ro src = sv("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| {\n    }) {\n        1\n    }\n}")
+    ro d = compile(src, sv_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("closure body that produces a value"), d[0].message)
+}
+
+test "on_timeout closure: the positives -- a tail value, a `return`, a println before the value (remark 4)" {
+    // The other half of remark 4: the correct bodies must still pass. A tail
+    // expression, an explicit `return`, and a statement followed by the value
+    // (the printer in the same block is a statement, not the value).
+    ro tail = sv("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| 0) {\n        1\n    }\n}")
+    assert(compile(tail, sv_decls()).len() == 0, "a tail value in the handler")
+    ro ret = sv("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| {\n        return -5\n    }) {\n        1\n    }\n}")
+    assert(compile(ret, sv_decls()).len() == 0, "an explicit return in the handler")
+    ro stmt = sv("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| {\n        println(\"late\")\n        0\n    }) {\n        1\n    }\n}")
+    assert(compile(stmt, sv_decls()).len() == 0, "a printer followed by the value")
+}
+
+test "on_timeout closure: any OTHER named-argument slot is refused at check, never an ICE at emit (remark 5)" {
+    // Remark 5: `closure_pos` resolved the literal for ANY NamedArg of a
+    // `supervised`, so `timeout: |_e| 0` passed check and the emitter iced on
+    // the missing type. The position gate names `on_timeout` now, and an
+    // unsupported position is refused by its own text on the check path.
+    ro src = sv("fn g() -> () {\n    supervised(timeout: |_e| 0) {\n        println(1)\n    }\n}")
+    ro d = compile(src, sv_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("on_timeout"), d[0].message)
+}
+
+test "supervised value: `return` inside the body is refused by name; a handler's `return` stays legal (remark 6)" {
+    // Remark 6: an early `return` from a split body printed C that skipped the
+    // queue's cleanup (and named temporaries the value form does not declare).
+    // The body is split at the join, so its exit boundary is a later wave --
+    // refused by name at check. A CLOSURE body is a function of its own: its
+    // `return` leaves the closure, not the enclosing fn, and stays legal.
+    ro bad = sv("fn f(k int) -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        if k > 0 {\n            return 1\n        }\n        0\n    }\n}")
+    ro d = compile(bad, sv_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("`return` inside the body of a `supervised`"), d[0].message)
+    ro ok = sv("fn f() -> int {\n    supervised(timeout: 100.to_millis(), on_timeout: |_e| {\n        println(\"returned\")\n        return -5\n    }) {\n        5\n    }\n}")
+    assert(compile(ok, sv_decls()).len() == 0, "a handler's own return")
+}
+
+test "closures: `break` outside a loop is refused; a loop INSIDE the closure still owns its jumps (remark 7)" {
+    // Remark 7: the closure body used to keep the OUTER loop's depth, so a
+    // `break` in a lambda passed check and the emitted C had a `break` outside
+    // any loop. The walk resets the depth for a closure (as the handler-op
+    // body already did); the positive is a loop the closure declares itself.
+    ro bad = sv("fn f() -> int {\n    for i in 0..1 {\n        ro v = supervised(timeout: 1.to_seconds(), on_timeout: |_e| {\n            break\n            0\n        }) { 1 }\n        println(v)\n    }\n    0\n}")
+    ro d = compile(bad, sv_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("no loop around this one"), d[0].message)
+    ro ok = sv("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| {\n        mut i = 0\n        while i < 3 {\n            i += 1\n            break\n        }\n        i\n    }) {\n        1\n    }\n}")
+    assert(compile(ok, sv_decls()).len() == 0, "the closure's own loop")
+}
+
+test "supervised value: the handler runs ONLY for a TimeoutError -- a foreign failure is rethrown (D449)" {
+    // D449 replaces `Fail[TimeoutError]` with the handler's value; any OTHER
+    // failure keeps its own path. The emitted outer frame asks the type id
+    // first and rethrows in the else branch -- asserted as the shape, since the
+    // branch is what makes the rule true.
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        1\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    ro q = at(c, "NovaFiberQueue _novac_q")
+    ro guard = at(c, "error_user_type_id == NOVA_TID_USER_TimeoutError")
+    ro rethrow = at(c, "nova_rethrow_scope(_novac_sotf")
+    assert(q >= 0 && guard > q && rethrow > guard, c)
+}
+
+test "supervised value: nested deadlines arm the inner and the outer scope; the later scope is untouched by the earlier timeout (boundaries)" {
+    // The nested deadline: each scope combines its own deadline into its own
+    // queue, so two of each line are emitted. And the scope RESTORE is what
+    // lets a second scope stand after a timed-out first one -- `_nova_active_scope`
+    // is put back on both the success and the failure path.
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 30.to_seconds(), on_timeout: |_e| -1) {\n        supervised(timeout: 50.to_millis(), on_timeout: |_e| -2) {\n            spawn { println(\"child\") }\n            5\n        }\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.matches("nova_deadline_combine(_novac_q").len() == 2, c)
+    assert(c.matches("nova_scope_arm_early_deadline(&_novac_q").len() == 2, c)
+    ro after = svf("fn f() -> int {\n    ro first = supervised(timeout: 50.to_millis(), on_timeout: |_e| -1) {\n        spawn { println(\"child\") }\n        10\n    }\n    ro second = supervised(timeout: 30.to_seconds(), on_timeout: |_e| -3) {\n        spawn { println(\"child\") }\n        20\n    }\n    first + second\n}")
+    ro (d2, c2) = compile_to_c(after, sv_decls())
+    assert(d2.len() == 0, messages(d2))
+    assert(c2.matches("nova_scope_init(&_novac_q").len() == 2, c2)
+    assert(c2.matches("_nova_active_scope = _novac_sqprev").len() == 4, c2)
+}

@@ -63,10 +63,27 @@ fn Lowerer mut @lower_with(st Node) -> () {
 
 /// `supervised { body }` (E.9 step 4): the scope opened, the body lowered, the
 /// scope joined -- the builder joins it on every other exit too.
+///
+/// A statement that CARRIES NAMED ARGUMENTS (`timeout:`, `on_timeout:`) takes a
+/// different door: its deadline, its handler and its join are ONE C protocol
+/// the emitter owns (`emit_c/emit_supervised.nv`, `@emit_supervised_stmt`),
+/// and dropping the arguments here was the acceptance's statement-args defect
+/// (supervised-value rework). The whole statement is recorded as an
+/// evaluation; the printer dispatches on the node's kind.
 fn Lowerer mut @lower_supervised(st Node) -> () {
     ro kids = branch_children(st)
     ro body = kids[kids.len() - 1]
     assert(body.kind_of() == NodeKind.Block, "lower: a supervised statement without its body block reached the lowering")
+    mut carries_args = false
+    for c in kids {
+        if c.kind_of() == NodeKind.NamedArg { carries_args = true } else {
+            // The keyword leaf, the body Block, or a separator.
+        }
+    }
+    if carries_args {
+        @ir.eval(st)
+        return
+    }
     ro at = @ir.begin_supervised()
     @lower_block_stmts_fn(body, false)
     @ir.end_supervised(at)
@@ -104,5 +121,17 @@ fn Lowerer mut @lower_sup_body_non_tail(body Node, q int) -> () {
         }
         j += 1
     }
+    @ir.pop_sup_scope(at)
+}
+
+/// A supervised body that runs EAGERLY, every statement before the join: the
+/// statement form's shape (D442's deadline covers the block) and the
+/// unit-valued construct's (there is no tail value to hold back). The scope is
+/// pushed WITHOUT a `ScopeOpen` statement, exactly as in the value door: the
+/// emitter prints the queue and the join itself, while the body's `spawn`s
+/// still find `q` as their innermost scope (`@spawn_site`).
+fn Lowerer mut @lower_sup_body_eager(body Node, q int) -> () {
+    ro at = @ir.push_sup_scope(q)
+    @lower_block_stmts_fn(body, false)
     @ir.pop_sup_scope(at)
 }

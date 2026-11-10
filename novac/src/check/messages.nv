@@ -676,6 +676,19 @@ const SUPERVISED_ON_TIMEOUT_NO_DEADLINE_MSG = "`on_timeout:` needs a deadline: a
 /// that ends in a statement has none to give.
 const SUPERVISED_VALUE_NO_TAIL_MSG = "a `supervised` used as a value needs a body that ends in a value -- its type is the body's tail type after the join (D414 §4); this body ends without one (the supervised-value wave, plan 274.11)"
 
+/// `return` inside a `supervised` VALUE body. The emitter splits such a body
+/// at the join -- its non-tail runs under the guard, its tail after the join --
+/// so a `return` there cannot leave the enclosing function: refused by name
+/// (supervised-value rework, remark 6) instead of emitting C that skips the
+/// cleanup.
+const SUPERVISED_SPLIT_RETURN_MSG = "outside the subset: `return` inside the body of a `supervised` used as a value is not compiled yet -- the body is split at the join, and its exit boundary is a later wave (E4, the concurrency horizon of plan 274.11)"
+
+/// A closure-light body that must produce a value but ends in a statement
+/// (`on_timeout: |_e| { println(1) }`): a LANGUAGE error by the same rule a fn
+/// body follows (`@report_if_tail_has_no_value`) -- the emitted C function
+/// would fall off its end (D22, the supervised-value wave).
+const CLOSURE_NO_VALUE_MSG = "a closure body that produces a value must end with one -- this one ends without a value (D22: the result comes from the context's signature)"
+
 /// `break` or `continue` with no loop around it (274.7 wave B10): a language error --
 /// the jump has no target. A handler op's body counts as its own function.
 const LOOP_CTL_OUTSIDE_MSG = "`break` and `continue` stand only inside the body of a `for` or `while` loop -- there is no loop around this one"

@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module supervised_value.pos_6
+
+import std.time.duration
+
+// The handler's own `return` leaves the CLOSURE, not the enclosing fn (the
+// closure is a separate C function): the value form still answers the
+// closure's result and the fn continues normally.
+fn handled() -> int {
+    supervised(timeout: 100.to_millis(), on_timeout: |_e| {
+        println("timed out")
+        return -5
+    }) {
+        spawn { 5000.to_millis().sleep() }
+        1
+    }
+}
+
+fn main() Io -> () {
+    println(handled())
+}

@@ -26,7 +26,8 @@ import ../sem.{branch_children, leaf_kind, ret_is_unit, is_value_tail_kind, expr
 import ../sem.{returns_receiver, is_never_ty}
 import ../types.{TyId, no_ty, is_ty}
 import ../sem.{iflet_body_at, iflet_else_at, loop_ctl_is_break}
-import ../builtins.{is_true_literal}
+import ../sem.{call_callee_text}
+import ../builtins.{is_true_literal, is_print_fn}
 
 /// Does this statement END the function on every path?
 ///
@@ -474,88 +475,125 @@ fn Checker mut @report_if_tail_has_no_value(kids []Node) -> () {
     if !promises_tail_value(kids) { return }
     for c in kids {
         if c.kind_of() != NodeKind.Block { continue }
-        ro bk = branch_children(c)
-        mut last_stmt = -1
-        mut i = 0
-        mut terminates = false
-        for b in bk {
-            terminates = terminates || stmt_terminates(b)
-            last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
-            i += 1
-        }
-        // The end is unreachable: whatever stands last, it is dead code and
-        // the oracle says nothing about it. Neither do we.
-        if terminates { return }
-        if last_stmt < 0 {
-            @report_first_leaf_of([]Node.of(c), TAIL_NO_VALUE_MSG)
-            return
-        }
-        ro tail_node = bk[last_stmt]
-        ro k = tail_node.kind_of()
-        // ALLOW-list, kept in step with the emitter's tail chain -- the
-        // `tail && j == last_branch` arms in emit_c.nv (match/if land in a
-        // temporary and return it, `is_expr_kind` returns the expression):
-        // the tail produces a value iff the emitter writes `return` for it.
-        // Named by the CHAIN and not by a line number: the hunt (emit_c x K1,
-        // P2) found the previous reference pointing at a line that had long
-        // moved on and quoting a formula the file no longer contains. The first
-        // version asked the opposite question -- "is the tail a binding or an
-        // assignment?" -- and four shapes walked past it: a tail `if` without
-        // `else`, a tail `while`, a tail `for`, and a tail unit call like
-        // `println(...)`. The oracle refuses all four; novac emitted a
-        // function that falls off its end. Asking a deny-list about an open
-        // set is how a rule looks complete while covering two cases of six.
-        // `Call` LEFT the exclusion with 274.5 wave B4: a tail call is the
-        // returned value -- eight of novac's own files end a body exactly so.
-        // `IfStmt` JOINS the allow-list with wave B14 -- named HERE rather
-        // than added to `is_expr_kind`, because that list is read by many walks
-        // and a kind put into it moves silently into every general arm (the
-        // lesson wave B13 paid for three times over).
-        // `is_value_tail_kind` (sem) is `is_expr_kind` plus the one positional
-        // record literal the tail chain returns since step 4b -- ONE door for
-        // this rule, the `=>` body's typing and the emitter's body arm (#974).
-        if k == NodeKind.RetStmt || k == NodeKind.LoopCtl || is_value_tail_kind(k) || k == NodeKind.IfStmt {
-            return
-        }
-        // `IfLet` JOINS with registry 1189, and it joins WITH A CONDITION: only
-        // the shape that has an `else`. Without one the None path produces no
-        // value and this door's own refusal is still the true thing to say.
-        //
-        // THE CONDITION IS NOT CAUTION, IT IS THE MEASUREMENT. Letting the form
-        // through unconditionally was probed first: the emitter wrote
-        // `(void)(v); ... return 0;` -- both branch values discarded and a hard
-        // zero returned -- so `g(Some(7))` printed 0. Check would have passed,
-        // the program would have built, and twelve diagnostics would have gone:
-        // every sign of work done, over a wrong answer.
-        if k == NodeKind.IfLet {
-            ro lk = branch_children(tail_node)
-            if lk.len() > iflet_else_at(lk) { return }
-        } else {
-            // Not an if-let: judged below.
-        }
-        // An INDEX tail (`@heads[b]`) is a value too -- one novac does not compile
-        // yet, and that refusal belongs to the expression walk ("indexing is read
-        // but not compiled yet"). Until 2026-09-05 this door refused it first,
-        // as "ends without a value": eleven of novac's own files got the wrong
-        // cause named (274.7 B3 measurement). The tail is let through to the walk
-        // that owns the real answer.
-        if k == NodeKind.Index { return }
-        // A HANDLER-LITERAL tail is a value on the same terms (registry 1312):
-        // the walk gate (`@walk`'s HandlerLit arm, check/check.nv) refuses it
-        // by name outside the two judged positions,
-        // and this door answering first put a second, FALSE cause ("ends
-        // without a value") on the same byte -- measured on the hunt's
-        // hl-block-tail probe, two diagnostics for one literal.
-        if k == NodeKind.HandlerLit { return }
-        // A SUPERVISED tail is a value on the same terms (the supervised-value
-        // wave, D414 §4): its type is the body's tail POST-JOIN, judged by
-        // `@type_supervised_value` -- a body without a value tail is refused
-        // THERE, by its own name, not here as "ends without a value" (the
-        // Index/HandlerLit precedent: the door that owns the answer speaks).
-        if k == NodeKind.SupervisedStmt { return }
-        @report_first_leaf_of([]Node.of(tail_node), TAIL_NO_VALUE_MSG)
+        @report_if_block_tail_has_no_value(c, TAIL_NO_VALUE_MSG)
         return
     }
+}
+
+/// Is this node a CALL of a statement-only form -- `println` or `print`, the
+/// subset's builtin printers? Such a call is a STATEMENT in every position:
+/// it has no registry row (typing.nv `@type_call_stmt`), its value is unit, and
+/// asking the lattice about it is an ice (#652 class). ONE answer for the two
+/// doors that must agree: the body-tail door below and the typing walk's tail
+/// call arm (typing.nv `@type_block`).
+fn tail_is_stmt_only(c Node) -> bool =>
+    c.kind_of() == NodeKind.Call && is_print_fn(call_callee_text(branch_children(c)))
+
+/// The BODY-BLOCK half of the rule, one TEXT per caller: a fn body speaks
+/// `TAIL_NO_VALUE_MSG`, a closure body `CLOSURE_NO_VALUE_MSG` (D22's result
+/// comes from the CONTEXT's signature, so "the fn declares a return type"
+/// would name a declaration the closure never writes). Everything else --
+/// the unreachable-end escape, the allow-list, the one-cause discipline -- is
+/// the same for both, which is why it is one door and not two. The closure
+/// caller is check/closure.nv: an EMPTY non-unit block was accepted there and
+/// emitted a numeric C function with no `return` (remark 4 of the
+/// supervised-value acceptance return; the oracle refuses it).
+fn Checker mut @report_if_block_tail_has_no_value(c Node, msg str) -> () {
+    ro bk = branch_children(c)
+    mut last_stmt = -1
+    mut i = 0
+    mut terminates = false
+    for b in bk {
+        terminates = terminates || stmt_terminates(b)
+        last_stmt = if b.kind_of() == NodeKind.LeafNode { last_stmt } else { i }
+        i += 1
+    }
+    // The end is unreachable: whatever stands last, it is dead code and
+    // the oracle says nothing about it. Neither do we.
+    if terminates { return }
+    if last_stmt < 0 {
+        @report_first_leaf_of([]Node.of(c), msg)
+        return
+    }
+    ro tail_node = bk[last_stmt]
+    ro k = tail_node.kind_of()
+    // A STATEMENT-ONLY CALL IS A STATEMENT, whatever its KIND says: `println`
+    // and `print` are the subset's builtin printers and live in no registry
+    // (typing.nv `@type_call_stmt`), so `is_value_tail_kind(Call)` -- an
+    // honest question about a callable's result -- has no answer here. A body
+    // ending in one produces NO value, and the class was measured: the oracle's
+    // checker lets it through and its CODEGEN writes `nova_int t = NOVA_UNIT`
+    // (invalid C) on a supervised body's tail (registry 221.1, supervised-value
+    // rework); the same body tail in novac reached the lattice and iced.
+    if tail_is_stmt_only(tail_node) {
+        @report_first_leaf_of([]Node.of(tail_node), msg)
+        return
+    } else {
+        // Not a printer call: judged by its kind below.
+    }
+    // ALLOW-list, kept in step with the emitter's tail chain -- the
+    // `tail && j == last_branch` arms in emit_c.nv (match/if land in a
+    // temporary and return it, `is_expr_kind` returns the expression):
+    // the tail produces a value iff the emitter writes `return` for it.
+    // Named by the CHAIN and not by a line number: the hunt (emit_c x K1,
+    // P2) found the previous reference pointing at a line that had long
+    // moved on and quoting a formula the file no longer contains. The first
+    // version asked the opposite question -- "is the tail a binding or an
+    // assignment?" -- and four shapes walked past it: a tail `if` without
+    // `else`, a tail `while`, a tail `for`, and a tail unit call like
+    // `println(...)`. The oracle refuses all four; novac emitted a
+    // function that falls off its end. Asking a deny-list about an open
+    // set is how a rule looks complete while covering two cases of six.
+    // `Call` LEFT the exclusion with 274.5 wave B4: a tail call is the
+    // returned value -- eight of novac's own files end a body exactly so.
+    // `IfStmt` JOINS the allow-list with wave B14 -- named HERE rather
+    // than added to `is_expr_kind`, because that list is read by many walks
+    // and a kind put into it moves silently into every general arm (the
+    // lesson wave B13 paid for three times over).
+    // `is_value_tail_kind` (sem) is `is_expr_kind` plus the one positional
+    // record literal the tail chain returns since step 4b -- ONE door for
+    // this rule, the `=>` body's typing and the emitter's body arm (#974).
+    if k == NodeKind.RetStmt || k == NodeKind.LoopCtl || is_value_tail_kind(k) || k == NodeKind.IfStmt {
+        return
+    }
+    // `IfLet` JOINS with registry 1189, and it joins WITH A CONDITION: only
+    // the shape that has an `else`. Without one the None path produces no
+    // value and this door's own refusal is still the true thing to say.
+    //
+    // THE CONDITION IS NOT CAUTION, IT IS THE MEASUREMENT. Letting the form
+    // through unconditionally was probed first: the emitter wrote
+    // `(void)(v); ... return 0;` -- both branch values discarded and a hard
+    // zero returned -- so `g(Some(7))` printed 0. Check would have passed,
+    // the program would have built, and twelve diagnostics would have gone:
+    // every sign of work done, over a wrong answer.
+    if k == NodeKind.IfLet {
+        ro lk = branch_children(tail_node)
+        if lk.len() > iflet_else_at(lk) { return }
+    } else {
+        // Not an if-let: judged below.
+    }
+    // An INDEX tail (`@heads[b]`) is a value too -- one novac does not compile
+    // yet, and that refusal belongs to the expression walk ("indexing is read
+    // but not compiled yet"). Until 2026-09-05 this door refused it first,
+    // as "ends without a value": eleven of novac's own files got the wrong
+    // cause named (274.7 B3 measurement). The tail is let through to the walk
+    // that owns the real answer.
+    if k == NodeKind.Index { return }
+    // A HANDLER-LITERAL tail is a value on the same terms (registry 1312):
+    // the walk gate (`@walk`'s HandlerLit arm, check/check.nv) refuses it
+    // by name outside the two judged positions,
+    // and this door answering first put a second, FALSE cause ("ends
+    // without a value") on the same byte -- measured on the hunt's
+    // hl-block-tail probe, two diagnostics for one literal.
+    if k == NodeKind.HandlerLit { return }
+    // A SUPERVISED tail is a value on the same terms (the supervised-value
+    // wave, D414 §4): its type is the body's tail POST-JOIN, judged by
+    // `@type_supervised_value` -- a body without a value tail is refused
+    // THERE, by its own name, not here as "ends without a value" (the
+    // Index/HandlerLit precedent: the door that owns the answer speaks).
+    if k == NodeKind.SupervisedStmt { return }
+    @report_first_leaf_of([]Node.of(tail_node), msg)
+    return
 }
 
 /// The BODY block of this fn when it declares a return value, else `no_node()`:

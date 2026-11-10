@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module supervised_value.pos_5
+
+import std.time.duration
+
+// After a timeout the first scope's queue must be cleaned up and the active
+// scope restored, or the SECOND scope stands on a stale one.
+fn after_timeout() -> int {
+    ro a = supervised(timeout: 100.to_millis(), on_timeout: |_e| -1) {
+        spawn { 5000.to_millis().sleep() }
+        10
+    }
+    ro b = supervised(timeout: 30.to_seconds(), on_timeout: |_e| -2) {
+        spawn { 5.to_millis().sleep() }
+        20
+    }
+    a + b
+}
+
+fn main() Io -> () {
+    println(after_timeout())
+}

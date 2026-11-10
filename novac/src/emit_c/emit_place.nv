@@ -340,6 +340,14 @@ fn Emitter mut @emit_assign_head(d LocalDecl) -> () {
 fn Emitter mut @emit_eval(rv Rvalue) -> () {
     ro e = @expr_of(rv)
     ro k = e.kind_of()
+    if k == NodeKind.SupervisedStmt {
+        // A supervised statement carrying named arguments (`timeout:`,
+        // `on_timeout:`): the emitter prints the deadline, the handler and the
+        // join itself (emit_supervised.nv). The argument-less form never gets
+        // here -- the lowering keeps it on the builder's `ScopeOpen` pair.
+        @emit_supervised_stmt(e)
+        return
+    }
     if k == NodeKind.Call {
         @emit_call_stmt(e)
         return

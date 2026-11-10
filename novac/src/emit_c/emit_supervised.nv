@@ -9,19 +9,25 @@
 //   join with the active scope restored, the tail value POST-JOIN, and the
 //   `on_timeout:` closure called on a timeout instead of rethrowing
 //   `Fail[TimeoutError]` (D449).
-// Role: emission of the SUPERVISED VALUE (supervised-value wave, D414 §4/D449).
-//   The lowering hands the body's non-tail statements to a builder of its own
-//   (`@lower_sup_body_non_tail`) and the tail value to another; this file prints
-//   both inline, between the guard and the join, and answers the result slot's
-//   C name as the construct's value.
-// Used by: emit_place.nv (`build_value`, the SupervisedStmt arm).
+// Role: emission of the SUPERVISED VALUE (supervised-value wave, D414 §4/D449)
+//   and of the ARGUMENT-CARRYING statement (D442/D449). ONE C block holds the
+//   queue, both fail frames, the body, the join and the tail: the body's
+//   bindings are declared in this very block, so the tail -- printed after the
+//   join, as D414 §4 asks -- reads them, and a shadowing binding shadows the
+//   outer one for the tail too (registry 221.1, the supervised-value scope
+//   defect). The body's non-tail statements and the tail value are lowered into
+//   ONE builder, the tail into the join block of that builder
+//   (`FnBuilder.goto_block`), which is what keeps the lowering scope and the C
+//   scope in step.
+// Used by: emit_place.nv (`build_value` for the value form; `emit_eval` for the
+//   statement form that carries named arguments).
 // Guarded by: check-novac-differential.sh over novac/fixtures/supervised_value.
 
 module novac.emit_c
 
 import ../tree.{Node, NodeKind}
 import ../builtins.{SUPERVISOR_EFFECT}
-import ../sem.{branch_children, leaf_text, effect_slot_c, c_type}
+import ../sem.{branch_children, leaf_text, effect_slot_c, c_type, is_unit_ty}
 import ../types.{TyId}
 import ../lower.{FnBuilder, Terminator, BlockId}
 
@@ -39,19 +45,10 @@ fn last_branch_idx(kids []Node) -> int {
     at
 }
 
-/// The VALUE of a supervised scope (D414 §4, D449). Emits, in order: the result
-/// slot, the scope's fiber queue with the deadline combined in, the handler
-/// closure as the shell's `NovaClosBase*`, the timeout guard, the body's
-/// non-tail statements inside a fail-frame guard, the join (children run to the
-/// end, the active scope restored), the body's tail value POST-JOIN, and -- a
-/// timeout that is not the deadline's -- the `on_timeout:` closure called with
-/// the `TimeoutError` payload, or `nova_rethrow_scope` of `Fail[TimeoutError]`
-/// when there is no handler. Answers the slot's C name.
-fn Emitter mut @emit_supervised_value(e Node, ty TyId) -> str {
-    ro kids = branch_children(e)
-    ro body = kids[kids.len() - 1]
-    // Which named argument is the deadline and which the handler: an index,
-    // -1 for absent -- a Node has no "none" sentinel (`no_node` is a NodeId).
+/// The child indexes of the deadline argument and of the handler, -1 for
+/// absent -- a Node has no "none" sentinel (`no_node` is a NodeId). Index 0 is
+/// the deadline (`timeout:`/`deadline:`), index 1 the `on_timeout:` handler.
+fn sup_arg_indexes(kids []Node) -> []int {
     mut timeout_at = 0 - 1
     mut ot_at = 0 - 1
     mut ci = 0
@@ -75,14 +72,14 @@ fn Emitter mut @emit_supervised_value(e Node, ty TyId) -> str {
         }
         ci += 1
     }
-    ro u = @fresh_uniq()
-    ro res = "_novac_supres${u}"
-    ro ret_c = c_type(@ctx, ty)
-    @body.append("    ${ret_c} ${res};\n")
-    @body.append("    {\n")
-    // The scope's queue: its supervisor flag, the deadline combined into the
-    // monotonic clock. The name `_novac_q<u>` is the one a `spawn` of the body
-    // reads back through `@spawn_queue` (the body's scope number is `u` too).
+    []int.of(timeout_at, ot_at)
+}
+
+/// The scope's queue: its supervisor flag, the deadline combined into the
+/// monotonic clock, and the handler closure as the shell's `NovaClosBase*`.
+/// The name `_novac_q<u>` is the one a `spawn` of the body reads back through
+/// `@spawn_queue` (the body's scope number is `u` too).
+fn Emitter mut @emit_sup_queue(kids []Node, u int, timeout_at int, ot_at int) -> () {
     @body.append("        NovaFiberQueue _novac_q${u} = {0};\n")
     @body.append("        nova_scope_init(&_novac_q${u});\n")
     @body.append("        _novac_q${u}.has_supervisor = (${effect_slot_c(SUPERVISOR_EFFECT)} != NULL);\n")
@@ -92,90 +89,190 @@ fn Emitter mut @emit_supervised_value(e Node, ty TyId) -> str {
         @emit_expr(timeout_node)
         @body.append(").nanos);\n")
     } else {
-        // No deadline to enforce (the statement form's shape; a value form
-        // always carries one, the checker can require it below if it must).
+        // No deadline to enforce.
     }
-    mut has_ot = false
     if ot_at >= 0 {
-        has_ot = true
         ro ot_node = branch_children(kids[ot_at])[2]
         ro clos = @closure_clos_value(ot_node)
         @body.append("        void* _novac_sot${u} = (void*)((void*)(${clos}));\n")
     } else {
         // No handler: a timeout rethrows `Fail[TimeoutError]` (D449).
     }
+}
+
+/// The two fail frames and the early-deadline arm. The OUTER frame
+/// (`_novac_sotf`) catches what the body or the join rethrew -- a timeout
+/// reaches the handler through it; the INNER one (`_novac_sg`) catches the
+/// body's own failure and rethrows it outward. Both labels are after the
+/// success path (the protocol never falls into them).
+fn Emitter mut @emit_sup_frames_open(u int) -> () {
     @body.append("        NovaFiberQueue* _novac_sqprev${u} = _nova_active_scope;\n")
     @body.append("        NovaFailFrame _novac_sotf${u};\n")
     @body.append("        nova_fail_push(&_novac_sotf${u});\n")
-    @body.append("        if (setjmp(_novac_sotf${u}.jmp) == 0) {\n")
-    @body.append("            void* _novac_sedl${u} = nova_scope_arm_early_deadline(&_novac_q${u});\n")
-    @body.append("            NovaFailFrame _novac_sg${u};\n")
-    @body.append("            nova_fail_push(&_novac_sg${u});\n")
-    @body.append("            if (setjmp(_novac_sg${u}.jmp) == 0) {\n")
-    @emit_sup_body(body, u)
-    @body.append("                NOVA_UNIT;\n")
-    @body.append("                nova_fail_pop();\n")
-    @body.append("            } else {\n")
-    @body.append("                nova_fail_pop();\n")
-    @body.append("                nova_scope_disarm_early_deadline(_novac_sedl${u});\n")
-    @body.append("                nova_rethrow_scope(_novac_sg${u}.error_msg.ptr, _novac_sg${u}.error_kind, _novac_sg${u}.error_user_payload, _novac_sg${u}.error_user_type_id, _novac_sg${u}.error_suppressed);\n")
-    @body.append("            }\n")
-    @body.append("            nova_scope_disarm_early_deadline(_novac_sedl${u});\n")
-    @body.append("            nova_supervised_run(&_novac_q${u});\n")
-    @body.append("            _nova_active_scope = _novac_sqprev${u};\n")
-    @emit_sup_tail(res, body, ty)
-    @body.append("            nova_fail_pop();\n")
-    @body.append("        } else {\n")
-    @body.append("            nova_fail_pop();\n")
-    @body.append("            _nova_active_scope = _novac_sqprev${u};\n")
-    if has_ot {
-        // D449 fixes the handler's one parameter: `TimeoutError`. The shell's
-        // payload is its pointer, so the ABI cast is exact.
-        @body.append("            if (_novac_sotf${u}.error_user_type_id == NOVA_TID_USER_TimeoutError) {\n")
-        @body.append("                ${res} = ((${ret_c}(*)(void*, Nova_TimeoutError*))(((NovaClosBase*)(_novac_sot${u}))->fn))(((NovaClosBase*)(_novac_sot${u}))->env, (Nova_TimeoutError*)(_novac_sotf${u}.error_user_payload));\n")
-        @body.append("            } else {\n")
-        @body.append("                nova_rethrow_scope(_novac_sotf${u}.error_msg.ptr, _novac_sotf${u}.error_kind, _novac_sotf${u}.error_user_payload, _novac_sotf${u}.error_user_type_id, _novac_sotf${u}.error_suppressed);\n")
-        @body.append("            }\n")
-    } else {
+    @body.append("        if (setjmp(_novac_sotf${u}.jmp) != 0) goto _novac_sotfail${u};\n")
+    @body.append("        void* _novac_sedl${u} = nova_scope_arm_early_deadline(&_novac_q${u});\n")
+    @body.append("        NovaFailFrame _novac_sg${u};\n")
+    @body.append("        nova_fail_push(&_novac_sg${u});\n")
+    @body.append("        if (setjmp(_novac_sg${u}.jmp) != 0) goto _novac_sgfail${u};\n")
+}
+
+/// The JOIN, reached in C exactly where the body's statements ended: the
+/// inner frame is popped (the body completed), the early deadline disarmed,
+/// the children run to the end, the active scope restored -- and only then
+/// does the value form print its tail (D414 §4).
+fn Emitter mut @emit_sup_join(u int) -> () {
+    @body.append("        nova_fail_pop();\n")
+    @body.append("        nova_scope_disarm_early_deadline(_novac_sedl${u});\n")
+    @body.append("        nova_supervised_run(&_novac_q${u});\n")
+    @body.append("        _nova_active_scope = _novac_sqprev${u};\n")
+}
+
+/// The success path's end and the two failure labels. The outer frame is
+/// popped on the success path; the inner label pops its own frame, disarms
+/// and rethrows into the outer one; the outer label restores the scope and
+/// leaves the handler/rethrow to `@emit_sup_outer_fail`.
+fn Emitter mut @emit_sup_end_ok(u int) -> () {
+    @body.append("        nova_fail_pop();\n")
+    @body.append("        goto _novac_supdone${u};\n")
+    @body.append("        _novac_sgfail${u}: ;\n")
+    @body.append("        nova_fail_pop();\n")
+    @body.append("        nova_scope_disarm_early_deadline(_novac_sedl${u});\n")
+    @body.append("        nova_rethrow_scope(_novac_sg${u}.error_msg.ptr, _novac_sg${u}.error_kind, _novac_sg${u}.error_user_payload, _novac_sg${u}.error_user_type_id, _novac_sg${u}.error_suppressed);\n")
+    @body.append("        _novac_sotfail${u}: ;\n")
+    @body.append("        nova_fail_pop();\n")
+    @body.append("        _nova_active_scope = _novac_sqprev${u};\n")
+}
+
+/// What the OUTER frame does with the failure it caught: a `TimeoutError`
+/// with an `on_timeout:` handler is the handler's call (D449 -- the payload is
+/// the shell's pointer, so the ABI cast is exact); anything else, and every
+/// timeout without a handler, is rethrown. `res` is the value form's result
+/// slot; empty for a unit-valued construct, whose handler's result is dropped.
+fn Emitter mut @emit_sup_outer_fail(u int, ot_at int, res str, ret_c str) -> () {
+    if ot_at >= 0 {
+        @body.append("        if (_novac_sotf${u}.error_user_type_id == NOVA_TID_USER_TimeoutError) {\n")
+        if res == "" {
+            @body.append("            (void)(((nova_unit(*)(void*, Nova_TimeoutError*))(((NovaClosBase*)(_novac_sot${u}))->fn))(((NovaClosBase*)(_novac_sot${u}))->env, (Nova_TimeoutError*)(_novac_sotf${u}.error_user_payload)));\n")
+        } else {
+            @body.append("            ${res} = ((${ret_c}(*)(void*, Nova_TimeoutError*))(((NovaClosBase*)(_novac_sot${u}))->fn))(((NovaClosBase*)(_novac_sot${u}))->env, (Nova_TimeoutError*)(_novac_sotf${u}.error_user_payload));\n")
+        }
+        @body.append("        } else {\n")
         @body.append("            nova_rethrow_scope(_novac_sotf${u}.error_msg.ptr, _novac_sotf${u}.error_kind, _novac_sotf${u}.error_user_payload, _novac_sotf${u}.error_user_type_id, _novac_sotf${u}.error_suppressed);\n")
+        @body.append("        }\n")
+    } else {
+        @body.append("        nova_rethrow_scope(_novac_sotf${u}.error_msg.ptr, _novac_sotf${u}.error_kind, _novac_sotf${u}.error_user_payload, _novac_sotf${u}.error_user_type_id, _novac_sotf${u}.error_suppressed);\n")
     }
-    @body.append("        }\n")
+    @body.append("        _novac_supdone${u}: ;\n")
+}
+
+/// The VALUE of a supervised scope (D414 §4, D449). Emits, in order: the
+/// queue with the deadline combined in, the two guards, the body's non-tail
+/// statements, the join, the body's tail value POST-JOIN, and -- a timeout
+/// that is not the deadline's -- the `on_timeout:` closure called with the
+/// `TimeoutError` payload, or `nova_rethrow_scope` of `Fail[TimeoutError]`
+/// when there is no handler. A UNIT-valued construct has no value to read
+/// after the join, so its body runs EAGERLY, before the join (the statement
+/// form's own shape); it answers `NOVA_UNIT`, a value of the unit type.
+fn Emitter mut @emit_supervised_value(e Node, ty TyId) -> str {
+    ro kids = branch_children(e)
+    ro body = kids[kids.len() - 1]
+    ro idx = sup_arg_indexes(kids)
+    ro timeout_at = idx[0]
+    ro ot_at = idx[1]
+    ro u = @fresh_uniq()
+    if is_unit_ty(@ctx, ty) {
+        @body.append("    {\n")
+        @emit_sup_queue(kids, u, timeout_at, ot_at)
+        @emit_sup_frames_open(u)
+        @emit_sup_eager_body(body, u)
+        @emit_sup_join(u)
+        @emit_sup_end_ok(u)
+        @emit_sup_outer_fail(u, ot_at, "", "nova_unit")
+        @body.append("    }\n")
+        return "NOVA_UNIT"
+    } else {
+        ro ret_c = c_type(@ctx, ty)
+        // THE NAME THE ENCLOSING EXPRESSION READS lives OUTSIDE the block: the
+        // consumer prints `return <name>;` (or an assignment) AFTER the block
+        // has closed, so a slot declared inside it is not in scope there --
+        // measured as clang's "use of undeclared identifier _novac_supres1".
+        ro out = "_novac_supv${u}"
+        @body.append("    ${ret_c} ${out};\n")
+        @body.append("    {\n")
+        @emit_sup_queue(kids, u, timeout_at, ot_at)
+        @emit_sup_frames_open(u)
+        ro res = "_novac_supres${u}"
+        @body.append("        ${ret_c} ${res};\n")
+        @lower_sup_value_body(body, u, ty, res)
+        @emit_sup_end_ok(u)
+        @emit_sup_outer_fail(u, ot_at, res, ret_c)
+        @body.append("        ${out} = ${res};\n")
+        @body.append("    }\n")
+        return out
+    }
+}
+
+/// A supervised STATEMENT that carries named arguments (`supervised(timeout:
+/// ...)`, `on_timeout:`): the same protocol as the value form, with the whole
+/// body EAGER (D442: the deadline covers the block) and the handler's result
+/// dropped. The statement form without arguments keeps the builder's own
+/// `ScopeOpen`/`ScopeJoin` pair (`lower_with.nv`), which joins on every exit.
+fn Emitter mut @emit_supervised_stmt(e Node) -> () {
+    ro kids = branch_children(e)
+    ro body = kids[kids.len() - 1]
+    ro idx = sup_arg_indexes(kids)
+    ro u = @fresh_uniq()
+    @body.append("    {\n")
+    @emit_sup_queue(kids, u, idx[0], idx[1])
+    @emit_sup_frames_open(u)
+    @emit_sup_eager_body(body, u)
+    @emit_sup_join(u)
+    @emit_sup_end_ok(u)
+    @emit_sup_outer_fail(u, idx[1], "", "nova_unit")
     @body.append("    }\n")
-    res
 }
 
-/// The body's NON-TAIL statements, lowered into a builder of their own and
-/// printed inline. The builder is finished at a join block that is NOT printed
-/// (`@print_chain` stops at it), so its `Return` never lands; the scope number
-/// `u` is the one pushed, so a `spawn` here hands its fiber to `_novac_q<u>`.
-fn Emitter mut @emit_sup_body(body Node, u int) -> () {
-    ro saved = @lo.ir
-    @lo.ir = FnBuilder.new(@ctx.prims.unit_id)
-    @lo.lower_sup_body_non_tail(body, u)
-    ro j = @lo.ir.reserve()
-    @lo.ir.seal(@lo.ir.current(), Terminator.Goto(j))
-    @lo.ir.seal(j, Terminator.Return)
-    ro f = @lo.ir.finish()
-    mut printed = []bool.new()
-    for _ in 0..f.blocks.len() { printed.push(false) }
-    @print_chain(f, BlockId(0), j, false, printed)
-    @lo.ir = saved
-}
-
-/// The body's TAIL value, lowered into a temporary of its own builder and
-/// printed POST-JOIN, then copied into `res`. A Block, a `match`, an `if`, a
-/// call or a literal all go through the one `@lower_place` door. The tail
-/// builder's join-return is not printed either.
-fn Emitter mut @emit_sup_tail(res str, body Node, ty TyId) -> () {
+/// The body's non-tail statements and its TAIL VALUE in ONE builder: the
+/// non-tail statements end at a jump into the join block, and the tail is the
+/// first statement of that block -- printed after the C join protocol, so
+/// D414's POST-JOIN order holds while the tail still reads the bindings the
+/// body declared. The join-return is not printed (`@print_chain` stops at it).
+fn Emitter mut @lower_sup_value_body(body Node, u int, ty TyId, res str) -> () {
     ro kids = branch_children(body)
     ro tail_at = last_branch_idx(kids)
     assert(tail_at >= 0, "emit: a supervised value body with no value tail reached the emitter")
     ro tail = kids[tail_at]
     ro saved = @lo.ir
     @lo.ir = FnBuilder.new(ty)
+    @lo.lower_sup_body_non_tail(body, u)
+    ro join = @lo.ir.reserve()
+    @lo.ir.seal(@lo.ir.current(), Terminator.Goto(join))
+    @lo.ir.goto_block(join)
     ro t = @lo.ir.temp(ty)
     @lo.lower_place(tail, t)
     ro tname = @lo.ir.decl_of(t).name
+    ro end = @lo.ir.reserve()
+    @lo.ir.seal(@lo.ir.current(), Terminator.Goto(end))
+    @lo.ir.seal(end, Terminator.Return)
+    ro f = @lo.ir.finish()
+    mut printed = []bool.new()
+    for _ in 0..f.blocks.len() { printed.push(false) }
+    @print_chain(f, BlockId(0), join, false, printed)
+    @emit_sup_join(u)
+    @print_chain(f, join, end, false, printed)
+    @body.append("        ${res} = ${tname};\n")
+    @lo.ir = saved
+}
+
+/// The whole body, EAGER: every statement runs before the join (D442's
+/// deadline covers the block; the statement form has no value tail to hold
+/// back). Lowered into a builder of its own -- the emitter's own scope number
+/// `u` is pushed, so a `spawn` here hands its fiber to `_novac_q<u>` -- and
+/// printed inline, its join-return not printed.
+fn Emitter mut @emit_sup_eager_body(body Node, u int) -> () {
+    ro saved = @lo.ir
+    @lo.ir = FnBuilder.new(@ctx.prims.unit_id)
+    @lo.lower_sup_body_eager(body, u)
     ro j = @lo.ir.reserve()
     @lo.ir.seal(@lo.ir.current(), Terminator.Goto(j))
     @lo.ir.seal(j, Terminator.Return)
@@ -184,5 +281,4 @@ fn Emitter mut @emit_sup_tail(res str, body Node, ty TyId) -> () {
     for _ in 0..f.blocks.len() { printed.push(false) }
     @print_chain(f, BlockId(0), j, false, printed)
     @lo.ir = saved
-    @body.append("            ${res} = ${tname};\n")
 }

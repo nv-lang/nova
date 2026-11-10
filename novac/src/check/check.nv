@@ -59,6 +59,18 @@ import ../types.{TyId, no_ty, is_ty}
 import ../resolve.{FnIndex, FieldIndex}
 
 
+/// Is this a `NamedArg` whose name leaf is `want`? The walk's positional
+/// gates open for ONE named argument at a time (`on_timeout:` of a
+/// supervised, remark 5): opening them for every named argument made
+/// `timeout: |_e| 0` pass the walk and die in emit as an ICE.
+fn named_arg_is(c Node, want str) -> bool {
+    if c.kind_of() != NodeKind.NamedArg { return false }
+    ro ak = branch_children(c)
+    if ak.len() < 3 { return false }
+    if ak[0].kind_of() != NodeKind.LeafNode { return false }
+    leaf_text(ak[0]) == want
+}
+
 /// Walk the tree and collect subset diagnostics.
 ///
 /// init_pos: record constructors and match expressions are subset forms ONLY
@@ -611,6 +623,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                         @report_first_leaf_of(children, CLOSURE_LIT_POSITION_MSG)
                         return
                     }
+                    // A closure body is a FUNCTION: a `break`/`continue` in it
+                    // has no loop of ITS OWN even when the literal stands inside
+                    // one -- the HandlerOp precedent above. Without this the
+                    // walk accepted `break` under an enclosing loop and the
+                    // emitter printed `break` in a C function with no loop
+                    // (remark 7).
+                    @loop_depth = 0
                 }
                 SupervisedStmt => {
                     // READ and TYPED (E4 wave, 274.11 Э.7 item 4): the
@@ -626,6 +645,10 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // The D13 pair of SupervisedStmt, same division: typed
                     // by `@type_stmt`, descended here so the body's
                     // statements carry their positions.
+                    //
+                    // A spawn body runs in a NEW FIBER: a `break` in it has no
+                    // loop of its own, exactly as in a closure body (remark 7).
+                    @loop_depth = 0
                 }
                 Index => {
                     // NOT TYPED HERE (fix 2026-08-31). This walk judges the
@@ -947,10 +970,14 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       if_tail: at == if_tail_at,
                       scrut_pos: kind == NodeKind.MatchExpr && at == 1,
                       // THE `on_timeout:` CLOSURE SLOT (supervised-value wave):
-                      // a NamedArg of a SupervisedStmt hands its value child
+                      // the NamedArg NAMED `on_timeout` hands its value child
                       // (slot 2) the closure position -- the HandlerLit/WithStmt
                       // discipline, one flag computed where the position is.
-                      closure_pos: (kind == NodeKind.SupervisedStmt && c.kind_of() == NodeKind.NamedArg) || (kind == NodeKind.NamedArg && closure_pos && at == 2),
+                      // ONLY that name: any NamedArg opened the gate, so
+                      // `supervised(timeout: |_e| 0)` passed the walk and died
+                      // in emit as an ICE instead of being refused here by
+                      // name (remark 5).
+                      closure_pos: (kind == NodeKind.SupervisedStmt && named_arg_is(c, "on_timeout")) || (kind == NodeKind.NamedArg && closure_pos && at == 2),
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is

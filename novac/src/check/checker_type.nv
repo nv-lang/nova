@@ -127,6 +127,13 @@ type Checker {
     /// How many `supervised` bodies enclose the statement being typed: a
     /// `spawn` needs one (D50), and the oracle refuses a bare one.
     sup_depth int
+    /// How many SUPERVISED VALUE bodies enclose the statement being typed.
+    /// Such a body is SPLIT by the emitter (its non-tail runs under the guard,
+    /// its tail after the join), so a `return` inside it cannot leave the
+    /// enclosing function: refused by name (supervised-value rework, remark 6).
+    /// A closure, a spawn body and a handler op are functions of their own and
+    /// zero this counter around their bodies.
+    sup_split_depth int
     /// How many `unsafe { }` blocks enclose the expression being typed: a
     /// raw-pointer operation needs one (D216, E_UNSAFE_REQUIRED).
     unsafe_depth int

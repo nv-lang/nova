@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module supervised_value.pos_4
+
+import std.time.duration
+
+// The inner scope's deadline fires; its handler answers with a value and the
+// outer scope -- whose deadline is far away -- sees that value, not a failure.
+fn inner_times_out() -> int {
+    supervised(timeout: 30.to_seconds(), on_timeout: |_e| -1) {
+        supervised(timeout: 100.to_millis(), on_timeout: |_e| -2) {
+            spawn { 5000.to_millis().sleep() }
+            5
+        }
+    }
+}
+
+// Both deadlines are far away: the inner child finishes and each scope hands
+// its own value out. The nested initializer is read by a NON-TAIL statement --
+// an oracle body-local read from the TAIL is the open registry class (its C
+// does not build), and the shape judged here is the deadline's, not that one.
+fn both_fit() -> int {
+    supervised(timeout: 30.to_seconds(), on_timeout: |_e| -1) {
+        ro inner = supervised(timeout: 10.to_seconds(), on_timeout: |_e| -2) {
+            spawn { 5.to_millis().sleep() }
+            40
+        }
+        println(inner)
+        42
+    }
+}
+
+fn main() Io -> () {
+    println(inner_times_out())
+    println(both_fit())
+}

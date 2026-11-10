@@ -436,6 +436,20 @@ fn Checker mut @type_block(b Node) -> () {
             Leaf(_) => {}
             Branch { .. } => {
                 if i == tail_at && c.kind_of() == NodeKind.Call {
+                    if tail_is_stmt_only(c) {
+                        // A STATEMENT-ONLY CALL (`println`, `print`) is not a
+                        // value tail: it has no registry row (see
+                        // `tail_is_stmt_only`, tail_rules.nv), so the expression
+                        // door would refuse it by name and the lattice would
+                        // ice. Typed as the statement it is, and the body keeps
+                        // no value -- the tail door (`@report_if_tail_has_no_value`)
+                        // says whether that is allowed here.
+                        @type_stmt(c)
+                        i += 1
+                        continue
+                    } else {
+                        // A call that produces a value: the expression door below.
+                    }
                     // TERMINATOR, not an else (the two shape guards meet on
                     // a variant test, and continue satisfies both).
                     //
@@ -558,7 +572,7 @@ fn Checker mut @type_block(b Node) -> () {
                     // with the fn's declared return exactly as a tail match.
                     ro smark = @out.len()
                     @value_expect = @ret_expect
-                    @type_supervised_value(c)
+                    @type_supervised_value(c, as_value: true)
                     @value_expect = no_ty()
                     if @out.len() == smark {
                         @judge_return(c, @chan.type_if_known(c.id_of()))
@@ -577,7 +591,23 @@ fn Checker mut @type_block(b Node) -> () {
                     ro emark = @out.len()
                     @type_tail_value(c)
                     if @out.len() == emark {
-                        @judge_return(c, @tail_type_of(c))
+                        ro tt = @tail_type_of(c)
+                        // RECORDED, not merely judged: a BOUND NAME's tail type
+                        // lives in the block's scope, and a reader that runs
+                        // AFTER `@scope.release` -- the supervised value's own
+                        // door, which reads the body's tail once the walk is
+                        // done -- then meets an unbound name and answers
+                        // "no value". The walk decided the type here, while the
+                        // scope was alive; the channel is the one place that
+                        // decision outlives the block (measured 2026-11-10 on
+                        // `supervised { ro x = 41
+                        // x }`, refused where the oracle accepts).
+                        if is_ty(tt) {
+                            @record(c, tt)
+                            @judge_return(c, tt)
+                        } else {
+                            // Untypeable after a clean walk: no answer to record.
+                        }
                     } else {
                         // Refused while typing: the walk already spoke.
                     }
@@ -676,6 +706,15 @@ fn Checker mut @type_stmt(st Node) -> () {
         }
     } else if k == NodeKind.RetStmt {
         ro kids = branch_children(st)
+        // A `return` inside a SPLIT supervised-value body cannot leave the
+        // enclosing fn: the body is emitted as its own chain, so the jump
+        // would print past the queue's cleanup with names the split never
+        // declares (remark 6, measured on the acceptor's probe). Refused by
+        // name BEFORE emit -- the declared boundary of this wave.
+        if @sup_split_depth > 0 {
+            @report_first_leaf_of(kids, SUPERVISED_SPLIT_RETURN_MSG)
+            return
+        }
         // `return` with no operand carries no value, so there is nothing for
         // the channel to hold -- a decision, not a skip: the emitter asks the
         // channel only about expressions, and there is none here.

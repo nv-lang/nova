@@ -292,7 +292,7 @@ fn Checker mut @type_untyped_bind(kids []Node) -> () {
     // is_expr_kind, so its own door types it; the bind takes the recorded
     // type, and a refusal (which records nothing) binds the name poisoned.
     if ik == NodeKind.SupervisedStmt {
-        @type_supervised_value(init)
+        @type_supervised_value(init, as_value: true)
         ro st_t = @chan.type_if_known(init.id_of())
         if !is_ty(st_t) {
             @bind_poisoned(vname, kids)

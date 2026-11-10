@@ -935,6 +935,18 @@ export fn FnBuilder mut @ret() -> () {
     @close(Terminator.Return, next)
 }
 
+/// Continue the body in an ALREADY RESERVED block: the current block has just
+/// been sealed with `Goto(b)`, and what is placed next belongs to `b`. The
+/// supervised-value emitter (`emit_c/emit_supervised.nv`) needs it: the body's
+/// non-tail statements end at the jump, and the TAIL VALUE is the first
+/// statement of the join block -- placed into the SAME builder, so the tail
+/// reads the body's own bindings instead of standing outside the guard block
+/// that holds their declarations (registry 221.1, the supervised-value scope
+/// defect). The caller owns the sealing; this door only moves the cursor.
+export fn FnBuilder mut @goto_block(b BlockId) -> () {
+    @cur_id = b
+}
+
 /// `break` (274.7 wave B10): the current block leaves the innermost loop, and
 /// what is placed next -- dead code the source may still hold -- goes to a fresh
 /// block, exactly as after `ret`. C's `break;` needs no target: the loops print
