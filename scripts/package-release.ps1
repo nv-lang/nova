@@ -1,14 +1,14 @@
-﻿# SPDX-License-Identifier: MIT OR Apache-2.0
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # package-release.ps1 — Plan 221 Ф.2 (A-V2): собирает Windows-x64 zip-релиз
-# Nova (nova.exe + nova-compat.exe + nova-lsp.exe + std/ + минимальный C-рантайм
+# Nova Oracle (Rust nova.exe + nova-lsp.exe + std/ + минимальный C-рантайм
 # для дистрибуции вне монорепы).
 #
 # PowerShell 5.1-совместимость: без `&&`, без ternary (`?:`), без
 # null-coalescing (`??`). Только if/else и явные проверки.
 #
 # std-discovery (см. docs/plans/wip/221-version-notes.md для полной разведки):
-# `nova.exe` и его `nova-compat.exe` ищут std/nova_rt НЕ относительно себя, а относительно
+# `nova.exe` ищет std/nova_rt НЕ относительно себя, а относительно
 # пользовательского проекта (`nova.toml` вверх от CWD) — если не переопределено
 # env-переменными `NOVA_STD_PATH` / `NOVA_CG_INCLUDE` / `NOVA_RT_DIR` /
 # `NOVA_GC_LIB_DIR` / `NOVA_GC_INCLUDE_DIR` (штатная config-поверхность,
@@ -24,8 +24,7 @@
 #     [-Version 0.1.0] [-Architecture x86_64] [-OutDir dist] [-SmokeTest]
 #
 #   -SkipBuild   не собирать cargo — взять уже собранные
-#                nova-driver/target/release/nova.exe,
-#                nova-cli/target/release/nova.exe (compat) и
+#                nova-cli/target/release/nova.exe и
 #                target/release/nova-lsp.exe (LSP's configured target-dir).
 #   -SmokeTest   после сборки zip: распаковать в чистую temp-папку, dot-source
 #                setup-env.ps1, собрать+прогнать hello.nv (реальная проверка
@@ -102,17 +101,6 @@ if (-not $SkipBuild) {
         Pop-Location
     }
 
-    Write-Host "=== cargo build --release (nova-driver) ==="
-    Push-Location (Join-Path $RepoRoot "nova-driver")
-    try {
-        cargo build --release
-        if ($LASTEXITCODE -ne 0) {
-            throw "cargo build --release (nova-driver) failed, exit=$LASTEXITCODE"
-        }
-    } finally {
-        Pop-Location
-    }
-
     Write-Host "=== cargo build --release (nova-lsp) ==="
     Push-Location (Join-Path $RepoRoot "nova-lsp")
     try {
@@ -127,22 +115,17 @@ if (-not $SkipBuild) {
     Write-Host "=== -SkipBuild: беру уже собранные бинари ==="
 }
 
-$NovaCompatExe = Join-Path $RepoRoot "nova-cli\target\release\nova.exe"
-$NovaDriverExe = Join-Path $RepoRoot "nova-driver\target\release\nova.exe"
+$NovaOracleExe = Join-Path $RepoRoot "nova-cli\target\release\nova.exe"
 $NovaLspExe = Join-Path $RepoRoot "target\release\nova-lsp.exe"
 
-if (-not (Test-Path $NovaCompatExe)) {
-    throw "nova compatibility CLI не найден: $NovaCompatExe (собери без -SkipBuild, либо cargo build --release --manifest-path nova-cli\Cargo.toml)"
-}
-if (-not (Test-Path $NovaDriverExe)) {
-    throw "nova.exe driver не найден: $NovaDriverExe (собери без -SkipBuild, либо cargo build --release --manifest-path nova-driver\Cargo.toml)"
+if (-not (Test-Path $NovaOracleExe)) {
+    throw "Rust Oracle CLI не найден: $NovaOracleExe (собери без -SkipBuild, либо cargo build --release --manifest-path nova-cli\Cargo.toml)"
 }
 if (-not (Test-Path $NovaLspExe)) {
     throw "nova-lsp.exe не найден: $NovaLspExe (собери без -SkipBuild, либо cargo build --release из nova-lsp\; target-dir задаётся nova-lsp\.cargo\config.toml)"
 }
 
-Write-Host "nova.exe:     $NovaDriverExe"
-Write-Host "nova compatibility CLI: $NovaCompatExe"
+Write-Host "nova.exe (Rust Oracle): $NovaOracleExe"
 Write-Host "nova-lsp.exe: $NovaLspExe"
 
 # ---------- 2. Чистая stage-папка ----------
@@ -154,18 +137,8 @@ New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
 New-Item -ItemType Directory -Force -Path $OutDirFull | Out-Null
 
 Write-Host "=== Копирую бинари ==="
-Copy-Item $NovaDriverExe (Join-Path $StageDir "nova.exe")
-Copy-Item $NovaCompatExe (Join-Path $StageDir "nova-compat.exe")
+Copy-Item $NovaOracleExe (Join-Path $StageDir "nova.exe")
 Copy-Item $NovaLspExe (Join-Path $StageDir "nova-lsp.exe")
-
-Write-Host "=== Копирую pinned Carina driver inputs ==="
-$CarinaSeedDir = Join-Path $StageDir "docs\dev\carina-seeds"
-$CarinaToolsDir = Join-Path $StageDir "scripts\tools"
-$CarinaSelfDir = Join-Path $StageDir "novac\src"
-New-Item -ItemType Directory -Force -Path $CarinaSeedDir, $CarinaToolsDir, (Split-Path $CarinaSelfDir -Parent) | Out-Null
-Copy-Item (Join-Path $RepoRoot "docs\dev\carina-seeds\windows-x86_64.json") (Join-Path $CarinaSeedDir "windows-x86_64.json")
-Copy-Item (Join-Path $RepoRoot "scripts\tools\carina-gate.py") (Join-Path $CarinaToolsDir "carina-gate.py")
-Copy-Item (Join-Path $RepoRoot "novac\src") $CarinaSelfDir -Recurse
 
 Write-Host "=== Копирую std/ (стандартная библиотека, исходники) ==="
 Copy-Item (Join-Path $RepoRoot "std") (Join-Path $StageDir "std") -Recurse
@@ -454,6 +427,9 @@ if ($SmokeTest) {
 
         if (-not (Test-Path (Join-Path $InstallDir "nova.exe"))) {
             throw "SmokeTest FAIL: nova.exe не найден в распакованном архиве ($InstallDir)"
+        }
+        if ((Get-FileHash (Join-Path $InstallDir "nova.exe")).Hash -ne (Get-FileHash $NovaOracleExe).Hash) {
+            throw "SmokeTest FAIL: packaged nova.exe differs from the Rust Oracle CLI"
         }
 
         # dot-source setup-env.ps1 из распакованной папки — задаёт env vars в
