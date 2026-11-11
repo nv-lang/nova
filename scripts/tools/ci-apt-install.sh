@@ -37,6 +37,21 @@ fi
 PKGS="$*"
 OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120)
 
+# GitHub's Azure mirror timed out on every retry. Use Ubuntu's signed
+# archive over HTTPS on hosted runners, keeping their suites and components.
+ubuntu_sources="${CI_APT_UBUNTU_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}"
+if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
+    [ -r "$ubuntu_sources" ] &&
+    grep -Eq '^URIs: (mirror\+file:/etc/apt/apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu)/?[[:space:]]*$' "$ubuntu_sources"; then
+    apt_sources=$(mktemp --suffix=.sources) || exit 1
+    trap 'rm -f "$apt_sources"' EXIT
+    sed -E 's@^URIs: (mirror\+file:/etc/apt/apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu)/?[[:space:]]*$@URIs: https://archive.ubuntu.com/ubuntu@' \
+        "$ubuntu_sources" > "$apt_sources" || exit 1
+    chmod a+r "$apt_sources" || exit 1
+    OPTS+=(-o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=-)
+    echo "ci-apt-install: using the Ubuntu archive over HTTPS"
+fi
+
 # Одна попытка: update и install под ОДНИМ пределом, чтобы три попытки уложились в предел шага.
 # Пакеты идут ПОЗИЦИОННЫМИ аргументами после "--": sudo (env_reset) сбрасывает окружение, и переменная с пакетами
 # терялась — `apt-get install -y` без пакетов завершается 0 и не ставит НИЧЕГО.
