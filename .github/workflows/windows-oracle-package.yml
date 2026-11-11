@@ -64,8 +64,13 @@ jobs:
         run: |
           cargo build --release --manifest-path nova-cli/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "nova-cli release build failed: exit=$LASTEXITCODE" }
-          cargo build --release --manifest-path nova-lsp/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw "nova-lsp release build failed: exit=$LASTEXITCODE" }
+          Push-Location nova-lsp
+          try {
+            cargo build --release
+            if ($LASTEXITCODE -ne 0) { throw "nova-lsp release build failed: exit=$LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
 
       - name: Package and run clean-extraction default-GC smoke test
         shell: pwsh
