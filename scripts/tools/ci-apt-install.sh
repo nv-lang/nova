@@ -37,6 +37,64 @@ fi
 PKGS="$*"
 OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o DPkg::Lock::Timeout=120)
 
+# Hosted build jobs already carry the C toolchain and the pinned GC source.
+# Build the one missing dependency locally when that covers the entire request.
+install_hosted_build_deps() {
+    [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] || return 1
+    local pkg gc_requested=0
+    for pkg do
+        case "$pkg" in
+            libgc-dev) gc_requested=1 ;;
+            clang|cmake|make) command -v "$pkg" >/dev/null || return 1 ;;
+            build-essential)
+                command -v gcc >/dev/null && command -v g++ >/dev/null &&
+                    command -v make >/dev/null || return 1 ;;
+            *) return 1 ;;
+        esac
+    done
+    [ "$gc_requested" -eq 1 ] || return 1
+
+    local gc_source="$(dirname "${BASH_SOURCE[0]}")/../../compiler-codegen/nova_rt/gc"
+    [ -f "$gc_source/CMakeLists.txt" ] && command -v cmake >/dev/null || return 1
+    local build_dir
+    build_dir=$(mktemp -d) || return 1
+    echo "ci-apt-install: building Boehm GC from the pinned submodule"
+    cmake -S "$gc_source" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_LIBDIR=lib \
+        -Denable_docs=OFF -Dbuild_cord=OFF &&
+        cmake --build "$build_dir" --parallel 2 &&
+        $SUDO cmake --install "$build_dir" &&
+        $SUDO ldconfig
+    local rc=$?
+    rm -rf "$build_dir"
+    return "$rc"
+}
+
+if install_hosted_build_deps "$@"; then
+    # ldconfig covers execution. Clang's lld also needs this directory when
+    # linking the emitted Carina fixtures with -lgc.
+    if [ -n "${GITHUB_ENV:-}" ]; then
+        printf 'LIBRARY_PATH=/usr/local/lib%s\n' "${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV" || exit 1
+    fi
+    exit 0
+fi
+
+
+# GitHub's Azure mirror timed out on every retry. Use Ubuntu's signed
+# archive over HTTPS on hosted runners, keeping their suites and components.
+ubuntu_sources="${CI_APT_UBUNTU_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}"
+if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
+    [ -r "$ubuntu_sources" ] &&
+    grep -Eq '^URIs: (mirror\+file:/etc/apt/apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu)/?[[:space:]]*$' "$ubuntu_sources"; then
+    apt_sources=$(mktemp --suffix=.sources) || exit 1
+    trap 'rm -f "$apt_sources"' EXIT
+    sed -E 's@^URIs: (mirror\+file:/etc/apt/apt-mirrors\.txt|https?://azure\.archive\.ubuntu\.com/ubuntu)/?[[:space:]]*$@URIs: https://archive.ubuntu.com/ubuntu@' \
+        "$ubuntu_sources" > "$apt_sources" || exit 1
+    chmod a+r "$apt_sources" || exit 1
+    OPTS+=(-o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=-)
+    echo "ci-apt-install: using the Ubuntu archive over HTTPS"
+fi
+
 # Одна попытка: update и install под ОДНИМ пределом, чтобы три попытки уложились в предел шага.
 # Пакеты идут ПОЗИЦИОННЫМИ аргументами после "--": sudo (env_reset) сбрасывает окружение, и переменная с пакетами
 # терялась — `apt-get install -y` без пакетов завершается 0 и не ставит НИЧЕГО.

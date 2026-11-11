@@ -2,6 +2,7 @@
 """The drift guard of the Carina seed contour (owner decision 2026-11-04,
 doc/tasks/140-sdelat-ci-kontur-kariny-nezavisimym-ot-orakula/owner-decisions.md
 section 4, mechanism 2).
+Plan: docs/plans/274-novac-self-hosted-compiler.md.
 
 The CI contour compiles the PINNED tree (the seed descriptor's
 source_revision) because the published seed speaks the language snapshot of

@@ -47,6 +47,9 @@ mk; wf '      - name: Install' '        run: bash scripts/tools/ci-apt-install.s
 out=$(bash "$GUARD" "$T/r" 2>&1); rc=$?
 if [ "$rc" -ne 0 ]; then ok "6: предел чужого шага не засчитан"; else bad "6: прикрылись чужим пределом: $out"; fi
 
+# APT stubs model a regular machine unless the individual case opts in.
+export RUNNER_ENVIRONMENT=
+
 # 7: apt, который молчит дольше предела
 cat > "$T/hang.sh" <<'EOF'
 #!/bin/sh
@@ -88,6 +91,29 @@ chmod +x "$T/sudo.sh" "$T/rec.sh"
 out=$(CI_APT_SUDO="$T/sudo.sh" CI_APT_GET="$T/rec.sh" CI_APT_DPKG=true CI_APT_ATTEMPT_TIMEOUT=5 CI_APT_PAUSE=0 bash "$TOOL" libgc-dev clang 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && grep -q 'install -y libgc-dev clang$' "$T/argv" && grep -q ' update$' "$T/argv"; then ok "9: sudo сбросил окружение, пакеты дошли до apt-get install"
 else bad "9: rc=$rc argv=[$(cat "$T/argv")] $out"; fi
+
+# Hosted runner: keep Ubuntu release metadata and signing keys, replace the mirror.
+cat > "$T/ubuntu.sources" <<'EOF'
+Types: deb
+URIs: mirror+file:/etc/apt/apt-mirrors.txt
+Suites: resolute resolute-updates resolute-security
+Components: main universe
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+cat > "$T/mirror.sh" <<'EOF'
+#!/bin/sh
+for arg do
+    case "$arg" in Dir::Etc::sourcelist=*) cp "${arg#*=}" "$CI_APT_CAPTURE";; esac
+done
+EOF
+chmod +x "$T/mirror.sh"
+out=$(RUNNER_ENVIRONMENT=github-hosted CI_APT_UBUNTU_SOURCES="$T/ubuntu.sources" \
+    CI_APT_SUDO="" CI_APT_GET="$T/mirror.sh" CI_APT_CAPTURE="$T/apt-capture" \
+    bash "$TOOL" libmbedtls-dev 2>&1); rc=$?
+sed 's@mirror+file:/etc/apt/apt-mirrors.txt@https://archive.ubuntu.com/ubuntu@' "$T/ubuntu.sources" > "$T/apt-expected"
+if [ "$rc" -eq 0 ] && cmp -s "$T/apt-expected" "$T/apt-capture"; then ok "10: HTTPS archive keeps suites, components and signing keys"
+else bad "10: rc=$rc: $out"; fi
+
 
 if [ "$FAILS" -gt 0 ]; then
     echo "test-check-workflow-apt-step: FAIL ($FAILS из $CASES)"
