@@ -314,7 +314,8 @@ if [ "$self_total" -gt 0 ]; then
     # РАЗУ три недели: каждый прогон уходил в пофайловый откат ниже и печатал
     # «ICE убил пачку», хотя ICE не было. `scripts/tools/double-build.sh` это
     # видел и обошёл у себя, не заведя строки.
-    eval "NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src timeout 60 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
+    # The 223-file batch completed in 63s when retried outside the 60s cap.
+    eval "NOVAC_UNIT=1 NOVAC_SELF_PATH=novac/src timeout 120 \"$NOVAC\" check $self_files" > "$T/self.out" 2> "$T/self.err" </dev/null
     src=$?
     # ПАЧКА, КОТОРАЯ НЕ ЗАПУСТИЛАСЬ, -- НЕ СМЕРТЬ ПАЧКИ. Коды 126/127 значат, что
     # команда не стартовала вовсе: о самосборке не узнали ничего, и тихий откат

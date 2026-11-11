@@ -237,7 +237,8 @@ floor_for() {
         # 23:46Z) -> 186 (e41b47d44), время идёт линейно с корпусом — 600с не
         # хватило уже в push-ярусе (этапы 1–2), без этапа 3. Поэтому пол 1200
         # теперь и в push; рост дальше — шардинг/кэш оракула (реестр №1717).
-        check-novac-differential.sh)           echo 1200 ;;
+        # Full also runs the corpus; the 1200s CI limit interrupted that stage.
+        check-novac-differential.sh)           if [ "${NOVAC_DIFF_TIER:-push}" = full ]; then echo 1800; else echo 1200; fi ;;
         # Тот же класс, что и дифференциал: корпус вырос 226 -> 284 фикстуры
         # за тот же день, обрыв 600с на e41b47d44 (замер 2026-10-03 выше).
         check-novac-no-panic.sh)               echo 1200 ;;
