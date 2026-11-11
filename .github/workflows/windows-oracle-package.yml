@@ -62,18 +62,28 @@ jobs:
       - name: Build Nova CLI and LSP from dispatched source
         shell: pwsh
         run: |
+          $manifest = Get-Content nova-cli/Cargo.toml -Raw
+          if ($manifest -notmatch '(?m)^version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)"') {
+            throw "Oracle package version missing from nova-cli/Cargo.toml"
+          }
+          "NOVA_ORACLE_VERSION=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           cargo build --release --manifest-path nova-cli/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "nova-cli release build failed: exit=$LASTEXITCODE" }
-          cargo build --release --manifest-path nova-lsp/Cargo.toml
-          if ($LASTEXITCODE -ne 0) { throw "nova-lsp release build failed: exit=$LASTEXITCODE" }
+          Push-Location nova-lsp
+          try {
+            cargo build --release
+            if ($LASTEXITCODE -ne 0) { throw "nova-lsp release build failed: exit=$LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
 
       - name: Package and run clean-extraction default-GC smoke test
         shell: pwsh
         run: |
           $out = Join-Path $PWD "dist\windows-oracle"
-          ./scripts/package-release.ps1 -SkipBuild -ProductName nova-oracle -Version 0.1.0 -Architecture x86_64 -VcpkgBase (Join-Path $PWD "compiler-codegen\vcpkg_installed\x64-windows-static") -OutDir $out -SmokeTest
+          ./scripts/package-release.ps1 -SkipBuild -ProductName nova-oracle -Version $env:NOVA_ORACLE_VERSION -Architecture x86_64 -VcpkgBase (Join-Path $PWD "compiler-codegen\vcpkg_installed\x64-windows-static") -OutDir $out -SmokeTest
           if ($LASTEXITCODE -ne 0) { throw "Windows Oracle packaging/smoke test failed: exit=$LASTEXITCODE" }
-          $zip = Join-Path $out "nova-oracle-0.1.0-windows-x86_64.zip"
+          $zip = Join-Path $out "nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64.zip"
           $sha = "$zip.sha256"
           if (-not (Test-Path $zip)) { throw "Expected package not produced: $zip" }
           if (-not (Test-Path $sha)) { throw "Expected checksum not produced: $sha" }
@@ -81,10 +91,10 @@ jobs:
           $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
           try {
             $roots = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/').Split('/')[0] } | Sort-Object -Unique)
-            if ($roots.Count -ne 1 -or $roots[0] -ne "nova-oracle-0.1.0-windows-x86_64") {
+            if ($roots.Count -ne 1 -or $roots[0] -ne "nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64") {
               throw "Unexpected top-level zip entries: $($roots -join ', ')"
             }
-            if (-not ($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq "nova-oracle-0.1.0-windows-x86_64/nova.exe" })) {
+            if (-not ($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq "nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64/nova.exe" })) {
               throw "Package lacks its top-level nova.exe"
             }
           } finally {
@@ -93,14 +103,14 @@ jobs:
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
           "Package: $zip" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           "SHA256: $hash" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          "Top-level folder: nova-oracle-0.1.0-windows-x86_64/" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "Top-level folder: nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64/" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Upload private Actions artifact (zip + SHA256)
         uses: actions/upload-artifact@v4
         with:
-          name: nova-oracle-0.1.0-windows-x86_64-${{ github.sha }}
+          name: nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64-${{ github.sha }}
           path: |
-            dist/windows-oracle/nova-oracle-0.1.0-windows-x86_64.zip
-            dist/windows-oracle/nova-oracle-0.1.0-windows-x86_64.zip.sha256
+            dist/windows-oracle/nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64.zip
+            dist/windows-oracle/nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64.zip.sha256
           if-no-files-found: error
           retention-days: 14
