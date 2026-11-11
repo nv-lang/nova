@@ -9,7 +9,7 @@ GUARD = Path(__file__).resolve().parents[1] / "check-packages-sweep.sh"
 BASH = str(Path(shutil.which("git")).parent.parent / "bin/bash.exe") if os.name == "nt" else "bash"
 
 class SweepVerdictTest(unittest.TestCase):
-    def run_guard(self, text, code, with_package=True):
+    def run_guard(self, text, code, with_package=True, package_name="nova-probe"):
         with tempfile.TemporaryDirectory(prefix="nova-sweep-verdict-") as tmp:
             root = Path(tmp) / "root"
             packages = Path(tmp) / "packages"
@@ -19,7 +19,7 @@ class SweepVerdictTest(unittest.TestCase):
             binary.write_text("#!/bin/sh\nprintf '%s\\n' '" + text + "'\nexit " + str(code) + "\n", encoding="utf-8")
             binary.chmod(0o755)
             if with_package:
-                package = packages / "nova-probe"
+                package = packages / package_name
                 (package / "src").mkdir(parents=True)
                 (package / "nova.toml").write_text('[package]\nname="probe"\nversion="0.0.0"\n', encoding="utf-8")
             return subprocess.run([BASH, GUARD.as_posix(), root.as_posix(), packages.as_posix()], capture_output=True, text=True)
@@ -38,6 +38,17 @@ class SweepVerdictTest(unittest.TestCase):
 
     def test_nonzero_failure_count(self):
         self.assertNotEqual(self.run_guard("PASS: 12  FAIL: 01", 0).returncode, 0)
+
+    def test_unfinished_cairo_is_skipped(self):
+        result = self.run_guard("CODEGEN-FAIL", 1, package_name="nova-cairo")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("SKIP nova-cairo", result.stdout)
+        self.assertNotIn("ok   nova-cairo", result.stdout)
+
+    def test_similarly_named_package_still_runs(self):
+        result = self.run_guard("CODEGEN-FAIL", 1, package_name="nova-cairo-other")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAIL nova-cairo-other", result.stderr)
 
     def test_absent_packages_remain_observable(self):
         result = self.run_guard("", 0, with_package=False)

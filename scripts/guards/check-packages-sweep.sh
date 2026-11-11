@@ -46,6 +46,11 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
     [ -f "$toml" ] || continue
     pkg_dir=$(dirname "$toml")
     pkg=$(basename "$pkg_dir")
+    if [ "$pkg" = "nova-cairo" ]; then
+        echo "  SKIP $pkg (пакет не завершён, исключён из релизного свипа по решению владельца)"
+        skipped=$((skipped+1))
+        continue
+    fi
     # src/ — канон пакетов; без него тестить нечего (пропуск с печатью).
     if [ ! -d "$pkg_dir/src" ]; then
         echo "  SKIP $pkg (нет src/)"
