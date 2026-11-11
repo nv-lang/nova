@@ -537,7 +537,14 @@ export fn FnBuilder mut @remember_hoist(id NodeId, l Local) -> () {
 
 /// A builder whose local 0 is the return place of type `ret_ty` (rustc `_0`)
 /// and whose entry block is reserved and current (rustc `START_BLOCK`).
-export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
+export fn FnBuilder.new(ret_ty TyId) -> FnBuilder => FnBuilder.seeded(ret_ty, 0)
+
+/// A builder whose C-name counters start at `seed`. A body the EMITTER lowers
+/// inside another body (`supervised`'s value/statement bodies, and every body
+/// of its own that the emitter prints in between) continues the emitter's
+/// numbering, so two scopes that land in one C block cannot both declare
+/// `_novac_q<n>` (registry 221.1, the r2 acceptance return's name collision).
+export fn FnBuilder.seeded(ret_ty TyId, seed int) -> FnBuilder {
     mut locals = []LocalDecl.new()
     locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "", decl_at: DeclAt.FirstAssign })
     mut blocks = []Block.new()
@@ -551,9 +558,23 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder {
     mut hoisted_at = []int.new()
     mut hoisted_to = []Local.new()
     FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
-                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: 0,
+                hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: seed,
                 bound_at: []int.new(), bound_to: []Local.new(),
                 bound_gone: []Local.new() }
+}
+
+/// The high-water mark of the builder's C-name counter -- the number the
+/// emitter folds back into `@fresh_uniq` after lowering a body of its own.
+export fn FnBuilder @frames_now() -> int => @frames
+
+/// Continue the numbering from `to`: the named scopes and frames lowered after
+/// this point cannot repeat a name a nested body already took.
+export fn FnBuilder mut @bump_frames(to int) -> () {
+    if to > @frames {
+        @frames = to
+    } else {
+        // Already at or above the mark: nothing to skip.
+    }
 }
 
 /// The block the next statement lands in.

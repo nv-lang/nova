@@ -62,6 +62,6 @@ fn Checker mut @type_for_iterator(st Node, kids []Node, ht TyId) -> () {
         @bind_names_untyped(kids[1])
     } else { // Every name bound with its decided type.
     }
-    @type_block(kids[4])
+    @type_loop_body(kids[4])
     @scope.release(mark)
 }

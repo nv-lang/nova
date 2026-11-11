@@ -727,8 +727,53 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
 /// C block: a redefinition, from a program that is perfectly legal Nova. The
 /// counter makes collision impossible instead of unlikely.
 fn Emitter mut @fresh_uniq() -> int {
+    // A number is free only ABOVE every name the open body already took: a
+    // bare `supervised` scope numbers its queue from that builder's counter,
+    // and a value scope is numbered here -- one space, or `_novac_q1` is
+    // declared twice in one C block (registry 221.1, the r2 name collision).
+    ro open = @lo.ir.frames_now()
+    if open > @next_tmp + 1 {
+        @next_tmp = open - 1
+    } else {
+        // The counter already stands above the open body's names.
+    }
     @next_tmp += 1
     @next_tmp
+}
+
+/// A builder for a `supervised` body. It is lowered while the enclosing body
+/// is open, and its C text lands in that body's C block, so its name counter
+/// starts above both sources: the emitter's last number and the enclosing
+/// body's next free one. A builder seeded at the emitter's LAST number would
+/// hand out that same number again (`_novac_q<u>` for the scope and for the
+/// body's first bare scope) -- the very duplicate the r2 acceptance return
+/// found in `two_bare_scopes`.
+fn Emitter mut @body_builder(ret_ty TyId) -> FnBuilder {
+    mut seed = @next_tmp + 1
+    ro open = @lo.ir.frames_now()
+    if open > seed {
+        seed = open
+    } else {
+        // The emitter's counter is ahead of the open body: it alone seeds.
+    }
+    FnBuilder.seeded(ret_ty, seed)
+}
+
+/// Fold a finished body's last C name back into the emitter's counter, which
+/// holds the LAST number handed out (the builder's counter holds the next free
+/// one, so the mark is one below it).
+fn Emitter mut @body_builder_done() -> () {
+    ro next_free = @lo.ir.frames_now()
+    if next_free > @next_tmp + 1 {
+        @next_tmp = next_free - 1
+    } else {
+        // The emitter's counter already stands above this body.
+    }
+}
+
+/// Continue a resumed enclosing builder above every name a nested body took.
+fn Emitter mut @body_builder_resume() -> () {
+    @lo.ir.bump_frames(@next_tmp + 1)
 }
 
 /// Emit a record constructor into a fresh temporary and answer its C name.

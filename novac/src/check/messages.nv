@@ -676,12 +676,21 @@ const SUPERVISED_ON_TIMEOUT_NO_DEADLINE_MSG = "`on_timeout:` needs a deadline: a
 /// that ends in a statement has none to give.
 const SUPERVISED_VALUE_NO_TAIL_MSG = "a `supervised` used as a value needs a body that ends in a value -- its type is the body's tail type after the join (D414 §4); this body ends without one (the supervised-value wave, plan 274.11)"
 
-/// `return` inside a `supervised` VALUE body. The emitter splits such a body
-/// at the join -- its non-tail runs under the guard, its tail after the join --
-/// so a `return` there cannot leave the enclosing function: refused by name
-/// (supervised-value rework, remark 6) instead of emitting C that skips the
-/// cleanup.
-const SUPERVISED_SPLIT_RETURN_MSG = "outside the subset: `return` inside the body of a `supervised` used as a value is not compiled yet -- the body is split at the join, and its exit boundary is a later wave (E4, the concurrency horizon of plan 274.11)"
+/// `return` inside a `supervised` body the emitter lowers as its own block --
+/// the VALUE form (split at the join: its non-tail runs under the guard, its
+/// tail after it) and the STATEMENT form that carries named arguments (the
+/// whole body eager, then the join). In both, a `return` cannot leave the
+/// enclosing function: refused by name (supervised-value rework, remark 6;
+/// the r2 acceptance return's no-handler carrier) instead of emitting C that
+/// skips the cleanup.
+const SUPERVISED_SPLIT_RETURN_MSG = "outside the subset: `return` inside the body of a `supervised` whose body is emitted as its own block is not compiled yet -- the body's exit boundary is a later wave (E4, the concurrency horizon of plan 274.11)"
+
+/// `break`/`continue` that would leave such a body: the jump's loop stands
+/// OUTSIDE the split boundary, so the exit would be printed at a join the
+/// body does not own (a `_novac_q` name it never declared). A loop the body
+/// declares itself keeps its jumps -- refused by name only across the
+/// boundary (r2 acceptance return, the split break/continue carriers).
+const SUPERVISED_SPLIT_LOOP_MSG = "outside the subset: `break`/`continue` that leave the body of a `supervised` are not compiled yet -- the body is emitted as its own block, and an exit across that boundary is a later wave (E4, the concurrency horizon of plan 274.11)"
 
 /// A closure-light body that must produce a value but ends in a statement
 /// (`on_timeout: |_e| { println(1) }`): a LANGUAGE error by the same rule a fn

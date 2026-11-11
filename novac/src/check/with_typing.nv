@@ -253,8 +253,10 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
     // their callees must be reached (a `100.to_millis()` left untyped vanishes
     // from mono's reach). The body stays an ORDINARY block -- no value tail is
     // demanded of the statement form (std's `supervised(timeout:) { spawn }`).
+    mut carries_args = false
     for c in skids {
         if c.kind_of() != NodeKind.NamedArg { continue }
+        carries_args = true
         ro ak = branch_children(c)
         if ak.len() < 3 { continue }
         @type_expr(ak[2])
@@ -267,7 +269,30 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
             return
         }
         @sup_depth += 1
-        @type_block(sbody)
+        if carries_args {
+            // THE BODY IS EMITTED AS ITS OWN BLOCK (`@emit_supervised_stmt`,
+            // dispatch in emit_place.nv): the queue, the guards and the body
+            // share one C block of the emitter's own, so a `return` would jump
+            // past the join -- and a `break`/`continue` out of it would lower
+            // the body's exit at a join named with a number this block never
+            // declared. The value door's split books are opened here too:
+            // until the r2 acceptance return this path typed the body as an
+            // ordinary block, and
+            // `supervised(timeout:) { if n > 0 { return 9 } }` passed check and
+            // emitted an early `return` followed by unreachable cleanup.
+            ro saved_loops = @split_loops
+            @sup_split_depth += 1
+            @split_loops = 0
+            @type_block(sbody)
+            @split_loops = saved_loops
+            @sup_split_depth -= 1
+        } else {
+            // THE ARGUMENT-LESS FORM stays on the builder's own
+            // `ScopeOpen`/`ScopeJoin` pair (lower_with.nv), which joins on
+            // every exit: an early `return`, `break` or `continue` is
+            // compiled by that pair, so neither split book opens here.
+            @type_block(sbody)
+        }
         @sup_depth -= 1
     } else {
         // A missing body is the parser's error node, reported by the
@@ -360,10 +385,15 @@ fn Checker mut @type_supervised_value(st Node, as_value bool) -> () {
     // A `return` in this body cannot leave the enclosing fn: the body is
     // SPLIT at the join and its exit boundary is a later wave. Refused by
     // name (typing.nv, RetStmt) rather than emitted as a jump past the
-    // queue's cleanup (remark 6).
+    // queue's cleanup (remark 6). A `break`/`continue` that would leave the
+    // body is refused the same way (typing.nv, LoopCtl), so the split's own
+    // loop book starts empty and a loop the body declares adds to it.
+    ro saved_loops = @split_loops
     @sup_split_depth += 1
+    @split_loops = 0
     ro bmark = @out.len()
     @type_block(sbody)
+    @split_loops = saved_loops
     @sup_split_depth -= 1
     @sup_depth -= 1
     @tail_value_body = saved_tail

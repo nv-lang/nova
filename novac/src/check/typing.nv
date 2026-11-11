@@ -622,6 +622,41 @@ fn Checker mut @type_block(b Node) -> () {
     @scope.release(mark)
 }
 
+/// A LOOP BODY's statements, with the loop counted in BOTH books the type pass
+/// keeps: `loop_depth` (does a `break`/`continue` have a target at all -- the
+/// shape walk refuses one with none, so the split check below must not repeat
+/// that refusal) and, inside a split `supervised` body, `split_loops` (is that
+/// target one the split owns). Every loop-body door of this pass goes through
+/// here: the while arm below, both `for` arms, `@type_for_iterator` and
+/// `@type_while_let` -- a loop typed by any other door would leave both books
+/// short and a cross-boundary `break` unseen (r2 acceptance return, blocker 2).
+fn Checker mut @type_loop_body(b Node) -> () {
+    @enter_loop()
+    @type_block(b)
+    @leave_loop()
+}
+
+/// One loop opens: both books of `@type_loop_body` move. The while arm calls
+/// these directly, because its branch is typed through the narrowing door.
+fn Checker mut @enter_loop() -> () {
+    @loop_depth += 1
+    if @sup_split_depth > 0 {
+        @split_loops += 1
+    } else {
+        // No split boundary: only the "has a target" book moves.
+    }
+}
+
+/// The twin of `@enter_loop`, in mirror order.
+fn Checker mut @leave_loop() -> () {
+    if @sup_split_depth > 0 {
+        @split_loops -= 1
+    } else {
+        // The twin of the entry's else.
+    }
+    @loop_depth -= 1
+}
+
 /// One `no_ty()` slot per argument child from `from` on. Children before
 /// `from` are syntax — the callee, or the receiver, the dot and the name — and
 /// a punctuation leaf is no argument.
@@ -690,7 +725,17 @@ fn Checker mut @type_stmt(st Node) -> () {
         }
         @type_expr(kids[1])
         // The then-branch, narrowed by an `is` condition (check/is_expr.nv).
-        @type_then_branch(kids[1], kids[2])
+        // A WHILE's then-branch is a LOOP body and opens both books of
+        // `@type_loop_body`; an `if`'s branch opens neither (it owns no jump
+        // target). Until the r2 acceptance return no loop door of this pass
+        // counted at all, so a `break` crossing a split body read as legal.
+        if k == NodeKind.WhileStmt {
+            @enter_loop()
+            @type_then_branch(kids[1], kids[2])
+            @leave_loop()
+        } else {
+            @type_then_branch(kids[1], kids[2])
+        }
         // The ELSE branch, since the parser learned `else` (2026-08-18).
         // Typing it is not optional: check passed the file and emit ICEd
         // with "sem: no type recorded" -- a decision taken by one layer
@@ -848,7 +893,7 @@ fn Checker mut @type_stmt(st Node) -> () {
                 return
             } else { // Every name bound with its decided type.
             }
-            @type_block(kids[4])
+            @type_loop_body(kids[4])
             @scope.release(cmark)
             // SILENT-OK: the collection head is fully decided -- head typed
             // and recorded, pattern bound, body typed; the range arm below
@@ -873,7 +918,7 @@ fn Checker mut @type_stmt(st Node) -> () {
             @bind_names_untyped(pat)
         } else { // Every name bound with its decided type.
         }
-        @type_block(kids[4])
+        @type_loop_body(kids[4])
         @scope.release(mark)
     } else if k == NodeKind.MatchExpr {
         // A match in STATEMENT position (274.5 wave B5): the arms run for
@@ -901,8 +946,22 @@ fn Checker mut @type_stmt(st Node) -> () {
     } else if is_expr_kind(k) {
         @type_expr(st)
     } else if k == NodeKind.LoopCtl {
-        // SILENT-OK: `break`/`continue` carry no operand (274.7 B10), so there is
-        // nothing to type; the walk already judged the position (inside a loop).
+        // `break`/`continue` carry no operand (274.7 B10), so there is nothing
+        // to type -- but their TARGET is judged here, not only by the shape
+        // walk's "is any loop open" question. Inside a split `supervised` body
+        // (its value form, or the statement form that carries named
+        // arguments) a jump whose loop stands OUTSIDE the boundary would be
+        // printed at a join the body does not own: the lowering leaves the
+        // pushed scope and names `_novac_q<q>`/`_novac_qdl<q>` that the block
+        // never declared (measured on the r2 acceptance probes). Refused by
+        // name -- unless the body opened the loop itself (`split_loops > 0`),
+        // or no loop at all is open (the walk has already said that).
+        if @sup_split_depth > 0 && @split_loops == 0 && @loop_depth > 0 {
+            @report_first_leaf_of(branch_children(st), SUPERVISED_SPLIT_LOOP_MSG)
+            return
+        }
+        // SILENT-OK: the jump has a target this body owns, or no target at all
+        // (the walk's own refusal, already reported there).
     } else {
         // SILENT-OK: a statement kind outside the subset is refused at the
         // emitter's door, so this walk has no answer to record for it.

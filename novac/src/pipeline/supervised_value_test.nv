@@ -9,7 +9,11 @@
 //   shadowing one reaching the POST-JOIN tail, the statement form's deadline and
 //   handler, the initializer's own expectation, the unit body that yields no
 //   value, the on_timeout closure's exit discipline, and the cleanup/scope
-//   restore after a timeout. Every refusal here is judged on the CHECK path
+//   restore after a timeout, plus the r2 acceptance return's classes: ONE C-name
+//   space for the queues of nested and sequential scopes, the split boundary's
+//   `return`/`break`/`continue` refusals (and the bare statement form that keeps
+//   them), the statement handler's own return type in its cast, and the drain a
+//   failing body runs before its rethrow. Every refusal here is judged on the CHECK path
 //   (`compile`); every emitter claim on the C text (`compile_to_c`), counted
 //   against a control with no supervised scope -- the shell carries runtime
 //   text of its own, so presence alone proves nothing. The TEXT doors are used,
@@ -86,7 +90,9 @@ test "supervised value: a nested supervised INITIALIZER inside the body joins be
     ro (d, c) = compile_to_c(src, sv_decls())
     assert(d.len() == 0, messages(d))
     assert(c.matches("nova_scope_init(&_novac_q").len() == 2, c)
-    assert(c.matches("nova_supervised_run(&_novac_q").len() == 2, c)
+    // Each value scope joins TWICE since the r2 drain: once on the success path
+    // and once while a failing body drains its children before the rethrow.
+    assert(c.matches("nova_supervised_run(&_novac_q").len() == 4, c)
     // The inner value lands in its own outer slot, the outer tail reads the
     // binding that slot initialised.
     assert(c.matches("_novac_supv").len() >= 2, c)
@@ -282,5 +288,110 @@ test "supervised value: nested deadlines arm the inner and the outer scope; the 
     ro (d2, c2) = compile_to_c(after, sv_decls())
     assert(d2.len() == 0, messages(d2))
     assert(c2.matches("nova_scope_init(&_novac_q").len() == 2, c2)
-    assert(c2.matches("_nova_active_scope = _novac_sqprev").len() == 4, c2)
+    // THREE restores per value scope since the r2 drain: the success path, the
+    // drain's own failure path, and the outer frame's handler path.
+    assert(c2.matches("_nova_active_scope = _novac_sqprev").len() == 6, c2)
+}
+
+/// How many `NovaFiberQueue _novac_q<n>` slots one number declares in `c` --
+/// the uniqueness claim of the r2 name fix is made by asking every number up
+/// to a ceiling the program cannot reach.
+fn q_decls(c str, n int) -> int => c.matches("NovaFiberQueue _novac_q${n} =").len()
+
+test "supervised value: a nested scope and the following bare ones get DISTINCT queue names in one C block (r2 name collision)" {
+    // The r2 acceptance return's blocker 1: the value scope's number came from
+    // the emitter's counter (the LAST number handed out) and a body builder's
+    // scopes from the builder's own (the NEXT FREE one), so the outer `_novac_q1`
+    // and the body's first bare scope `_novac_q1` were both declared in the same
+    // C block -- `redefinition of '_novac_q1'` from a legal Nova program. The
+    // books are one now; this program is the probe the return measured on.
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        supervised { spawn { println(\"first\") } }\n        supervised { spawn { println(\"second\") } }\n        42\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    mut total = 0
+    mut dup = 0
+    for n in 1..40 {
+        ro k = q_decls(c, n)
+        total += k
+        if k > 1 {
+            dup += 1
+        } else { // One or none: the number is free or taken once.
+        }
+    }
+    assert(total == 3, c)
+    assert(dup == 0, c)
+}
+
+test "supervised STATEMENT with named arguments: a body `return` is refused by name (r2 split boundary)" {
+    // The r2 acceptance return's blocker 2, statement carrier: a statement that
+    // CARRIES named arguments is emitted as the emitter's own block
+    // (`@emit_supervised_stmt`), so its body's `return` would jump past the join.
+    // Before the fix this path typed the body as an ordinary block and the
+    // emitted C returned early, leaving the queue's cleanup unreachable.
+    ro bad = sv("fn f(k int) -> int {\n    supervised(timeout: 1.to_seconds()) {\n        if k > 0 {\n            return 9\n        }\n    }\n    42\n}")
+    ro d = compile(bad, sv_decls())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("`return` inside the body of a `supervised`"), d[0].message)
+    // CONTROL: the ARGUMENT-LESS form keeps the builder's ScopeOpen/ScopeJoin
+    // pair, which joins on every exit -- its `return` is compiled, not refused.
+    ro ok = sv("fn f(k int) -> int {\n    supervised {\n        if k > 0 {\n            return 9\n        }\n    }\n    42\n}")
+    ro d2 = compile(ok, sv_decls())
+    assert(d2.len() == 0, messages(d2))
+}
+
+test "supervised value: `break`/`continue` that leave the split body are refused; the body's OWN loop keeps them (r2 split boundary)" {
+    // The r2 acceptance return's blocker 2, the jump carriers: a `break` in a
+    // split body whose loop stands OUTSIDE the boundary lowers at a join named
+    // with a number the body's block never declared. Refused by name; a loop the
+    // body declares itself owns its target and stays legal (the control).
+    ro brk = sv("fn f() -> int {\n    for i in 0..1 {\n        ro v = supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n            break\n            42\n        }\n        println(v)\n    }\n    0\n}")
+    ro d1 = compile(brk, sv_decls())
+    assert(d1.len() == 1, messages(d1))
+    assert(d1[0].message.contains("leave the body of a `supervised`"), d1[0].message)
+    ro cont = sv("fn f() -> int {\n    for i in 0..1 {\n        ro v = supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n            continue\n            42\n        }\n        println(v)\n    }\n    0\n}")
+    ro d2 = compile(cont, sv_decls())
+    assert(d2.len() == 1, messages(d2))
+    assert(d2[0].message.contains("leave the body of a `supervised`"), d2[0].message)
+    ro own = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        mut s = 0\n        for i in 0..10 {\n            if i == 3 {\n                break\n            }\n            if i == 1 {\n                continue\n            }\n            s += i\n        }\n        42\n    }\n}")
+    ro d3 = compile(own, sv_decls())
+    assert(d3.len() == 0, messages(d3))
+}
+
+test "supervised STATEMENT: the on_timeout handler is CALLED through ITS OWN return type (r2 handler ABI)" {
+    // The r2 acceptance return's blocker 3: the statement form cast the handler
+    // through the STATEMENT's result type (`nova_unit`, the discarded value),
+    // so a `str`-returning handler was called through a `nova_unit` function
+    // pointer -- an ABI mismatch invisible to the C compiler because the cast
+    // is explicit. The cast now names the handler's declared return type; the
+    // unit case is the existing positive above.
+    ro src = "import std.time.duration\nfn main() {\n    g()\n}\nfn g() -> () {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| \"late\") {\n        \"ok\"\n    }\n    println(\"after\")\n}"
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("(void)(((nova_str(*)(void*, Nova_TimeoutError*))"), c)
+    assert(!c.contains("(void)(((nova_unit(*)(void*, Nova_TimeoutError*))"), c)
+}
+
+test "supervised value: a failing body cancels and joins its children BEFORE the rethrow (r2 body-fail drain)" {
+    // The r2 acceptance return's drain class: the body's own failure used to
+    // rethrow immediately, leaving the spawned fibers unjoined (their queue
+    // still holding them) and `_nova_active_scope` unrestored. The fail path now
+    // delivers the cancel, joins under a DISCARD guard (the drain's own failure
+    // must not replace the body's), pops the frame, restores the scope and only
+    // then rethrows the body's failure. The order is the claim.
+    ro src = svf("fn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        spawn { println(\"child\") }\n        assert(false, \"body failed\")\n        42\n    }\n}")
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    ro cancel = at(c, "nova_scope_deliver_cancel(&_novac_q")
+    ro discard = at(c, "nova_fail_push(&_novac_sgj")
+    ro joinat = at(c, "_novac_sgjoin")
+    assert(cancel >= 0 && discard > cancel && joinat > discard, c)
+    // Past the drain's join: the scope is restored and the BODY's failure is
+    // rethrown, in that order -- the whole tail, so the success path's restore
+    // (which stands before the fail label) cannot answer for it.
+    ro past = c.after("_novac_sgjoin")
+    ro restore = at(past, "_nova_active_scope = _novac_sqprev")
+    ro rethrow = at(past, "nova_rethrow_scope(_novac_sg")
+    assert(restore >= 0 && rethrow > restore, c)
+    // The drain's own join runs on the fail path as well as on the success one.
+    assert(c.matches("nova_supervised_run(&_novac_q").len() == 2, c)
 }
