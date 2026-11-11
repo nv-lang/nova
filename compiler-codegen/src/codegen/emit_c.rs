@@ -1943,6 +1943,7 @@ pub struct CEmitter {
     /// (checker-side ambiguity diagnostic or a resolved-const-identity
     /// channel) is a followup, not attempted here (see report).
     const_qualified_by_name: HashMap<String, String>,
+    qualified_const_module: HashMap<(crate::diag::FileId, String, String), Vec<String>>,
     /// Plan 170 (D307): file-private FREE-FN C-name mangling. Same per-file
     /// resolution model as `private_const_c_names`: `((file_id, source_name)
     /// → file-discriminated C name)`. A `priv(file) fn helper` gets a unique
@@ -2962,6 +2963,7 @@ impl CEmitter {
             private_const_c_names: HashMap::new(),
             colliding_const_names: HashSet::new(),
             const_qualified_by_name: HashMap::new(),
+            qualified_const_module: HashMap::new(),
             file_priv_fn_c_names: HashMap::new(),
             file_priv_free_fn_decls: HashMap::new(),
             current_emit_file_id: None,
@@ -6724,8 +6726,25 @@ impl CEmitter {
                 }
             }
             for (name, mods) in &export_const_def_modules {
-                if mods.len() >= 2 {
-                    self.colliding_const_names.insert(name.clone());
+                if mods.len() < 2 {
+                    continue;
+                }
+                self.colliding_const_names.insert(name.clone());
+                for peer in &module.peer_files {
+                    for import in peer.imports.iter().filter(|import| import.items.is_none()) {
+                        let Some(prefix) = import.alias.as_ref().or_else(|| import.path.last()) else {
+                            continue;
+                        };
+                        let mut matching = mods.iter().filter(|path| path.ends_with(&import.path));
+                        if let Some(path) = matching.next() {
+                            if matching.next().is_none() {
+                                self.qualified_const_module.insert(
+                                    (peer.file_id, prefix.clone(), name.clone()),
+                                    path.clone(),
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -10851,6 +10870,26 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         if !self.lazy_consts.contains(name) { return None; }
         let q = self.init_dep_sym(file_id, name);
         self.lazy_const_syms.contains(&q).then_some(q)
+    }
+
+    fn qualified_const_read(
+        &self,
+        file_id: crate::diag::FileId,
+        prefix: &str,
+        name: &str,
+    ) -> Result<Option<String>, String> {
+        if !self.colliding_const_names.contains(name) {
+            return Ok(None);
+        }
+        let module = self.qualified_const_module
+            .get(&(file_id, prefix.to_owned(), name.to_owned()))
+            .ok_or_else(|| format!("cannot resolve qualified constant {prefix}.{name}"))?;
+        let symbol = format!("Nova_const_{}_{name}", module.join("_"));
+        if self.lazy_const_syms.contains(&symbol) {
+            Ok(Some(format!("_nova_const_{symbol}_value")))
+        } else {
+            Ok(Some(symbol))
+        }
     }
 
     /// Registry 221.1 #1549: THE C identifier of a read of `name` in `file_id` that is
@@ -37022,11 +37061,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Locals keep priority (the block above), and a lowercase
                 // prefix that is neither a local nor an imported module is
                 // untouched.
-                if parts.len() >= 2
+                if parts.len() == 2
                     && !self.var_types.contains_key(&parts[0])
                     && self.imported_modules.contains(&parts[0])
                     && self.module_value_tys.contains_key(&parts[1])
                 {
+                    if let Some(read) = self.qualified_const_read(expr.span.file_id, &parts[0], &parts[1])? {
+                        return Ok(read);
+                    }
                     let bare = Expr::new(ExprKind::Ident(parts[1].clone()), expr.span);
                     return self.emit_expr(&bare);
                 }
@@ -38349,6 +38391,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             && self.imported_modules.contains(prefix)
                             && self.module_value_tys.contains_key(name)
                         {
+                            if let Some(read) = self.qualified_const_read(expr.span.file_id, prefix, name)? {
+                                return Ok(read);
+                            }
                             let bare = Expr::new(ExprKind::Ident(name.clone()), expr.span);
                             return self.emit_expr(&bare);
                         }
