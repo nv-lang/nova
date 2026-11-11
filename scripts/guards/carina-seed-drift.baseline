@@ -93,3 +93,4 @@ std/src/fs/d323_mock_fs_rw_test.nv # task 140 (record the configurable read buff
 std/src/fs/fs.nv # task 140 (record the configurable read buffer until the seed re-pins)
 std/src/unicode/graphemes.nv # task 140 (record the simplified grapheme count until the seed re-pins)
 std/src/unicode/graphemes_test.nv # task 140 (record the reusable grapheme iterator coverage until the seed re-pins)
+novac/src/pipeline/shell_stub_test.nv # task 144 (the 0.1.3 print-dispatch removal changes the shell helper control)

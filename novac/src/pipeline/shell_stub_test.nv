@@ -27,7 +27,14 @@ test "a stub's NAME is still known to the shell: only callability is withdrawn" 
     // A stub returning NULL and one returning NOVA_UNIT are both taken.
     assert(!t.has("Nova_Vec_method_clone"), "a NULL-returning stub is not callable")
     assert(!t.has("Nova_Vec_method_display"), "a NOVA_UNIT-returning stub is not callable")
-    // CONTROL: the runtime's own helpers, with real bodies, stay.
-    assert(t.has("nova_print_int"), "a runtime helper is callable")
+    // CONTROL: the runtime's own helpers, with real bodies, stay. The
+    // 0.1.3 println wave (task 144, owner decision) removed the whole
+    // nova_print_* dispatch family from the shell emission - printing now
+    // lowers through Io.write_out + the display engine - so the control
+    // helper is nova_int_to_str (a real body that stays), and the REMOVAL
+    // itself is pinned: a resurrected nova_print_* stub would mean the
+    // shell regrew dead dispatch entries.
+    assert(!t.has("nova_print_int"), "the 0.1.3 print-dispatch removal holds: no nova_print_int stub")
+    assert(t.has("nova_int_to_str"), "a runtime helper is callable")
     assert(t.sym_cnt > 1000, "the lifted surface keeps every identifier it read")
 }
