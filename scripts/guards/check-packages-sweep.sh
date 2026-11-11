@@ -57,29 +57,29 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
         skipped=$((skipped+1)); continue
     fi
     rc=0
-    out=$(cd "$pkg_dir" && timeout 600 "$BIN" test src 2>&1) || rc=$?
+    # nova-polaris (2026-11-10): ws_upgrade needs a real-socket deadline - the
+    # suite is 50/50 PASS at --timeout 600; the runner default (116s) killed
+    # it under full-suite contention, which read as a package FAIL.
+    out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 2>&1) || rc=$?
     if [ "$rc" -eq 124 ]; then
-        echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 600с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
+        echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 900с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
         failed=$((failed+1)); continue
     fi
     line=$(printf '%s\n' "$out" | grep -aE '^PASS: ' | tail -1)
-    case "$line" in
-        *"FAIL: 0"*)
-            echo "  ok   $pkg ($line)"
-            checked=$((checked+1))
-            ;;
-        *)
-            echo "  FAIL $pkg (${line:-нет PASS-строки}; хвост вывода ниже)" >&2
-            printf '%s\n' "$out" | grep -aE '^(CC-FAIL|CODEGEN-FAIL|RUN-FAIL|TIMEOUT|NEG-[A-Z-]+)' | head -3 >&2
-            failed=$((failed+1))
-            ;;
-    esac
+    if [ "$rc" -eq 0 ] && [[ "$line" =~ ^PASS:[[:space:]]+[1-9][0-9]*[[:space:]]+FAIL:[[:space:]]+0([[:space:]]|$) ]]; then
+        echo "  ok   $pkg ($line)"
+        checked=$((checked+1))
+    else
+        echo "  FAIL $pkg (exit $rc; ${line:-нет PASS-строки}; хвост вывода ниже)" >&2
+        printf '%s\n' "$out" | grep -aE '^(CC-FAIL|CODEGEN-FAIL|RUN-FAIL|TIMEOUT|NEG-[A-Z-]+)' | head -3 >&2
+        failed=$((failed+1))
+    fi
 done
 
 echo "check-packages-sweep: проверено $checked, пропущено $skipped, отказов $failed"
+[ "$failed" -eq 0 ] || { echo "check-packages-sweep: FAIL — пакеты падают на этом тулчейне" >&2; exit 1; }
 if [ "$checked" -eq 0 ]; then
     echo "check-packages-sweep ok (деградация): соседних пакетов под рукой нет — судить нечего; полный свип — в локальном полном гейте" >&2
     exit 0
 fi
-[ "$failed" -eq 0 ] || { echo "check-packages-sweep: FAIL — пакеты падают на этом тулчейне" >&2; exit 1; }
 echo "check-packages-sweep ok: все проверенные пакеты зелёные на этом тулчейне"

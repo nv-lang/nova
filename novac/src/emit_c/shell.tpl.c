@@ -332,49 +332,6 @@ static const NovaTypeInfo NOVA_TYPEINFO_nova_str = { NOVA_TID_nova_str, "nova_st
 
 
 /* Value-record / generic-instance / tuple / fixed-array struct definitions (complete, topologically sorted — реестр 221.1 №139 Round 3): */
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_EnumerateIter {
-    Nova_I* src;
-    nova_int i;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_FilterIter {
-    Nova_I* src;
-    void* pred;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_FilterMapIter {
-    Nova_I* src;
-    void* f;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_MapIter {
-    Nova_I* src;
-    void* f;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_SkipIter {
-    Nova_I* src;
-    nova_int to_skip;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_StepByIter {
-    Nova_I* src;
-    nova_int step;
-    nova_bool first;
-    nova_int rem;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_TakeIter {
-    Nova_I* src;
-    nova_int left;
-};
-/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
-struct NovaValue_VecIter {
-    Nova_T** data;
-    nova_int idx;
-    nova_int len;
-};
 typedef struct NovaValue_IoError NovaValue_IoError;
 struct NovaValue_IoError {
     Nova_ErrorKind* kind;
@@ -1019,6 +976,49 @@ struct NovaValue_VecIter____Nova_Slot____nova_str__nova_int_p {
     nova_int len;
 };
 
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_EnumerateIter {
+    Nova_I* src;
+    nova_int i;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_FilterIter {
+    Nova_I* src;
+    void* pred;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_FilterMapIter {
+    Nova_I* src;
+    void* f;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_MapIter {
+    Nova_I* src;
+    void* f;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_SkipIter {
+    Nova_I* src;
+    nova_int to_skip;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_StepByIter {
+    Nova_I* src;
+    nova_int step;
+    nova_bool first;
+    nova_int rem;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_TakeIter {
+    Nova_I* src;
+    nova_int left;
+};
+/* Task 144: synthesized def -- a peer value-record named through an Option/Result typedef whose declaring module is not emitted in this CU. */
+struct NovaValue_VecIter {
+    Nova_T** data;
+    nova_int idx;
+    nova_int len;
+};
 #ifndef NOVA_TUPLE_TYPEDEF__NovaTuple_2_22_Nova_Vec____nova_int_p_22_Nova_Vec____nova_int_p
 #define NOVA_TUPLE_TYPEDEF__NovaTuple_2_22_Nova_Vec____nova_int_p_22_Nova_Vec____nova_int_p
 typedef struct _NovaTuple_2_22_Nova_Vec____nova_int_p_22_Nova_Vec____nova_int_p { Nova_Vec____nova_int* f0; Nova_Vec____nova_int* f1; } _NovaTuple_2_22_Nova_Vec____nova_int_p_22_Nova_Vec____nova_int_p;

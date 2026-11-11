@@ -1,0 +1,33 @@
+// EXPECT_STDOUT a ok
+// EXPECT_STDOUT 1
+// EXPECT_STDOUT 0
+//
+// Pin: registry 221.1 №1967 — unit-variant constructors of GENERIC sums
+// without arguments have their mono route (the 0.1.3 known-limitation pair
+// "no mono route" + "nova build ICEs in sem/channel.nv:812" is closed):
+// a qualified ctor (`Flag.On`), a bare ctor (`On`) under an expected
+// generic-sum binding, and a match over the value all build and run on
+// both instantiations (`Flag[int]`, `Flag[str]`).
+module standalone.generic_sum_unit_variant_ctor
+
+type Flag[T] value
+    | On
+    | Off
+
+fn show(f Flag[int]) -> int {
+    match f {
+        On => 1
+        Off => 0
+    }
+}
+
+fn main() {
+    ro a Flag[int] = Flag.On
+    println("a ok")
+    println(show(a))
+    ro b Flag[str] = Off
+    match b {
+        On => println(1)
+        Off => println(0)
+    }
+}
