@@ -71,6 +71,11 @@ install_hosted_build_deps() {
 }
 
 if install_hosted_build_deps "$@"; then
+    # ldconfig covers execution. Clang's lld also needs this directory when
+    # linking the emitted Carina fixtures with -lgc.
+    if [ -n "${GITHUB_ENV:-}" ]; then
+        printf 'LIBRARY_PATH=/usr/local/lib%s\n' "${LIBRARY_PATH:+:$LIBRARY_PATH}" >> "$GITHUB_ENV" || exit 1
+    fi
     exit 0
 fi
 
