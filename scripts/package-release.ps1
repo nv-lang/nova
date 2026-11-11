@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT OR Apache-2.0
+﻿# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # package-release.ps1 — Plan 221 Ф.2 (A-V2): собирает Windows-x64 zip-релиз
 # Nova Oracle (Rust nova.exe + nova-lsp.exe + std/ + минимальный C-рантайм
