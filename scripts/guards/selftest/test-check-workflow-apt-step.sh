@@ -47,6 +47,9 @@ mk; wf '      - name: Install' '        run: bash scripts/tools/ci-apt-install.s
 out=$(bash "$GUARD" "$T/r" 2>&1); rc=$?
 if [ "$rc" -ne 0 ]; then ok "6: предел чужого шага не засчитан"; else bad "6: прикрылись чужим пределом: $out"; fi
 
+# APT stubs model a regular machine unless the individual case opts in.
+export RUNNER_ENVIRONMENT=
+
 # 7: apt, который молчит дольше предела
 cat > "$T/hang.sh" <<'EOF'
 #!/bin/sh
@@ -106,7 +109,7 @@ EOF
 chmod +x "$T/mirror.sh"
 out=$(RUNNER_ENVIRONMENT=github-hosted CI_APT_UBUNTU_SOURCES="$T/ubuntu.sources" \
     CI_APT_SUDO="" CI_APT_GET="$T/mirror.sh" CI_APT_CAPTURE="$T/apt-capture" \
-    bash "$TOOL" libgc-dev 2>&1); rc=$?
+    bash "$TOOL" libmbedtls-dev 2>&1); rc=$?
 sed 's@mirror+file:/etc/apt/apt-mirrors.txt@https://archive.ubuntu.com/ubuntu@' "$T/ubuntu.sources" > "$T/apt-expected"
 if [ "$rc" -eq 0 ] && cmp -s "$T/apt-expected" "$T/apt-capture"; then ok "10: HTTPS archive keeps suites, components and signing keys"
 else bad "10: rc=$rc: $out"; fi
