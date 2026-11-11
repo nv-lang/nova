@@ -92,3 +92,8 @@ void   nova_gc_reset_stats(void) { _alloc_count = 0; _free_count = 0; }
 size_t   nova_gc_heap_size(void)     { return 0; }
 void     nova_gc_collect(void)       { /* no-op: RC is incremental */ }
 uint64_t nova_gc_last_pause_ns(void) { return 0; }
+void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns) {
+    if (count) *count = 0;
+    if (total_ns) *total_ns = 0;
+    if (max_ns) *max_ns = 0;
+}
