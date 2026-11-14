@@ -1,0 +1,27 @@
+// EXPECT_COMPILE_ERROR E7301
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 №1014 (hunt 2026-09-07, fixed 2026-11-14, task 150): a
+// FOREIGN record reaching a declared slot through the `??` rhs or an
+// effect-handler op body used to be accepted silently and reinterpreted at
+// runtime (`nova: out of memory`, the tag field read as a string). Both are
+// value positions and refuse by name now.
+module neg.p1014_wrong_record_positions_neg
+
+type Alpha { ro tag int, ro name str }
+type Beta  { ro other str }
+
+type Meter effect {
+    fn read() -> Beta
+}
+
+fn none_beta(x int) -> Option[Beta] => if x > 0 { Some(Beta { other: "b" }) } else { None }
+
+fn main() Meter -> () {
+    ro a = Alpha { tag: 4919, name: "alpha" }
+    // nova:expect E7301 -- foreign record on the `??` right-hand side
+    ro v Beta = none_beta(-1) ?? a
+    // nova:expect E7301 -- foreign record as an effect-handler op body
+    ro w = with Meter = effect Meter { read() -> Beta => a } { Meter.read() }
+    println("${v.other} ${w.other}")
+}
