@@ -679,7 +679,19 @@ fn Lowerer @variant_test(pat Node, ty TyId, lo Local) -> Cond {
 /// with `Return`; what the source wrote after it lands in a fresh block.
 fn Lowerer mut @lower_return(st Node) -> () {
     ro kids = branch_children(st)
-    if kids.len() > 1 {
+    // An exit across LIVE SCOPE PROTOCOL (a `supervised` join, a `with`
+    // restore) must not place its value into the return place: that
+    // assignment is spelled `return <expr>;` at its placement, and the
+    // protocol `@ret` pushes afterwards prints below it -- dead lines, and
+    // over a `supervised` an unjoined child on the dying frame (the
+    // acceptor's segfault probe, registry 221.1). The value waits in a
+    // temporary of the return place's type -- the D432 pattern the cleanups
+    // already take -- and `@ret_via` joins first, returns second.
+    mut via = no_local()
+    if kids.len() > 1 && @ir.exit_scopes_open() {
+        via = @ir.temp(@ir.decl_of(@ir.ret_place()).ty)
+        @lower_place(kids[1], via)
+    } else if kids.len() > 1 {
         @lower_exit_value(kids[1], @ir.ret_place(), st.id_of())
     } else {
         // A BARE `return` RECORDS AND PRINTS NOTHING HERE (2026-09-09). It used to print
@@ -689,12 +701,20 @@ fn Lowerer mut @lower_return(st Node) -> () {
         // the form: a grep for a bare `return` found zero carriers, which is why every
         // green measurement of this wave was silent about it. The `Return` terminator is
         // what the walk prints from, and it prints the same for a body that just ends.
+        // A bare `return` prints nothing at its placement, so the protocol is safe.
     }
     if kids.len() <= 1 {
         // A bare `return`: the values still owned are cleaned before it (D432).
         @lower_cleanups(st.id_of(), ExitOutcome.NormalExit)
+    } else if via != no_local() {
+        // The value waited in the temporary; its cleanups run before the join.
+        @lower_cleanups(st.id_of(), ExitOutcome.NormalExit)
     } else {
         // `@lower_exit_value` cleaned them between the value and the return.
+    }
+    if via != no_local() {
+        @ir.ret_via(via)
+        return
     }
     @ir.ret()
 }
@@ -762,149 +782,6 @@ fn Lowerer mut @lower_eval(e Node) -> () {
     @hoist_operand(e)
     if needs_own_lowering(e) { return }
     @ir.eval(e)
-}
-
-/// Lowers one `println` into the sequence it IS: first every argument that calls
-/// something, laid down into its own local in source order; then per argument its output
-/// statement; one newline at the end.
-///
-/// WHY THE ARGUMENTS COME FIRST. `println` is a call (D69), so D484 s2 applies: all of its
-/// arguments are evaluated, left to right, before it prints anything, and that order is
-/// observable. Hoisting only the CONSTRUCTIONS up front (the first edition) ran a
-/// constructor argument's effects ahead of a neighbour that calls; printing each argument
-/// right after its own lowering (H1, 2026-08-31, matching the oracle of that day) printed
-/// before a later argument's effects. Both broke D484; the pass in the body is the order
-/// the norm states, by construction rather than by the printer's care (registry #1823).
-///
-/// A construction (an array literal, a record or positional record, an interpolation) is
-/// still printed from the tree and hoisted by the printer right before its own output line
-/// -- that is legal, because a hoist only PRINTS TEXT and print order is the walk's order.
-/// `??` is the one form that could not stay: it LOWERS. It leaves through the one door
-/// above, and this is why the two refusals of step 3b close.
-fn Lowerer mut @lower_println(call Node) -> () {
-    // EVERY ARGUMENT THAT CALLS SOMETHING IS EVALUATED BEFORE THE FIRST OUTPUT
-    // (registry 221.1 #1823, D484 s2 over D69). `println` is `fn print(...items
-    // []any)`: its arguments are evaluated left to right and the call prints
-    // after ALL of them -- observably. The per-argument sequence above (H1,
-    // 2026-08-31) matched the oracle of that day, which printed `head` before a
-    // later argument's `tick`; the oracle has since been brought to D484 and
-    // prints `tick` then `head1`, and Carina kept the retired order -- the
-    // corpus carrier `println_arg_effect_order.nv` diverged on every run from
-    // 2026-10-03. Only an argument that calls something is laid down: one
-    // without a call has no effect to order, and a temporary for it would be
-    // emission nobody needs (the rule of `@hoist_ordered_args`). And when the ONLY
-    // argument that calls something is the FIRST, nothing is printed before it and no
-    // sibling is evaluated ahead of it: `println(f(x))` keeps its one line.
-    mut first_arg = true
-    mut calling = 0
-    mut calling_first = false
-    for c in branch_children(call) {
-        ro ck = c.kind_of()
-        if ck != NodeKind.Lit && !is_expr_kind(ck) { continue }
-        if ck != NodeKind.Lit && contains_call(c) {
-            calling += 1
-            calling_first = calling_first || first_arg
-        } else {
-            // A literal or an argument without a call: nothing to order.
-        }
-        first_arg = false
-    }
-    if calling == 0 || (calling == 1 && calling_first) {
-        // Nothing is evaluated after an output: the sequence below is already D484's order.
-    } else {
-        @lay_print_args(call)
-    }
-    for c in branch_children(call) {
-        ro ck = c.kind_of()
-        if ck == NodeKind.Lit {
-            // THE CHANNEL FIRST, AND THE FORM ONLY WHERE IT IS SILENT -- and it is silent
-            // about exactly ONE literal. Measured 2026-09-09 in `check/typing.nv:836-850`:
-            // the argument loop of `println` RECORDS a numeric or char literal through the
-            // full `type_of` (all four kinds, plus the half where the POSITION dictates a
-            // width), and skips only a STRING one -- deliberately, and its comment says why:
-            // "the emitter never asks its type", because the only consumer took the pool
-            // slot by shape.
-            //
-            // So asking the door for EVERY literal, as the first edition of this line did,
-            // computed a second answer to a question the channel had already decided -- the
-            // very `decide it twice` this channel's doctrine exists to prevent. Asking the
-            // channel first also makes this FALLBACK DIE ON ITS OWN, and its removal
-            // condition is named: when the type of a
-            // string literal is published (marker `[M-strlit-node-has-no-type]`), this
-            // `else` stops executing and no consumer needs editing.
-            //
-            // The fallback judges the LAST leaf, as the checker does: a negated literal
-            // arrives as `[Minus, lit]`.
-            ro known = @out.type_if_known(c.id_of())
-            ro lty = if is_ty(known) {
-                known
-            } else {
-                ro lk_kids = branch_children(c)
-                literal_prim_of(leaf_kind(lk_kids[lk_kids.len() - 1]), @ctx)
-            }
-            @ir.output(Operand.Tree(c), lty)
-        } else if is_expr_kind(ck) {
-            ro ty = @out.type_of(c.id_of())
-            ro laid = @ir.local_of_node(c.id_of())
-            if laid != no_local() {
-                // Laid down by the pass above: its effects have run, it prints its local.
-                @ir.output(Operand.Place(laid), ty)
-                continue
-            } else {
-                // Not laid down: nothing in it calls anything.
-            }
-            match @lower_value_source(c, ty) {
-                Some(l) => @ir.output(Operand.Place(l), ty)
-                None => {
-                    // A block form nested in the argument goes first (registry 1619),
-                    // and so does a call's own `if`/`unsafe` argument, as in `@lower_place`
-                    // (sweep 6: `println(f(if c { a } else { b }))` iced in emit).
-                    // ITS OWN ARGUMENTS IN ORDER (registry 1681, D484 s2): `println`
-                    // is a sequence, but each argument is still one expression.
-                    @hoist_ordered_args(c)
-                    @hoist_sealed_args(c)
-                    @hoist_block_forms(c)
-                    @ir.output(Operand.Tree(c), ty)
-                }
-            }
-        } else {
-            match c {
-                Leaf(_) => {
-                    // The callee leaf and the parenthesis leaves are not arguments.
-                }
-                Branch { .. } => {
-                    // The checker refuses every branch it cannot type in an argument
-                    // position (#870), so a branch here is a broken invariant rather than
-                    // a shape to skip -- the silent fallout this arm replaces printed `ab`
-                    // for `a20b`.
-                    ice_at("novac/src/lower/lowering.nv:880", "emit_c: an argument form the checker let through (#870)")
-                }
-            }
-        }
-    }
-    @ir.output_end(print_call_ends_line(call))
-}
-
-/// Every argument of a `print`/`println` that calls something, into a local of its own,
-/// in source order (registry #1823, D484 s2). The output loop of `@lower_println` then
-/// prints the local, so the arguments' effects have all run before the first output.
-fn Lowerer mut @lay_print_args(call Node) -> () {
-    for c in branch_children(call) {
-        ro ck = c.kind_of()
-        if ck == NodeKind.Lit || !is_expr_kind(ck) || !contains_call(c) { continue }
-        if @ir.local_of_node(c.id_of()) != no_local() { continue }
-        ro t = @out.type_if_known(c.id_of())
-        if !is_ty(t) {
-            // SILENT-OK: an argument the checker recorded no type for was refused where
-            // it was typed (the rule of `@hoist_ordered_args`); it prints in place.
-            continue
-        } else {
-            // A typed argument that calls something: it gets its own local, in order.
-        }
-        ro l = @ir.temp(t)
-        @lower_place(c, l)
-        @ir.remember_hoist(c.id_of(), l)
-    }
 }
 
 /// THE LOWERING HALF of the dispatch on the form of a value: a `match` and an `if` in value

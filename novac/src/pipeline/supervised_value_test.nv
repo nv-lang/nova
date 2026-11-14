@@ -395,3 +395,46 @@ test "supervised value: a failing body cancels and joins its children BEFORE the
     // The drain's own join runs on the fail path as well as on the success one.
     assert(c.matches("nova_supervised_run(&_novac_q").len() == 2, c)
 }
+
+test "supervised STATEMENT, bare form: an early `return` with a live child DRAINS the scope before it (r2 segfault)" {
+    // The rework acceptance's blocker: the bare statement form's early `return`
+    // printed its value into the return place FIRST -- spelled `return 9;` at
+    // its placement -- so the scope protocol the builder pushes on the exit
+    // (disarm, join, restore, ir.nv `@ret`) printed BELOW the `return`, dead.
+    // Over a live child that left an unjoined fiber on the dying frame: the
+    // binary crashed where the oracle printed 9, three runs out of three. The
+    // exit value now waits in a temporary (the D432 pattern) and `@ret_via`
+    // joins first, returns second -- the order is the claim.
+    ro src = "import std.time.duration\nfn main() {\n    println(f(1))\n}\nfn f(n int) -> int {\n    supervised {\n        spawn { println(\"child\") }\n        if n > 0 {\n            return 9\n        }\n        println(\"no\")\n    }\n    0\n}"
+    ro (d, c) = compile_to_c(src, sv_decls())
+    assert(d.len() == 0, messages(d))
+    // The early path: the value into a temporary, then the protocol, then the
+    // return OF THE TEMPORARY -- never the bare value return above the join.
+    // The needles are counted INSIDE f's body: the shell carries runtime text
+    // of its own (a disarm of its own scope stands above f), so presence and
+    // order are judged from f's C symbol on.
+    // The needle region is f's OWN function body: the anchor is f's C
+    // definition, the end the body's closing brace -- past it the linked
+    // runtime text of its own carries disarms and joins.
+    ro ftail = c.after("_f__nova_int__to_nova_int(nova_int n) {")
+    ro body = ftail[0..at(ftail, "\n}")]
+    ro tmp = at(body, "nova_int _novac_l")
+    ro disarm = at(body, "nova_scope_disarm_early_deadline(")
+    ro join = at(body, "nova_supervised_run(&_novac_q")
+    ro restore = at(body, "_nova_active_scope = _novac_qprev")
+    ro ret = at(body, "return _novac_l")
+    assert(tmp >= 0 && disarm > tmp && join > disarm && restore > join && ret > restore,
+        "order: tmp=${tmp} disarm=${disarm} join=${join} restore=${restore} ret=${ret}")
+    assert(at(body, "return ((nova_int)9LL)") < 0, c)
+    // CONTROL, no supervised: the same early `return` is bare -- the shell and
+    // this function carry no scope protocol of their own, so the order above is
+    // the supervised body's, not the program's background.
+    ro ctl = "import std.time.duration\nfn main() {\n    println(f(1))\n}\nfn f(n int) -> int {\n    if n > 0 {\n        return 9\n    }\n    println(\"no\")\n    0\n}"
+    ro (d2, c2) = compile_to_c(ctl, sv_decls())
+    assert(d2.len() == 0, messages(d2))
+    ro cftail = c2.after("_f__nova_int__to_nova_int(nova_int n) {")
+    ro cbody = cftail[0..at(cftail, "\n}")]
+    assert(at(cbody, "nova_scope_disarm_early_deadline(") < 0, c2)
+    assert(at(cbody, "nova_supervised_run(") < 0, c2)
+    assert(at(cbody, "return ((nova_int)9LL)") >= 0, c2)
+}

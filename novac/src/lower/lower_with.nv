@@ -76,7 +76,9 @@ fn Lowerer mut @lower_supervised(st Node) -> () {
     assert(body.kind_of() == NodeKind.Block, "lower: a supervised statement without its body block reached the lowering")
     mut carries_args = false
     for c in kids {
-        if c.kind_of() == NodeKind.NamedArg { carries_args = true } else {
+        if c.kind_of() == NodeKind.NamedArg {
+            carries_args = true
+        } else {
             // The keyword leaf, the body Block, or a separator.
         }
     }
@@ -116,7 +118,11 @@ fn Lowerer mut @lower_sup_body_non_tail(body Node, q int) -> () {
             Branch { .. } => {
                 // The last statement is the value; the emitter places it after
                 // the join, so only the statements before it are lowered here.
-                if j != last_branch { @lower_stmt(c) }
+                if j != last_branch {
+                    @lower_stmt(c)
+                } else {
+                    // The value itself: it reaches the join block instead.
+                }
             }
         }
         j += 1

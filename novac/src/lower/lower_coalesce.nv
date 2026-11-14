@@ -76,14 +76,26 @@ fn Lowerer mut @lower_coalesce(e Node) -> Local {
     // its calls recorded at this `??` node (check/consume_paths.nv `@flow_coalesce_return`).
     if is_coalesce_return(qk) {
         if qk.len() > 3 {
-            @lower_exit_value(qk[3], @ir.ret_place(), e.id_of())
+            // An exit across live scope protocol (`@ret_via`'s reason, ir.nv):
+            // the value waits in a temporary so the join and the restores print
+            // before the `return`, not dead below it.
+            if @ir.exit_scopes_open() {
+                ro t = @ir.temp(@ir.decl_of(@ir.ret_place()).ty)
+                @lower_place(qk[3], t)
+                @lower_cleanups(e.id_of(), ExitOutcome.NormalExit)
+                @ir.ret_via(t)
+            } else {
+                @lower_exit_value(qk[3], @ir.ret_place(), e.id_of())
+                @ir.ret()
+            }
         } else {
             // A bare `?? return` of a unit (or `-> @`) body: the `Return`
             // terminator prints the unit, or the receiver (emit_flow.nv). A `return`,
             // so its cleanups are handed `Success` (D314's row for `return`).
+            // It prints at the terminator, above nothing: the protocol is safe.
             @lower_cleanups(e.id_of(), ExitOutcome.NormalExit)
+            @ir.ret()
         }
-        @ir.ret()
     } else {
         @lower_place(qk[2], lr)
     }
@@ -131,9 +143,19 @@ fn Lowerer mut @lower_try(e Node) -> Local {
     // outcome for `?` (amended 2026-10-03) -- `Success` over an `Option` (`None` is "no
     // value", not an error), `Failure(e)` over a `Result`, the payload the `Err` value
     // itself (registry 221.1 #1707).
+    // The None/Err lands in a temporary of the return place's type when the
+    // exit crosses live scope protocol (`@ret_via`'s reason, ir.nv): written
+    // into the return place directly, its assignment is spelled `return ...`
+    // at its placement and the protocol prints dead below it.
+    mut via = no_local()
     if is_opt {
         @lower_cleanups(e.id_of(), ExitOutcome.NormalExit)
-        @ir.set_none(@ir.ret_place())
+        if @ir.exit_scopes_open() {
+            via = @ir.temp(@ir.decl_of(@ir.ret_place()).ty)
+            @ir.set_none(via)
+        } else {
+            @ir.set_none(@ir.ret_place())
+        }
     } else {
         ro err = result_err_variant(@ctx, ot)
         ro le = @ir.temp(result_error(@ctx, ot))
@@ -141,9 +163,18 @@ fn Lowerer mut @lower_try(e Node) -> Local {
         @lower_cleanups(e.id_of(), ExitOutcome.FailureExit(le))
         ro rt = @ir.decl_of(@ir.ret_place()).ty
         ro boxed = is_any_ty(@ctx.tys, result_error(@ctx, rt)) && !is_any_ty(@ctx.tys, result_error(@ctx, ot))
-        @ir.set_err(@ir.ret_place(), le, result_err_variant(@ctx, rt), boxed)
+        if @ir.exit_scopes_open() {
+            via = @ir.temp(rt)
+            @ir.set_err(via, le, result_err_variant(@ctx, rt), boxed)
+        } else {
+            @ir.set_err(@ir.ret_place(), le, result_err_variant(@ctx, rt), boxed)
+        }
     }
-    @ir.ret()
+    if via != no_local() {
+        @ir.ret_via(via)
+    } else {
+        @ir.ret()
+    }
     @ir.end_if(c)
     lr
 }
