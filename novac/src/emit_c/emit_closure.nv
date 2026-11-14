@@ -60,7 +60,11 @@ fn collect_closure_nodes(n Node, mut out []Node) -> () {
 fn Emitter @closure_number(lit Node) -> int {
     mut found = 0 - 1
     for i in 0..@closures.len() {
-        if @closures[i].id_of() == lit.id_of() { found = i }
+        if @closures[i].id_of() == lit.id_of() {
+            found = i
+        } else {
+            // Not this literal: the scan continues.
+        }
     }
     assert(found >= 0, "emit: a closure literal outside the reached functions reached the emitter")
     found
@@ -75,15 +79,13 @@ fn closure_param_names(lit Node) -> []str {
     ro kids = branch_children(lit)
     if kids.len() < 2 { return out }
     if leaf_kind(kids[0]) == TokenKind.PipePipe { return out }
-    mut i = 1
-    while i < kids.len() - 1 {
+    for i in 1..kids.len() - 1 {
         ro c = kids[i]
         if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
             out.push(leaf_text(c))
         } else {
             // A Comma separator or the closing Pipe leaf: not a parameter.
         }
-        i += 1
     }
     out
 }
@@ -105,11 +107,9 @@ fn Emitter mut @emit_closure_protos() -> () {
         ro ret = @ctx.tys.arg(sig, arity)
         ro params = closure_param_names(lit)
         @body.append("static ${c_type(@ctx, ret)} novac_lambda_${@tag}${n}_body(void* _env_ptr")
-        mut i = 0
-        while i < arity {
+        for i in 0..arity {
             ro pn = if i < params.len() { closure_c_param(params[i], i) } else { "_novac_p${i}" }
             @body.append(", ${c_type(@ctx, @ctx.tys.arg(sig, i))} ${pn}")
-            i += 1
         }
         @body.append(");\n")
         ro caps = @out.captures_of(lit.id_of())
@@ -150,11 +150,9 @@ fn Emitter mut @emit_closure_fn(n int) -> () {
     ro kids = branch_children(lit)
     ro body = kids[kids.len() - 1]
     @body.append("static ${c_type(@ctx, ret)} novac_lambda_${@tag}${n}_body(void* _env_ptr")
-    mut i = 0
-    while i < arity {
+    for i in 0..arity {
         ro pn = if i < params.len() { closure_c_param(params[i], i) } else { "_novac_p${i}" }
         @body.append(", ${c_type(@ctx, @ctx.tys.arg(sig, i))} ${pn}")
-        i += 1
     }
     @body.append(") {\n")
     if caps.len() > 0 {
@@ -165,10 +163,12 @@ fn Emitter mut @emit_closure_fn(n int) -> () {
     ro saved = @lo.ir
     @lo.ir = FnBuilder.new(ret)
     @cur_closure = n
-    if body.kind_of() == NodeKind.Block {
-        @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
-    } else {
-        @lo.lower_place(body, @lo.ir.ret_place())
+    match body.kind_of() {
+        NodeKind.Block => @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
+        // ANY other kind is the body's own expression form, read by the
+        // parser's `@expr()` -- an OPEN set of value kinds, placed into the
+        // return place by the one door, not enumerated here.
+        other => @lo.lower_place(body, @lo.ir.ret_place())
     }
     @lo.ir.end_body()
     @print_body(@lo.ir.finish())

@@ -3,12 +3,8 @@
 //   Koka's structured scope (children joined at the end); the C PROTOCOL is the
 //   runtime's ABI (the fiber queue, the fail frames, the early-deadline arm) --
 //   novac repeats it as interop, exactly as `emit_spawn.nv` repeats the spawn
-//   protocol. The reference for the SHAPE is the oracle's own output
-//   (`oracle-pos_1.c`, measured 2026-11-10): a result slot before the block,
-//   the queue, the deadline combined in, the body's non-tail inside a guard, the
-//   join with the active scope restored, the tail value POST-JOIN, and the
-//   `on_timeout:` closure called on a timeout instead of rethrowing
-//   `Fail[TimeoutError]` (D449).
+//   protocol. NOT taken: a value semantics of the timed result beyond the
+//   body's own tail (a later stage of the wave).
 // Role: emission of the SUPERVISED VALUE (supervised-value wave, D414 §4/D449)
 //   and of the ARGUMENT-CARRYING statement (D442/D449). ONE C block holds the
 //   queue, both fail frames, the body, the join and the tail: the body's
@@ -18,7 +14,12 @@
 //   defect). The body's non-tail statements and the tail value are lowered into
 //   ONE builder, the tail into the join block of that builder
 //   (`FnBuilder.goto_block`), which is what keeps the lowering scope and the C
-//   scope in step.
+//   scope in step. The reference for the SHAPE is the measured emission of
+//   2026-11-10 (`oracle-pos_1.c`): a result slot before the block, the queue,
+//   the deadline combined in, the body's non-tail inside a guard, the join with
+//   the active scope restored, the tail value POST-JOIN, and the `on_timeout:`
+//   closure called on a timeout instead of rethrowing `Fail[TimeoutError]`
+//   (D449).
 // Used by: emit_place.nv (`build_value` for the value form; `emit_eval` for the
 //   statement form that carries named arguments).
 // Guarded by: check-novac-differential.sh over novac/fixtures/supervised_value.
@@ -26,7 +27,7 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind}
-import ../builtins.{SUPERVISOR_EFFECT}
+import ../builtins.{UNIT_C_NAME, SUPERVISOR_EFFECT}
 import ../sem.{branch_children, leaf_text, effect_slot_c, c_type, is_unit_ty}
 import ../types.{TyId}
 import ../lower.{FnBuilder, Terminator, BlockId}
@@ -37,7 +38,9 @@ fn last_branch_idx(kids []Node) -> int {
     mut at = 0 - 1
     mut i = 0
     for c in kids {
-        if c.kind_of() != NodeKind.LeafNode { at = i } else {
+        if c.kind_of() != NodeKind.LeafNode {
+            at = i
+        } else {
             // A brace or another leaf: not a statement.
         }
         i += 1
@@ -209,7 +212,7 @@ fn Emitter mut @emit_supervised_value(e Node, ty TyId) -> str {
     ro idx = sup_arg_indexes(kids)
     ro timeout_at = idx[0]
     ro ot_at = idx[1]
-    ro ot_ret = if ot_at >= 0 { @sup_handler_ret_c(kids, ot_at) } else { "nova_unit" }
+    ro ot_ret = if ot_at >= 0 { @sup_handler_ret_c(kids, ot_at) } else { UNIT_C_NAME }
     ro u = @fresh_uniq()
     if is_unit_ty(@ctx, ty) {
         @body.append("    {\n")
@@ -253,7 +256,7 @@ fn Emitter mut @emit_supervised_stmt(e Node) -> () {
     ro body = kids[kids.len() - 1]
     ro idx = sup_arg_indexes(kids)
     ro u = @fresh_uniq()
-    ro ot_ret = if idx[1] >= 0 { @sup_handler_ret_c(kids, idx[1]) } else { "nova_unit" }
+    ro ot_ret = if idx[1] >= 0 { @sup_handler_ret_c(kids, idx[1]) } else { UNIT_C_NAME }
     @body.append("    {\n")
     @emit_sup_queue(kids, u, idx[0], idx[1])
     @emit_sup_frames_open(u)

@@ -389,6 +389,13 @@ export const EFFECT_MARKER = "effect"
 /// to stop.
 export const SLICE_HEAD = "Vec"
 
+/// The C ABI name of the unit type, read off the table's own row above: the
+/// emitter spells the unit result of a handler with no written return type
+/// (`on_timeout:` of a `supervised`, P5). The name of the LANGUAGE'S ABI, so
+/// it lives here with the row that owns it -- a literal at the call site is
+/// exactly what the name-hardcode guard exists to stop.
+export const UNIT_C_NAME = "nova_unit"
+
 /// The std constructor the TYPED array literal is written with: `[]int.of(7, 8)`.
 /// Not a word of the language grammar but the one spelling the subset reads as
 /// a literal -- and a spelled name lives here (P5), so a second reader cannot

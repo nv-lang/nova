@@ -59,12 +59,21 @@ NAME = "check-novac-one-branch-head"
 # tests and the hand-off's test whether the M:N runtime is up -- fixed interop
 # text, not a branch of a lowered body: the same kind of boundary as the
 # contract prologue.
+# Plan 274 supervised value (2026-11-14): @emit_sup_frames_open,
+# @emit_sup_end_ok and @emit_sup_outer_fail print the supervised scope's OWN
+# protocol -- the NovaFailFrame setjmp probes (`if (setjmp(...) != 0) goto
+# ...`) and the caught-failure dispatch to the `on_timeout:` handler. Fixed
+# interop text of the scope contract, not a branch of a lowered body: the same
+# kind of boundary as @emit_spawn_entry above.
 DOORS = {
     "@print_if_head": "emit_flow.nv",
     "@print_arm_head": "emit_match.nv",
     "@emit_requires_prologue": "emit_requires.nv",
     "@emit_spawn_entry": "emit_spawn.nv",
     "@emit_spawn_site": "emit_spawn.nv",
+    "@emit_sup_frames_open": "emit_supervised.nv",
+        "@emit_sup_end_ok": "emit_supervised.nv",
+    "@emit_sup_outer_fail": "emit_supervised.nv",
 }
 
 # `@body.append("` + необязательные пробелы + `if (`  — голова ветвления C.

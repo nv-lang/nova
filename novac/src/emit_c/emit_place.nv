@@ -450,7 +450,7 @@ fn Emitter mut @emit_element_store(st StoreStmt, built Option[str]) -> () {
     ro rt = @out.type_if_known(kids[0].id_of())
     if !is_ty(rt) {
         ice_at(
-            "novac/src/emit_c/emit_place.nv:444",
+            "novac/src/emit_c/emit_place.nv:452",
             "emit: an element store whose receiver type the checker did not record")
     } else {
         // Decided: the receiver's temporary is typed from it.
