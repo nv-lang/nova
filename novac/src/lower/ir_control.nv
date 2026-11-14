@@ -1,0 +1,193 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc MIR builder (`Builder::then_else_break`) -- the if/loop/switch
+// region builders of the lowered body; Go `types2` no. NOT taken: a region
+// tree (the builder stays flat, the terminator carries the shape).
+// Role: the CONTROL-FLOW region doors of the lowered body's builder (E.9,
+//   plan 274.11): if/chained-else, loop, switch, and their begin/end pairs.
+//   Split out of ir.nv (the 1000-line cap) by meaning: the data types and the
+//   linear statement doors stay in ir.nv, the regions live here.
+// Used by: lower/lowering.nv, lower/lower_branch.nv, lower/lower_loop.nv,
+//   lower/lower_match.nv (the region shapes); the printer reads the sealed
+//   terminators (emit_c/emit_flow.nv).
+// Guarded by: nova test novac/src/lower/lower_test.nv; the split moves text
+//   only.
+
+module novac.lower
+import ../diag.{ice_at}
+import ../types.{TyId}
+
+/// Opens an `if`: the statements placed so far end the current block with
+/// `If`, and what is placed next belongs to the `then` branch. `els` says whether
+/// the else branch is a block of its own or the join itself, and in which shape it
+/// prints -- the source knows, the builder does not guess.
+export fn FnBuilder mut @begin_if(cond Cond, els ElseShape) -> IfCtx {
+    ro join = @reserve()
+    @open_if(cond, join, els)
+}
+
+/// Opens an `if` whose join ALREADY exists: the current block ends with `If`
+/// and the `then` branch becomes current. `begin_if` reserves the join and
+/// comes here; `begin_else_if` comes here with the outer join, so a chain
+/// shares one. The emitter calls it directly when it has to print the
+/// condition after `begin_else` and before the branch opens.
+export fn FnBuilder mut @begin_chained_if(cond Cond, join BlockId, els ElseShape) -> IfCtx {
+    @open_if(cond, join, els)
+}
+
+/// The ONE place an `If` terminator is built. Both public doors delegate here, which is
+/// exactly why the shape is a PARAMETER: from inside, the entry door is invisible, and a bit
+/// inferred here would come out the same for both forms -- measured in step 3a of wave
+/// M2b-2, where that mistake moved the C of one corpus file by one indent. The bit still
+/// reaches `IfTerm`, and the lesson of that measurement stands: it is READ OFF the shape the
+/// caller handed in, never guessed here.
+fn FnBuilder mut @open_if(cond Cond, join BlockId, shape ElseShape) -> IfCtx {
+    ro then = @reserve()
+    ro els = match shape {
+        ElseShape.NoElse => join
+        ElseShape.Braced => @reserve()
+        ElseShape.Chained => @reserve()
+    }
+    ro els_braced = match shape {
+        ElseShape.Braced => true
+        ElseShape.NoElse => false
+        ElseShape.Chained => false
+    }
+    ro head = @cur_id
+    @close(Terminator.If(IfTerm { cond, then, els, join, els_braced }), then)
+    IfCtx { head, then, els, join }
+}
+
+/// Moves from the `then` branch to the `else` branch: the branch ends with a
+/// jump to the join, and what is placed next belongs to `els`. Asking it of
+/// an `if` opened without an else branch is a compiler bug, named as such.
+export fn FnBuilder mut @begin_else(c IfCtx) -> () {
+    if c.els == c.join {
+        ice_at("novac/src/lower/ir_control.nv:65", "lower: begin_else on an if that was opened without an else branch")
+    }
+    @close(Terminator.Goto(c.join), c.els)
+}
+
+/// `else if`: the else branch of `outer` is a block with no statements whose
+/// terminator is a second `If` sharing the outer join. Hands back the inner
+/// context; its `end_if` closes onto the shared join, after which the outer
+/// `end_if` finds the join current and has nothing to seal.
+/// THE door for "an else followed by a chain". Until 2026-09-08 the emitter opened this
+/// pair BY HAND in two places (`lower_if`, `lower_if_let`) and only a builder test called
+/// the door -- one concept, two implementations, and the hand-written pair would not have
+/// followed a change to the door (registry #991 is that class). The emitter now comes here.
+export fn FnBuilder mut @begin_else_if(outer IfCtx, cond Cond, els ElseShape) -> IfCtx {
+    @begin_else(outer)
+    @begin_chained_if(cond, outer.join, els)
+}
+
+/// Closes an `if`: the open branch jumps to the join, and what is placed next
+/// belongs to the join. When the join is ALREADY current -- the else branch
+/// was an `else if` chain that closed onto it -- there is nothing to seal.
+export fn FnBuilder mut @end_if(c IfCtx) -> () {
+    if @cur_id != c.join {
+        @close(Terminator.Goto(c.join), c.join)
+    } else {
+        // The join is already current: the else branch was an `else if`
+        // chain whose inner `end_if` closed onto this very join, so the
+        // branch is sealed and there is nothing left to jump from.
+    }
+}
+
+/// Opens a loop: the current block jumps to a fresh header block, the header
+/// carries the `Loop` terminator, and what is placed next belongs to the body.
+export fn FnBuilder mut @begin_loop(head LoopHead) -> LoopCtx {
+    ro h = @reserve()
+    ro body = @reserve()
+    ro exit = @reserve()
+    @close(Terminator.Goto(h), h)
+    @close(Terminator.Loop(LoopTerm { head, body, exit }), body)
+    @loops += 1
+    LoopCtx { head: h, body, exit }
+}
+
+/// Closes a loop: the body's last block jumps back to the header (the back
+/// edge), and what is placed next belongs to the exit.
+export fn FnBuilder mut @end_loop(c LoopCtx) -> () {
+    @close(Terminator.Goto(c.head), c.exit)
+    @loops -= 1
+}
+
+/// A binder of a matched variant (wave M2b-1d): `dest = field index of the
+/// variant vrow in scr`, recorded in the current block -- the arm's block,
+/// where the test just proved the variant.
+export fn FnBuilder mut @take_field(dest Local, scr Local, vrow VariantRow, slot int) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.VariantField(VariantRead { scr, vrow, slot }) }))
+}
+
+/// A plain binder (wave M2b-1d): `dest = src`, the scrutinee under a new name
+/// -- the first use of the operand rvalue.
+export fn FnBuilder mut @copy(dest Local, src Local) -> () {
+    @cur.push(Stmt.Assign(AssignStmt { dest, src: Rvalue.Use(Operand.Place(src)) }))
+}
+
+/// Opens a `match` on the local `scr`: the current block jumps to a fresh
+/// header block, which is sealed with the `Switch` by `end_switch` once the
+/// arms are known; nothing is placed in the header meanwhile.
+/// THE NUMBER IS THE BUILDER'S, not the printer's (274.8 M3, 2026-09-09). It used to arrive
+/// as an argument from `@fresh_uniq()`, a counter of the PRINTER -- so the lowering held a
+/// piece of printing state and the move out of `emit_c/` would have carried it along. The
+/// number is a plain count of the matches opened in THIS body, which is what a reader of
+/// `_novac_matched_t2` needs it to mean. It stays a FIELD for the reason recorded at
+/// `SwitchTerm`: a walk over sealed blocks could otherwise recover it only by taking apart
+/// a name the lowering composed.
+export fn FnBuilder mut @begin_switch(scr Local) -> SwitchCtx {
+    ro uniq = @switches
+    @switches += 1
+    ro h = @reserve()
+    ro join = @reserve()
+    @close(Terminator.Goto(h), h)
+    @arm_start.push(@open_arms.len())
+    SwitchCtx { head: h, scr, join, uniq }
+}
+
+/// Opens an arm: a fresh block for its binders and body becomes current.
+/// Asked while a previous arm is still open, or a match is not, it is a
+/// compiler bug named as such.
+export fn FnBuilder mut @begin_arm(c SwitchCtx, pat Pattern, guard Option[Node]) -> () {
+    if @cur_id != c.head {
+        ice_at("novac/src/lower/ir_control.nv:153", "lower: begin_arm while the previous arm of the match is still open")
+    }
+    if @arm_start.len() == 0 {
+        ice_at("novac/src/lower/ir_control.nv:156", "lower: begin_arm outside of a match")
+    }
+    ro body = @reserve()
+    @open_arms.push(SwitchArm { pat, guard, body, heads: []BlockId.new() })
+    @cur_id = body
+}
+
+/// Closes an arm: its block jumps to the join; the header is current again.
+export fn FnBuilder mut @end_arm(c SwitchCtx) -> () {
+    @close(Terminator.Goto(c.join), c.head)
+}
+
+/// Closes a `match`: the header is sealed with the `Switch` over the arms
+/// collected, and what is placed next belongs to the join.
+export fn FnBuilder mut @end_switch(c SwitchCtx) -> () {
+    if @arm_start.len() == 0 {
+        ice_at("novac/src/lower/ir_control.nv:172", "lower: end_switch without an open match")
+    }
+    ro start = @arm_start[@arm_start.len() - 1]
+    ro _ = @arm_start.pop()
+    mut arms = []SwitchArm.new()
+    for i in start..@open_arms.len() {
+        // The tail moves element by element on purpose: no vector bulk copy exists
+        // in the subset novac compiles ITSELF with. Measured 2026-09-07 over all of
+        // `novac/src`: a range slice appears only over strings (`lex.nv:476`),
+        // `.clone()` has zero uses, `.extend(` has zero, and all 33 `.append(` are
+        // string appends. Retired when the subset gains a one-door copy of a vector
+        // slice.
+        // nova:allow W_MANUAL_SLICE_COPY -- no vector bulk copy in novac's own subset yet
+        arms.push(@open_arms[i])
+    }
+    while @open_arms.len() > start {
+        ro _ = @open_arms.pop()
+    }
+    @seal(c.head, Terminator.Switch(SwitchTerm { scrutinee: c.scr, arms, join: c.join,
+                                                 uniq: c.uniq }))
+    @cur_id = c.join
+}

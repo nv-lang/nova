@@ -1,0 +1,14 @@
+module supervised_value.pos_3
+
+import std.time.duration
+
+fn no_handler_ok() -> int {
+    supervised(timeout: 30.to_seconds()) {
+        spawn { 5.to_millis().sleep() }
+        8
+    }
+}
+
+fn main() Io -> () {
+    println(no_handler_ok())
+}

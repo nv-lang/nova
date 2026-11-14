@@ -314,6 +314,12 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     ro saved_tail = @tail_value_body
     ro saved_unit = @ret_unit
     ro saved_ro = @ret_ro
+    // An op body is a FUNCTION OF ITS OWN (the literal becomes a C function),
+    // so a `return` written here belongs to it and not to the fn that holds
+    // the literal -- the split boundary of a supervised value around that fn
+    // does not cross into this body. Zeroed and restored with the rest.
+    ro saved_split = @sup_split_depth
+    @sup_split_depth = 0
     @ret_ro = false
     @ret_expect = sig.ret_id
     @ret_unit = @returns_unit(sig.ret_id)
@@ -338,6 +344,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
         @tail_value_body = saved_tail
         @ret_unit = saved_unit
         @ret_ro = saved_ro
+        @sup_split_depth = saved_split
         @scope.release(pmark)
         // SILENT-OK: the block body was typed and its tail judged inside
         // `@type_block` through the very doors a fn body uses -- the
@@ -356,6 +363,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     @tail_value_body = saved_tail
     @ret_unit = saved_unit
     @ret_ro = saved_ro
+    @sup_split_depth = saved_split
     @scope.release(pmark)
 }
 

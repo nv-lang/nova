@@ -340,6 +340,14 @@ fn Emitter mut @emit_assign_head(d LocalDecl) -> () {
 fn Emitter mut @emit_eval(rv Rvalue) -> () {
     ro e = @expr_of(rv)
     ro k = e.kind_of()
+    if k == NodeKind.SupervisedStmt {
+        // A supervised statement carrying named arguments (`timeout:`,
+        // `on_timeout:`): the emitter prints the deadline, the handler and the
+        // join itself (emit_supervised.nv). The argument-less form never gets
+        // here -- the lowering keeps it on the builder's `ScopeOpen` pair.
+        @emit_supervised_stmt(e)
+        return
+    }
     if k == NodeKind.Call {
         @emit_call_stmt(e)
         return
@@ -442,7 +450,7 @@ fn Emitter mut @emit_element_store(st StoreStmt, built Option[str]) -> () {
     ro rt = @out.type_if_known(kids[0].id_of())
     if !is_ty(rt) {
         ice_at(
-            "novac/src/emit_c/emit_place.nv:444",
+            "novac/src/emit_c/emit_place.nv:452",
             "emit: an element store whose receiver type the checker did not record")
     } else {
         // Decided: the receiver's temporary is typed from it.
@@ -534,6 +542,13 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
         // A handler value (E.9 step 3): its table and context are built
         // here, before the line that reads the table pointer.
         return Some(@emit_handler_lit(e))
+    }
+    if k == NodeKind.SupervisedStmt {
+        // A supervised VALUE (supervised-value wave, D414 §4/D449): the
+        // queue, the guard, the body, the join and the `on_timeout:` call are
+        // printed here, into a result slot this door declares; the slot's NAME
+        // is the value the reading line takes.
+        return Some(@emit_supervised_value(e, ty))
     }
     @hoist_array_lits(e)
     None

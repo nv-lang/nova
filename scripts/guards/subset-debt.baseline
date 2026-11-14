@@ -511,7 +511,11 @@ refusals=145
 # The accepted region grows: unchanged string_literals now builds and runs with
 # exact stdout; four prior runnable inputs remain PASS with identical generated C.
 # undated=52 and undated_by_door=67 stay unchanged. No predicate is weakened.
-refusals=147
+# refusals 147 -> 151 (2026-11-14, merge of p274-carina-supervised-value): the wave's four NAMED subset
+#   boundaries -- supervised-value no-tail, split-body early return, split-body break/continue
+#   (all naming the plan-274.11 E4 horizon) and the closure-literal arity (D22) -- replace silent
+#   miscompiles; each has a check-path negative in novac/src/pipeline/supervised_value_test.nv.
+refusals=151
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:
@@ -663,4 +667,7 @@ refusals=147
 #   reason -- a program type named like a struct the interop shell defines gets the D381
 #   module-qualified C base (sem `type_base`), every shape, and a file with no module the
 #   empty-modpath formula `Nova__<Name>`. undated_by_door 68 -> 67, the guard's count on the tree.
-undated_by_door=67
+# undated_by_door 67 -> 68 (2026-11-14, merge of p274-carina-supervised-value): the wave's closure-literal
+#   arity refusal (check/closure.nv, D22 ClosureLit) and the split-exit boundaries name their horizon
+#   (plan 274.11 E4) but not a date -- the E4 wave itself is to date them.
+undated_by_door=68

@@ -1922,10 +1922,13 @@
 #   duplicates 0.
 # 2026-11-10, zz146 sum-lift fix: row 1965 added (repro reconstructed from carrier evidence; pin sum_lift_self_recursive_payload.nv).
 # 2026-11-10, reg 1966: oracle №1647 regression row (variant-by-expect for builtin sums).
-rows=1876
+# 2026-11-14, merge of p274-carina-supervised-value: 11 TBD rows numbered 1969-1979
+#   (7 from the wave's r2/r3 findings: queue names, split exits, handler ABI, body-fail drain,
+#   bare-form segfault -- FIXED; scope tail, oracle tail-statement, KNOWN-RED 685 encoding, parser
+#   operand, oracle ordering, oracle E7301 -- OPEN).
+rows=1887
 
-max=1968
-
+max=1979
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

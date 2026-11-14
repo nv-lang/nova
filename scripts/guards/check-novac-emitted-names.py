@@ -54,6 +54,10 @@ QUOTED = re.compile(r'"[A-Za-z_][A-Za-z0-9_]*(?:\$\{[^}]*\})?[A-Za-z0-9_]*"')
 ALLOWED_PREFIX = ("Nova_", "NovaValue_", "nova_", "novac_", "NOVAC_", "_novac_",
                   "_NovaTuple", "NovaVtable_", "_nova_handler_", "NOVA_TID_")
 ALLOWED_EXACT = {"void", "_", "equal", "fmod",
+                 # `NovaClosBase` -- the RUNTIME's own closure dispatch type
+                 # (nova_rt/array.h, NOVA_CLOS_CALL_*), used by Carina's D22
+                 # closure-light handler exactly as the oracle emits it.
+                 "NovaClosBase",
                  "__NOVAC_BODY__", "__NOVAC_STRLITS__", "NOVA_UNIT",
                  # Разделители имени в c_callable — куски, а не имена (см. шапку).
                  "__", "__to_",

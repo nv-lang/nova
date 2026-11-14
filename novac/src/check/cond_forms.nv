@@ -262,7 +262,7 @@ fn Checker mut @type_while_let(st Node) -> () {
         return
     } else { // Every payload name bound with its decided type.
     }
-    @type_block(kids[whilelet_body_at(kids)])
+    @type_loop_body(kids[whilelet_body_at(kids)])
     @scope.release(mark)
 }
 

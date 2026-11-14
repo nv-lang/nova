@@ -266,6 +266,7 @@ fn Emitter @capture_source(c CaptureRow) -> str {
 fn Emitter @owner_captures() -> []CaptureRow {
     if @cur_lit >= 0 { return @out.captures_of(@hlits[@cur_lit].id_of()) }
     if @cur_spawn >= 0 { return @out.captures_of(@spawns[@cur_spawn].id_of()) }
+    if @cur_closure >= 0 { return @out.captures_of(@closures[@cur_closure].id_of()) }
     []CaptureRow.new()
 }
 
