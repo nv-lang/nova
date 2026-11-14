@@ -23911,7 +23911,24 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         let ExprKind::Call { func, args, .. } = &expr.kind else { return };
-        let ExprKind::Ident(name) = &func.kind else { return };
+        // cairo/text (packages sweep 2026-11-10): the QUALIFIED spellings
+        // `Align.Left(...)`-style — `Path[Align, Left]` / `Member{Ident(Align),
+        // Left}` — resolved their base by flat name and could name ANOTHER
+        // module's same-named sum (prelude.protocols' `Some(Align.Left)`
+        // typed cairo.text's Align while the FmtCtx.align field expects
+        // runtime.fmt_buf's; emission built fmt_buf's ctor, the checker's
+        // type said cairo's — CC-FAIL split). Accept the qualified forms with
+        // the SAME guards: the qualifier must equal the EXPECTED sum's own
+        // simple name — the user wrote exactly which sum they meant.
+        let (name, qualifier): (&str, Option<&str>) = match &func.kind {
+            ExprKind::Ident(n) => (n.as_str(), None),
+            ExprKind::Path(parts) if parts.len() == 2 => (parts[1].as_str(), Some(parts[0].as_str())),
+            ExprKind::Member { obj, name: m } if matches!(obj.kind, ExprKind::Ident(_)) => {
+                let ExprKind::Ident(q) = &obj.kind else { unreachable!() };
+                (m.as_str(), Some(q.as_str()))
+            }
+            _ => return,
+        };
         if scope.contains_key(name) {
             return;
         }
@@ -23938,14 +23955,30 @@ impl<'a> TypeCheckCtx<'a> {
         if !generics.is_empty() {
             return;
         }
-        let Some(tname) = path.last() else { return };
-        let Some(td) = self.types_get_here(tname) else { return };
+        let Some(simple) = path.last() else { return };
+        // cairo/text (packages sweep 2026-11-10): store the MODULE-QUALIFIED
+        // base in the №658 channel, not the simple name — two sums of one
+        // simple name in one CU (cairo.text.Align vs runtime.fmt_buf.Align)
+        // made the consumers' collision-aware re-resolution pick the WRONG
+        // one (emission built fmt_buf's ctor while typing named cairo's:
+        // `nova_make_runtime_fmt_buf_Align_Left()` into a temp typed
+        // `NovaOpt_Nova_cairo_text_Align_p`). The qualified form matches the
+        // cross-module mangling (`cairo_text_Align`) the schema registry and
+        // `ref_type_base` already use; a same-module decl keeps the bare name,
+        // byte-identical for every non-colliding corpus.
+        let tname: String = if path.len() > 1 {
+            format!("{}_{}", path[..path.len() - 1].join("_"), simple)
+        } else {
+            simple.to_string()
+        };
+        let Some(td) = self.types_get_here(simple) else { return };
         if !td.generics.is_empty() {
             return;
         }
         let TypeDeclKind::Sum(variants) = &td.kind else { return };
         let hit = variants.iter().enumerate().find(|(_, v)| {
             &v.name == name
+                && qualifier.map_or(true, |q| q == simple)
                 && matches!(&v.kind,
                     SumVariantKind::Tuple(fields) if fields.len() == args.len())
         });
@@ -23957,6 +23990,22 @@ impl<'a> TypeCheckCtx<'a> {
             self.resolved_variant_ctors_buf
                 .borrow_mut()
                 .insert(expr.id, (tname.clone(), idx));
+            // cairo/text (packages sweep 2026-11-10, the №1647 class for USER
+            // sums): the channel steers codegen's CTOR emission, but the
+            // expr's own TYPE still came from the module-local-wins inference
+            // — two windows named two different sums for one expression
+            // (`nova_make_runtime_fmt_buf_Align_Left()` assigned into a
+            // temp typed `NovaOpt_Nova_cairo_text_Align_p`; CC-FAIL). The
+            // expected type decided here is authoritative (D478 rule 2):
+            // overwrite the resolved TYPE with the same verdict the channel
+            // already carries — one answer for emission and typing.
+            // `expected` — не `tname`: полное TypeRef с module-путём. Двe
+            // суммы одного простого имени (cairo.text.Align и
+            // runtime.fmt_buf.Align) в одном CU — простое имя в канале
+            // двусмысленно, полный путь — нет.
+            self.resolved_types_buf
+                .borrow_mut()
+                .insert(expr.id, ResolvedType::from_type_ref(expected));
         }
         // Literal payloads: seed their C-width from the variant's declared
         // field type (no-op for wide defaults — mirrors the call-arg

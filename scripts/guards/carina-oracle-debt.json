@@ -16,14 +16,6 @@
     "due": "Replace before switching REQUIRED F1/fixture paths and before promoting this guard to required CI."
   },
   {
-    "path": ".github/workflows/windows-oracle-package.yml",
-    "pattern": "oracle-package",
-    "count": 7,
-    "lines_sha256": "aea1236e0cfab0fa8f1cb624d90cb2d89bba760ea36270041fb9152e19bf0e0a",
-    "reason": "Manual-only Windows Oracle compatibility package is outside task 106 scope.",
-    "due": "Out of scope; never wire into the required Carina gate."
-  },
-  {
     "path": "docs/dev/carina-seeds/linux-x86_64.json",
     "pattern": "oracle-package",
     "count": 2,

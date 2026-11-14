@@ -1,0 +1,11 @@
+// EXPECT_STDOUT 19|23
+module standalone.qualified_export_const_collision
+
+import ./roads_const_left
+import ./roads_const_right as right_const
+
+fn main() Io -> () {
+    assert(roads_const_left.N == 19)
+    assert(right_const.N == 23)
+    print("${roads_const_left.N}|${right_const.N}")
+}

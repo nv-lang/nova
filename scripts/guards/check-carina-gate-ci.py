@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """check-carina-gate-ci.py -- the Carina CI contour is oracle-free BY FORM.
 
+Plan: docs/plans/274-novac-self-hosted-compiler.md.
 Task 140 (doc/tasks/140-sdelat-ci-kontur-kariny-nezavisimym-ot-o): the
 carina-gate workflow builds Carina from the pinned B1 seed and runs the
 textual tier of gate-novac.sh without a single Oracle call; the

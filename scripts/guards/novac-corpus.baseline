@@ -386,8 +386,10 @@
 #   PANIC 0, самосборка 16/16. Носитель H1 — один из прибавков поведения; остальные
 #   пришли слияниями main со времени прошлой базы (ночной full был красен с 2026-10-02
 #   и базу не поднимал). Поимённо прибавки этим прогоном не названы.
-contract-match 71
-behavior-match 61
+# Five Roads corpus run: 67 accepted by both plus 5 rejected by both;
+# 62 accepted examples matched at runtime. Both counters grew by one.
+contract-match 72
+behavior-match 62
 # 58/50 -> 60/52 (2026-09-05, волна 274.7 В1б-1 — свой тип в слоте интерполяции
 # через его `display(mut f Fmt)`, D422). Два файла корпуса перешли из «отставание»
 # в «совпали-приняли», оба поведенчески байт-в-байт: `examples/basics/interp_display.nv`
