@@ -44,6 +44,9 @@ fn sv_decls() -> []str {
     mut d = []str.new()
     d.push("module std.time.duration\nexport type Duration value priv { nanos int }\nexport fn int @to_millis() -> Duration => Duration { nanos: @ * 1000000 }\nexport fn int @to_seconds() -> Duration => Duration { nanos: @ * 1000000000 }\nexport fn Duration @sleep() -> ()\n")
     d.push("module std.prelude\nexport type TimeoutError value priv { deadline_ns int }\n")
+    // The prelude sums the coalesce-exit tests need: bare Ok/Err/Some
+    // resolve by the expected type (reg 1966), so the sums are handed.
+    d.push("module std.v\nexport type Option[T] enum Some(T) | None\nexport type Result[T, E] enum Ok(T) | Err(E)\n")
     d
 }
 
@@ -437,4 +440,35 @@ test "supervised STATEMENT, bare form: an early `return` with a live child DRAIN
     assert(at(cbody, "nova_scope_disarm_early_deadline(") < 0, c2)
     assert(at(cbody, "nova_supervised_run(") < 0, c2)
     assert(at(cbody, "return ((nova_int)9LL)") >= 0, c2)
+}
+
+test "supervised value: `x?` and `X ?? return R` exits of a split body are refused; outside it they stay (K3 hunt, split-exit-scopejoin)" {
+    // The 2026-11-14 emit_c x K3 hunt found the third and fourth carriers of
+    // the split-exit class: the plain `return` and loop jumps were refused by
+    // name, but the coalesce exits -- `x?` (D85) and `X ?? return R` (D86) --
+    // passed the checker and the emitter printed their exit past the join with
+    // names the body's own block never declared (`use of undeclared identifier
+    // '_novac_qdl1'`). Both doors now refuse by the SAME message the plain
+    // `return` gets; outside a split body both forms stay legal (the control).
+    ro qm = sv("fn opt() -> Result[int, int] {\n    Err(9)\n}\nfn f() -> Result[int, int] {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| Err(-1)) {\n        opt()?\n        Ok(42)\n    }\n}")
+    ro d1 = compile(qm, sv_decls())
+    assert(d1.len() == 1, messages(d1))
+    assert(d1[0].message.contains("`return` inside the body of a `supervised`"), d1[0].message)
+    ro cr = svf("fn opt() -> Result[int, int] {\n    Ok(1)\n}\nfn f() -> int {\n    supervised(timeout: 1.to_seconds(), on_timeout: |_e| -1) {\n        ro v = opt() ?? return 7\n        v + 1\n    }\n}")
+    ro d2 = compile(cr, sv_decls())
+    assert(d2.len() == 1, messages(d2))
+    assert(d2[0].message.contains("`return` inside the body of a `supervised`"), d2[0].message)
+    // CONTROL, the BARE (argument-less) form: its body stays on the builder's
+    // ScopeOpen/ScopeJoin pair, which drains on every exit via @ret_via -- the
+    // executor's caveat stands: refusing the bare form would diverge from the
+    // oracle on a legal program (c3_nospawn smoke is byte-identical).
+    ro bare = svf("fn opt() -> Result[int, int] {\n    Ok(1)\n}\nfn f() -> int {\n    supervised {\n        ro v = opt() ?? return 7\n        println(\"child\")\n    }\n    0\n}\nfn g() -> Result[int, int] {\n    supervised {\n        ro a = opt()?\n        println(\"child\")\n    }\n    Ok(0)\n}")
+    ro d0 = compile(bare, sv_decls())
+    assert(d0.len() == 0, messages(d0))
+    // CONTROL, no supervised scope around them: both coalesce exits keep their
+    // ordinary meaning -- the hunt's own control probe measured the split forms
+    // CC-fail, these must not even wobble the checker.
+    ro ok = svf("fn opt() -> Result[int, int] {\n    Ok(1)\n}\nfn f() -> int {\n    ro a = opt() ?? return 7\n    a\n}\nfn g() -> Result[int, int] {\n    ro a = opt()?\n    Ok(a)\n}")
+    ro d3 = compile(ok, sv_decls())
+    assert(d3.len() == 0, messages(d3))
 }
