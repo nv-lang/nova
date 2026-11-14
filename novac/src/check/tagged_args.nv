@@ -9,7 +9,8 @@ module novac.check
 import ../tree.{Node}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind, SLICE_HEAD, EMPTY_CTOR}
-import ../sem.{decl_of_ty, ty_source_name}
+import ../sem.{decl_of_ty, ty_source_name, branch_children, leaf_text}
+import ../tree.{Node, NodeKind}
 
 /// Only the tag parser creates a leafless ArrayLit; explicit [] has brackets.
 /// The expected type is the ordinary parameter's, not a hardcoded str default.
@@ -25,4 +26,16 @@ fn Checker mut @type_tag_args(arg Node, want TyId, call_kids []Node) -> () {
         return
     }
     @record(arg, want)
+}
+
+/// Is this a `NamedArg` whose name leaf is `want`? The walk's positional
+/// gates open for ONE named argument at a time (`on_timeout:` of a
+/// supervised, remark 5): opening them for every named argument made
+/// `timeout: |_e| 0` pass the walk and die in emit as an ICE.
+fn named_arg_is(c Node, want str) -> bool {
+    if c.kind_of() != NodeKind.NamedArg { return false }
+    ro ak = branch_children(c)
+    if ak.len() < 3 { return false }
+    if ak[0].kind_of() != NodeKind.LeafNode { return false }
+    leaf_text(ak[0]) == want
 }

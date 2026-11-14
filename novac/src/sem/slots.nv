@@ -680,15 +680,13 @@ export fn closure_param_count(n Node) -> int {
     if kids.len() < 2 { return 0 }
     if leaf_kind(kids[0]) == TokenKind.PipePipe { return 0 }
     mut cnt = 0
-    mut i = 1
-    while i < kids.len() - 1 {
+    for i in 1..kids.len() - 1 {
         ro c = kids[i]
         if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
             cnt += 1
         } else {
             // A Comma separator or the closing Pipe leaf: not a parameter.
         }
-        i += 1
     }
     cnt
 }

@@ -120,7 +120,8 @@ fn breaks_out(n Node) -> bool {
         Leaf(_) => false
         Branch { kind, children, .. } => {
             if kind == NodeKind.LoopCtl { return loop_ctl_is_break(n) }
-            if kind == NodeKind.ForStmt || kind == NodeKind.WhileStmt || kind == NodeKind.HandlerOp || kind == NodeKind.ClosureLit {
+            if kind == NodeKind.ForStmt || kind == NodeKind.WhileStmt ||
+                kind == NodeKind.HandlerOp || kind == NodeKind.ClosureLit {
                 return false
             }
             for c in children {
@@ -683,7 +684,8 @@ fn Checker mut @reject_return_self_in(n Node) -> () {
     match n {
         Leaf(_) => {}
         Branch { kind, children, .. } => {
-            if kind == NodeKind.HandlerOp || kind == NodeKind.HandlerLit || kind == NodeKind.SpawnStmt || kind == NodeKind.ClosureLit {
+            if kind == NodeKind.HandlerOp || kind == NodeKind.HandlerLit ||
+                kind == NodeKind.SpawnStmt || kind == NodeKind.ClosureLit {
                 // SILENT-OK: a nested function's `return` is its own, not this method's.
                 return
             }

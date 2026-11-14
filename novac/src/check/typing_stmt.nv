@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt`'s statement typing (`check_stmt`) -- one dispatch door
+// per statement kind, each arm a judged shape; Go `types2`'s suppression for
+// no-cascade (an already-reported branch yields nothing further). NOT taken:
+// one pass per statement family (the dispatch IS the wave boundary this file
+// keeps single-door).
+// Role: layer 7 (check) -- `@type_stmt`, the statement dispatch of the subset
+//   judge. Split out of typing.nv (the 1000-line cap) by meaning: statements
+//   are the walk's spine, expressions and bodies stay in typing.nv.
+// Used by: typing.nv (`@type_block` dispatches every statement here).
+// Guarded by: check-novac-module-tests.sh (the pipeline batch runs this
+//   file's tests) and check-novac-differential.sh (the corpus verdicts); the
+//   split moves text only.
+
+module novac.check
+
+import ../lex.{Token, TokenKind}
+import ../source.{Span}
+import ../tree.{Node, NodeKind, BinOp, bin_op_of, un_op_of, raw_node}
+import ../diag.{ice_at}
+import ../builtins.{ENTRY_FN, TypeKind, is_bool_literal, RECV_BINDING, LITERAL_CTOR, LITERAL_PUSH, SLICE_HEAD}
+import ../builtins.{EQUAL_METHOD, is_print_fn}
+import ../sem.{LitArg, field_range_of, decl_of_ty, no_frow}
+import ../resolve.{FnLookup}
+import ../names.{NameTable, NamespaceId, raw_decl}
+import ../sem.{CallForm, CalleeTarget, ty_of_decl, decl_fn_row, declares_receiver, generic_names, arm_body_at}
+import ../sem.{returns_receiver}
+import ../sem.{Ctx, CheckOut, param_name_at, param_type_at, branch_children, call_callee_text, is_expr_kind, leaf_text}
+import ../sem.{is_value_tail_kind}
+import ../sem.{leaf_kind, expr_leaf_name, subst_type, decl_name_at, coerce_row, param_mode_at, bind_mode_at, carrier_of}
+import ../sem.{representation_of, raw_row, FnRow, ArgSpec, ArgClass, ParamMode, raw_vrow, no_vrow, is_vrow, is_arg_node}
+import ../sem.{arg_expr_of, arg_name_of, bind_slots, identity_slots, arg_count, no_row, file_decls, generic_head_cnt}
+import ../sem.{literal_elems, literal_head_name, literal_ctor_name, slice_term_of, c_instance_ctor}
+import ../sem.{ty_source_name, is_value_record}
+import ../types.{TyId, no_ty, is_ty}
+import ../sem.{option_payload, for_head_elem, is_collection_head}
+import ../sem.{let_decl_of, const_init_at}
+import ../sem.{iflet_pattern_at, iflet_init_at, iflet_body_at, iflet_else_at}
+import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
+import ../sem.{pattern_shape, pattern_head_text, PatShape}
+import ../sem.{shape_of}
+
+
+/// One statement. A kind the subset does not know is NOT typed and NOT iced:
+/// the emitter refuses it at its own door (`ice("emit: statement kind outside
+/// the subset")` at novac/src/lower/lowering.nv:438), and a second death here
+/// would only move the message.
+fn Checker mut @type_stmt(st Node) -> () {
+    ro k = st.kind_of()
+    if k == NodeKind.Block {
+        // A BARE BLOCK statement (task 134, class B1): a nested scope
+        // standing as a statement, typed through the SAME block door a fn
+        // body takes. The tail-value logic inside cannot misfire here: the
+        // tail slot is keyed on the fn BODY's id and this block is nobody's
+        // body, so every statement takes the ordinary statement door. Until
+        // this arm the block fell through in silence (this chain's own
+        // contract, quoted above: "NOT typed and NOT iced") -- and a binding
+        // written inside never reached the scope, so the name was "unknown"
+        // at its use.
+        @type_block(st)
+    } else if k == NodeKind.Call {
+        @type_call_stmt(st)
+    } else if k == NodeKind.IfStmt || k == NodeKind.WhileStmt {
+        ro kids = branch_children(st)
+        // A head this short is a form the subset walk already REFUSED, and
+        // the refusal is the decision: the channel carries no answer for a
+        // node that will never be emitted. Not a silent skip -- the verdict
+        // exists, it just lives in @out (P17 / no-silent-skip).
+        if kids.len() < 3 {
+            assert(@out.len() > 0, "check: a malformed if/while reached typing with no refusal")
+            return
+        }
+        @type_expr(kids[1])
+        // The then-branch, narrowed by an `is` condition (check/is_expr.nv).
+        // A WHILE's then-branch is a LOOP body and opens both books of
+        // `@type_loop_body`; an `if`'s branch opens neither (it owns no jump
+        // target). Until the r2 acceptance return no loop door of this pass
+        // counted at all, so a `break` crossing a split body read as legal.
+        if k == NodeKind.WhileStmt {
+            @enter_loop()
+            @type_then_branch(kids[1], kids[2])
+            @leave_loop()
+        } else {
+            @type_then_branch(kids[1], kids[2])
+        }
+        // The ELSE branch, since the parser learned `else` (2026-08-18).
+        // Typing it is not optional: check passed the file and emit ICEd
+        // with "sem: no type recorded" -- a decision taken by one layer
+        // that never reached the next, which is the very class this
+        // compiler was built to stop repeating.
+        if kids.len() > 4 {
+            ro tail = kids[4]
+            // `else if ...` is a nested if and a block is a block: one door for
+            // the shape "a body is a block or a single statement".
+            @type_body(tail)
+        } else {
+            // No else branch was written.
+        }
+    } else if k == NodeKind.RetStmt {
+        ro kids = branch_children(st)
+        // A `return` inside a SPLIT supervised-value body cannot leave the
+        // enclosing fn: the body is emitted as its own chain, so the jump
+        // would print past the queue's cleanup with names the split never
+        // declares (remark 6, measured on the acceptor's probe). Refused by
+        // name BEFORE emit -- the declared boundary of this wave.
+        if @sup_split_depth > 0 {
+            @report_first_leaf_of(kids, SUPERVISED_SPLIT_RETURN_MSG)
+            return
+        }
+        // `return` with no operand carries no value, so there is nothing for
+        // the channel to hold -- a decision, not a skip: the emitter asks the
+        // channel only about expressions, and there is none here.
+        // A bare `return` is a form the parser can produce, so the branch is
+        // live. In a body that returns no value (`-> ()`, or none declared)
+        // it is the ordinary early exit, and the lowering already prints it
+        // through the `Return` terminator (lowering.nv `@lower_return`): 195
+        // of novac's own `return`s were refused here before 2026-09-26. In a
+        // body that promises a value it stays refused (P17).
+        // A bare `return` in a `-> @` body IS `return @` (D409).
+        if kids.len() < 2 && (@ret_unit || @ret_self) {
+            // SILENT-OK: the early exit of a unit body carries nothing to type.
+            return
+        }
+        if kids.len() < 2 {
+            @report_first_leaf_of(kids, "outside the subset: `return` must carry a value")
+            return
+        }
+        // A `return` is a tail by another spelling: the same literal rule and
+        // the same door (274.7 B5), asked only when typing refused nothing.
+        //
+        // A MATCH IS THE ONE FORM `@type_tail_value` DOES NOT KNOW (2026-09-21):
+        // `@type_expr`'s own dispatch skips `MatchExpr` outright and says so --
+        // "the two doors that admit a match ... call @type_match themselves"
+        // (exprs.nv). Until this arm existed, `return` was a THIRD door
+        // admitting one (the subset walk in check.nv opened the position the
+        // same day) without anyone calling the door that types it: `check`
+        // passed `return match k {..}`, `emit` ICE'd with "no type recorded
+        // for this node". Mirrors `FnExprBody`'s own dispatch above
+        // (line ~296) rather than inventing a new shape for it.
+        ro rmark = @out.len()
+        ro rv = kids[1]
+        if rv.kind_of() == NodeKind.MatchExpr {
+            @type_match(rv)
+        } else if is_value_tail_kind(rv.kind_of()) {
+            @type_tail_value(rv)
+        } else {
+            // Not an expression tail: the subset walk already refused this form.
+        }
+        if @out.len() == rmark {
+            @judge_return(rv, @tail_type_of(rv))
+        } else {
+            // The operand was refused: the walk already spoke.
+        }
+    } else if k == NodeKind.BindStmt {
+        @type_bind(st)
+        @report_if_ro_view_into_mut(st)
+    } else if k == NodeKind.AssignStmt {
+        ro kids = branch_children(st)
+        // A malformed assignment was already refused by the subset walk, and
+        // the refusal IS the decision -- asserted so the branch cannot go
+        // quiet if the walk ever stops refusing it (P17).
+        if kids.len() < 3 {
+            assert(@out.len() > 0, "check: a malformed assignment reached typing with no refusal")
+            return
+        }
+        ro before = @out.len()
+        @type_expr(kids[2])
+        // The emitter needs the value's type to pick the form of a
+        // compound assignment (int helper, raw C, or fmod), and it may
+        // only READ it. The MARK, not the file's count: a refusal in an
+        // earlier declaration is not this assignment's business.
+        if @out.len() > before { return }
+        // THE TARGET IS AN EXPRESSION TOO, and the emitter writes it as one --
+        // so it needs the same answers. `a.n = 1` on a VALUE record must be
+        // `a.n`, not `a->n`, and the arrow is chosen from the OPERAND's recorded
+        // type: without this the target kept the pointer form while the reads of
+        // the same field used the dot (measured 2026-08-23, clang: "expression
+        // is not assignable"). Typed BEFORE the right operand is recorded, so
+        // the target's type can decide it (below).
+        @type_expr(kids[0])
+        if @out.len() > before { return }
+        // An ELEMENT target writes through its own overload (registry 1524).
+        @judge_index_store(kids[0])
+        if @out.len() > before { return }
+        // THE TARGET'S ROW DECIDES A COMPOUND ASSIGNMENT (274.7 B7, #932): the
+        // door in assign_rules.nv answers the type the operation runs in, or
+        // `no_ty()` when it refused -- and a refusal is the decision.
+        ro rt = @assigned_operand_type(kids)
+        if !is_ty(rt) {
+            // SILENT-OK: the assignment door refused the operand (a literal that
+            // does not fit, or two named numeric types) at its own token.
+            return
+        } else {
+            // Decided: the type the emitter reads for the right operand.
+        }
+        @record(kids[2], rt)
+    } else if k == NodeKind.ForStmt {
+        ro kids = branch_children(st)
+        // A head this short was already refused by the subset walk; the same
+        // assertion keeps the branch from going quiet if that ever changes.
+        if kids.len() < 5 {
+            assert(@out.len() > 0, "check: a malformed for head reached typing with no refusal")
+            return
+        }
+        ro pat = kids[1]
+        if pat.kind_of() != NodeKind.Pattern {
+            // SILENT-OK: a recovery gap stands where the pattern should be --
+            // the parser's own marker already said what was expected here.
+            return
+        }
+        // THE POSITION'S PREDICATE (D486 s4) is judged by `@bind_pattern` at
+        // every node of the tree (PatPos.PosFor, registry 1379) -- a check of
+        // the ROOT alone stood here and let `for (k, Some(v)) in xs` through.
+        ro head = kids[3]
+        if is_collection_head(head) {
+            // A COLLECTION head (wave B16): a call, a name or a field hands
+            // back a VECTOR, the
+            // loop variable is its element. The call's type is RECORDED --
+            // the Call arm of the walk does not cache it (the B15 step 5
+            // lesson), and the emitter reads the strict door.
+            ro before = @out.len()
+            @type_expr(head)
+            if @out.len() > before { return }
+            ro ht = type_of(head, @ctx, @scope, @chan)
+            ro elem = for_head_elem(@ctx, ht)
+            if !is_ty(elem) {
+                // Not a vector: an ITERATOR head (D58), or the refusal by name.
+                @type_for_iterator(st, kids, ht)
+                return
+            }
+            @record(head, ht)
+            ro cmark = @scope.mark()
+            // The element pattern binds through the ONE door, fresh each
+            // iteration (the mark is the loop's, released after the body).
+            if !@bind_pattern(pat, elem, kids, ParamMode.ModeRo, PatPos.PosFor) {
+                @bind_names_untyped(pat)
+            } else if !@walk_carried(kids, ht) {
+                // SILENT-OK: refused by the shell's name inside @walk_carried (asked of an admitted pattern).
+                @scope.release(cmark)
+                return
+            } else { // Every name bound with its decided type.
+            }
+            @type_loop_body(kids[4])
+            @scope.release(cmark)
+            // SILENT-OK: the collection head is fully decided -- head typed
+            // and recorded, pattern bound, body typed; the range arm below
+            // is the other form.
+            return
+        }
+        ro range = branch_children(head)
+        if range.len() > 2 {
+            @type_expr(range[0])
+            @type_expr(range[2])
+        } else {
+            // A malformed range was already refused; the body below is still
+            // typed because its statements do not depend on the range's shape.
+        }
+        // The loop variable is bound AFTER the range is typed and BEFORE
+        // the body -- the emitter's order (a range expression cannot see
+        // the variable it defines).
+        ro mark = @scope.mark()
+        // A loop variable is a fresh value each turn, bound read-only --
+        // through the same pattern door, against the counter's int.
+        if !@bind_pattern(pat, @ctx.prims.int_id, kids, ParamMode.ModeRo, PatPos.PosFor) {
+            @bind_names_untyped(pat)
+        } else { // Every name bound with its decided type.
+        }
+        @type_loop_body(kids[4])
+        @scope.release(mark)
+    } else if k == NodeKind.MatchExpr {
+        // A match in STATEMENT position (274.5 wave B5): the arms run for
+        // effect, so the statement variant types them as statements and asks
+        // no value question -- the generic @type_expr below has an EMPTY
+        // MatchExpr arm, and routing there left arms untyped and coverage
+        // unjudged (the recon of 2026-08-29 measured exactly that).
+        @type_match_stmt(st)
+    } else if k == NodeKind.TupleExpr {
+        // Named ALONE and not put into is_expr_kind (wave B13 lesson): a
+        // tuple in statement position is legal -- the oracle accepts and
+        // discards it -- and the emitter reads the recorded type to build
+        // the dropped temporary (B15 step 4a).
+        @type_expr(st)
+    } else if k == NodeKind.DestructureBind {
+        @type_destructure_bind(st)
+    } else if k == NodeKind.IfLet {
+        @type_if_let(st)
+    } else if k == NodeKind.WhileLet {
+        @type_while_let(st)
+    } else if k == NodeKind.WithStmt {
+        @type_with_stmt(st)
+    } else if k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt {
+        @type_supervised_stmt(st)
+    } else if is_expr_kind(k) {
+        @type_expr(st)
+    } else if k == NodeKind.LoopCtl {
+        // `break`/`continue` carry no operand (274.7 B10), so there is nothing
+        // to type -- but their TARGET is judged here, not only by the shape
+        // walk's "is any loop open" question. Inside a split `supervised` body
+        // (its value form, or the statement form that carries named
+        // arguments) a jump whose loop stands OUTSIDE the boundary would be
+        // printed at a join the body does not own: the lowering leaves the
+        // pushed scope and names `_novac_q<q>`/`_novac_qdl<q>` that the block
+        // never declared (measured on the r2 acceptance probes). Refused by
+        // name -- unless the body opened the loop itself (`split_loops > 0`),
+        // or no loop at all is open (the walk has already said that).
+        if @sup_split_depth > 0 && @split_loops == 0 && @loop_depth > 0 {
+            @report_first_leaf_of(branch_children(st), SUPERVISED_SPLIT_LOOP_MSG)
+            return
+        }
+        // SILENT-OK: the jump has a target this body owns, or no target at all
+        // (the walk's own refusal, already reported there).
+    } else {
+        // SILENT-OK: a statement kind outside the subset is refused at the
+        // emitter's door, so this walk has no answer to record for it.
+    }
+}
