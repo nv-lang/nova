@@ -59,5 +59,28 @@ mbedTLS removed from the regression CI).
 - One-line `match` arms whose body is an assignment refuse with a
   separator diagnostic even across lines (№TBD-3, narrowed; use `=`
   with braces or commas).
-- Pre-existing soundness-lane diagnostic-coordinate defects (D78
-  module-path mismatches) are unchanged in this patch.
+- **Inherited corpus failures** (identical set on main; verified
+  name-for-name against a main-tree run of the same suite — none are
+  new to this release):
+  `spec_tests/p270/f2_display_baseline` (missing `#impl(Display)`,
+  D186 opt-in display), `spec_tests/soundness/{assert_static_unverified_warn,
+  assume_trust_introduced_warn, int_arith_no_overflow_positive,
+  loop_compound_assign_w2402, loop_cond_assign_w2402, loop_in_let_w2402,
+  ovf_unbounded_panic_neg, recursive_no_decreases_warn}` (D78
+  module-path diagnostic-coordinate defects),
+  `spec_tests/conformance/standalone/carina_text_backtick_tag`
+  (stdout mismatch), `std/src/encoding/serde/decode_errors_test`
+  (ext round-trip RUN-FAIL). A load-flaky timing timeout
+  (`proc_streams`) also appears occasionally in both trees.
+
+## Provenance
+
+- Release source: branch `release/oracle-0.1.5`, HEAD `f15b05504`
+  (11 commits over `main` @ `dd0e65f59`; version bump tile
+  `35fb34c7a`).
+- Windows binaries: built from this tree with the release toolchain
+  (clang), `nova --version` prints `nova 0.1.5`; the tile corpus run
+  (`spec_tests std`) shows only the inherited failures listed above.
+- Linux binaries and the source archive are built by the release CI
+  from the same tag; `SHA256SUMS` is generated over the published
+  files at release time (plan 295).
