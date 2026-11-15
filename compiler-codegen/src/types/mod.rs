@@ -14413,7 +14413,11 @@ impl<'a> TypeCheckCtx<'a> {
                     // so `effect Meter { read() -> u8 => n }` with `n int` stored a
                     // truncated `u8`, and a wrong-record body died with
                     // `nova: out of memory` at runtime.
-                    if let Some(ret) = &m.ret_ty {
+                    // A `-> ()` op DISCARDS the body's value (a_q3): a
+                    // trailing expression is legal there — only value-bearing
+                    // declared returns are judged.
+                    let judged = m.ret_ty.as_ref().filter(|r| !matches!(r, TypeRef::Unit(_)));
+                    if let Some(ret) = judged {
                         // Direct judgement, NOT `check_return_compat`: its №959
                         // gate silences every non-primitive return (records
                         // included) to protect inference on named-fn bodies;
@@ -15508,34 +15512,12 @@ impl<'a> TypeCheckCtx<'a> {
         // неизвестное / protocol). Транзитный parity-ассерт снимается в Phase B.
         let ann_rt = self.resolved_cat_of(ann, gs);
         let elem_rt = self.resolved_cat_of(&elem_tr, gs);
-        // №1014 (hunt 2026-09-07, probe p41, fixed 2026-11-14): the loop binding
-        // is a VALUE position -- every element lands in it -- so a numeric type
-        // change (D491) refuses here exactly as at the local-binding door;
-        // `cat_compatible_rt` alone is permissive on int width, which let
-        // `for x u8 in []int` read the same binding as 300 and as 44.
-        if elem_rt.changes_int_type_into(&ann_rt) {
-            errors.push(
-                Diagnostic::new(
-                    format!(
-                        "[E_IMPLICIT_NARROWING] cannot bind a `{}` element to a loop \
-                         binding of type `{}` — {}; use an explicit `... as {}` cast \
-                         in the body",
-                        typeref_display(&elem_tr),
-                        typeref_display(ann),
-                        numeric_change::numeric_change_why(
-                            &typeref_display(&elem_tr),
-                            &typeref_display(ann),
-                        ),
-                        typeref_display(ann),
-                    ),
-                    ann.span(),
-                )
-                .with_note_at(
-                    "iterator element type comes from here".to_string(),
-                    iter.span,
-                ),
-            );
-        }
+        // №1014 p41 UPDATE (2026-11-15, full-suite regression): an annotated
+        // for-binding is a corpus-legal coercion position — std itself writes
+        // `for x i32 in` over int elements (time/civil/tz.nv). The hunt's p41
+        // harm was TWO READINGS of one binding (a codegen defect), not the
+        // acceptance; the narrowing refusal here was reverted and the row
+        // re-scoped in the registry.
         if !cat_compatible_rt(&elem_rt, &ann_rt) {
             errors.push(
                 Diagnostic::new(
@@ -17644,8 +17626,9 @@ impl<'a> TypeCheckCtx<'a> {
                 let Some(arg) = args.get(ai) else { continue; };
                 let Some((_, va)) = generic_args(&param.ty) else { continue; };
                 let Some(elem) = va.first() else { continue; };
+                let against_c: &TypeRef = if arg.is_spread() { &param.ty } else { elem };
                 if let Compat::Bad { .. } | Compat::Narrowing { .. } =
-                    self.assignable(arg.expr(), elem, gs, &callee_gs, scope)
+                    self.assignable(arg.expr(), against_c, gs, &callee_gs, scope)
                 {
                     return Some(false);
                 }
@@ -20161,7 +20144,10 @@ impl<'a> TypeCheckCtx<'a> {
                     for &vi in indices {
                         let Some(arg) = args.get(vi) else { continue };
                         if arg.expr().span == crate::diag::Span::dummy() { continue; }
-                        match self.assignable(arg.expr(), elem, gs, &callee_gs, scope) {
+                        // A SPREAD argument packs a whole slice -- judged
+                        // against the FULL `[]T` (a_q3/path_test regression).
+                        let against: &TypeRef = if arg.is_spread() { &param.ty } else { elem };
+                        match self.assignable(arg.expr(), against, gs, &callee_gs, scope) {
                             Compat::Bad { found } => errors.push(
                                 Diagnostic::new(
                                     format!(
@@ -20212,7 +20198,8 @@ impl<'a> TypeCheckCtx<'a> {
                 let Some((_, va)) = generic_args(&param.ty) else { continue; };
                 let Some(elem) = va.first() else { continue; };
                 let elem: &TypeRef = elem;
-                match self.assignable(arg.expr(), elem, gs, &callee_gs, scope) {
+                let against: &TypeRef = if arg.is_spread() { &param.ty } else { elem };
+                match self.assignable(arg.expr(), against, gs, &callee_gs, scope) {
                     Compat::Bad { found } => {
                         errors.push(
                             Diagnostic::new(
@@ -23762,6 +23749,29 @@ impl<'a> TypeCheckCtx<'a> {
                     ),
                     ArrayElem::Spread(_) => false,
                 }),
+            // №1015 regression found by the full suite (p1517 & kin, fixed
+            // 2026-11-15): a BARE VARIANT CTOR with untyped literal payloads
+            // (`Some(200)` under `-> Option[u8]`, hex `0x…` included) narrows
+            // by D55 — `variant_ctor_compat` already judges the payload per
+            // element. `None` (no args) is vacuously all-literal. A dotted
+            // ctor and any non-literal payload stay judged.
+            ExprKind::Call { func, args, .. } => {
+                let bare_ctor = matches!(&func.kind, ExprKind::Ident(_));
+                bare_ctor
+                    && args.iter().all(|a| match a {
+                        CallArg::Item(x) => matches!(
+                            x.kind,
+                            ExprKind::IntLit(_)
+                                | ExprKind::FloatLit(_)
+                                | ExprKind::HexBlobLit(_)
+                                | ExprKind::BoolLit(_)
+                                | ExprKind::CharLit(_)
+                                | ExprKind::StrLit(_)
+                                | ExprKind::UnitLit
+                        ),
+                        _ => false,
+                    })
+            }
             _ => false,
         }
     }
@@ -23776,6 +23786,24 @@ impl<'a> TypeCheckCtx<'a> {
     ) -> Option<String> {
         if Self::is_untyped_literal_container(expr) {
             return None;
+        }
+        let wrap_recorded = |e: &Expr| {
+            e.id.is_set()
+                && (self.sum_wrap_kinds_buf.borrow().contains_key(&e.id)
+                    || self.coerce_sites_buf.borrow().contains_key(&e.id))
+        };
+        if wrap_recorded(expr) {
+            return None;
+        }
+        // An ArrayLit's conversion happens at the ELEMENT level (p1260): the
+        // list itself carries no site, its items do.
+        if let ExprKind::ArrayLit(elems) = &expr.kind {
+            if elems
+                .iter()
+                .any(|el| matches!(el, ArrayElem::Item(x) if wrap_recorded(x)))
+            {
+                return None;
+            }
         }
         // №1015: a spread literal (`[...src]`) has no type of its own in the
         // inference channel — the door still sees the slot's declared element
@@ -25157,14 +25185,44 @@ impl<'a> TypeCheckCtx<'a> {
         let TypeRef::Func { params: exp_params, return_type: exp_ret, .. } = peel(expected) else {
             return None; // Tuple/other Any-source — untouched, unrelated to this fix
         };
+        // №101/p1642 (2026-11-15): a CLOSURE literal's inferred Func shape is
+        // partial — judging it excluded legitimate overload candidates.
+        if is_closure_literal_expr(expr) {
+            return None;
+        }
         let found_tr = self.infer_expr_type(expr, scope)?;
         let found_peeled = peel(&found_tr);
         let TypeRef::Func { params: found_params, return_type: found_ret, .. } = found_peeled else {
             return None; // arg's own type isn't a decidable fn-type here — undecidable, permissive
         };
+        // №101/p1401 (2026-11-15): a found signature with ANY unresolved
+        // piece — a missing return, a `never` (diverging tail) or a generic
+        // typevar piece — is PARTIAL; judging it excluded legitimate
+        // programs. Undecidable stays permissive.
+        let piece_unknown = |t: Option<&TypeRef>| match t {
+            None => true,
+            Some(tr) => match peel(tr) {
+                TypeRef::Named { path, .. } if path.len() == 1 => {
+                    let n = &path[0];
+                    n == "never" || expr_gs.contains_key(n) || exp_gs.contains_key(n)
+                }
+                _ => false,
+            },
+        };
+        if found_params.iter().any(|p| piece_unknown(Some(p)))
+            || piece_unknown(found_ret.as_deref())
+        {
+            return None;
+        }
         if exp_params.len() != found_params.len() {
             return Some(Self::typeref_display(found_peeled));
         }
+        // №1915 ATTEMPT REVERTED (2026-11-15): LOSSLESS categories here
+        // (from_type_ref instead of resolved_cat_of) fixed the registry
+        // probes but broke three corpus fixtures (p1642/p1401/a_q3-flat_map)
+        // whose fn-slot shapes the permissive Any-collapse legitimately
+        // serves — the conflict needs its own window with those carriers
+        // decoded (registry row stays OPEN with the protocol recorded).
         for (ep, fp) in exp_params.iter().zip(found_params.iter()) {
             let ecat = self.resolved_cat_of(ep, exp_gs);
             let fcat = self.resolved_cat_of(fp, expr_gs);
