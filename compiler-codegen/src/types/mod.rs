@@ -23725,6 +23725,19 @@ impl<'a> TypeCheckCtx<'a> {
             if let Some(found) = self.mono_mismatch_found(expr, expected, expr_gs, exp_gs, scope) {
                 return Compat::Bad { found };
             }
+            // Registry 221.1 TBD-1 (nova-alula survey item 128
+            // `fixarr_to_vec_arg`, task 150, 2026-11-15): a fixed array and a
+            // slice are DIFFERENT C representations (a by-value
+            // `_NovaFixArr_N_T` struct vs a `Nova_Vec__T*` pointer) — passing
+            // one where the other is declared is a CC-FAIL inside generated
+            // C with a coordinate useless to the Nova author. The implicit
+            // [N]T -> []T conversion is a LANGUAGE question (needs its own
+            // D-block), so the door refuses by name until that decision:
+            // the diagnostic names the fix (a fresh-slice copy or an [N]T
+            // parameter).
+            if let Some(found) = self.fixarr_slice_mismatch_found(expr, expected, scope) {
+                return Compat::Bad { found };
+            }
         }
         verdict
     }
@@ -23773,6 +23786,42 @@ impl<'a> TypeCheckCtx<'a> {
                     })
             }
             _ => false,
+        }
+    }
+
+    /// TBD-1: `Some(found-type)` when the value is a FIXED ARRAY and the
+    /// slot a SLICE, or the reverse — the two never reinterpret safely (a
+    /// struct by value vs a heap Vec pointer). The directional conversion
+    /// is a language decision pending its D-block; until then the door
+    /// refuses with the fix spelled out.
+    fn fixarr_slice_mismatch_found(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<String> {
+        // An ARRAY LITERAL in a fixed slot is a legitimate BUILD (a_q3's
+        // `mut out [3]Holder2 = [...]`): only a TYPED slice value reaching a
+        // fixed slot (or a typed fixed reaching a slice) is the boundary
+        // refusal.
+        if matches!(expr.kind, ExprKind::ArrayLit(_)) {
+            return None;
+        }
+        let found_tr = self.infer_expr_type(expr, scope)?;
+        let kind_of = |t: &TypeRef| match t {
+            TypeRef::FixedArray(..) => Some("fixed"),
+            TypeRef::Array(..) => Some("slice"),
+            _ => None,
+        };
+        // `Compat::Bad.found` is the FOUND-TYPE string: the callers spell
+        // their own E7301 around it (same convention as the №1015 mono
+        // door); the representation reasoning lives in the fixtures and the
+        // registry row.
+        match (kind_of(&found_tr), kind_of(expected)) {
+            // ONLY the cross pair refuses: slice->slice and fixed->fixed are
+            // legitimate (the kind_of arms above are exact matches).
+            (Some(k), Some(e)) if k != e => Some(Self::typeref_display(&found_tr)),
+            _ => None,
         }
     }
 
