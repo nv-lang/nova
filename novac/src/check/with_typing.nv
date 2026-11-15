@@ -317,7 +317,7 @@ fn Checker mut @type_supervised_stmt(st Node) -> () {
 /// initializer, an argument), where a body without a tail value is refused;
 /// `false` for the statement form that carries a handler, whose body may yield
 /// nothing -- the construct is then UNIT and the handler returns nothing.
-fn Checker mut @type_supervised_value(st Node, as_value bool) -> () {
+fn Checker mut @type_supervised_value(st Node, as_value bool = false) -> () {
     ro skids = branch_children(st)
     if skids.len() < 2 {
         assert(@out.len() > 0, "check: a malformed supervised reached typing with no refusal")
