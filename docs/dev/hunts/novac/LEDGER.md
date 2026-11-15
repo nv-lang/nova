@@ -184,3 +184,4 @@ if-let/while-let) → №1292, мутабельность и `consume` на ур
 `probes/2026-10-25-sem-target-availability-k6/` удалены тем же коммитом. -->
 СВЁРНУТО | 2026-10-25-sem-target-availability-k6 | sem | К6 | находок 3 | №1910
 СВЁРНУТО | 2026-10-31-check-anon-ctor-k7 | check | К3 | находок 2 | №1943
+СВЁРНУТО | 2026-10-31-check-k6 | check | К6 | находок 4 | №1939,№1940,№1941,№1942
