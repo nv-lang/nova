@@ -94,3 +94,4 @@ std/src/fs/d323_mock_fs_rw_test.nv # task 140 (record the configurable read buff
 std/src/fs/fs.nv # task 140 (record the configurable read buffer until the seed re-pins)
 std/src/unicode/graphemes.nv # task 140 (record the simplified grapheme count until the seed re-pins)
 std/src/unicode/graphemes_test.nv # task 140 (record the reusable grapheme iterator coverage until the seed re-pins)
+std/src/time/duration/time_effect.nv # task 150 (explicit i64 conversions for Time handlers until the seed re-pins)
