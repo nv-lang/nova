@@ -57,7 +57,11 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace", newline="\n")
 
 NAME = "check-ecode-fixture-debt"
 CODE = re.compile(r"\bE_[A-Z][A-Z0-9_]{2,}\b")
-SHADOW = re.compile(r"nova:shadowed-by\s+(E_[A-Z][A-Z0-9_]{2,})")
+# 2026-11-15, task 150 (No.1983): numeric E-codes of the C-emission
+# diagnostics (E7301 etc.) shadow too -- the letter-first pattern could not
+# name them; the fixarr/slice boundary leaves its carriers old code
+# shadowed by E7301, with the fixtures pinning E7301.
+SHADOW = re.compile(r"nova:shadowed-by\s+(E_[A-Z][A-Z0-9_]{2,}|E[0-9]{3,4})")
 SRC_DIRS = ("compiler-codegen/src",)
 FIXTURE_DIRS = ("spec_tests",)
 SKIP_DIRS = (".git", "target", "node_modules")

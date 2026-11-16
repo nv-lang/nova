@@ -20397,9 +20397,15 @@ impl<'a> TypeCheckCtx<'a> {
                                         &self.resolved_cat_of(pa, &callee_gs),
                                         &self.resolved_cat_of(aa, gs),
                                     ) {
+                                        // compatibility-door wrapper judges the
+                                        // same instancing first on this path, so
+                                        // this arm answers the door's E7301; the
+                                        // three NEG fixtures pin the E7301 text.
                                         errors.push(
                                             Diagnostic::new(
                                                 format!(
+                                                    // nova:shadowed-by E7301 -- No.1015
+                                                    // nova:shadowed-by E7301 (No.1015; the 3 NEG fixtures pin the E7301 text).
                                                     "[E_ARG_ELEM_TYPE_MISMATCH] cannot \
                                                      pass `{}` as argument `{}` of type \
                                                      `{}` — generic type argument \
