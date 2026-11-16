@@ -415,7 +415,7 @@ void nova_interrupt_ptr(void* value) {
 }
 
 #ifdef _MSC_VER
-__declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
+__declspec(thread) NovaFailFrame*      _nova_fail_top_tls      = NULL;
 /* Plan 201 trace-per-fiber: combined last_error/throw_site/throw_trace
  * bucket (effects.h NovaFiberErrorState) + the ONE active-pointer swapped
  * per-fiber around mco_resume (runtime.c) / nova_supervised_step
@@ -423,10 +423,10 @@ __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
  * bucket for "outside any fiber" contexts; `_nova_error_state_p` starts
  * NULL and self-heals to it via `nova_error_state_active()` (effects.h). */
 __declspec(thread) NovaFiberErrorState  _nova_error_state_native = {0};
-__declspec(thread) NovaFiberErrorState* _nova_error_state_p      = NULL;
-__declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
+__declspec(thread) NovaFiberErrorState* _nova_error_state_p_tls  = NULL;
+__declspec(thread) NovaInterruptFrame* _nova_interrupt_top_tls = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
-__declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
+__declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe_tls = NULL;
 __declspec(thread) NovaTestFrame*      _nova_test_frame    = NULL;
 __declspec(thread) NovaVtable_Fail*     _nova_handler_Fail_tls     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
 __declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* Plan 61 Ф.2 typed erased slot */
@@ -435,8 +435,8 @@ __declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* P
  * definition stays HERE too (dispatch FUNCTIONS moved to generic codegen,
  * not this slot). */
 __declspec(thread) NovaVtable_Time*     _nova_handler_Time_tls     = NULL;  /* default NULL → ambient #default_handler(Time) installs lazily (prelude) */
-__declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
-__declspec(thread) int                 _nova_active_slot   = -1;
+__declspec(thread) NovaFiberQueue*     _nova_active_scope_tls  = NULL;  /* active supervised scope for current thread */
+__declspec(thread) int                 _nova_active_slot_tls   = -1;
 /* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
  * mco_yield; called by worker loop AFTER mco_resume returns (= after fiber is
  * truly MCO_SUSPENDED). Prevents race where cross-thread wake clears parked
@@ -448,25 +448,25 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
  * stack for Application effect. Saved+initialized в `with Application = ...`
  * block prologue, fired LIFO + restored на exit. NULL outside Application
  * blocks → nova_app_register_finalizer becomes no-op. */
-__declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
+__declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack_tls = NULL;
 #else
-__thread NovaFailFrame*      _nova_fail_top      = NULL;
+__thread NovaFailFrame*      _nova_fail_top_tls      = NULL;
 /* Plan 201 trace-per-fiber: see MSVC branch above for rationale. */
 __thread NovaFiberErrorState  _nova_error_state_native = {0};
-__thread NovaFiberErrorState* _nova_error_state_p      = NULL;
-__thread NovaInterruptFrame* _nova_interrupt_top = NULL;
-__thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
+__thread NovaFiberErrorState* _nova_error_state_p_tls  = NULL;
+__thread NovaInterruptFrame* _nova_interrupt_top_tls = NULL;
+__thread NovaInterruptFrame* _nova_current_handler_iframe_tls = NULL;  /* Plan 61 fu#1 */
 __thread NovaTestFrame*      _nova_test_frame    = NULL;
 __thread NovaVtable_Fail*     _nova_handler_Fail_tls     = NULL;
 __thread NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* Plan 61 Ф.2 */
 __thread NovaVtable_Time*     _nova_handler_Time_tls     = NULL;
-__thread NovaFiberQueue*     _nova_active_scope  = NULL;
-__thread int                 _nova_active_slot   = -1;
+__thread NovaFiberQueue*     _nova_active_scope_tls  = NULL;
+__thread int                 _nova_active_slot_tls   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;
 __thread void*               _nova_park_unlock_arg = NULL;
 __thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
 /* Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: см. MSVC branch. */
-__thread NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
+__thread NovaFinalizerStack* _nova_active_finalizer_stack_tls = NULL;
 #endif
 
 /* Plan 175 Ф.2-v3: `_nova_time_default_ctor` (Ф.2-v2 special-case hook) is

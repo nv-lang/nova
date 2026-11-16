@@ -14797,6 +14797,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    NovaFailFrame* _nova_saved_fail_top;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        // Registry 221.1 №TBD (class): fiber-scoped handler context restored
+        // on every resume. MUST mirror NovaSpawnCtxBase (fibers.h).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_handler_iframe;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFinalizerStack* _nova_saved_finalizer_stack;");
         // Plan 44.5 Layer 5 deadlock fix: home worker scope for work-stealing.
         // Set once in preamble; worker restores _nova_active_scope from this
         // before each mco_resume so channel ops always capture the correct scope.
@@ -16177,6 +16183,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    NovaFailFrame* _nova_saved_fail_top;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        // Registry 221.1 №TBD (class): mirror NovaSpawnCtxBase (fibers.h).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_handler_iframe;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFinalizerStack* _nova_saved_finalizer_stack;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_fiber_scope;");
         let _ = writeln!(self.lambda_forward_decls,

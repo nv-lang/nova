@@ -1179,6 +1179,8 @@ static void _nova_resume_restore_ctx_tls(void* vctx) {
         _nova_active_slot   = base->_nova_worker_slot;
         _nova_fail_top      = base->_nova_saved_fail_top;
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_current_handler_iframe  = base->_nova_saved_handler_iframe;
+        _nova_active_finalizer_stack  = base->_nova_saved_finalizer_stack;
         NovaFiberQueue* fscope = base->_nova_fiber_scope;
         int fslot = base->_nova_worker_slot;
         if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
@@ -1198,6 +1200,8 @@ static void _nova_resume_restore_ctx_tls(void* vctx) {
         _nova_active_slot   = -1;  /* slot is invalidated — no valid slot */
         _nova_fail_top      = base->_nova_saved_fail_top;
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_current_handler_iframe  = base->_nova_saved_handler_iframe;
+        _nova_active_finalizer_stack  = base->_nova_saved_finalizer_stack;
         /* Effect snapshot: slot is -1, skip snapshot restore (fiber is exiting soon). */
     } else if (base) {
         /* Before preamble (first run): restore saved fail/interrupt but
@@ -1205,6 +1209,8 @@ static void _nova_resume_restore_ctx_tls(void* vctx) {
          * allocate the home slot + set _nova_fiber_scope on first resume). */
         _nova_fail_top      = base->_nova_saved_fail_top;
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_current_handler_iframe  = base->_nova_saved_handler_iframe;
+        _nova_active_finalizer_stack  = base->_nova_saved_finalizer_stack;
         /* Plan 83.10.4 Ф.3: restore spawn-time handler snapshot so fiber
          * sees parent's effect handlers on its FIRST run (before preamble). */
         if (base->_nova_init_snapshot) {
@@ -1218,6 +1224,8 @@ static void _nova_resume_save_ctx_tls(void* vctx) {
     if (!base) return;
     base->_nova_saved_fail_top      = _nova_fail_top;
     base->_nova_saved_interrupt_top = _nova_interrupt_top;
+    base->_nova_saved_handler_iframe = _nova_current_handler_iframe;
+    base->_nova_saved_finalizer_stack = _nova_active_finalizer_stack;
     /* Plan 83.4.2 Ф.2: save fiber's current handler-state (с учётом
      * with-блоков push/pop сделанных fiber'ом во время выполнения) обратно
      * в home scope's snapshot. */

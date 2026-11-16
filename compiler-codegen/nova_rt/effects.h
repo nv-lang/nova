@@ -123,10 +123,19 @@ typedef struct NovaFiberAnchor {
 
 /* Thread-local fail stack */
 #ifdef _MSC_VER
-__declspec(thread) extern NovaFailFrame* _nova_fail_top;
+__declspec(thread) extern NovaFailFrame* _nova_fail_top_tls;
 #else
-extern __thread NovaFailFrame* _nova_fail_top;
+extern __thread NovaFailFrame* _nova_fail_top_tls;
 #endif
+/* Registry 221.1 №TBD (class): every fiber-scoped TLS slot is re-read on the
+ * current thread through a noinline accessor. The fiber may be resumed on
+ * another worker; a cached address of the old thread's slot would point at
+ * empty/foreign state (see nova_rt.h, "Effect-handler TLS slots"). */
+static inline NOVA_NOINLINE NovaFailFrame** nova_fail_top_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_fail_top_tls;
+}
+#define _nova_fail_top (*nova_fail_top_slot())
 
 static inline void nova_fail_push(NovaFailFrame* f) {
     f->is_cleanup = 0;  /* Plan 173 Ф.4 #6: default; codegen marks cleanup frames */
@@ -303,11 +312,17 @@ typedef struct {
 
 #ifdef _MSC_VER
 __declspec(thread) extern NovaFiberErrorState  _nova_error_state_native;
-__declspec(thread) extern NovaFiberErrorState* _nova_error_state_p;
+__declspec(thread) extern NovaFiberErrorState* _nova_error_state_p_tls;
 #else
 extern __thread NovaFiberErrorState  _nova_error_state_native;
-extern __thread NovaFiberErrorState* _nova_error_state_p;
+extern __thread NovaFiberErrorState* _nova_error_state_p_tls;
 #endif
+/* Registry 221.1 №TBD (class): fiber-scoped slot, re-read per access. */
+static inline NOVA_NOINLINE NovaFiberErrorState** nova_error_state_p_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_error_state_p_tls;
+}
+#define _nova_error_state_p (*nova_error_state_p_slot())
 
 /* Self-healing accessor — guarantees a non-NULL bucket regardless of
  * thread-startup ordering. `_nova_error_state_p` starts NULL on a fresh
@@ -1133,7 +1148,7 @@ typedef struct NovaInterruptFrame {
 } NovaInterruptFrame;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top;
+__declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top_tls;
 /* Plan 61 followup #1: handler-arm interrupt context. Set ДО invoke
  * handler-arm body в Nova_Fail_fail / nova_throw_typed; restored после.
  * `interrupt v` в handler-arm body использует этот slot вместо
@@ -1141,11 +1156,22 @@ __declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top;
  * (outer Fail handler делает `interrupt v`) jump'тся в inner with-block
  * вместо outer's. См. simplifications [M-plan-61-cross-effect-throw]
  * resolution. */
-__declspec(thread) extern NovaInterruptFrame* _nova_current_handler_iframe;
+__declspec(thread) extern NovaInterruptFrame* _nova_current_handler_iframe_tls;
 #else
-extern __thread NovaInterruptFrame* _nova_interrupt_top;
-extern __thread NovaInterruptFrame* _nova_current_handler_iframe;
+extern __thread NovaInterruptFrame* _nova_interrupt_top_tls;
+extern __thread NovaInterruptFrame* _nova_current_handler_iframe_tls;
 #endif
+/* Registry 221.1 №TBD (class): both are fiber-scoped and re-read per access. */
+static inline NOVA_NOINLINE NovaInterruptFrame** nova_interrupt_top_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_interrupt_top_tls;
+}
+#define _nova_interrupt_top (*nova_interrupt_top_slot())
+static inline NOVA_NOINLINE NovaInterruptFrame** nova_handler_iframe_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_current_handler_iframe_tls;
+}
+#define _nova_current_handler_iframe (*nova_handler_iframe_slot())
 
 static inline void nova_interrupt_push(NovaInterruptFrame* f) {
     /* Default kind = WITHBLOCK. Caller can override (см.
@@ -2011,10 +2037,16 @@ typedef struct {
 } NovaFinalizerStack;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaFinalizerStack* _nova_active_finalizer_stack;
+__declspec(thread) extern NovaFinalizerStack* _nova_active_finalizer_stack_tls;
 #else
-extern __thread NovaFinalizerStack* _nova_active_finalizer_stack;
+extern __thread NovaFinalizerStack* _nova_active_finalizer_stack_tls;
 #endif
+/* Registry 221.1 №TBD (class): fiber-scoped slot, re-read per access. */
+static inline NOVA_NOINLINE NovaFinalizerStack** nova_active_finalizer_stack_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_active_finalizer_stack_tls;
+}
+#define _nova_active_finalizer_stack (*nova_active_finalizer_stack_slot())
 
 /* Push closure (fn + env) onto active stack. No-op if no active stack
  * or fn==NULL. */
