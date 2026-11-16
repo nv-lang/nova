@@ -25127,14 +25127,14 @@ static nova_unit _nova_handler_lit_1_impl_Time_sleep(void* _ctx, NovaValue_Durat
 static NovaValue_Timestamp _nova_handler_lit_1_impl_Time_now(void* _ctx) {
     NovaCtx__nova_handler_lit_1* _c = (NovaCtx__nova_handler_lit_1*)_ctx;
     NovaValue_Timestamp _nv_tmp_133;
-    _nv_tmp_133.nanos = nova_int_checked_mul(time_wall_unix_ms(), ((nova_int)1000000LL));
+    _nv_tmp_133.nanos = nova_i64_checked_mul(((int64_t)(time_wall_unix_ms())), ((nova_int)1000000LL));
     return _nv_tmp_133;
 }
 
 static NovaValue_Monotonic _nova_handler_lit_1_impl_Time_now_monotonic(void* _ctx) {
     NovaCtx__nova_handler_lit_1* _c = (NovaCtx__nova_handler_lit_1*)_ctx;
     NovaValue_Monotonic _nv_tmp_134;
-    _nv_tmp_134.nanos = time_monotonic_ns();
+    _nv_tmp_134.nanos = ((int64_t)(time_monotonic_ns()));
     return _nv_tmp_134;
 }
 
