@@ -75,12 +75,9 @@ mbedTLS removed from the regression CI).
 
 ## Provenance
 
-- Release source: branch `release/oracle-0.1.5`, HEAD `f15b05504`
-  (11 commits over `main` @ `dd0e65f59`; version bump tile
-  `35fb34c7a`).
-- Windows binaries: built from this tree with the release toolchain
-  (clang), `nova --version` prints `nova 0.1.5`; the tile corpus run
-  (`spec_tests std`) shows only the inherited failures listed above.
-- Linux binaries and the source archive are built by the release CI
-  from the same tag; `SHA256SUMS` is generated over the published
-  files at release time (plan 295).
+- The annotated tag `oracle-v0.1.5` identifies the release source.
+- The Windows x86_64 archive includes the Rust Oracle CLI and the pinned
+  Boehm GC 8.2.8 built as a static MSVC Release library with
+  `LARGE_CONFIG` (81,920 heap sections).
+- The Linux x86_64 binary and source archive are produced from the same
+  revision. `SHA256SUMS` covers all three archives (plan 295).
