@@ -428,13 +428,13 @@ __declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
 __declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
 __declspec(thread) NovaTestFrame*      _nova_test_frame    = NULL;
-__declspec(thread) NovaVtable_Fail*     _nova_handler_Fail     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
-__declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 typed erased slot */
+__declspec(thread) NovaVtable_Fail*     _nova_handler_Fail_tls     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
+__declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* Plan 61 Ф.2 typed erased slot */
 /* Plan 175 Ф.2-v3: struct type stays hand-written (effects.h doc comment —
  * channels.h / runtime.c need a stable named type), so the TLS slot
  * definition stays HERE too (dispatch FUNCTIONS moved to generic codegen,
  * not this slot). */
-__declspec(thread) NovaVtable_Time*     _nova_handler_Time     = NULL;  /* default NULL → ambient #default_handler(Time) installs lazily (prelude) */
+__declspec(thread) NovaVtable_Time*     _nova_handler_Time_tls     = NULL;  /* default NULL → ambient #default_handler(Time) installs lazily (prelude) */
 __declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
 __declspec(thread) int                 _nova_active_slot   = -1;
 /* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
@@ -457,9 +457,9 @@ __thread NovaFiberErrorState* _nova_error_state_p      = NULL;
 __thread NovaInterruptFrame* _nova_interrupt_top = NULL;
 __thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
 __thread NovaTestFrame*      _nova_test_frame    = NULL;
-__thread NovaVtable_Fail*     _nova_handler_Fail     = NULL;
-__thread NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 */
-__thread NovaVtable_Time*     _nova_handler_Time     = NULL;
+__thread NovaVtable_Fail*     _nova_handler_Fail_tls     = NULL;
+__thread NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* Plan 61 Ф.2 */
+__thread NovaVtable_Time*     _nova_handler_Time_tls     = NULL;
 __thread NovaFiberQueue*     _nova_active_scope  = NULL;
 __thread int                 _nova_active_slot   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;

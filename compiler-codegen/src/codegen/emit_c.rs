@@ -3148,15 +3148,26 @@ impl CEmitter {
             // stays `static inline` and is safely duplicated per-TU).
             out.push_str("#ifdef _MSC_VER\n");
             out.push_str(&format!(
-                "__declspec(thread) {storage}NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                "__declspec(thread) {storage}NovaVtable_Fail_{m}* _nova_handler_Fail_{m}_tls = NULL;\n",
                 storage = self.top_level_storage(), m = mangled
             ));
             out.push_str("#else\n");
             out.push_str(&format!(
-                "{storage}__thread NovaVtable_Fail_{m}* _nova_handler_Fail_{m} = NULL;\n",
+                "{storage}__thread NovaVtable_Fail_{m}* _nova_handler_Fail_{m}_tls = NULL;\n",
                 storage = self.top_level_storage(), m = mangled
             ));
             out.push_str("#endif\n");
+            // Registry 221.1 №TBD: re-read the slot address on every access —
+            // the per-E slot is thread-scoped, the fiber is not (same reason
+            // as the per-effect slot in emit_effect_type).
+            out.push_str(&format!(
+                "static inline NOVA_NOINLINE NovaVtable_Fail_{m}** _nova_handler_Fail_{m}_slot(void) {{ NOVA_SLOT_BARRIER(); return &_nova_handler_Fail_{m}_tls; }}\n",
+                m = mangled
+            ));
+            out.push_str(&format!(
+                "#define _nova_handler_Fail_{m} (*_nova_handler_Fail_{m}_slot())\n",
+                m = mangled
+            ));
             out.push_str("/* Per-E throw entry: prefer per-E slot, fallback на erased nova_throw_typed.\n");
             out.push_str(" * Plan 173 Ф.4 #6 (D158 model B): cleanup-unwind bypasses handler dispatch —\n");
             out.push_str(" * a failing cleanup composes into the suppressed pocket, не hijack'ит handler. */\n");
@@ -18948,17 +18959,35 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             self.line("");
 
             // 2. Thread-local handler slot.
+            //
+            // Registry 221.1 №TBD: `_nova_handler_<E>` is thread-scoped, but a
+            // Nova fiber migrates between worker threads at suspension points.
+            // The runtime restores the fiber's handler values into the new
+            // thread's slots, yet an address of the old thread's slot cached
+            // by the optimizer across a call (clang hoists the `lea` out of a
+            // loop; `volatile` does not prevent it) still points at the old
+            // TLS block, where the slot is empty -> `unhandled effect` panic.
+            // Every access therefore goes through the noinline accessor
+            // below, which re-computes the address on the current thread.
             self.line("#ifdef _MSC_VER");
             self.line(&format!(
-                "__declspec(thread) NovaVtable_{name}* _nova_handler_{name} = NULL;",
+                "__declspec(thread) NovaVtable_{name}* _nova_handler_{name}_tls = NULL;",
                 name = name
             ));
             self.line("#else");
             self.line(&format!(
-                "__thread NovaVtable_{name}* _nova_handler_{name} = NULL;",
+                "__thread NovaVtable_{name}* _nova_handler_{name}_tls = NULL;",
                 name = name
             ));
             self.line("#endif");
+            self.line(&format!(
+                "static inline NOVA_NOINLINE NovaVtable_{name}** _nova_handler_{name}_slot(void) {{ NOVA_SLOT_BARRIER(); return &_nova_handler_{name}_tls; }}",
+                name = name
+            ));
+            self.line(&format!(
+                "#define _nova_handler_{name} (*_nova_handler_{name}_slot())",
+                name = name
+            ));
             self.line("");
         }
 
@@ -18988,7 +19017,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let ret = ret.clone();
             let mut fn_params: Vec<String> = Vec::new();
             let mut call_args: Vec<String> = vec![
-                format!("_nova_handler_{name}->ctx", name = name)
+                "_nv_h->ctx".to_string()
             ];
             for (p, ty) in m.params.iter().zip(param_c_types.iter()) {
                 fn_params.push(format!("{} {}", ty, Self::mangle_field_name(&p.name)));
@@ -19072,6 +19101,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // regression vs the hand-written dispatcher this replaces;
                 // falling back to the real-clock primitive instead keeps
                 // the exact same behavior partial-handler fixtures relied on.
+                // Registry 221.1 №TBD: read the slot once for this dispatch;
+                // the accessor re-computes the address on the CURRENT thread
+                // (a fiber may have migrated since the previous effect call).
+                self.line("NovaVtable_Time* _nv_h = _nova_handler_Time;");
                 match mangled.as_str() {
                     "sleep" => {
                         // param `d` is `NovaValue_Duration` (by value) —
@@ -19079,7 +19112,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         let arg_name = m.params.first().map(|p| Self::mangle_field_name(&p.name))
                             .unwrap_or_else(|| "d".to_string());
                         self.line(&format!(
-                            "if (_nova_handler_Time->sleep) {{ return _nova_handler_Time->sleep(_nova_handler_Time->ctx, {arg}.nanos); }}",
+                            "if (_nv_h->sleep) {{ return _nv_h->sleep(_nv_h->ctx, {arg}.nanos); }}",
                             arg = arg_name
                         ));
                         self.line(&format!(
@@ -19088,27 +19121,33 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         ));
                     }
                     "now" => {
-                        self.line("if (_nova_handler_Time->now) { int64_t _nv_w = _nova_handler_Time->now(_nova_handler_Time->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }");
+                        self.line("if (_nv_h->now) { int64_t _nv_w = _nv_h->now(_nv_h->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }");
                         self.line(&format!(
                             "return ({ret}){{ .nanos = time_wall_unix_ms() * (int64_t)1000000 }};",
                             ret = ret
                         ));
                     }
                     "now_monotonic" => {
-                        self.line("if (_nova_handler_Time->now_monotonic) { int64_t _nv_w = _nova_handler_Time->now_monotonic(_nova_handler_Time->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }");
+                        self.line("if (_nv_h->now_monotonic) { int64_t _nv_w = _nv_h->now_monotonic(_nv_h->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }");
                         self.line(&format!(
                             "return ({ret}){{ .nanos = time_monotonic_ns() }};",
                             ret = ret
                         ));
                     }
                     _ /* local_offset_sec */ => {
-                        self.line("if (_nova_handler_Time->local_offset_sec) { return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx); }");
+                        self.line("if (_nv_h->local_offset_sec) { return _nv_h->local_offset_sec(_nv_h->ctx); }");
                         self.line("return time_local_offset_sec();");
                     }
                 }
             } else { // №158: null handler → `nv_panic` (D62 "runtime fail (panic)"), не NULL-deref.
+                // Registry 221.1 №TBD: one slot read per dispatch, through the
+                // noinline accessor — the fiber may have migrated.
                 self.line(&format!(
-                    "if (!_nova_handler_{name}) {{ nv_panic(nova_str_from_cstr(\"unhandled effect `{name}.{op}`: no active handler (missing `with {name} = …` around this call)\")); return ({ret}){{0}}; }} return _nova_handler_{name}->{field}({args});",
+                    "NovaVtable_{name}* _nv_h = _nova_handler_{name};",
+                    name = name
+                ));
+                self.line(&format!(
+                    "if (!_nv_h) {{ nv_panic(nova_str_from_cstr(\"unhandled effect `{name}.{op}`: no active handler (missing `with {name} = …` around this call)\")); return ({ret}){{0}}; }} return _nv_h->{field}({args});",
                     name = name, op = m.name, ret = ret, field = Self::mangle_field_name(&mangled), args = call_args_str
                 ));
             }

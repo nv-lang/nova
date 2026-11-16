@@ -1711,10 +1711,19 @@ typedef struct NovaVtable_Fail {
 } NovaVtable_Fail;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaVtable_Fail* _nova_handler_Fail;
+__declspec(thread) extern NovaVtable_Fail* _nova_handler_Fail_tls;
 #else
-extern __thread NovaVtable_Fail* _nova_handler_Fail;
+extern __thread NovaVtable_Fail* _nova_handler_Fail_tls;
 #endif
+/* Registry 221.1 №TBD: the slot is thread-scoped, the fiber is not. Every
+ * access re-computes the address on the current thread through a noinline
+ * call, so a fiber resumed on another worker cannot read the old thread's
+ * slot (see nova_rt.h, "Effect-handler TLS slots"). */
+static inline NOVA_NOINLINE NovaVtable_Fail** nova_handler_Fail_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_handler_Fail_tls;
+}
+#define _nova_handler_Fail (*nova_handler_Fail_slot())
 
 /* Inline dispatch: Nova_Fail_fail(msg). Codegen emits this from
  * Stmt::Throw. With user handler installed → handler runs (e.g. records
@@ -1781,10 +1790,16 @@ typedef struct NovaVtable_Fail_any {
 } NovaVtable_Fail_any;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaVtable_Fail_any* _nova_handler_Fail_any;
+__declspec(thread) extern NovaVtable_Fail_any* _nova_handler_Fail_any_tls;
 #else
-extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
+extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any_tls;
 #endif
+/* Registry 221.1 №TBD: same re-read rule as `_nova_handler_Fail`. */
+static inline NOVA_NOINLINE NovaVtable_Fail_any** nova_handler_Fail_any_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_handler_Fail_any_tls;
+}
+#define _nova_handler_Fail_any (*nova_handler_Fail_any_slot())
 
 /* Plan 61 Ф.2: typed throw — фолдит на правильный slot по dispatch
  * precedence. Codegen emits this для `throw expr` где expr type != nova_str
@@ -1952,10 +1967,16 @@ typedef struct {
 } NovaVtable_Time;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
+__declspec(thread) extern NovaVtable_Time* _nova_handler_Time_tls;
 #else
-extern __thread NovaVtable_Time* _nova_handler_Time;
+extern __thread NovaVtable_Time* _nova_handler_Time_tls;
 #endif
+/* Registry 221.1 №TBD: same re-read rule as `_nova_handler_Fail`. */
+static inline NOVA_NOINLINE NovaVtable_Time** nova_handler_Time_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_handler_Time_tls;
+}
+#define _nova_handler_Time (*nova_handler_Time_slot())
 
 /* ──────────────────────────────────────────────────────────────────
  * Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
