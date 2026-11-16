@@ -10,7 +10,7 @@ M:N-рантайм под sanitizer'ами (TSan/ASan/UBSan) для разраб
 компилятора; этот — тонкий образ для КОНЕЧНОГО пользователя языка,
 собранный по верифицированному рецепту `docs/guide/linux-build.md` /
 `.github/workflows/nova-gate.yml` (Ubuntu 22.04, clang + cmake + make +
-libgc-dev + build-essential, rustup 1.85 только в build-стадии).
+build-essential, rustup 1.85 только в build-стадии).
 
 ## Сборка образа
 
@@ -19,14 +19,14 @@ libgc-dev + build-essential, rustup 1.85 только в build-стадии).
 top-level каталоги контекста, не через `git clone`):
 
 ```sh
-git submodule update --init compiler-codegen/nova_rt/libuv   # если ещё не инициализирован
+git submodule update --init --recursive
 docker build -f docker/release/Dockerfile -t nova:0.1.0 .
 ```
 
 Two-stage build:
 1. **builder** — Ubuntu 22.04 + rustup (pinned 1.85, MSRV) + системные пакеты
-   (`clang cmake make libgc-dev build-essential`) — `cargo build --release
-   --manifest-path nova-cli/Cargo.toml`.
+   (`clang cmake make build-essential`) — `cargo build --release
+   --manifest-path nova-cli/Cargo.toml` и статический Boehm GC из закреплённого субмодуля с `LARGE_CONFIG`.
 2. **runtime** — свежий Ubuntu 22.04 + те же системные пакеты (нужны, чтобы
    `nova` сама компилировала сгенерированный C и линковала Boehm GC/libuv) +
    собранный бинарь `nova` + `std/` + `nova_rt/` (полный, включая libuv
@@ -90,8 +90,8 @@ docker run --rm -v "$PWD":/work --entrypoint ./hello nova:0.1.0
 | `NOVA_STD_PATH` | `/opt/nova/std` | исходники стандартной библиотеки |
 | `NOVA_CG_INCLUDE` | `/opt/nova` | родитель `nova_rt/` |
 | `NOVA_RT_DIR` | `/opt/nova/nova_rt` | C-рантайм (`eventloop.c`, `libuv/`) |
-| `NOVA_GC_LIB_DIR` | `/usr/lib/x86_64-linux-gnu` | Boehm GC `.so` (системный `libgc-dev`) |
-| `NOVA_GC_INCLUDE_DIR` | `/usr/include` | Boehm GC заголовки (`gc.h`) |
+| `NOVA_GC_LIB_DIR` | `/opt/nova/gc/lib` | статический Boehm GC `libgc.a` |
+| `NOVA_GC_INCLUDE_DIR` | `/opt/nova/gc/include` | Boehm GC заголовки (`gc.h`) |
 
 ## Smoke test (верифицировано)
 

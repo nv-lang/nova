@@ -46,7 +46,8 @@ jobs:
           $gcSource = Join-Path $PWD "compiler-codegen/nova_rt/gc"
           $gcBuild = Join-Path $env:RUNNER_TEMP "oracle-gc-build"
           $gcRoot = Join-Path $PWD "compiler-codegen/vcpkg_installed/x64-windows-static"
-          cmake -S $gcSource -B $gcBuild -A x64 -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -Denable_large_config=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          $atomic = Join-Path $PWD "compiler-codegen/nova_rt/libatomic_ops/src"
+          cmake -S $gcSource -B $gcBuild -A x64 -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -Denable_large_config=ON "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded "-DCMAKE_C_FLAGS=/I`"$atomic`""
           if ($LASTEXITCODE -ne 0) { throw "Boehm GC configuration failed: exit=$LASTEXITCODE" }
           cmake --build $gcBuild --config Release --target gc --parallel
           if ($LASTEXITCODE -ne 0) { throw "Boehm GC build failed: exit=$LASTEXITCODE" }
@@ -56,7 +57,6 @@ jobs:
           Copy-Item (Join-Path $gcBuild "Release/gc.lib") $lib
           Copy-Item (Join-Path $gcSource "include/gc*.h") $gcInclude
           Copy-Item (Join-Path $gcSource "include/extra/gc*.h") $include
-          $atomic = Join-Path $PWD "compiler-codegen/nova_rt/libatomic_ops/src"
           Copy-Item (Join-Path $atomic "atomic_ops*.h") $include
           Copy-Item (Join-Path $atomic "atomic_ops") $include -Recurse
           $version = git -C $gcSource describe --tags --always

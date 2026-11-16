@@ -79,5 +79,7 @@ mbedTLS removed from the regression CI).
 - The Windows x86_64 archive includes the Rust Oracle CLI and the pinned
   Boehm GC 8.2.8 built as a static MSVC Release library with
   `LARGE_CONFIG` (81,920 heap sections).
+- The Linux x86_64 archive and Docker image bundle the same pinned collector
+  as a static `libgc.a` with `LARGE_CONFIG`.
 - The Linux x86_64 binary and source archive are produced from the same
   revision. `SHA256SUMS` covers all three archives (plan 295).
