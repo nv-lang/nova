@@ -101,6 +101,12 @@ jobs:
             if (-not ($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq "nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64/nova.exe" })) {
               throw "Package lacks its top-level nova.exe"
             }
+            $paths = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
+            foreach ($notice in @("bdwgc-README.md", "libatomic_ops-LICENSE", "libatomic_ops-COPYING")) {
+              if ("${roots}/THIRD_PARTY/$notice" -notin $paths) {
+                throw "Missing Boehm package notice: $notice"
+              }
+            }
           } finally {
             $archive.Dispose()
           }
