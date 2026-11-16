@@ -320,6 +320,12 @@ typedef struct NovaFiberQueue {
     void**          fiber_ctx;           /* dynamic [count] — GC root для SpawnCtx */
     NovaFailFrame** fiber_fail_top;      /* dynamic [count] */
     NovaInterruptFrame** fiber_interrupt_top; /* dynamic [count] */
+    /* Registry 221.1 №1988 (class): fiber-scoped handler context that used to
+     * live only in TLS and was NOT restored on resume. Both are pointers into
+     * the fiber's own stack (with-block frames), so saving/restoring the value
+     * is enough — the stack travels with the fiber. */
+    NovaInterruptFrame** fiber_handler_iframe;  /* dynamic [count] */
+    NovaFinalizerStack** fiber_finalizer_stack; /* dynamic [count] */
     NovaEffectSnapshot** fiber_effect_snapshot; /* dynamic [count] */
     /* Plan 201 trace-per-fiber (2026-07-13): per-fiber owned bucket for
      * `_nova_last_error`/`_nova_throw_site`/`_nova_throw_trace` (effects.h
@@ -877,6 +883,8 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     void**               new_ctx    = (void**)nova_alloc(sizeof(void*) * cap);
     NovaFailFrame**      new_fail_top = (NovaFailFrame**)nova_alloc(sizeof(NovaFailFrame*) * cap);
     NovaInterruptFrame** new_interrupt_top = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
+    NovaInterruptFrame** new_handler_iframe = (NovaInterruptFrame**)nova_alloc(sizeof(NovaInterruptFrame*) * cap);
+    NovaFinalizerStack** new_finalizer_stack = (NovaFinalizerStack**)nova_alloc(sizeof(NovaFinalizerStack*) * cap);
     NovaEffectSnapshot** new_effect_snapshot = (NovaEffectSnapshot**)nova_alloc(sizeof(NovaEffectSnapshot*) * cap);
     NovaFiberErrorState** new_error_state = (NovaFiberErrorState**)nova_alloc(sizeof(NovaFiberErrorState*) * cap);
     const char**         new_error = (const char**)nova_alloc(sizeof(const char*) * cap);
@@ -888,6 +896,8 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
             new_ctx[i]             = q->fiber_ctx[i];
             new_fail_top[i]        = q->fiber_fail_top[i];
             new_interrupt_top[i]   = q->fiber_interrupt_top[i];
+            new_handler_iframe[i]  = q->fiber_handler_iframe[i];
+            new_finalizer_stack[i] = q->fiber_finalizer_stack[i];
             new_effect_snapshot[i] = q->fiber_effect_snapshot[i];
             new_error_state[i]     = q->fiber_error_state[i];
             new_error[i]           = q->fiber_error[i];
@@ -900,6 +910,8 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
         new_ctx[i]             = NULL;
         new_fail_top[i]        = NULL;
         new_interrupt_top[i]   = NULL;
+        new_handler_iframe[i]  = NULL;
+        new_finalizer_stack[i] = NULL;
         new_effect_snapshot[i] = NULL;
         new_error_state[i]     = NULL;
         new_error[i]           = NULL;
@@ -910,6 +922,8 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
     q->fiber_ctx           = new_ctx;
     q->fiber_fail_top      = new_fail_top;
     q->fiber_interrupt_top = new_interrupt_top;
+    q->fiber_handler_iframe = new_handler_iframe;
+    q->fiber_finalizer_stack = new_finalizer_stack;
     q->fiber_effect_snapshot = new_effect_snapshot;
     q->fiber_error_state   = new_error_state;
     q->fiber_error         = new_error;
@@ -921,12 +935,26 @@ static inline void nova_scope_grow(NovaFiberQueue* q, int new_cap) {
  * inherit the enclosing scope's deadline. Full platform-conditional definition
  * is below (~line 1660); a matching earlier extern decl is legal C. */
 #ifdef _MSC_VER
-__declspec(thread) extern NovaFiberQueue* _nova_active_scope;
-__declspec(thread) extern int             _nova_active_slot;
+__declspec(thread) extern NovaFiberQueue* _nova_active_scope_tls;
+__declspec(thread) extern int             _nova_active_slot_tls;
 #else
-extern __thread NovaFiberQueue* _nova_active_scope;
-extern __thread int             _nova_active_slot;
+extern __thread NovaFiberQueue* _nova_active_scope_tls;
+extern __thread int             _nova_active_slot_tls;
 #endif
+/* Registry 221.1 №1988 (class): the active scope/slot are fiber-scoped (the
+ * runtime restores the fiber's own pair on resume), so their ADDRESS must be
+ * re-read on the current thread at every access — see nova_rt.h,
+ * "Effect-handler TLS slots". */
+static inline NOVA_NOINLINE NovaFiberQueue** nova_active_scope_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_active_scope_tls;
+}
+#define _nova_active_scope (*nova_active_scope_slot())
+static inline NOVA_NOINLINE int* nova_active_slot_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_active_slot_tls;
+}
+#define _nova_active_slot (*nova_active_slot_slot())
 
 static inline void nova_scope_init(NovaFiberQueue* q) {
     q->count = 0;
@@ -935,6 +963,8 @@ static inline void nova_scope_init(NovaFiberQueue* q) {
     q->fiber_ctx = NULL;
     q->fiber_fail_top = NULL;
     q->fiber_interrupt_top = NULL;
+    q->fiber_handler_iframe = NULL;
+    q->fiber_finalizer_stack = NULL;
     q->fiber_effect_snapshot = NULL;
     q->fiber_error_state = NULL;  /* Plan 201 trace-per-fiber */
     q->fiber_error = NULL;
@@ -1205,6 +1235,8 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
             scope->fiber_ctx[i]            = user;  /* GC root: SpawnCtx pinned */
             scope->fiber_fail_top[i]       = NULL;
             scope->fiber_interrupt_top[i]  = NULL;
+            scope->fiber_handler_iframe[i] = NULL;
+            scope->fiber_finalizer_stack[i]= NULL;
             scope->fiber_effect_snapshot[i]= NULL;
             /* Plan 201 trace-per-fiber: fresh per-fiber error-diag bucket
              * (fresh fiber = no in-flight error yet) + point the active
@@ -1238,6 +1270,8 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     scope->fiber_ctx[slot]            = user;       /* GC root: SpawnCtx pinned */
     scope->fiber_fail_top[slot]       = NULL;
     scope->fiber_interrupt_top[slot]  = NULL;
+    scope->fiber_handler_iframe[slot] = NULL;
+    scope->fiber_finalizer_stack[slot]= NULL;
     scope->fiber_effect_snapshot[slot]= NULL;
     /* Plan 201 trace-per-fiber: see reuse-path comment above. */
     scope->fiber_error_state[slot]    =
@@ -2051,6 +2085,10 @@ typedef struct {
     int                  _nova_worker_slot;
     NovaFailFrame*       _nova_saved_fail_top;
     NovaInterruptFrame*  _nova_saved_interrupt_top;
+    /* Registry 221.1 №1988 (class): fiber-scoped handler context restored on
+     * every resume (both point into the fiber's own stack). */
+    NovaInterruptFrame*  _nova_saved_handler_iframe;
+    NovaFinalizerStack*  _nova_saved_finalizer_stack;
     NovaFiberQueue*      _nova_fiber_scope;
     /* Plan 83.4.5.4 (2026-05-23): spawn-time TLS handler-snapshot capture
      * для inheritance в worker'е. Saved BEFORE nova_runtime_spawn_into на
@@ -2364,6 +2402,8 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
     q->fiber_ctx[q->count] = user;            /* GC root: SpawnCtx reachable via managed array */
     q->fiber_fail_top[q->count] = NULL;       /* fresh fiber: empty fail-stack */
     q->fiber_interrupt_top[q->count] = NULL;  /* and empty interrupt-stack */
+    q->fiber_handler_iframe[q->count] = NULL; /* handler-arm context: none yet */
+    q->fiber_finalizer_stack[q->count] = NULL;/* Application finalizers: none */
     /* Plan 201 trace-per-fiber: fresh per-fiber error-diag bucket (single-
      * thread/bootstrap path). Parent thread allocates it here; the fiber's
      * OWN first resume (nova_supervised_step, below) points the active TLS
@@ -2389,8 +2429,6 @@ static inline void nova_fiber_spawn_into(NovaFiberQueue* q,
  *  - emit_supervised entry/exit (main-flow scope context)
  * Externally linked so codegen can write to it from emitted C. */
 #ifdef _MSC_VER
-__declspec(thread) extern NovaFiberQueue* _nova_active_scope;
-__declspec(thread) extern int             _nova_active_slot;
 /* Plan 44.5 Layer 5 deferred-unlock: set by park_with_unlock before mco_yield;
  * called by scheduler (worker loop / supervised_step) after mco_resume returns. */
 __declspec(thread) extern void (*_nova_park_unlock_fn)(void*);
@@ -2404,8 +2442,6 @@ __declspec(thread) extern void*           _nova_park_unlock_arg;
  * is stuck inside mco_resume for the whole CPU-loop and can't re-copy. */
 __declspec(thread) extern volatile int*   _nova_preempt_ptr;
 #else
-extern __thread NovaFiberQueue* _nova_active_scope;
-extern __thread int             _nova_active_slot;
 extern __thread void (*_nova_park_unlock_fn)(void*);
 extern __thread void*           _nova_park_unlock_arg;
 extern __thread volatile int*   _nova_preempt_ptr;
@@ -2567,6 +2603,8 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
     int                  outer_slot      = _nova_active_slot;
     NovaFailFrame*       outer_fail      = _nova_fail_top;
     NovaInterruptFrame*  outer_interrupt = _nova_interrupt_top;
+    NovaInterruptFrame*  outer_iframe    = _nova_current_handler_iframe;
+    NovaFinalizerStack*  outer_finalizers = _nova_active_finalizer_stack;
     NovaFiberErrorState* outer_error     = nova_error_state_active();
     NovaEffectSnapshot   outer_effects;
     nova_effect_snapshot_save(&outer_effects);
@@ -2593,6 +2631,8 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
     _nova_active_slot   = outer_slot;
     _nova_fail_top      = outer_fail;
     _nova_interrupt_top = outer_interrupt;
+    _nova_current_handler_iframe = outer_iframe;
+    _nova_active_finalizer_stack = outer_finalizers;
     _nova_error_state_p = outer_error;
     nova_effect_snapshot_restore(&outer_effects);
 
@@ -3014,6 +3054,11 @@ static void _nova_resume_restore_step_tls(void* vctx) {
      * on fiber-stack (longjmp across mco-boundary = UB). */
     _nova_fail_top      = q->fiber_fail_top[i];
     _nova_interrupt_top = q->fiber_interrupt_top[i];
+    /* Registry 221.1 №1988 (class): these two used to be left in TLS across
+     * the resume; they point into this fiber's own stack, so the saved value
+     * is the right one on any worker. */
+    _nova_current_handler_iframe  = q->fiber_handler_iframe[i];
+    _nova_active_finalizer_stack  = q->fiber_finalizer_stack[i];
     _nova_active_scope  = q;
     _nova_active_slot   = i;
     /* Plan 201 trace-per-fiber: point the active error-state pointer at
@@ -3043,6 +3088,8 @@ static void _nova_resume_save_step_tls(void* vctx) {
     /* Save fiber's current fail/interrupt state back into its slot. */
     q->fiber_fail_top[i]      = _nova_fail_top;
     q->fiber_interrupt_top[i] = _nova_interrupt_top;
+    q->fiber_handler_iframe[i]  = _nova_current_handler_iframe;
+    q->fiber_finalizer_stack[i] = _nova_active_finalizer_stack;
 }
 
 /* Single round-robin pass: resume each live fiber in the queue ONCE.
@@ -5214,8 +5261,12 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
     if (mco_running()) {
         /* Plan 22 Ф.4 (D93): production path через park-on-uv_timer.
          * После D92 (Plan 22 Ф.5) _nova_active_scope всегда non-NULL
-         * в user-code; fiber без scope — это runtime bug. */
-        if (!_nova_active_scope || _nova_active_slot < 0) {
+         * в user-code; fiber без scope — это runtime bug.
+         * Registry 221.1 №1988 (class): fetch the pair ONCE — the accessor is a
+         * real call, and nothing can suspend between these reads. */
+        NovaFiberQueue* _sc = _nova_active_scope;
+        int             _sl = _nova_active_slot;
+        if (!_sc || _sl < 0) {
             fprintf(stderr,
                 "nova: FATAL Time.sleep called in fiber without active scope "
                 "(D92 invariant violated)\n");
@@ -5224,9 +5275,9 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
         /* Plan 83.11 Ф.3: route to centralized driver if started, otherwise
          * fallback to legacy per-worker path (bootstrap/single-thread mode). */
         if (nova_driver_is_started()) {
-            _nova_sleep_via_driver(_nova_active_scope, _nova_active_slot, ms);
+            _nova_sleep_via_driver(_sc, _sl, ms);
         } else {
-            _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
+            _nova_sleep_via_libuv(_sc, _sl, ms);
         }
         return NOVA_UNIT;
     } else if (_nova_active_scope) {

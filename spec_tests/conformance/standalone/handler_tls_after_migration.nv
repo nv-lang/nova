@@ -1,0 +1,77 @@
+// handler_tls_after_migration.nv — registry 221.1 №1986: an effect handler
+// installed by `with` must survive the fiber being resumed on another worker
+// thread while the effect call is on its stack.
+//
+// Before the fix the generated dispatch cached the ADDRESS of the
+// thread-local handler slot across calls. A fiber that suspended inside the
+// effect and resumed on another OS thread then read the old thread's slot
+// (empty), and the detached fiber died with
+//   `unhandled effect Journal.write: no active handler`.
+//
+// Six rounds of six detached workers on NOVA_MAXPROCS=4, each worker doing
+// 96 steps with two or three Journal.write calls per step; the handler sleeps
+// 1 ms inside the effect, which is the suspension point. More runnable fibers
+// than worker threads makes the scheduler move a resumed fiber to another
+// thread. On the pre-fix compiler this fixture lost a worker in 10/10 runs.
+//
+// ENV NOVA_MAXPROCS=4
+// EXPECT_STDOUT all rounds committed
+
+module standalone.handler_tls_after_migration
+
+import std.concurrency.nvchan.{Chan, ChanTx}
+
+type Journal effect {
+    fn write(step int) -> ()
+}
+
+fn journal_for() -> Effect[Journal] {
+    effect Journal {
+        write(step) -> () { 1.to_millis().sleep() }
+    }
+}
+
+fn commit(step int) Journal -> () {
+    for copy in 0..(2 + step % 2) {
+        Journal.write(step * 10 + copy)
+    }
+}
+
+fn worker(id int, done ChanTx[int]) Time -> () {
+    for step in 0..96 {
+        with Journal = journal_for() {
+            commit(step)
+        }
+        if step % 4 == 0 { 2.to_millis().sleep() }
+    }
+    ro sent = done.send(id)
+}
+
+fn round(workers int) Detach Time Io -> bool {
+    ro done = Chan[int].new(workers)
+    for id in 0..workers {
+        detach { worker(id, done.tx) }
+    }
+    mut got = 0
+    ro deadline = Time.now().unix_millis() + 5000
+    while got < workers {
+        match done.rx.try_recv() {
+            Some(id) => { got = got + 1 }
+            None => {
+                if Time.now().unix_millis() >= deadline { return false }
+                1.to_millis().sleep()
+            }
+        }
+    }
+    true
+}
+
+fn main() Detach Time Io -> () {
+    for r in 0..6 {
+        if !round(6) {
+            println("round ${r} lost a worker")
+            return
+        }
+    }
+    println("all rounds committed")
+}

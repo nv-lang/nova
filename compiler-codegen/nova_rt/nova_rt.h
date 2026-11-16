@@ -10,6 +10,36 @@
 #include <math.h>     /* D74: f64.sqrt()/sin()/cos()/etc. → libm */
 #include <float.h>    /* Plan 38: f64.MAX (DBL_MAX) / f64.EPSILON / etc. */
 #include "cast.h"     /* План 07: float→int saturation helpers */
+
+/* ─── Effect-handler TLS slots: re-read the address on every access ───
+ *
+ * A `_nova_handler_<E>` slot is `__declspec(thread)` / `__thread`, i.e. it
+ * belongs to the OS THREAD. A Nova fiber, however, can be suspended inside
+ * an effect call and resumed on another worker thread (M:N scheduler). The
+ * runtime restores the fiber's handler values into the destination thread's
+ * slots, but any address of the OLD thread's slot that the optimizer cached
+ * across the suspension point still points at the old TLS block. There the
+ * slot is empty (or holds another fiber's handler), so the next dispatch
+ * takes the `unhandled effect` panic path (registry 221.1 №1988).
+ *
+ * clang -O2 legally hoists `lea rcx,[tls_block+offset]` out of a loop: C
+ * semantics say the thread cannot change under a call. Nova fibers break
+ * that assumption. `volatile` does not help (the address is still loop
+ * invariant — measured), so every access goes through a noinline accessor:
+ * the call happens at the point of use, reads the current thread's TLS, and
+ * cannot be hoisted or CSE'd by the optimizer. */
+#if defined(__clang__) || defined(__GNUC__)
+#  define NOVA_NOINLINE __attribute__((noinline))
+#  define NOVA_SLOT_BARRIER() __asm__ __volatile__("" ::: "memory")
+#elif defined(_MSC_VER)
+#  include <intrin.h>
+#  define NOVA_NOINLINE __declspec(noinline)
+#  define NOVA_SLOT_BARRIER() _ReadWriteBarrier()
+#else
+#  define NOVA_NOINLINE
+#  define NOVA_SLOT_BARRIER() ((void)0)
+#endif
+
 /* numeric.h снят [M-ptr-raw-access-contract-and-unaligned] item 3
  * (2026-07-08): f64/f32 to_bits/from_bits теперь ЧИСТЫЙ .nv
  * (std/runtime/numeric.nv, unsafe read_unaligned) — C-обёртки больше не
