@@ -1,0 +1,33 @@
+// EXPECT_COMPILE_ERROR E7301
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 №1015 (hunt 2026-09-07, fixed 2026-11-14, wave of task 150):
+// a TYPED slice/spread never lands in a differently-instantiated generic slot
+// — the same base + arity with a differing concrete type-argument is a distinct
+// monomorphization, and accepting it reinterprets the source's bytes (reads
+// past the allocation on a wider element). Literal-only containers stay legal
+// (D55 narrows untyped literals, see p1532); every carrier here is TYPED.
+// Toggle both ways on one binary: NOVA_KILL_MONO_DOOR=1 restores the
+// pre-fix acceptance of every line below.
+module neg.p1015_mono_reinterpret_positions_neg
+
+type Box { ro payload []u8 }
+
+fn show(t []u8) -> int => t.len()
+
+fn make(mut src []int) -> ro []u8 => src
+
+fn main() {
+    ro src []int = [1, 2]
+    // nova:expect E7301 -- bare slice into a local slot
+    ro a []u8 = src
+    // nova:expect E7301 -- spread literal into a local slot
+    ro b []u8 = [...src]
+    // nova:expect E7301 -- spread at an argument position
+    show([...src])
+    // nova:expect E7301 -- spread into a record field
+    ro bx = Box { payload: [...src] }
+    // nova:expect E7301 -- bare slice returned from an arrow body
+    ro out = make(src)
+    println("${a.len()} ${b.len()} ${bx.payload.len()} ${out.len()}")
+}

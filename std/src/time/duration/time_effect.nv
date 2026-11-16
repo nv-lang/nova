@@ -135,8 +135,8 @@ extern "C" fn time_sleep_ms(ms int) -> ()
 fn real_time() -> Effect[Time] {
     effect Time {
         sleep(d Duration) -> () => time_sleep_ms(((d.nanos() + 999_999) / 1_000_000) as int)
-        now() -> Timestamp => { nanos: time_wall_unix_ms() * 1_000_000 }
-        now_monotonic() -> Monotonic => { nanos: time_monotonic_ns() }
+        now() -> Timestamp => { nanos: time_wall_unix_ms() as i64 * 1_000_000 }
+        now_monotonic() -> Monotonic => { nanos: time_monotonic_ns() as i64 }
         local_offset_sec() -> int => time_local_offset_sec()
     }
 }

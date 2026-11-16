@@ -1,0 +1,25 @@
+// EXPECT_COMPILE_ERROR E7301
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 TBD-1 (nova-alula survey item 128 `fixarr_to_vec_arg`,
+// filed 2026-11-14, refused-by-name 2026-11-15 in task 150): a fixed array
+// and a slice are different C representations (a by-value
+// `_NovaFixArr_N_T` struct vs a `Nova_Vec__T*` pointer). Before the door
+// existed, the direct form built C that failed at the clang step with a
+// coordinate useless to the Nova author. The implicit [N]T -> []T
+// conversion is a LANGUAGE question pending its D-block; until then the
+// boundary refuses by name. A literal array building INTO a fixed slot
+// (`ro d [4]u8 = [1, 2, 3, 4]`) stays legal, and the element-copy
+// workaround compiles (the alula carrier's own workaround).
+module neg.tbd1_fixarr_slice_boundary_neg
+
+fn show(t []u8) -> int => t.len() as int
+
+fn main() {
+    ro h [4]u8 = [1, 2, 3, 4]
+    // nova:expect E7301 -- a typed fixed array into a []u8 parameter
+    println("${show(h)}")
+    // the documented workaround compiles: copy into a fresh slice
+    ro boxed []u8 = [h[0], h[1], h[2], h[3]]
+    println("${show(boxed)}")
+}

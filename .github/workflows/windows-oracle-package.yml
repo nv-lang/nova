@@ -40,24 +40,28 @@ jobs:
         with:
           toolchain: "1.85"
 
-      - name: Install Boehm GC for x64 static Windows
+      - name: Build pinned Boehm GC with LARGE_CONFIG for x64 static Windows
         shell: pwsh
         run: |
-          $vcpkg = Join-Path $env:VCPKG_INSTALLATION_ROOT "vcpkg.exe"
-          if (-not (Test-Path $vcpkg)) {
-            throw "vcpkg.exe not found under VCPKG_INSTALLATION_ROOT=$env:VCPKG_INSTALLATION_ROOT"
-          }
-          & $vcpkg install bdwgc:x64-windows-static "--x-install-root=$PWD\compiler-codegen\vcpkg_installed"
-          if ($LASTEXITCODE -ne 0) { throw "vcpkg bdwgc install failed: exit=$LASTEXITCODE" }
-          $gcRoot = Join-Path $PWD "compiler-codegen\vcpkg_installed\x64-windows-static"
-          foreach ($required in @("lib\gc.lib", "include\gc.h", "include\gc\gc.h", "include\atomic_ops.h", "include\atomic_ops")) {
-            if (-not (Test-Path (Join-Path $gcRoot $required))) { throw "Required Boehm GC payload missing: $required" }
-          }
-          if (Test-Path (Join-Path $gcRoot "lib\atomic_ops.lib")) {
-            Write-Host "vcpkg installed optional atomic_ops.lib"
-          } else {
-            Write-Host "No atomic_ops.lib: x86_64 atomics are inline; GC smoke test validates this layout."
-          }
+          $gcSource = Join-Path $PWD "compiler-codegen/nova_rt/gc"
+          $gcBuild = Join-Path $env:RUNNER_TEMP "oracle-gc-build"
+          $gcRoot = Join-Path $PWD "compiler-codegen/vcpkg_installed/x64-windows-static"
+          $atomic = Join-Path $PWD "compiler-codegen/nova_rt/libatomic_ops/src"
+          cmake -S $gcSource -B $gcBuild -A x64 -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF -Denable_large_config=ON "-DCMAKE_POLICY_VERSION_MINIMUM=3.5" -DCMAKE_POLICY_DEFAULT_CMP0091=NEW -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded "-DCMAKE_C_FLAGS=/I`"$atomic`""
+          if ($LASTEXITCODE -ne 0) { throw "Boehm GC configuration failed: exit=$LASTEXITCODE" }
+          cmake --build $gcBuild --config Release --target gc --parallel
+          if ($LASTEXITCODE -ne 0) { throw "Boehm GC build failed: exit=$LASTEXITCODE" }
+          $include = New-Item -ItemType Directory -Force (Join-Path $gcRoot "include")
+          $lib = New-Item -ItemType Directory -Force (Join-Path $gcRoot "lib")
+          $gcInclude = New-Item -ItemType Directory -Force (Join-Path $include "gc")
+          Copy-Item (Join-Path $gcBuild "Release/gc.lib") $lib
+          Copy-Item (Join-Path $gcSource "include/gc*.h") $gcInclude
+          Copy-Item (Join-Path $gcSource "include/extra/gc*.h") $include
+          Copy-Item (Join-Path $atomic "atomic_ops*.h") $include
+          Copy-Item (Join-Path $atomic "atomic_ops") $include -Recurse
+          $version = git -C $gcSource describe --tags --always
+          "Boehm GC: $version, x64 MSVC Release, static library and CRT, LARGE_CONFIG" |
+            Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
       - name: Build Nova CLI and LSP from dispatched source
         shell: pwsh
@@ -96,6 +100,12 @@ jobs:
             }
             if (-not ($archive.Entries | Where-Object { $_.FullName.Replace('\', '/') -eq "nova-oracle-${{ env.NOVA_ORACLE_VERSION }}-windows-x86_64/nova.exe" })) {
               throw "Package lacks its top-level nova.exe"
+            }
+            $paths = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
+            foreach ($notice in @("bdwgc-README.md", "libatomic_ops-LICENSE", "libatomic_ops-COPYING")) {
+              if ("${roots}/THIRD_PARTY/$notice" -notin $paths) {
+                throw "Missing Boehm package notice: $notice"
+              }
             }
           } finally {
             $archive.Dispose()

@@ -477,9 +477,6 @@ pub fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                             c.arg("-L").arg(lib);
                         }
                     }
-                    c.arg("-lgc");
-                    #[cfg(target_os = "linux")]
-                    c.arg("-lpthread");
                 }
             }
             // Plan 115 D214 [M-115-ffi-build-pipeline]: user FFI flags
@@ -568,6 +565,13 @@ pub fn build_command(tc: &Toolchain, opts: &BuildOpts) -> Command {
                 for lib in &ffi.libs {
                     c.arg(format!("-l{}", lib));
                 }
+            }
+            // Unix linkers resolve static archives after their consumers.
+            #[cfg(not(target_os = "windows"))]
+            if opts.gc_kind == GcKind::Boehm {
+                c.arg("-lgc");
+                #[cfg(target_os = "linux")]
+                c.arg("-lpthread");
             }
             c
         }

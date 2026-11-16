@@ -372,8 +372,21 @@ foreach ($lic in @("LICENSE", "LICENSE-APACHE", "LICENSE-MIT")) {
     }
 }
 $ThirdPartyDir = Join-Path $RepoRoot "THIRD_PARTY"
+$DstThirdParty = Join-Path $StageDir "THIRD_PARTY"
 if (Test-Path $ThirdPartyDir) {
-    Copy-Item $ThirdPartyDir (Join-Path $StageDir "THIRD_PARTY") -Recurse
+    Copy-Item $ThirdPartyDir $DstThirdParty -Recurse
+}
+$GcNotices = @{
+    "bdwgc-README.md" = "gc/README.md"
+    "libatomic_ops-LICENSE" = "libatomic_ops/LICENSE"
+    "libatomic_ops-COPYING" = "libatomic_ops/COPYING"
+}
+foreach ($notice in $GcNotices.GetEnumerator()) {
+    $source = Join-Path $SrcNovaRt $notice.Value
+    if (Test-Path -LiteralPath $source) {
+        New-Item -ItemType Directory -Force -Path $DstThirdParty | Out-Null
+        Copy-Item -LiteralPath $source -Destination (Join-Path $DstThirdParty $notice.Key)
+    }
 }
 
 # ---------- 8. Zip + sha256 ----------

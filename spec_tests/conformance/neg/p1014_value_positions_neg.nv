@@ -1,0 +1,45 @@
+// EXPECT_COMPILE_ERROR E_IMPLICIT_NARROWING
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//
+// Registry 221.1 №1014 residual positions (hunt 2026-09-07, fixed 2026-11-14,
+// task 150): every position where a value lands in a DECLARED type now routes
+// through the same compatibility door. This fixture pins the positions the
+// 2026-09 hunt found SILENT that no later wave had closed: the `??` rhs, the
+// effect-handler op body, a parameter's default value, a variadic element, an
+// explicit turbofish argument and a typed `for` binding. Every line is a
+// non-literal `n int = 300` into a `u8` slot unless said otherwise.
+module neg.p1014_value_positions_neg
+
+type Meter effect {
+    fn read() -> u8
+}
+
+fn none_u8(x int) -> Option[u8] => if x > 0 { Some(1) } else { None }
+
+// nova:expect E_IMPLICIT_NARROWING -- a parameter's default value is the omitted argument
+fn take(x u8 = WIDE) -> u8 => x
+
+fn total(...xs []u8) -> int => 1
+
+fn pass[T](x T) -> ro T => x
+
+const WIDE int = 300
+
+fn main() Meter -> () {
+    ro n int = 300
+    // nova:expect E_IMPLICIT_NARROWING -- `??` right-hand side into the unwrapped slot
+    ro c u8 = none_u8(-1) ?? n
+    ro d = take()
+    // nova:expect E_IMPLICIT_NARROWING -- effect-handler op body against its declared -> u8
+    ro v = with Meter = effect Meter { read() -> u8 => n } { 0 as u8 }
+    // nova:expect E_IMPLICIT_NARROWING -- variadic element into ...xs []u8
+    total(n, 1)
+    // nova:expect E_IMPLICIT_NARROWING -- explicit turbofish binds T=u8 for this call
+    ro t = pass[u8](n)
+    // nova:expect E_IMPLICIT_NARROWING -- typed for-binding over a wider element
+    ro src []int = [300]
+    for x u8 in src {
+        println("${x}")
+    }
+    println("${c} ${v} ${t}")
+}

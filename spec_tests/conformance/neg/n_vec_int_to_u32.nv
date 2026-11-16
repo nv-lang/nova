@@ -1,4 +1,8 @@
-// EXPECT_COMPILE_ERROR E_ARG_ELEM_TYPE_MISMATCH
+// EXPECT_COMPILE_ERROR E7301
+// (No.1015, task 150: the compatibility door now judges generic instancing
+// FIRST, so these carriers answer the door's E7301 instead of the old
+// argument-pass E_ARG_ELEM_TYPE_MISMATCH -- same refusal, same carriers,
+// one rule earlier in the pipeline.)
 //
 // Passing a whole Vec[int] where Vec[u32] is expected is a pointer
 // reinterpretation (8-byte slots read as 4-byte) — must be a type error.

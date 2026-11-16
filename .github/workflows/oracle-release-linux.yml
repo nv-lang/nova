@@ -1,0 +1,52 @@
+name: oracle-release-linux
+
+on:
+  push:
+    tags: ['oracle-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and verify the Linux archive and Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#oracle-v}
+          git rev-parse HEAD
+          mkdir -p dist/oracle
+          docker build -f docker/release/Dockerfile -t "nova-oracle:$version" .
+          docker run --rm --entrypoint bash \
+            -v "$PWD/docker/release:/release:ro" -v "$PWD/dist/oracle:/out" \
+            "nova-oracle:$version" /release/package-linux.sh "$version" /out
+
+      - name: Archive matching sources and pinned submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="nova-oracle-${GITHUB_REF_NAME#oracle-v}-src"
+          archive="$RUNNER_TEMP/$name.tar"
+          git archive --format=tar --prefix="$name/" -o "$archive" HEAD
+          git submodule foreach --recursive '
+            git archive --format=tar --prefix="'"$name"'/$displaypath/" -o "'"$RUNNER_TEMP"'/oracle-submodule.tar" HEAD &&
+            tar --concatenate --file="'"$archive"'" "'"$RUNNER_TEMP"'/oracle-submodule.tar"
+          '
+          gzip -n < "$archive" > "dist/oracle/$name.tar.gz"
+          tar -tzf "dist/oracle/$name.tar.gz" > "$RUNNER_TEMP/oracle-source-entries"
+          for module in gc libatomic_ops libuv; do
+            grep -Fqx "$name/compiler-codegen/nova_rt/$module/README.md" "$RUNNER_TEMP/oracle-source-entries"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-and-source-${{ github.sha }}
+          path: dist/oracle/*.tar.gz
+          if-no-files-found: error

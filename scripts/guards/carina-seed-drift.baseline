@@ -116,3 +116,4 @@ novac/src/lower/lower_with.nv # task 274 (p274 supervised-value wave merge 2026-
 novac/src/parse/closure.nv # task 274 (p274 supervised-value wave merge 2026-11-14: D414 sec.4 value + D22 closure-light + the r3 exit drain; seed re-pins at the next Carina release)
 novac/src/pipeline/supervised_value_test.nv # task 274 (p274 supervised-value wave merge 2026-11-14: D414 sec.4 value + D22 closure-light + the r3 exit drain; seed re-pins at the next Carina release)
 novac/src/check/try_rules.nv # task 274 (p274 supervised-value wave merge 2026-11-14: the K3 split-exit refusal lands here; seed re-pins at the next Carina release)
+std/src/time/duration/time_effect.nv # task 150 (explicit i64 conversions for Time handlers until the seed re-pins)

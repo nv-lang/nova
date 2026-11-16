@@ -62,9 +62,7 @@ name: nova-gate
 # compiler-codegen/src/test_runner.rs:942, вызывается из cmd_build И из
 # test-раннера одинаково — nova-cli/src/main.rs:4997) — нужен только
 # компилятор C (clang, уже ставится). Поэтому апт-набор здесь — РОВНО
-# как в docs/guide/linux-build.md, без доп. TLS/brotli пакетов (в отличие от
-# nova-test-regression.yml, где они нужны СТАРОМУ std/tls + std/encoding/
-# compress/brotli, не затронутым этим гейтом).
+# как в docs/guide/linux-build.md, без доп. TLS/brotli пакетов.
 #
 # Один job, шаги последовательно (не два параллельных job): общий кэш
 # cargo/target без artifact-передачи между job'ами, собранный бинарь `nova`

@@ -1741,3 +1741,4 @@ blockers=117
 # match arm not recognized), BLOKIRUET TEG: DA. blockers 90->91.
 # 2026-09-21, integrator: row 1243 added (assistant, else-if chain in
 # value position not parsed), BLOKIRUET TEG: DA. blockers 92->93.
+# 2026-11-15, task 150 (release/oracle-0.1.5): row 1983 added (fixarr->slice boundary refusal step; K1), BLOKIRUET TEG: NET (refusal half frozen by fixture; the conversion half awaits the owner's D-block). Tag-blocker count unchanged (NET).

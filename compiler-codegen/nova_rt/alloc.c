@@ -75,3 +75,8 @@ size_t   nova_gc_heap_size(void) { return 0; }
 void     nova_gc_collect(void)   { /* no-op: no GC to invoke */ }
 /* Plan 57.C.2: under malloc — нет collect-cycle, последний pause всегда 0. */
 uint64_t nova_gc_last_pause_ns(void) { return 0; }
+void nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns) {
+    if (count) *count = 0;
+    if (total_ns) *total_ns = 0;
+    if (max_ns) *max_ns = 0;
+}

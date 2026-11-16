@@ -7526,6 +7526,46 @@ impl<'a> TypeCheckCtx<'a> {
             self.walk_typeref(&p.ty, &gs, errors);
             if let Some(dv) = &p.default {
                 self.walk_expr(dv, &gs, errors);
+                // №1014 (hunt 2026-09-07, probe p37, fixed 2026-11-14): the
+                // default value IS the argument when the caller omits it —
+                // judge it by the same door an explicit argument takes. It
+                // used to be name-resolved only, so `fn take(x u8 = WIDE)`
+                // with `WIDE int = 300` silently stored a truncated `u8`.
+                let empty_scope = HashMap::new();
+                match self.assignable(dv, &p.ty, &gs, &gs, &empty_scope) {
+                    Compat::Bad { found } => {
+                        errors.push(
+                            Diagnostic::new(
+                                format!(
+                                    "[E7301] default value of parameter `{}` has type \
+                                     `{}`, but the parameter is declared `{}`",
+                                    p.name,
+                                    found,
+                                    typeref_display(&p.ty),
+                                ),
+                                dv.span,
+                            ),
+                        );
+                    }
+                    Compat::Narrowing { from, to } => {
+                        errors.push(
+                            Diagnostic::new(
+                                format!(
+                                    "[E_IMPLICIT_NARROWING] default value of parameter \
+                                     `{}` has type `{}` — the parameter is `{}`; {}; use \
+                                     an explicit `... as {}` cast",
+                                    p.name,
+                                    from,
+                                    to,
+                                    numeric_change::numeric_change_why(&from, &to),
+                                    to,
+                                ),
+                                dv.span,
+                            ),
+                        );
+                    }
+                    _ => {}
+                }
             }
         }
         if let Some(rt) = &fd.return_type {
@@ -9558,6 +9598,28 @@ impl<'a> TypeCheckCtx<'a> {
                     // №959: explicit `return X` внутри arrow-тела-блока.
                     if !fd.returns_receiver {
                         self.check_return_compat_in_expr(e, ret, &gs, &scope, errors);
+                        // №1014 (hunt 2026-09-07, probe p51, fixed 2026-11-14): a
+                        // bare VALUE arrow body (`fn make(src []int) -> ro []u8 => src`)
+                        // was judged NOWHERE — in_expr recurses only into composite
+                        // shapes (branch tails of if/match/loops/blocks), and a bare
+                        // tail reached neither that nor the block-tail door. The
+                        // body IS the return value: judge non-composite bodies by
+                        // the same door here, once. D55 names the return a coercion
+                        // position, and the literal exemptions live inside
+                        // `check_return_compat` (№959), so legal literal tails are
+                        // safe; statement exprs are NOT touched (in_expr stays
+                        // silent for them by its own match).
+                        match e.kind {
+                            ExprKind::If { .. }
+                            | ExprKind::IfLet { .. }
+                            | ExprKind::Match { .. }
+                            | ExprKind::While { .. }
+                            | ExprKind::WhileLet { .. }
+                            | ExprKind::Loop { .. }
+                            | ExprKind::For { .. }
+                            | ExprKind::Block(_) => {}
+                            _ => self.check_return_compat(e, ret, &gs, &scope, errors),
+                        }
                     }
                 }
             }
@@ -13142,6 +13204,58 @@ impl<'a> TypeCheckCtx<'a> {
                 // Plan 172.1 §0a (Coalesce): type = unwrapped inner of `a` ≡ type of `b`.
                 // `infer_expr_type` delegates to `b` as the canonical source.
                 // gs-gated: generic fallback stays on legacy.
+                // №1014 (hunt 2026-09-07, probe p32, fixed 2026-11-14): the
+                // equivalence above was ASSUMED, never judged -- `ro v Beta =
+                // none_beta(-1) ?? a` typed the whole coalesce `Beta` (from
+                // `a`'s inner) while `b` was an `Alpha`, and the slot silently
+                // reinterpreted a foreign record (runtime: `nova: out of
+                // memory`). The rhs is a VALUE position: judge it by the same
+                // door against the unwrapped inner of `a`.
+                if let Some(lhs_tr) = self.infer_expr_type(a, scope) {
+                    if let Some((base, args)) = generic_args(&lhs_tr) {
+                        // `??` unwraps Option[T] / Result[T, E] to T (D86).
+                        let inner = match (base.as_str(), args.len()) {
+                            ("Option", 1) => Some(args[0]),
+                            ("Result", 2) => Some(args[0]),
+                            _ => None,
+                        };
+                        if let Some(inner) = inner {
+                            match self.assignable(b, inner, gs, gs, scope) {
+                                Compat::Bad { found } => {
+                                    errors.push(
+                                        Diagnostic::new(
+                                            format!(
+                                                "[E7301] the right-hand side of `??` has \
+                                                 type `{}`, but the left side unwraps to \
+                                                 `{}`",
+                                                found,
+                                                typeref_display(inner),
+                                            ),
+                                            b.span,
+                                        ),
+                                    );
+                                }
+                                Compat::Narrowing { from, to } => {
+                                    errors.push(
+                                        Diagnostic::new(
+                                            format!(
+                                                "[E_IMPLICIT_NARROWING] the right-hand side \
+                                                 of `??` has type `{}` — the left side \
+                                                 unwraps to `{}`; use an explicit \
+                                                 `... as {}` cast",
+                                                from,
+                                                to,
+                                                to,
+                                            ),
+                                            b.span,
+                                        ),
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 if e.id.is_set() {
                     if let Some(tr) = self.infer_expr_type(e, scope) {
                         if !typeref_mentions_any(&tr, gs) {
@@ -14280,7 +14394,71 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // Plan 97 Ф.4 (D142): protocol-литерал — f1_expr walk
             // идентичен.
-            ExprKind::HandlerLit { methods, .. } | ExprKind::ProtocolLit { methods, .. } => {
+            ExprKind::HandlerLit { methods, .. } => {
+                for m in methods {
+                    let mut op_scope = handler_method_scope(scope, m);
+                    match &m.body {
+                        HandlerMethodBody::Expr(e) => {
+                            self.f1_expr(e, gs, &mut op_scope, errors)
+                        }
+                        HandlerMethodBody::Block(b) => {
+                            self.f1_block(b, gs, &mut op_scope, errors)
+                        }
+                    }
+                    // №1014 (hunt 2026-09-07, probes p25/p31, fixed 2026-11-14): a
+                    // handler-literal op body is a RETURN position against the op's
+                    // own declared `-> Type` (mandatory on the literal,
+                    // E_INCOMPLETE_HANDLER_OP_DECL guards it) -- judge it by the
+                    // same door a named fn takes. The body used to be walked only,
+                    // so `effect Meter { read() -> u8 => n }` with `n int` stored a
+                    // truncated `u8`, and a wrong-record body died with
+                    // `nova: out of memory` at runtime.
+                    // A `-> ()` op DISCARDS the body's value (a_q3): a
+                    // trailing expression is legal there — only value-bearing
+                    // declared returns are judged.
+                    let judged = m.ret_ty.as_ref().filter(|r| !matches!(r, TypeRef::Unit(_)));
+                    if let Some(ret) = judged {
+                        // Direct judgement, NOT `check_return_compat`: its №959
+                        // gate silences every non-primitive return (records
+                        // included) to protect inference on named-fn bodies;
+                        // a handler op's `-> Type` is declared on the literal
+                        // itself, so the mismatch is decidable here.
+                        let body_expr = match &m.body {
+                            HandlerMethodBody::Expr(e) => Some(e.clone()),
+                            HandlerMethodBody::Block(b) => b.trailing.as_deref().cloned(),
+                        };
+                        if let Some(be) = body_expr {
+                            match self.assignable(&be, ret, gs, gs, &op_scope) {
+                                Compat::Bad { found } => {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E7301] handler operation `{}` returns `{}`, \
+                                             but it is declared `-> {}`",
+                                            m.name,
+                                            found,
+                                            typeref_display(ret),
+                                        ),
+                                        be.span,
+                                    ));
+                                }
+                                Compat::Narrowing { from, to } => {
+                                    errors.push(Diagnostic::new(
+                                        format!(
+                                            "[E_IMPLICIT_NARROWING] handler operation `{}` \
+                                             returns `{}` — it is declared `-> {}`; use \
+                                             an explicit `... as {}` cast",
+                                            m.name, from, to, to,
+                                        ),
+                                        be.span,
+                                    ));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            ExprKind::ProtocolLit { methods, .. } => {
                 for m in methods {
                     let mut op_scope = handler_method_scope(scope, m);
                     match &m.body {
@@ -15334,6 +15512,12 @@ impl<'a> TypeCheckCtx<'a> {
         // неизвестное / protocol). Транзитный parity-ассерт снимается в Phase B.
         let ann_rt = self.resolved_cat_of(ann, gs);
         let elem_rt = self.resolved_cat_of(&elem_tr, gs);
+        // №1014 p41 UPDATE (2026-11-15, full-suite regression): an annotated
+        // for-binding is a corpus-legal coercion position — std itself writes
+        // `for x i32 in` over int elements (time/civil/tz.nv). The hunt's p41
+        // harm was TWO READINGS of one binding (a codegen defect), not the
+        // acceptance; the narrowing refusal here was reverted and the row
+        // re-scoped in the registry.
         if !cat_compatible_rt(&elem_rt, &ann_rt) {
             errors.push(
                 Diagnostic::new(
@@ -17435,6 +17619,19 @@ impl<'a> TypeCheckCtx<'a> {
             };
             let Some(param) = callee.params.get(pi) else { continue; };
             if param.is_variadic {
+                // №1014 (probe p38): a variadic element lands in the ELEMENT type
+                // of the packed `[]T` — judge it by the same door, applicability
+                // only (this loop is a candidate probe, it pushes no diagnostics;
+                // the definite site below does).
+                let Some(arg) = args.get(ai) else { continue; };
+                let Some((_, va)) = generic_args(&param.ty) else { continue; };
+                let Some(elem) = va.first() else { continue; };
+                let against_c: &TypeRef = if arg.is_spread() { &param.ty } else { elem };
+                if let Compat::Bad { .. } | Compat::Narrowing { .. } =
+                    self.assignable(arg.expr(), against_c, gs, &callee_gs, scope)
+                {
+                    return Some(false);
+                }
                 continue;
             }
             let Some(arg) = args.get(ai) else { continue; };
@@ -19935,11 +20132,109 @@ impl<'a> TypeCheckCtx<'a> {
             let ai = match binding {
                 crate::argbind::ArgBinding::Positional(i)
                 | crate::argbind::ArgBinding::Named(i) => *i,
-                // Variadic собирается в []T, Default — нет arg-выражения.
+                // №1014 (probe p38): the variadic pack carries its arg indices
+                // HERE — judge each packed element against the ELEMENT type of
+                // the declared `[]T`, by the same door every other argument
+                // takes.
+                crate::argbind::ArgBinding::Variadic(indices) => {
+                    let Some(param) = callee.params.get(pi) else { continue };
+                    let Some((_, va)) = generic_args(&param.ty) else { continue };
+                    let Some(elem) = va.first() else { continue };
+                    let elem: &TypeRef = elem;
+                    for &vi in indices {
+                        let Some(arg) = args.get(vi) else { continue };
+                        if arg.expr().span == crate::diag::Span::dummy() { continue; }
+                        // A SPREAD argument packs a whole slice -- judged
+                        // against the FULL `[]T` (a_q3/path_test regression).
+                        let against: &TypeRef = if arg.is_spread() { &param.ty } else { elem };
+                        match self.assignable(arg.expr(), against, gs, &callee_gs, scope) {
+                            Compat::Bad { found } => errors.push(
+                                Diagnostic::new(
+                                    format!(
+                                        "[E7301] cannot pass `{}` as variadic element of \
+                                         `{}` of type `{}`",
+                                        found,
+                                        param.name,
+                                        typeref_display(&param.ty),
+                                    ),
+                                    arg.expr().span,
+                                )
+                                .with_note_at(
+                                    format!("parameter `{}` declared here", param.name),
+                                    param.span,
+                                ),
+                            ),
+                            Compat::Narrowing { from, to } => errors.push(
+                                Diagnostic::new(
+                                    format!(
+                                        "[E_IMPLICIT_NARROWING] variadic element of `{}` \
+                                         has type `{}` — the element type is `{}`; use \
+                                         an explicit `... as {}` cast",
+                                        param.name, from, to, to,
+                                    ),
+                                    arg.expr().span,
+                                )
+                                .with_note_at(
+                                    format!("parameter `{}` declared here", param.name),
+                                    param.span,
+                                ),
+                            ),
+                            _ => {}
+                        }
+                    }
+                    continue;
+                }
                 _ => continue,
             };
             let Some(param) = callee.params.get(pi) else { continue; };
             if param.is_variadic {
+                // №1014 (hunt 2026-09-07, probe p38, fixed 2026-11-14): a variadic
+                // element lands in the ELEMENT type of the packed `[]T` -- the same
+                // door every other argument takes. The loop used to skip variadic
+                // params entirely, so `total(n, 1)` with `...xs []u8` silently
+                // stored a truncated `u8` element.
+                let Some(arg) = args.get(ai) else { continue; };
+                if arg.expr().span == crate::diag::Span::dummy() { continue; }
+                let Some((_, va)) = generic_args(&param.ty) else { continue; };
+                let Some(elem) = va.first() else { continue; };
+                let elem: &TypeRef = elem;
+                let against: &TypeRef = if arg.is_spread() { &param.ty } else { elem };
+                match self.assignable(arg.expr(), against, gs, &callee_gs, scope) {
+                    Compat::Bad { found } => {
+                        errors.push(
+                            Diagnostic::new(
+                                format!(
+                                    "[E7301] cannot pass `{}` as variadic element of `{}` \
+                                     of type `{}`",
+                                    found, param.name, typeref_display(&param.ty),
+                                ),
+                                arg.expr().span,
+                            )
+                            .with_note_at(
+                                format!("parameter `{}` declared here", param.name),
+                                param.span,
+                            ),
+                        );
+                    }
+                    Compat::Narrowing { from, to } => {
+                        errors.push(
+                            Diagnostic::new(
+                                format!(
+                                    "[E_IMPLICIT_NARROWING] variadic element of `{}` has \
+                                     type `{}` — the element type is `{}`; use an \
+                                     explicit `... as {}` cast",
+                                    param.name, from, to, to,
+                                ),
+                                arg.expr().span,
+                            )
+                            .with_note_at(
+                                format!("parameter `{}` declared here", param.name),
+                                param.span,
+                            ),
+                        );
+                    }
+                    _ => {}
+                }
                 continue;
             }
             let Some(arg) = args.get(ai) else { continue; };
@@ -19970,7 +20265,32 @@ impl<'a> TypeCheckCtx<'a> {
             // №375 (window p375-ptr2): `&ro_x` passed where a `*mut T` param
             // is declared — same source-check as the let-annotation site.
             self.check_addrof_mut_from_ro_source(arg.expr(), &param.ty, errors);
-            let arg_compat = self.assignable(arg.expr(), &param.ty, gs, &callee_gs, scope);
+            // №1014 (hunt 2026-09-07, probe p39, fixed 2026-11-14): an explicit
+            // turbofish (`pass[u8](n)`) binds the callee generics for THIS call;
+            // the argument door must judge the BOUND type, not the bare typevar
+            // (a generic type-param resolves permissive inside `assignable`, so
+            // the narrowing door never fired on `n int` into `T=u8`). Use the
+            // call's resolved substitution when it is COMPLETE for this param
+            // (no residual typevar mention) — otherwise keep the declared type
+            // (absence is honest).
+            let bound_ty_owned;
+            let checked_ty: &TypeRef = if typeref_mentions_any(&param.ty, &callee_gs) {
+                match &arg_subst {
+                    Some(s) => {
+                        let sub = crate::const_fn_trampoline::subst_type_ref_pub(&param.ty, s);
+                        if !typeref_mentions_any(&sub, &callee_gs) {
+                            bound_ty_owned = sub;
+                            &bound_ty_owned
+                        } else {
+                            &param.ty
+                        }
+                    }
+                    None => &param.ty,
+                }
+            } else {
+                &param.ty
+            };
+            let arg_compat = self.assignable(arg.expr(), checked_ty, gs, &callee_gs, scope);
             // #1452: a `#coerce` view accepted just above must not bind a writable param.
             self.check_coerce_view_into_mut(
                 arg.expr(),
@@ -19986,7 +20306,7 @@ impl<'a> TypeCheckCtx<'a> {
                             format!(
                                 "[E7301] cannot pass `{}` as argument `{}` \
                                  of type `{}`",
-                                found, param.name, typeref_display(&param.ty),
+                                found, param.name, typeref_display(checked_ty),
                             ),
                             arg.expr().span,
                         )
@@ -20077,9 +20397,15 @@ impl<'a> TypeCheckCtx<'a> {
                                         &self.resolved_cat_of(pa, &callee_gs),
                                         &self.resolved_cat_of(aa, gs),
                                     ) {
+                                        // compatibility-door wrapper judges the
+                                        // same instancing first on this path, so
+                                        // this arm answers the door's E7301; the
+                                        // three NEG fixtures pin the E7301 text.
                                         errors.push(
                                             Diagnostic::new(
                                                 format!(
+                                                    // nova:shadowed-by E7301 -- No.1015
+                                                    // nova:shadowed-by E7301 (No.1015; the 3 NEG fixtures pin the E7301 text).
                                                     "[E_ARG_ELEM_TYPE_MISMATCH] cannot \
                                                      pass `{}` as argument `{}` of type \
                                                      `{}` — generic type argument \
@@ -22617,6 +22943,23 @@ impl<'a> TypeCheckCtx<'a> {
         }
         match self.assignable(value, ret, gs, gs, scope) {
             Compat::Bad { found } => {
+                // №1015 (probe p51, 2026-11-14): a DISTINCT-MONOMORPHIZATION
+                // refusal must pass the gate below — the reinterpretation harm
+                // (reading past the allocation) is exactly the class the gate
+                // was never asked about, and it fires on containers, which
+                // `is_primitive_lowerable` excludes. Re-derive the mono verdict
+                // here: if it is the mono door that refused, report directly.
+                if self.mono_mismatch_found(value, ret, gs, gs, scope).is_some() {
+                    errors.push(Diagnostic::new(
+                        format!(
+                            "[E7301] cannot return value of type `{}` from a function                              declared `-> {}` — the generic type argument differs; a                              generic instantiation is a distinct monomorphized type,                              so this would reinterpret its contents",
+                            found,
+                            render_type_ref(ret),
+                        ),
+                        value.span,
+                    ));
+                    return;
+                }
                 // №959, вторая находка корпуса (2026-09-05): АНОНИМНЫЙ ЛИТЕРАЛ
                 // в позиции возврата — это D55-coercion, а не несовпадение.
                 // Таблица D55 «Позиции с явно ожидаемым типом» прямо называет
@@ -22726,6 +23069,20 @@ impl<'a> TypeCheckCtx<'a> {
         // #1451: a container whose own value reaches `ret` through `#coerce` is
         // coerced whole, like the same value in a `let`.
         if self.coerce_return_container(e, ret, gs, scope) {
+            // №1015 (probe p51): the container bail must not silence the
+            // instancing re-check — `=> src` with `src []int` under `-> ro []u8`
+            // reaches exactly this early return and nothing else judges it.
+            if let Some(found) = self.mono_mismatch_found(e, ret, gs, gs, scope) {
+                errors.push(Diagnostic::new(
+                    format!(
+                        "[E7301] cannot return value of type `{}` from a function \
+                         declared `-> {}`",
+                        found,
+                        typeref_display(ret),
+                    ),
+                    e.span,
+                ));
+            }
             return;
         }
         match &e.kind {
@@ -23345,7 +23702,218 @@ impl<'a> TypeCheckCtx<'a> {
         Some((tname, idx))
     }
 
+    /// Registry 221.1 №1015 (hunt 2026-09-07; fixed 2026-11-14): the ONE
+    /// compatibility door must also judge GENERIC INSTANCING. The old
+    /// instancing check lived ONLY in the argument pass (the
+    /// `E_ARG_ELEM_TYPE_MISMATCH` block there), so the same memory
+    /// reinterpretation stayed silent in a local, a field, a return value, a
+    /// spread literal and a bare slice (`ro a []u8 = src` with `src []int`
+    /// reads past the allocation). This wrapper keeps every other verdict of
+    /// the door untouched and adds exactly one narrow re-check on the door's
+    /// own accept: when both sides are the same generic type (base name +
+    /// arity) but a concrete type-argument is a DISTINCT monomorphization,
+    /// the value would be reinterpreted -- refused with the same diagnostic
+    /// the argument pass already speaks (registry: all four forms must be
+    /// judged by the SAME rule, not a second copy).
     fn assignable(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        expr_gs: &GenericScope,
+        exp_gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Compat {
+        if mono_door_disabled() {
+            return self.assignable_no_mono(expr, expected, expr_gs, exp_gs, scope);
+        }
+        let verdict = self.assignable_no_mono(expr, expected, expr_gs, exp_gs, scope);
+        if matches!(verdict, Compat::Ok | Compat::Unknown) {
+            if let Some(found) = self.mono_mismatch_found(expr, expected, expr_gs, exp_gs, scope) {
+                return Compat::Bad { found };
+            }
+            // Registry 221.1 TBD-1 (nova-alula survey item 128
+            // `fixarr_to_vec_arg`, task 150, 2026-11-15): a fixed array and a
+            // slice are DIFFERENT C representations (a by-value
+            // `_NovaFixArr_N_T` struct vs a `Nova_Vec__T*` pointer) — passing
+            // one where the other is declared is a CC-FAIL inside generated
+            // C with a coordinate useless to the Nova author. The implicit
+            // [N]T -> []T conversion is a LANGUAGE question (needs its own
+            // D-block), so the door refuses by name until that decision:
+            // the diagnostic names the fix (a fresh-slice copy or an [N]T
+            // parameter).
+            if let Some(found) = self.fixarr_slice_mismatch_found(expr, expected, scope) {
+                return Compat::Bad { found };
+            }
+        }
+        verdict
+    }
+
+    /// The instancing re-check of №1015: `Some(message)` when both sides
+    /// share the generic base and arity but at least one concrete
+    /// type-argument is a distinct monomorphization. Scalar coercion
+    /// (`int`→`u32` outside a generic) stays NOT flagged: the folded
+    /// `resolved_cat_of` comparison cannot see width-only differences, and
+    /// that value-level truncation is the door's own business (D491 doors).
+    /// №1015 caveat: an array/map literal of UNTYPED numeric literals narrows
+    /// by D55 (`[1, 2, 3]` into `[]u8` is a coercion position, registry p1532
+    /// fixture) — the mono door must not fire there. A TYPED source (a bound
+    /// slice, a spread) is the reinterpretation class and still fires.
+    fn is_untyped_literal_container(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::ArrayLit(elems) => !elems.is_empty()
+                && elems.iter().all(|el| match el {
+                    ArrayElem::Item(x) => matches!(
+                        x.kind,
+                        ExprKind::IntLit(_) | ExprKind::FloatLit(_)
+                    ),
+                    ArrayElem::Spread(_) => false,
+                }),
+            // №1015 regression found by the full suite (p1517 & kin, fixed
+            // 2026-11-15): a BARE VARIANT CTOR with untyped literal payloads
+            // (`Some(200)` under `-> Option[u8]`, hex `0x…` included) narrows
+            // by D55 — `variant_ctor_compat` already judges the payload per
+            // element. `None` (no args) is vacuously all-literal. A dotted
+            // ctor and any non-literal payload stay judged.
+            ExprKind::Call { func, args, .. } => {
+                let bare_ctor = matches!(&func.kind, ExprKind::Ident(_));
+                bare_ctor
+                    && args.iter().all(|a| match a {
+                        CallArg::Item(x) => matches!(
+                            x.kind,
+                            ExprKind::IntLit(_)
+                                | ExprKind::FloatLit(_)
+                                | ExprKind::HexBlobLit(_)
+                                | ExprKind::BoolLit(_)
+                                | ExprKind::CharLit(_)
+                                | ExprKind::StrLit(_)
+                                | ExprKind::UnitLit
+                        ),
+                        _ => false,
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// TBD-1: `Some(found-type)` when the value is a FIXED ARRAY and the
+    /// slot a SLICE, or the reverse — the two never reinterpret safely (a
+    /// struct by value vs a heap Vec pointer). The directional conversion
+    /// is a language decision pending its D-block; until then the door
+    /// refuses with the fix spelled out.
+    fn fixarr_slice_mismatch_found(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<String> {
+        // An ARRAY LITERAL in a fixed slot is a legitimate BUILD (a_q3's
+        // `mut out [3]Holder2 = [...]`): only a TYPED slice value reaching a
+        // fixed slot (or a typed fixed reaching a slice) is the boundary
+        // refusal.
+        if matches!(expr.kind, ExprKind::ArrayLit(_)) {
+            return None;
+        }
+        let found_tr = self.infer_expr_type(expr, scope)?;
+        let kind_of = |t: &TypeRef| match t {
+            TypeRef::FixedArray(..) => Some("fixed"),
+            TypeRef::Array(..) => Some("slice"),
+            _ => None,
+        };
+        // `Compat::Bad.found` is the FOUND-TYPE string: the callers spell
+        // their own E7301 around it (same convention as the №1015 mono
+        // door); the representation reasoning lives in the fixtures and the
+        // registry row.
+        match (kind_of(&found_tr), kind_of(expected)) {
+            // ONLY the cross pair refuses: slice->slice and fixed->fixed are
+            // legitimate (the kind_of arms above are exact matches).
+            (Some(k), Some(e)) if k != e => Some(Self::typeref_display(&found_tr)),
+            _ => None,
+        }
+    }
+
+    fn mono_mismatch_found(
+        &self,
+        expr: &Expr,
+        expected: &TypeRef,
+        expr_gs: &GenericScope,
+        exp_gs: &GenericScope,
+        scope: &HashMap<String, TypeRef>,
+    ) -> Option<String> {
+        if Self::is_untyped_literal_container(expr) {
+            return None;
+        }
+        let wrap_recorded = |e: &Expr| {
+            e.id.is_set()
+                && (self.sum_wrap_kinds_buf.borrow().contains_key(&e.id)
+                    || self.coerce_sites_buf.borrow().contains_key(&e.id))
+        };
+        if wrap_recorded(expr) {
+            return None;
+        }
+        // An ArrayLit's conversion happens at the ELEMENT level (p1260): the
+        // list itself carries no site, its items do.
+        if let ExprKind::ArrayLit(elems) = &expr.kind {
+            if elems
+                .iter()
+                .any(|el| matches!(el, ArrayElem::Item(x) if wrap_recorded(x)))
+            {
+                return None;
+            }
+        }
+        // №1015: a spread literal (`[...src]`) has no type of its own in the
+        // inference channel — the door still sees the slot's declared element
+        // type, so resolve the SPREAD SOURCE's slice here: `[...src]` from
+        // `[]int` into a `[]u8` slot reinterprets the source's bytes (the
+        // hunt's p19–p24), and a map spread (`p45`) does the same by key/value
+        // pair.
+        let found_tr = match self.infer_expr_type(expr, scope) {
+            Some(tr) => tr,
+            None => {
+                // №1015 (probe p51): in the return-door's scope the inference
+                // channel has no entry for a bare param Ident — fall back to
+                // the scope's own binding (params/lets are inserted there by
+                // the walker), then to a spread's source slice.
+                if let ExprKind::Ident(n) = &expr.kind {
+                    if let Some(tr) = scope.get(n) {
+                        tr.clone()
+                    } else {
+                        return None;
+                    }
+                } else if let ExprKind::ArrayLit(elems) = &expr.kind {
+                    let src = elems.iter().find_map(|el| match el {
+                        ArrayElem::Spread(src) => Some(src),
+                        _ => None,
+                    })?;
+                    self.infer_expr_type(src, scope)?
+                } else {
+                    return None;
+                }
+            }
+        };
+        let (base_p, args_p) = generic_args(expected)?;
+        let (base_a, args_a) = generic_args(&found_tr)?;
+        if base_p != base_a || args_p.len() != args_a.len() {
+            return None;
+        }
+        for (pa, aa) in args_p.iter().zip(args_a.iter()) {
+            if distinct_mono(
+                &self.resolved_cat_of(pa, exp_gs),
+                &self.resolved_cat_of(aa, expr_gs),
+            ) {
+                // `Compat::Bad.found` is the FOUND TYPE string: the callers
+                // spell their own refusal around it (E7301 with the two type
+                // names). The distinct-monomorphization reasoning lives in
+                // the fixtures and the registry row, not in a type slot.
+                return Some(typeref_display(&found_tr));
+            }
+        }
+        None
+    }
+
+    /// The door's former body: wrap candidates, `#coerce` fallback and the
+    /// direct verdict -- every call site of `assignable` reaches it through
+    /// the №1015 wrapper above.
+    fn assignable_no_mono(
         &self,
         expr: &Expr,
         expected: &TypeRef,
@@ -23911,7 +24479,24 @@ impl<'a> TypeCheckCtx<'a> {
             _ => {}
         }
         let ExprKind::Call { func, args, .. } = &expr.kind else { return };
-        let ExprKind::Ident(name) = &func.kind else { return };
+        // cairo/text (packages sweep 2026-11-10): the QUALIFIED spellings
+        // `Align.Left(...)`-style — `Path[Align, Left]` / `Member{Ident(Align),
+        // Left}` — resolved their base by flat name and could name ANOTHER
+        // module's same-named sum (prelude.protocols' `Some(Align.Left)`
+        // typed cairo.text's Align while the FmtCtx.align field expects
+        // runtime.fmt_buf's; emission built fmt_buf's ctor, the checker's
+        // type said cairo's — CC-FAIL split). Accept the qualified forms with
+        // the SAME guards: the qualifier must equal the EXPECTED sum's own
+        // simple name — the user wrote exactly which sum they meant.
+        let (name, qualifier): (&str, Option<&str>) = match &func.kind {
+            ExprKind::Ident(n) => (n.as_str(), None),
+            ExprKind::Path(parts) if parts.len() == 2 => (parts[1].as_str(), Some(parts[0].as_str())),
+            ExprKind::Member { obj, name: m } if matches!(obj.kind, ExprKind::Ident(_)) => {
+                let ExprKind::Ident(q) = &obj.kind else { unreachable!() };
+                (m.as_str(), Some(q.as_str()))
+            }
+            _ => return,
+        };
         if scope.contains_key(name) {
             return;
         }
@@ -23938,14 +24523,30 @@ impl<'a> TypeCheckCtx<'a> {
         if !generics.is_empty() {
             return;
         }
-        let Some(tname) = path.last() else { return };
-        let Some(td) = self.types_get_here(tname) else { return };
+        let Some(simple) = path.last() else { return };
+        // cairo/text (packages sweep 2026-11-10): store the MODULE-QUALIFIED
+        // base in the №658 channel, not the simple name — two sums of one
+        // simple name in one CU (cairo.text.Align vs runtime.fmt_buf.Align)
+        // made the consumers' collision-aware re-resolution pick the WRONG
+        // one (emission built fmt_buf's ctor while typing named cairo's:
+        // `nova_make_runtime_fmt_buf_Align_Left()` into a temp typed
+        // `NovaOpt_Nova_cairo_text_Align_p`). The qualified form matches the
+        // cross-module mangling (`cairo_text_Align`) the schema registry and
+        // `ref_type_base` already use; a same-module decl keeps the bare name,
+        // byte-identical for every non-colliding corpus.
+        let tname: String = if path.len() > 1 {
+            format!("{}_{}", path[..path.len() - 1].join("_"), simple)
+        } else {
+            simple.to_string()
+        };
+        let Some(td) = self.types_get_here(simple) else { return };
         if !td.generics.is_empty() {
             return;
         }
         let TypeDeclKind::Sum(variants) = &td.kind else { return };
         let hit = variants.iter().enumerate().find(|(_, v)| {
             &v.name == name
+                && qualifier.map_or(true, |q| q == simple)
                 && matches!(&v.kind,
                     SumVariantKind::Tuple(fields) if fields.len() == args.len())
         });
@@ -23957,6 +24558,22 @@ impl<'a> TypeCheckCtx<'a> {
             self.resolved_variant_ctors_buf
                 .borrow_mut()
                 .insert(expr.id, (tname.clone(), idx));
+            // cairo/text (packages sweep 2026-11-10, the №1647 class for USER
+            // sums): the channel steers codegen's CTOR emission, but the
+            // expr's own TYPE still came from the module-local-wins inference
+            // — two windows named two different sums for one expression
+            // (`nova_make_runtime_fmt_buf_Align_Left()` assigned into a
+            // temp typed `NovaOpt_Nova_cairo_text_Align_p`; CC-FAIL). The
+            // expected type decided here is authoritative (D478 rule 2):
+            // overwrite the resolved TYPE with the same verdict the channel
+            // already carries — one answer for emission and typing.
+            // `expected` — не `tname`: полное TypeRef с module-путём. Двe
+            // суммы одного простого имени (cairo.text.Align и
+            // runtime.fmt_buf.Align) в одном CU — простое имя в канале
+            // двусмысленно, полный путь — нет.
+            self.resolved_types_buf
+                .borrow_mut()
+                .insert(expr.id, ResolvedType::from_type_ref(expected));
         }
         // Literal payloads: seed their C-width from the variant's declared
         // field type (no-op for wide defaults — mirrors the call-arg
@@ -24623,14 +25240,44 @@ impl<'a> TypeCheckCtx<'a> {
         let TypeRef::Func { params: exp_params, return_type: exp_ret, .. } = peel(expected) else {
             return None; // Tuple/other Any-source — untouched, unrelated to this fix
         };
+        // №101/p1642 (2026-11-15): a CLOSURE literal's inferred Func shape is
+        // partial — judging it excluded legitimate overload candidates.
+        if is_closure_literal_expr(expr) {
+            return None;
+        }
         let found_tr = self.infer_expr_type(expr, scope)?;
         let found_peeled = peel(&found_tr);
         let TypeRef::Func { params: found_params, return_type: found_ret, .. } = found_peeled else {
             return None; // arg's own type isn't a decidable fn-type here — undecidable, permissive
         };
+        // №101/p1401 (2026-11-15): a found signature with ANY unresolved
+        // piece — a missing return, a `never` (diverging tail) or a generic
+        // typevar piece — is PARTIAL; judging it excluded legitimate
+        // programs. Undecidable stays permissive.
+        let piece_unknown = |t: Option<&TypeRef>| match t {
+            None => true,
+            Some(tr) => match peel(tr) {
+                TypeRef::Named { path, .. } if path.len() == 1 => {
+                    let n = &path[0];
+                    n == "never" || expr_gs.contains_key(n) || exp_gs.contains_key(n)
+                }
+                _ => false,
+            },
+        };
+        if found_params.iter().any(|p| piece_unknown(Some(p)))
+            || piece_unknown(found_ret.as_deref())
+        {
+            return None;
+        }
         if exp_params.len() != found_params.len() {
             return Some(Self::typeref_display(found_peeled));
         }
+        // №1915 ATTEMPT REVERTED (2026-11-15): LOSSLESS categories here
+        // (from_type_ref instead of resolved_cat_of) fixed the registry
+        // probes but broke three corpus fixtures (p1642/p1401/a_q3-flat_map)
+        // whose fn-slot shapes the permissive Any-collapse legitimately
+        // serves — the conflict needs its own window with those carriers
+        // decoded (registry row stays OPEN with the protocol recorded).
         for (ep, fp) in exp_params.iter().zip(found_params.iter()) {
             let ecat = self.resolved_cat_of(ep, exp_gs);
             let fcat = self.resolved_cat_of(fp, expr_gs);
@@ -45387,6 +46034,19 @@ fn provenance_disabled() -> bool {
 /// Реестр 221.1 №959: выключатель проверки «тело против объявленного
 /// возврата». Дофиксное поведение — проверки нет вовсе, — возвращается
 /// целиком, чтобы обе стороны были видны на ОДНОМ бинаре.
+/// Реестр 221.1 №1015: выключатель mono-двери (distinct-monomorphization
+/// re-check). Дофиксное поведение — проверки нет вовсе, — возвращается
+/// целиком, чтобы обе стороны были видны на ОДНОМ бинаре.
+fn mono_door_disabled() -> bool {
+    use std::sync::OnceLock;
+    static OFF: OnceLock<bool> = OnceLock::new();
+    *OFF.get_or_init(|| {
+        std::env::var("NOVA_KILL_MONO_DOOR")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}
+
 fn return_compat_disabled() -> bool {
     use std::sync::OnceLock;
     static OFF: OnceLock<bool> = OnceLock::new();
