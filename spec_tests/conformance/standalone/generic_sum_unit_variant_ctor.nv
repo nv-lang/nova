@@ -21,7 +21,7 @@ fn show(f Flag[int]) -> int {
     }
 }
 
-fn main() {
+fn main() Io {
     ro a Flag[int] = Flag.On
     println("a ok")
     println(show(a))
