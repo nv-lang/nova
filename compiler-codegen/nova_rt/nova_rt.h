@@ -20,7 +20,7 @@
  * slots, but any address of the OLD thread's slot that the optimizer cached
  * across the suspension point still points at the old TLS block. There the
  * slot is empty (or holds another fiber's handler), so the next dispatch
- * takes the `unhandled effect` panic path (registry 221.1 №TBD).
+ * takes the `unhandled effect` panic path (registry 221.1 №1969).
  *
  * clang -O2 legally hoists `lea rcx,[tls_block+offset]` out of a loop: C
  * semantics say the thread cannot change under a call. Nova fibers break

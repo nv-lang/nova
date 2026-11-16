@@ -251,10 +251,22 @@ nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
  * true for genuine main-flow (pre-#108 builds, or any future non-fiber
  * caller) AND for the root main-fiber itself; false for any genuinely
  * spawned/detached child fiber (where the original cross-stack-longjmp UB
- * concern this gate exists for is still real). */
-static inline int nova_cross_effect_route_safe(void) {
+ * concern this gate exists for is still real).
+ *
+ * Registry 221.1 №1969 (class): the gate used to reject EVERY spawned fiber,
+ * although the UB concern is only about an owner frame on ANOTHER stack
+ * (handler inherited from the parent). If the owner iframe lies inside the
+ * CURRENT fiber's own stack, the longjmp stays on that stack and is safe.
+ * That makes the handler-arm cross-effect route usable in fibers without
+ * enabling the cross-stack case. */
+static inline int nova_cross_effect_route_safe(NovaInterruptFrame* owner) {
     mco_coro* co = mco_running();
-    return !co || (void*)co == _nova_main_fiber_co;
+    if (!co || (void*)co == _nova_main_fiber_co) return 1;
+    if (!owner) return 0;
+    const char* p    = (const char*)owner;
+    const char* base = (const char*)co->stack_base;
+    const char* end  = base + co->stack_size;
+    return p >= base && p < end;
 }
 
 void nova_interrupt(nova_int value) {
@@ -274,7 +286,7 @@ void nova_interrupt(nova_int value) {
      * (default path ниже). */
     if (_nova_current_handler_iframe
         && _nova_interrupt_top != _nova_current_handler_iframe
-        && nova_cross_effect_route_safe()) {
+        && nova_cross_effect_route_safe(_nova_current_handler_iframe)) {
         /* owner != top — walk chain. Если intermediate DEFER_SCOPE frames
          * есть → fall through к top (defer cleanup → re-issue → propagate).
          * Если только WITHBLOCK frames (nested with) → skip directly к owner. */
@@ -364,7 +376,7 @@ void nova_interrupt_ptr(void* value) {
      * в fiber context (UB across coroutine boundary). */
     if (_nova_current_handler_iframe
         && _nova_interrupt_top != _nova_current_handler_iframe
-        && nova_cross_effect_route_safe()) {
+        && nova_cross_effect_route_safe(_nova_current_handler_iframe)) {
         int has_defer_between = 0;
         NovaInterruptFrame* p = _nova_interrupt_top;
         while (p && p != _nova_current_handler_iframe) {
@@ -506,9 +518,13 @@ __thread NovaEffectRegistry _nova_effect_registry;
 typedef struct NovaEffectRootNode {
     NovaEffectRegistry* volatile reg;
     struct NovaEffectRootNode* next;
-    /* nova_effect_register_root: GC-only slots of this thread (per-E Fail). The
-     * array grows by publishing a fresh copy; the old one is never freed, so a
-     * collection that stopped this thread mid-growth still reads valid memory. */
+    /* nova_effect_register_root: extra GC-only slots of this thread (kept for
+     * a slot that must be scanned without joining the snapshot). Registry
+     * 221.1 №1968 (class): per-E `Fail_<E>` slots no longer use this path — they
+     * are registered as effect storage and therefore live in the snapshot.
+     * The array grows by publishing a fresh copy; the old one is never freed,
+     * so a collection that stopped this thread mid-growth still reads valid
+     * memory. */
     void** volatile* volatile extra;
     volatile int extra_n;
     int extra_cap;

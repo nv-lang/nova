@@ -3157,7 +3157,7 @@ impl CEmitter {
                 storage = self.top_level_storage(), m = mangled
             ));
             out.push_str("#endif\n");
-            // Registry 221.1 №TBD: re-read the slot address on every access —
+            // Registry 221.1 №1967: re-read the slot address on every access —
             // the per-E slot is thread-scoped, the fiber is not (same reason
             // as the per-effect slot in emit_effect_type).
             out.push_str(&format!(
@@ -9985,11 +9985,14 @@ static nova_int _nova_supervisor_decide_impl(void* _scope_v, nova_int _idx, cons
         // Plan 174.4: effect-registry compile-time размер marker. N = число
         // distinct-эффектов в реестре (built-in Fail/Time + user-defined;
         // "Mem" REMOVED from this count — D76 amend, no longer an effect).
+        // Registry 221.1 №1968 (class): per-E `Fail_<E>` slots are registered as
+        // effect storage too (they are per-fiber handler state and must be in
+        // the snapshot), so the count includes them.
         // Клампим к >=1 (C запрещает массив [0]; на практике built-in гарантируют
         // N>=3). Build-слой читает это число и прокидывает -DNOVA_MAX_EFFECT_STORAGES=N
         // во ВСЕ TU → silent-drop 33-го эффекта невозможен, snapshot = ровно N
         // указателей вместо фикс-256B, и generated/runtime TU согласованы по ABI.
-        let effect_count = self.effect_schemas.len().max(1);
+        let effect_count = (self.effect_schemas.len() + self.per_e_fail_types.len()).max(1);
         self.out = self.out.replace(
             "/*__EFFECT_COUNT_MARKER__*/",
             &format!("/* nova-effect-count: {} */", effect_count),
@@ -13039,15 +13042,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             "_nova_handler_Fail_{m} = {vt};",
                             m = mangled_e, vt = per_e_vt_var
                         ));
-                        // Registry 221.1 #1857: the per-E slot is thread-local and
-                        // Boehm does not scan TLS; `{vt}` above is a dead local after
-                        // the store under -O2/-O3. The slot is not effect storage
-                        // (not in the fiber snapshot), so it is recorded as a GC-only
-                        // root of THIS thread -- the one whose slot was just written.
-                        self.line(&format!(
-                            "nova_effect_register_root((void**)&_nova_handler_Fail_{m});",
-                            m = mangled_e
-                        ));
+                        // Registry 221.1 №1968 (class): the per-E slot is now
+                        // registered as effect storage in
+                        // `_nova_register_all_effects_` (per-thread registry),
+                        // so it is a GC root AND part of the fiber snapshot.
+                        // No separate `nova_effect_register_root` is needed.
                         // Push в saves с special effect_name `Fail_<E>` для
                         // restore. handler_val содержит per-E vtable.
                         saves.push((
@@ -14797,7 +14796,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    NovaFailFrame* _nova_saved_fail_top;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_interrupt_top;");
-        // Registry 221.1 №TBD (class): fiber-scoped handler context restored
+        // Registry 221.1 №1969 (class): fiber-scoped handler context restored
         // on every resume. MUST mirror NovaSpawnCtxBase (fibers.h).
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_handler_iframe;");
@@ -16183,7 +16182,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             "    NovaFailFrame* _nova_saved_fail_top;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_interrupt_top;");
-        // Registry 221.1 №TBD (class): mirror NovaSpawnCtxBase (fibers.h).
+        // Registry 221.1 №1969 (class): mirror NovaSpawnCtxBase (fibers.h).
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_handler_iframe;");
         let _ = writeln!(self.lambda_forward_decls,
@@ -18971,7 +18970,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
             // 2. Thread-local handler slot.
             //
-            // Registry 221.1 №TBD: `_nova_handler_<E>` is thread-scoped, but a
+            // Registry 221.1 №1967: `_nova_handler_<E>` is thread-scoped, but a
             // Nova fiber migrates between worker threads at suspension points.
             // The runtime restores the fiber's handler values into the new
             // thread's slots, yet an address of the old thread's slot cached
@@ -19112,7 +19111,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // regression vs the hand-written dispatcher this replaces;
                 // falling back to the real-clock primitive instead keeps
                 // the exact same behavior partial-handler fixtures relied on.
-                // Registry 221.1 №TBD: read the slot once for this dispatch;
+                // Registry 221.1 №1967: read the slot once for this dispatch;
                 // the accessor re-computes the address on the CURRENT thread
                 // (a fiber may have migrated since the previous effect call).
                 self.line("NovaVtable_Time* _nv_h = _nova_handler_Time;");
@@ -19151,7 +19150,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
             } else { // №158: null handler → `nv_panic` (D62 "runtime fail (panic)"), не NULL-deref.
-                // Registry 221.1 №TBD: one slot read per dispatch, through the
+                // Registry 221.1 №1967: one slot read per dispatch, through the
                 // noinline accessor — the fiber may have migrated.
                 self.line(&format!(
                     "NovaVtable_{name}* _nv_h = _nova_handler_{name};",
@@ -31195,6 +31194,17 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             if name == "Fail" || name == "TimerMetrics" { continue; }
             self.line(&format!(
                 "nova_register_effect_storage((void**)&_nova_handler_{});", name));
+        }
+        // Registry 221.1 №1968 (class): per-E `Fail_<E>` slots are per-fiber
+        // handler state too. Registering them as effect storage puts them in
+        // NovaEffectSnapshot, so a fiber keeps its typed handler across a
+        // worker migration (and children inherit it like every other handler).
+        let mut per_e: Vec<String> = self.per_e_fail_types.iter().cloned().collect();
+        per_e.sort();
+        for e_c in per_e {
+            let mangled = Self::debt_per_e_mangle(&e_c);
+            self.line(&format!(
+                "nova_register_effect_storage((void**)&_nova_handler_Fail_{});", mangled));
         }
     }
 

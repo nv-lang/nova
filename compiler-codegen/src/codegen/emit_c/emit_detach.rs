@@ -190,7 +190,7 @@ impl CEmitter {
             "    NovaFailFrame* _nova_saved_fail_top;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_interrupt_top;");
-        // Registry 221.1 №TBD (class): fiber-scoped handler context restored
+        // Registry 221.1 №1969 (class): fiber-scoped handler context restored
         // on every resume. MUST mirror NovaSpawnCtxBase (fibers.h).
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_handler_iframe;");

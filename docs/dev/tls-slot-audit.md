@@ -128,12 +128,12 @@ detached-волокно хаба умирало с `unhandled effect Journal.wri
 | Слот | Владелец | Восстанавливается на resume | Статус |
 |---|---|---|---|
 | `_nova_handler_<E>`, `Fail`, `Fail_any`, `Time`, `Fail_<E>` | волокно | да (snapshot / переустановка) | исправлено аксессорами |
-| `Fail_<E>` в snapshot | волокно | нет (GC-only реестр) | OPEN, находка в реестре |
+| `Fail_<E>` в snapshot | волокно | да (зарегистрирован как effect storage) | исправлено (1968): snapshot + GC |
 | `_nova_fail_top`, `_nova_interrupt_top` | волокно | да (`_nova_resume_restore_ctx_tls`) | аксессоры добавлены; восстановление было |
-| `_nova_current_handler_iframe` | волокно | да (добавлено) | аксессор + restore; маршрут в волокнах отключён guard'ом — риск теоретический |
+| `_nova_current_handler_iframe` | волокно | да (добавлено) | аксессор + restore; маршрут разрешён на своей стеке (1969), фикстура |
 | `_nova_active_scope`, `_nova_active_slot` | волокно | да | аксессоры добавлены |
 | `_nova_error_state_p` | волокно | да | аксессор добавлен |
-| `_nova_active_finalizer_stack` | волокно | да (добавлено) | исправлено: аксессор + restore; пин `finalizer_after_migration` |
+| `_nova_active_finalizer_stack` | волокно | да (добавлено) | исправлено (1969): аксессор + restore; пин `finalizer_after_migration` |
 | `_nova_effect_registry` | поток | n/a (реестр адресов потока) | проверено: доступ только внутри коротких вызовов без yield |
 | `_nova_effect_root_self` | поток | n/a | GC-колбэки, низкий риск |
 | `_nova_preempt_ptr` | worker | n/a (потоковый) | проверено: перечитывается на safepoint'ах |
@@ -151,13 +151,14 @@ detached-волокно хаба умирало с `unhandled effect Journal.wri
 
 | Слот | Сценарий миграции | Почему риск (по коду) | Что сделано | Статус |
 |---|---|---|---|---|
-| `_nova_current_handler_iframe` | handler-arm (`Nova_Fail_fail`, типизированный `throw`) приостанавливается; волокно возобновляется на другом worker'е | В restore-хуках его не было; `nova_interrupt`/cross-effect routing читают его в `effects.c`. **Аудит:** этот маршрут разрешён только на main-flow — `nova_cross_effect_route_safe()` отключает его для spawned/detached волокон (longjmp через стеки корутин — UB), а главный поток не мигрирует | Аксессор + save/restore в ctx- и supervised-хуках; восстановление оставлено для согласованности состояния | закрыто; живого волоконного сценария нет |
-| `_nova_active_finalizer_stack` | тело `with Application = …` приостанавливается, волокно переезжает; `register_finalizer` после resume | Стек финализаторов — объект на стеке волокна, адрес пишется в TLS в прологе `with` (`emit_c.rs`); в restore-хуках его не было. На новом потоке TLS пуст: `Application.register_finalizer` терял финализатор | Аксессор + save/restore в ctx- и supervised-хуках; фикстура `finalizer_after_migration` (12 волокон, 20 sleep'ов внутри блока) | закрыто; красное 5/5 на 0.1.5, зелёное 5/5 с фиксом |
+| `_nova_current_handler_iframe` | handler-arm приостанавливается (sleep) и только потом делает `interrupt`; волокно возобновляется на другом worker'е | В restore-хуках его не было; `nova_interrupt`/cross-effect routing читают его в `effects.c`. Прежний guard отключал маршрут для всех волокон, хотя UB касается только owner-кадра на ЧУЖОМ стеке | Аксессор + save/restore в ctx/supervised; guard теперь проверяет, что owner-кадр лежит в стеке ТЕКУЩЕГО волокна (`stack_base`/`stack_size`); фикстура `handler_iframe_after_migration` | закрыто (1969): red 5/5 с отключённым restore, green 5/5 с ним |
+| `_nova_active_finalizer_stack` | тело `with Application = …` приостанавливается, волокно переезжает; `register_finalizer` после resume | Стек финализаторов — объект на стеке волокна, адрес пишется в TLS в прологе `with` (`emit_c.rs`); в restore-хуках его не было. На новом потоке TLS пуст: `Application.register_finalizer` терял финализатор | Аксессор + save/restore в ctx- и supervised-хуках; фикстура `finalizer_after_migration` (12 волокон, 20 sleep'ов внутри блока) | закрыто (1969): красное 5/5 на 0.1.5, зелёное 5/5 с фиксом |
 
-Связанная находка: per-E `Fail[E]`-слоты не входят в snapshot (строка в
-`docs/plans/221.1-bug-sweep.md`, статус OPEN) — после миграции типизированный
-обработчик не восстанавливается, dispatch уходит в erased/legacy fallback. Это
-покрытие snapshot, а не кэш адреса; отдельная строка.
+Per-E `Fail[E]` (1968): слоты зарегистрированы как effect storage в
+`_nova_register_all_effects_`, поэтому входят в snapshot и GC-реестр; кодоген
+больше не зовёт `nova_effect_register_root` для них. Отдельного красного репро
+нет: до фикса поведение маскировал legacy `_nova_handler_Fail`, который всегда
+был в snapshot; менялась только fast-path/идентичность типизированного слота.
 
 ### 7.2 Что закрыто классом, а что осталось
 
@@ -170,21 +171,23 @@ detached-волокно хаба умирало с `unhandled effect Journal.wri
 - Проверено и не требует фикса: `park_unlock` дренится на потоке park до
   миграции; `preempt_ptr`/`current_loop` потоковые; реестр эффектов не
   используется через yield; `test_frame` вне фиберов.
-- Осталось: per-E `Fail[E]` в snapshot (OPEN) и остаточная цена — один
-  noinline-вызов на доступ к fiber-scoped слоту.
+- Цена: dispatch читает слот один раз (было три), горячий `Time.sleep` — пару
+  один раз на вызов; остальные обращения — холодные. Полный ноль вызовов
+  требует переноса состояния в контекст волокна (отдельная задача).
 
 ## 8. Порядок аудита
 
 1. Обработчики — сделано (все формы, `2d1ecd134`).
 2. `_nova_current_handler_iframe` и `_nova_active_finalizer_stack` — сделано:
-   аксессоры + restore. Iframe-маршрут в волокнах отключён guard'ом (main-flow
-   only), поэтому живого волоконного дефекта нет; финализатор воспроизведён
-   фикстурой и исправлен.
+   аксессоры + restore. Iframe-маршрут теперь разрешён в волокне, когда
+   owner-кадр лежит на его собственном стеке (1969), фикстура
+   `handler_iframe_after_migration`; финализатор — фикстура
+   `finalizer_after_migration`.
 3. `_nova_fail_top`, `_nova_interrupt_top`, `_nova_active_scope/slot`,
    `_nova_error_state_p` — сделано: аксессоры адреса; восстановление значений
    уже было.
-4. Per-E `Fail[E]` — не сделано; расширить snapshot или восстановление;
-   отдельная OPEN-строка реестра.
+4. Per-E `Fail[E]` — сделано (1968): зарегистрированы как effect storage,
+   входят в snapshot и GC; кодоген больше не зовёт register_root.
 5. Потоковые (`preempt_ptr`, `current_loop`, `park_unlock`) — проверено:
    не fiber-scope; `park_unlock` дренится на потоке park до миграции.
 6. Реестр GC и `root_self` — проверено: доступ без yield, миграция не участвует.

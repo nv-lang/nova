@@ -320,7 +320,7 @@ typedef struct NovaFiberQueue {
     void**          fiber_ctx;           /* dynamic [count] — GC root для SpawnCtx */
     NovaFailFrame** fiber_fail_top;      /* dynamic [count] */
     NovaInterruptFrame** fiber_interrupt_top; /* dynamic [count] */
-    /* Registry 221.1 №TBD (class): fiber-scoped handler context that used to
+    /* Registry 221.1 №1969 (class): fiber-scoped handler context that used to
      * live only in TLS and was NOT restored on resume. Both are pointers into
      * the fiber's own stack (with-block frames), so saving/restoring the value
      * is enough — the stack travels with the fiber. */
@@ -941,7 +941,7 @@ __declspec(thread) extern int             _nova_active_slot_tls;
 extern __thread NovaFiberQueue* _nova_active_scope_tls;
 extern __thread int             _nova_active_slot_tls;
 #endif
-/* Registry 221.1 №TBD (class): the active scope/slot are fiber-scoped (the
+/* Registry 221.1 №1969 (class): the active scope/slot are fiber-scoped (the
  * runtime restores the fiber's own pair on resume), so their ADDRESS must be
  * re-read on the current thread at every access — see nova_rt.h,
  * "Effect-handler TLS slots". */
@@ -2085,7 +2085,7 @@ typedef struct {
     int                  _nova_worker_slot;
     NovaFailFrame*       _nova_saved_fail_top;
     NovaInterruptFrame*  _nova_saved_interrupt_top;
-    /* Registry 221.1 №TBD (class): fiber-scoped handler context restored on
+    /* Registry 221.1 №1969 (class): fiber-scoped handler context restored on
      * every resume (both point into the fiber's own stack). */
     NovaInterruptFrame*  _nova_saved_handler_iframe;
     NovaFinalizerStack*  _nova_saved_finalizer_stack;
@@ -3050,7 +3050,7 @@ static void _nova_resume_restore_step_tls(void* vctx) {
      * on fiber-stack (longjmp across mco-boundary = UB). */
     _nova_fail_top      = q->fiber_fail_top[i];
     _nova_interrupt_top = q->fiber_interrupt_top[i];
-    /* Registry 221.1 №TBD (class): these two used to be left in TLS across
+    /* Registry 221.1 №1969 (class): these two used to be left in TLS across
      * the resume; they point into this fiber's own stack, so the saved value
      * is the right one on any worker. */
     _nova_current_handler_iframe  = q->fiber_handler_iframe[i];
@@ -5257,8 +5257,12 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
     if (mco_running()) {
         /* Plan 22 Ф.4 (D93): production path через park-on-uv_timer.
          * После D92 (Plan 22 Ф.5) _nova_active_scope всегда non-NULL
-         * в user-code; fiber без scope — это runtime bug. */
-        if (!_nova_active_scope || _nova_active_slot < 0) {
+         * в user-code; fiber без scope — это runtime bug.
+         * Registry 221.1 №1969 (class): fetch the pair ONCE — the accessor is a
+         * real call, and nothing can suspend between these reads. */
+        NovaFiberQueue* _sc = _nova_active_scope;
+        int             _sl = _nova_active_slot;
+        if (!_sc || _sl < 0) {
             fprintf(stderr,
                 "nova: FATAL Time.sleep called in fiber without active scope "
                 "(D92 invariant violated)\n");
@@ -5267,9 +5271,9 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
         /* Plan 83.11 Ф.3: route to centralized driver if started, otherwise
          * fallback to legacy per-worker path (bootstrap/single-thread mode). */
         if (nova_driver_is_started()) {
-            _nova_sleep_via_driver(_nova_active_scope, _nova_active_slot, ms);
+            _nova_sleep_via_driver(_sc, _sl, ms);
         } else {
-            _nova_sleep_via_libuv(_nova_active_scope, _nova_active_slot, ms);
+            _nova_sleep_via_libuv(_sc, _sl, ms);
         }
         return NOVA_UNIT;
     } else if (_nova_active_scope) {
