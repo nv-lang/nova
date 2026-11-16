@@ -59,9 +59,7 @@ mbedTLS removed from the regression CI).
 - One-line `match` arms whose body is an assignment refuse with a
   separator diagnostic even across lines (№TBD-3, narrowed; use `=`
   with braces or commas).
-- **Inherited corpus failures** (identical set on main; verified
-  name-for-name against a main-tree run of the same suite — none are
-  new to this release):
+- **Inherited corpus failures reproduced on main**:
   `spec_tests/p270/f2_display_baseline` (missing `#impl(Display)`,
   D186 opt-in display), `spec_tests/soundness/{assert_static_unverified_warn,
   assume_trust_introduced_warn, int_arith_no_overflow_positive,
@@ -70,8 +68,14 @@ mbedTLS removed from the regression CI).
   module-path diagnostic-coordinate defects),
   `spec_tests/conformance/standalone/carina_text_backtick_tag`
   (stdout mismatch), `std/src/encoding/serde/decode_errors_test`
-  (ext round-trip RUN-FAIL). A load-flaky timing timeout
-  (`proc_streams`) also appears occasionally in both trees.
+  (ext round-trip RUN-FAIL),
+  `std/src/os/n1850_probe/env_bytes_str_literal_test` (C compilation
+  failure for an implicit string-to-bytes coercion), and
+  `std/src/os/proc_control/proc_control_test` (Windows child-group
+  cleanup assertions). Timing-sensitive tests can time out under load.
+- The optional MSVC CI job reproduces the known `C2099` failure on
+  `p1418_exit_process_immediate` (registry No.1850). The Clang job
+  passed.
 
 ## Provenance
 
