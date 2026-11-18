@@ -2,10 +2,10 @@
 """Packages leg of the 0.3 distance re-measurement (task 141 rerun)."""
 import pathlib, re, subprocess, time
 
-WT = pathlib.Path(r"D:\Sources\nv-lang\worktrees\nova-opencode-novac-tail-value")
-S = pathlib.Path(r"D:\Sources\nv-lang\nova-opencode\scratch-opencode\measure-0.3-1118")
+WT = pathlib.Path(r"<tree>\nv-lang\worktrees\nova-opencode-novac-tail-value")
+S = pathlib.Path(r"<tree>\nv-lang\nova-opencode\scratch-opencode\measure-0.3-1118")
 NOVA = WT / "nova-driver" / "target" / "release" / "nova.exe"
-REPOS = pathlib.Path(r"D:\Sources\nv-lang")
+REPOS = pathlib.Path(r"<tree>\nv-lang")
 TABLE_141 = WT / "doc/tasks/141-zamer-korpusa-0-3-vse-primery-i-pakety-k/evidence/packages.tsv"
 LOGS = S / "logs-packages"
 LOGS.mkdir(exist_ok=True)

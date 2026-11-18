@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import pathlib, re, json
-S = pathlib.Path(r'D:\Sources\nv-lang\nova-opencode\scratch-opencode\measure-0.3-1118')
-WT = pathlib.Path(r'D:\Sources\nv-lang\worktrees\nova-opencode-novac-tail-value')
+S = pathlib.Path(r'<tree>\nv-lang\nova-opencode\scratch-opencode\measure-0.3-1118')
+WT = pathlib.Path(r'<tree>\nv-lang\worktrees\nova-opencode-novac-tail-value')
 
 def load(p):
     rows = {}

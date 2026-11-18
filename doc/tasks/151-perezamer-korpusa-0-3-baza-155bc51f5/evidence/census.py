@@ -3,7 +3,7 @@
 import pathlib, re
 from collections import Counter, defaultdict
 
-S = pathlib.Path(r'D:\Sources\nv-lang\nova-opencode\scratch-opencode\measure-0.3-1118')
+S = pathlib.Path(r'<tree>\nv-lang\nova-opencode\scratch-opencode\measure-0.3-1118')
 rows = {}
 for line in (S / 'table-118.tsv').read_text(encoding='utf-8').splitlines()[1:]:
     if line.strip():
