@@ -288,6 +288,18 @@ export const COERCE_ATTR = "coerce"
 /// differential corpus reddens and this decision comes back.
 export const REALTIME_ATTR = "realtime"
 
+/// The `#stable(since = "...")` attribute (D460, `01-philosophy.md:310`): the
+/// FREEZE MARKER of the public surface. It carries no compiled behaviour --
+/// the decision is about what a release promises, not what a body does -- so
+/// the subset reads it and ignores it, the `#realtime` discipline. Measured
+/// 2026-11-18: the oracle accepts it on a module and on a `fn` (check ok).
+export const STABLE_ATTR = "stable"
+
+/// The `#doc` / `#doc(...)` attribute (D101 module attribute, D105 typed doc
+/// attributes): documentation metadata, no compiled behaviour either. Read and
+/// ignored (E.12 wave of 274.11).
+export const DOC_ATTR = "doc"
+
 /// The CONTEXTUAL mode word of the language -- the one a token kind cannot
 /// answer for.
 ///

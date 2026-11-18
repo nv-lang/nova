@@ -378,8 +378,13 @@ const EXPORT_MSG = "outside the subset: `export` arrives with modules (E3)"
 /// at, and accepting the word would leave a promise novac does not keep.
 const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arrives with cross-file resolution -- a C name is a function of the DECLARATION, not of the importer (274 section 9.1d point 2)"
 
-/// `#realtime nogc` and its kin.
-const ATTR_MSG = "outside the subset: an effect attribute is read but not compiled yet"
+/// A declaration attribute outside the set the subset reads (E.12 wave,
+/// 274.11). The text names the CLASS: the list is the set whose words the
+/// language gives a meaning to here (#coerce D429, #impl D186, #realtime D172,
+/// #cfg D99, #stable D460, #doc D101/D105). The oracle refuses an unknown one
+/// at parse ("expected fn / type / let / const / test, got `#`"); the subset
+/// refuses it one layer later, by name.
+const ATTR_MSG = "outside the subset: a declaration attribute outside the set the subset reads -- `#coerce`, `#impl(P)`, `#realtime`, `#cfg`, `#stable`, `#doc`; any other attribute may change what the declaration means and is refused by name (274.11 E12)"
 
 /// `#impl(P)` for a protocol other than `Display` / `Equal` / `Serialize` --
 /// `Deserialize` first of all: its derived `.deserialize` is a STATIC method

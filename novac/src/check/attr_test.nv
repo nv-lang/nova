@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/attr_test.nv -- the E.12 wave of 274.11 (charter
+// 2026-11-18): declaration attributes WITHOUT behaviour are read and ignored,
+// and an attribute outside the known set is refused by its own class text.
+//
+// WHY IT IS A WAVE OF ITS OWN: the refusal `ATTR_MSG` used to call every such
+// attribute an "effect attribute", which is false for the carriers -- the
+// aggregator's three inputs read `#stable(since = ...)`, a freeze marker with
+// no compiled behaviour (D460), and `#doc` is documentation metadata
+// (D101/D105). The oracle accepts both on a module and on a `fn` (measured
+// 2026-11-18, oracle 0.1.5); the subset refused them one layer later.
+//
+// Donor: none -- D460 and D101/D105 are the norm; the test shape follows
+//   check/check_test.nv.
+// Guarded by: check-novac-module-tests.sh.
+module novac.check
+
+import ../source.{SourceText}
+import ../lex.{lex}
+import ../parse.{parse}
+import ../sem.{collect, InteropTable}
+import ../tree.{Node}
+
+/// The FIRST diagnostic's message for `text`, or "" when the text is clean.
+fn dat_first_msg(text str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
+    if diags.len() == 0 { return "" }
+    diags[0].message
+}
+
+test "decl-attr: #stable on a module is read and ignored" {
+    ro src = "#stable(since = \"0.1\")\nmodule m\n\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: #stable on a fn is read and ignored" {
+    ro src = "module m\n\n#stable(since = \"0.1\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: an unknown attribute is refused by the CLASS text" {
+    ro src = "module m\n\n#sparkle\nfn f() -> int => 1\n"
+    ro m = dat_first_msg(src)
+    assert(m.contains("a declaration attribute outside the set the subset reads"), m)
+    assert(m.contains("#stable"), m)
+}
+
+test "decl-attr: control -- #impl(Deserialize) keeps its own refusal" {
+    ro src = "module m\n\n#impl(Deserialize)\ntype T value { n int }\n"
+    ro m = dat_first_msg(src)
+    assert(m.contains("not synthesized yet"), m)
+}

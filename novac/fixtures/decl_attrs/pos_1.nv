@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.12 wave (274.11): `#stable` is a FREEZE MARKER (D460) with no compiled
+// behaviour -- on the module and on the function alike. The oracle accepts
+// both (measured 2026-11-18); the program must behave the same either way.
+#stable(since = "0.1")
+module decl_attrs.pos_1
+
+#stable(since = "0.1")
+fn twice(x int) -> int => x * 2
+
+fn main() {
+    println(twice(21))
+}
