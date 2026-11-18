@@ -375,7 +375,11 @@
 # builtins 102 -> 103 (2026-10-25, task 092 acceptance repair): `HOST_BOOTSTRAP_MODULE`
 # names the bootstrap module ("novac") so `sem/handed_bodies.nv` recognizes it when
 # validating the host-OS bridge identity instead of retyping the literal (P5).
-builtins 104
+# builtins 104 -> 106, lower 103 -> 111, sem 406 -> 407 (2026-11-14, merge of p274-carina-supervised-value,
+#   the supervised-value wave): builtins +`UNIT_C_NAME` +`CLOS_PARAM` (D22 closure-light handler);
+#   lower +8 `@ret_via`/`@exit_scopes_open` (D432 exit temp) and the wave's region/println doors the
+#   file split surfaced (ir_control, lower_print, emit_literals, typing_stmt, tagged_args, bind_array).
+builtins 106
 # 2026-10-07, task #29 (221.1 #1787, integrator decision on check-novac-atomics-door): new module `atomics` 0 -> 1,
 #   `c_tls_keyword` -- the one word (`thread_local`) the C-name door's keyword table cannot carry (`builtins` is a
 #   leaf and may not import `atomics`), asked here instead of a literal in `builtins`.
@@ -494,7 +498,7 @@ lex 11
 #   and `FnBuilder @call_next` -- one turn of a `for` over an iterator (D58, sweep 10), recorded by
 #   lower/lowering.nv and printed by emit_c/emit_place.nv.
 # merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
-lower 103
+lower 111
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
@@ -1296,7 +1300,7 @@ resolve 27
 #   (check/strings.nv). Без экспорта каждый потребитель дублировал бы алфавит
 #   D467, и расхождение ловилось бы поздно, в эмиссии.
 #
-sem 406
+sem 407
 source 7
 # tree 19 -> 21 (2026-08-20): `Node @is_ident` and `Node @ident_str`.
 # Предложение владельца: двухчастный тест «это лист И это идентификатор» стоял в

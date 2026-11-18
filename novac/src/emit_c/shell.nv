@@ -207,6 +207,8 @@ type Emitter consume {
     spawns []Node /// the `spawn` statements of the reached functions; the index is the spawn's C number (E.9 step 4)
     cur_spawn int /// the C number of the spawn whose body function is being emitted, -1 outside one
     cur_lit int /// the C number of the literal whose op function is being emitted, -1 outside one: a literal built there reads its outer captures through that op's context
+    closures []Node /// the closure-light literals of the reached functions (supervised-value wave, D22): the index is the closure's C number
+    cur_closure int /// the C number of the closure whose body function is being emitted, -1 outside one
     mut blobs []int /// the rows of `Ctx.embeds` whose static arrays the emission printed a reference to (D412, emit_embed.nv): their arrays go before the code
     mut infos []TyId /// the types a value was boxed into `any` through (`Failure(e)` of `x?`, emit_flow.nv): `NOVAC_TYPEINFO_<index>`, defined before the code
     tag str /// the mark in every name this emission NUMBERS itself (`_novac_strlit_<tag><i>`, the blobs, type infos, handler and spawn functions): "" for a unit alone, the unit's own in a program, where every unit numbers from zero into ONE C file (274.11 E.10 step 2b)
@@ -234,7 +236,7 @@ fn strlit_defs(lits []str, tag str) -> str {
 /// hands in every unit's pool, each under its own mark (274.11 E.10 step 2b).
 fn render_spelled(lit_defs str, body str, init str) -> str {
     ro tpl_bytes = shell_template()
-    ro tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:237", "emit: shell.tpl.c is not UTF-8")
+    ro tpl = tpl_bytes.to_str() ?? ice_at("novac/src/emit_c/shell.nv:239", "emit: shell.tpl.c is not UTF-8")
     consume out = StringBuilder.new()
     mut emitted_lits = false
     mut emitted_body = false

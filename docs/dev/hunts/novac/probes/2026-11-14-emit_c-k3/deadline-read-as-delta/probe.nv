@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module probe.p
+
+// cmd: bash docs/dev/hunts/novac/probes/2026-11-14-emit_c-k3/deadline-read-as-delta/cmd.sh <root>
+//
+// K3 probe (emit_c x K3, 2026-11-14): `deadline:` принимает АБСОЛЮТНУЮ точку
+// Monotonic -- так записано в самой спеке-примере прелюдии
+// (std/src/prelude/errors.nv, D442/D349:
+//   `supervised(deadline: Monotonic.now() + 200.to_millis())`).
+// Точка, собранная через сырой люк T.to_monotonic_nanos() на 10 секунд после
+// нуля шкалы, на любой машине, стоящей дольше 10 секунд, -- ГЛУБОКОЕ ПРОШЛОЕ:
+// читатель абсолютной точки обязан дать дедлайну сработать ДО тела.
+// novac/src/emit_c/emit_supervised.nv:63 читает `timeout` и `deadline`
+// ОДИНАКОВО и :91 комбинирует В ОБЕИХ случаях как ДЕЛЬТУ
+// (time_monotonic_ns() + EXPR.nanos) -- прошлое превращается в будущее.
+// Оракул различает по имени аргумента (emit_c.rs: dl.relative):
+// timeout: -> now + .nanos, deadline: -> .nanos.
+// Замер 2026-11-14: оракул печатает -1 (дедлайн сработал), novac печатает 7
+// и ждёт всё тело (1 с) -- поведенческий дифференциал.
+
+import std.time.duration
+
+fn f() -> int {
+    supervised(deadline: (10000000000).to_monotonic_nanos(), on_timeout: |_e| -1) {
+        spawn { 1000.to_millis().sleep() }
+        7
+    }
+}
+
+fn main() Io -> () {
+    println(f())
+}

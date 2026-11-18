@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module supervised_value.pos_2
+
+import std.time.duration
+
+fn make(n int) -> Result[int, int] {
+    if n == 0 { Err(7) } else { Ok(n) }
+}
+
+// The tail is a MATCH over a Result, and the handler is a BLOCK returning a
+// constructor -- the two shapes the flagship's `read_headers_guarded` and
+// `connect_guarded` use (D414 §4, D449).
+fn classify(n int) -> Result[int, int] {
+    supervised(timeout: 30.to_seconds(), on_timeout: |_e| { Err(0 - 1) }) {
+        match make(n) {
+            Ok(v) => Ok(v + 1)
+            Err(e) => Err(e)
+        }
+    }
+}
+
+fn slow_classify() -> Result[int, int] {
+    supervised(timeout: 100.to_millis(), on_timeout: |_e| { Err(0 - 9) }) {
+        spawn { 5000.to_millis().sleep() }
+        Ok(1)
+    }
+}
+
+// The value form as an INITIALIZER: the slot is read on the next line.
+fn via_initializer() -> int {
+    ro v = supervised(timeout: 30.to_seconds(), on_timeout: |_e| -7) {
+        spawn { 5.to_millis().sleep() }
+        41
+    }
+    v + 1
+}
+
+// The handler CAPTURES a local (D22): the closure needs an environment.
+fn captured_fallback() -> int {
+    ro fb = 0 - 3
+    supervised(timeout: 100.to_millis(), on_timeout: |_e| fb) {
+        spawn { 5000.to_millis().sleep() }
+        5
+    }
+}
+
+fn main() Io -> () {
+    match classify(5) {
+        Ok(v) => println(v)
+        Err(e) => println(e)
+    }
+    match classify(0) {
+        Ok(v) => println(v)
+        Err(e) => println(e)
+    }
+    match slow_classify() {
+        Ok(v) => println(v)
+        Err(e) => println(e)
+    }
+    println(via_initializer())
+    println(captured_fallback())
+}

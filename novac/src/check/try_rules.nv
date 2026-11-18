@@ -94,6 +94,15 @@ fn Checker mut @type_try(e Node) -> () {
     } else if !op_is_opt && !@try_result_pair_ok(tk, ot, rt) {
         // SILENT-OK: `@try_result_pair_ok` refused the pair of error types by name.
         return
+    } else if @sup_split_depth > 0 {
+        // The admitted `x?` exits the enclosing fn through its return place when
+        // the operand holds the error -- the SAME boundary the plain `return` of
+        // a split supervised body cannot cross (SUPERVISED_SPLIT_RETURN_MSG,
+        // typing_stmt.nv): the body is emitted as its own block, and the join
+        // the exit would print past declares names that block never made (the
+        // 2026-11-14 emit_c x K3 hunt, probe split-exit-scopejoin: a check-clean
+        // carrier used to reach `use of undeclared identifier '_novac_qdl1'`).
+        @reject_first_leaf_of(tk, SUPERVISED_SPLIT_RETURN_MSG)
     } else {
         // The language's form, compiled: an Option in a body returning an Option, or a
         // Result whose error the body's Result carries unchanged. The Err branch builds
@@ -182,6 +191,17 @@ fn Checker mut @type_coalesce_return(e Node, qk []Node) -> bool {
     }
     if @substs.len() > 0 && raw_row(@inst_row) >= 0 && !@ctx.tys.is_concrete(@ctx.fns.rows[raw_row(@inst_row)].ret_id) {
         @reject_first_leaf_of(qk, COALESCE_RETURN_GENERIC_MSG)
+        return false
+    }
+    // The fallback `return` exits the enclosing fn through its return place --
+    // value or bare, the SAME split boundary the plain `return` cannot cross
+    // (SUPERVISED_SPLIT_RETURN_MSG, typing_stmt.nv): the supervised body is
+    // emitted as its own block, and the exit prints past its join with names
+    // the block never declared (the 2026-11-14 emit_c x K3 hunt, probe
+    // split-exit-scopejoin: `use of undeclared identifier '_novac_qprev1'` on
+    // a check-clean carrier).
+    if @sup_split_depth > 0 {
+        @reject_first_leaf_of(qk, SUPERVISED_SPLIT_RETURN_MSG)
         return false
     }
     // A bare `?? return` is the bare `return` of a body that returns no value

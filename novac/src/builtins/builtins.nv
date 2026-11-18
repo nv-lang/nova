@@ -152,6 +152,11 @@ export const CLEANUP_METHOD = "cleanup"
 /// D432: the type of `@cleanup`'s one parameter, and the variant a normal exit
 /// passes (std's prelude, `ScopeOutcome enum Success | ...`).
 export const SCOPE_OUTCOME_TYPE = "ScopeOutcome"
+/// The prelude's timeout error (`std/src/prelude/errors.nv`): D449 gives the
+/// `on_timeout:` closure its one parameter `TimeoutError { deadline_ns i64 }`.
+/// The shell carries `Nova_TimeoutError`; the name resolves from the handed
+/// std interface like every other prelude type (the supervised-value wave).
+export const TIMEOUT_ERROR_TYPE = "TimeoutError"
 export const SCOPE_OUTCOME_SUCCESS = "Success"
 /// The outcome of an exit that leaves with an error: `?` over a `Result` at `Err(e)` (D314
 /// amended 2026-10-03), its payload the error boxed into `any`.
@@ -383,6 +388,13 @@ export const EFFECT_MARKER = "effect"
 /// "Vec" at the resolution site is exactly what the name-hardcode guard exists
 /// to stop.
 export const SLICE_HEAD = "Vec"
+
+/// The C ABI name of the unit type, read off the table's own row above: the
+/// emitter spells the unit result of a handler with no written return type
+/// (`on_timeout:` of a `supervised`, P5). The name of the LANGUAGE'S ABI, so
+/// it lives here with the row that owns it -- a literal at the call site is
+/// exactly what the name-hardcode guard exists to stop.
+export const UNIT_C_NAME = "nova_unit"
 
 /// The std constructor the TYPED array literal is written with: `[]int.of(7, 8)`.
 /// Not a word of the language grammar but the one spelling the subset reads as

@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/parse/closure.nv -- the CLOSURE-LIGHT literal (D22) and the
+// SUPERVISED form's reader (the supervised-value wave: D414 §4, D449).
+//
+// Donor: none -- both forms are the language's own (D22, D13/D449).
+// Role: layer 2 -- two contextual forms read whole so the tree tells the
+//   truth about what was written; the shape walk and the typist judge them.
+// Used by: parse/expr.nv (@atom: a leading `|`/`||`, and `supervised` in
+//   value position) and parse/stmt.nv (the supervised statement door).
+// Guarded by: check-novac-file-size.py (this file exists because expr.nv
+//   had no honest room for the readers), the reserialize property in
+//   parse_test.nv (every token the forms write is a child).
+//
+// A co-equal file of module `novac.parse` (folder = one module), cut by
+// MEANING under decision 12: expr.nv keeps the precedence climb and the
+// generic atom reader; this file keeps the two atoms that carry a BODY
+// introduced by a contextual marker -- like `match` they interrupt the
+// ordinary expression grammar.
+
+module novac.parse
+
+import ../lex.{TokenKind}
+import ../builtins.{SUPERVISED_WORD}
+import ../tree.{Node, NodeKind}
+
+/// A CLOSURE-LIGHT literal (D22): `|a, b| expr`, `|e| { ... }`, or `|| expr`.
+/// Params are BARE identifiers (or `_`, which lexes as an Ident) -- no types,
+/// no modes, no `=>`; the signature comes from the context that admits the
+/// form. Children: the opening Pipe leaf (or ONE PipePipe leaf for `||`),
+/// one Ident leaf per param with Comma leaves between, the closing Pipe
+/// leaf, then the body (an expression or a Block) LAST.
+///
+/// The body brace is THIS reader's by construction: the door fires on a
+/// leading `|`, which no ordinary expression can start with (a binary `|`
+/// needs a left operand the precedence climb has already read). The body
+/// expression is read with the constructor restriction LIFTED, the
+/// handler-op body's own discipline: a record constructor may be the whole
+/// body (`|e| Point { x: 1 }`).
+fn Cursor mut @closure_lit() -> Node {
+    mut kids = []Node.new()
+    if @peek() == TokenKind.PipePipe {
+        // `||`: zero params, ONE token -- the lexer folds the two pipes.
+        kids.push(@take())
+    } else {
+        kids.push(@take()) // `|`
+        while !@at_eof() && @peek() != TokenKind.Pipe {
+            ro before = @i
+            if @peek() == TokenKind.Ident {
+                kids.push(@take()) // a param name (or `_`)
+            } else {
+                // Recovery inside the param list: one Err, one token,
+                // advance -- bounded by the Pipe test, the list's closer.
+                // RECOVERY-BOUNDED: the loop stops at `|`, so this take can
+                // never reach it.
+                kids.push(@node(NodeKind.Err, []Node.of(@take())))
+            }
+            @push_if(kids, TokenKind.Comma)
+            if @i == before { break }
+        }
+        @push_expected(kids, TokenKind.Pipe)
+    }
+    if @peek() == TokenKind.LBrace {
+        kids.push(@block())
+    } else {
+        ro saved = @no_ctor
+        @no_ctor = false
+        kids.push(@expr())
+        @no_ctor = saved
+    }
+    @node(NodeKind.ClosureLit, kids)
+}
+
+/// The SUPERVISED form, whole: `supervised { body }` or
+/// `supervised(timeout: d, on_timeout: |e| fallback) { body }` (D13, D449).
+/// ONE reader for the statement door (stmt.nv) and the value door (@atom):
+/// the node shape is one, only the POSITION decides value-ness -- the
+/// if-let-value precedent. Children: the `supervised` word leaf, then
+/// optionally `(`, the arguments (@call_args: NamedArg/positional, commas,
+/// `)`), then the body Block LAST. The body is always the last child, so
+/// every reader of the bare form keeps answering.
+///
+/// `supervised` is a CONTEXTUAL word (D13 keeps the keyword table closed),
+/// but the ORACLE RESERVES it (probed 2026-09-23: `type supervised { ... }`
+/// refuses "expected identifier, got `supervised`"), so `supervised (` can
+/// only be this form -- no ordinary call loses its callee.
+fn Cursor mut @supervised_form() -> Node {
+    mut kids = []Node.of(@take()) // `supervised`
+    if @peek() == TokenKind.LParen {
+        kids.push(@take()) // `(`
+        @call_args(kids)
+    } else {
+        // The bare `supervised { }` form: no arguments.
+    }
+    if @peek() == TokenKind.LBrace {
+        kids.push(@block())
+    } else {
+        // A bodyless supervised must not reach the emitter unrefused: the
+        // zero-width marker, the if/while discipline for a missing body.
+        kids.push(@error_node(TokenKind.ErrorTok))
+    }
+    @node(NodeKind.SupervisedStmt, kids)
+}

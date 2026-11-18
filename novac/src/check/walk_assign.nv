@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/walk_assign.nv -- the subset walk's ASSIGNMENT-position rule.
+//
+// Donor: same as check.nv (the subset refusals are the language's own).
+// Role: layer 7 -- one arm of the shape walk, cut by MEANING (decision 12)
+//   when the supervised-value wave's ClosureLit arm pushed check.nv back over
+//   the 1000-line cap (the same remedy that made run.nv and checker_type.nv).
+// Used by: check/check.nv's @walk (the AssignStmt arm calls @walk_assign).
+// Guarded by: check-novac-file-size.py (this split), check-novac-deps.py.
+//
+// A co-equal file of module `novac.check` (folder = one module): the cursor
+// of the walk is the Checker receiver, and @walk is a method of it, so the
+// helper needs no import of its own caller -- only the tree and the leaf door.
+
+module novac.check
+
+import ../lex.{TokenKind}
+import ../tree.{Node, NodeKind}
+import ../sem.{leaf_kind}
+
+/// THE RIGHT SIDE OF A PLAIN `=` IS A VALUE POSITION for a record constructor
+/// (registry #TBD, the record-position wave): the store prints its source
+/// through the same inline door an initializer's own constructor takes, and
+/// the carriers are novac's own (`fx.ops[oi] = EffectOpSig { .. }` and six
+/// more). ONLY the plain `=` and ONLY the constructor -- a compound `op=` has
+/// no record meaning, and opening init_pos for the whole right side would wave
+/// a `match` through to a store that cannot lay its blocks down. An `if` joins
+/// the constructor, and on ANY assign op: `ints += if t.kind == ... { 1 } else
+/// { 0 }` is four of the if-value wave's carriers, and a compound store spells
+/// its source exactly where a plain one spells it. Everything else is walked
+/// exactly as before.
+///
+/// AN ARRAY LITERAL JOINS THE CONSTRUCTOR on the plain `=` (registry 221.1
+/// #1457): `@cur = []Stmt.new()`, `pending = []str.new()`. The store builds it
+/// through the same `@build_value` door (emit_place.nv), whose `ArrayLit` arm
+/// was already there -- only this gate was closed.
+fn Checker mut @walk_assign(children []Node) -> () {
+    mut ai = 0
+    for c in children {
+        @walk(c, init_pos: ai == 2 &&
+                     ((leaf_kind(children[1]) == TokenKind.Assign &&
+                       (c.kind_of() == NodeKind.RecordCtor ||
+                        c.kind_of() == NodeKind.ArrayLit)) ||
+                      c.kind_of() == NodeKind.IfExpr || c.kind_of() == NodeKind.MatchExpr))
+        ai += 1
+    }
+}
