@@ -54,14 +54,17 @@ fn is_short_circuit(e Node) -> bool {
 
 /// Does this expression hold a block form that `@hoist_block_forms` must lay down?
 /// The forms that lower their own insides -- an `if` value, a `match`, `unsafe`, a
-/// handler literal -- stop the search: their branches go through `@lower_place`.
+/// handler literal, a closure, a supervised value -- stop the search: their branches
+/// go through `@lower_place` (the closure and supervised bodies through their own
+/// emission, into a builder of their own, never this one).
 fn contains_block_form(e Node) -> bool {
     match e {
         Leaf(_) => false
         Branch { kind, children, .. } => {
             if is_block_form(kind) { return true }
             if kind == NodeKind.IfExpr || kind == NodeKind.MatchExpr || kind == NodeKind.Unsafe ||
-               kind == NodeKind.HandlerLit || kind == NodeKind.Block {
+               kind == NodeKind.HandlerLit || kind == NodeKind.Block ||
+               kind == NodeKind.ClosureLit || kind == NodeKind.SupervisedStmt {
                 return false
             }
             for c in children {
@@ -88,7 +91,8 @@ fn contains_construction(e Node) -> bool {
         Branch { kind, children, .. } => {
             if is_printer_build_kind(kind) { return true }
             if kind == NodeKind.IfExpr || kind == NodeKind.MatchExpr || kind == NodeKind.Unsafe ||
-               kind == NodeKind.HandlerLit || kind == NodeKind.Block {
+               kind == NodeKind.HandlerLit || kind == NodeKind.Block ||
+               kind == NodeKind.ClosureLit || kind == NodeKind.SupervisedStmt {
                 return false
             }
             for c in children {
@@ -168,7 +172,8 @@ fn Lowerer mut @hoist_block_forms(e Node) -> () {
 fn lowers_itself(e Node) -> bool {
     ro k = e.kind_of()
     needs_own_lowering(e) || k == NodeKind.IfExpr || k == NodeKind.MatchExpr ||
-        k == NodeKind.Unsafe || k == NodeKind.HandlerLit
+        k == NodeKind.Unsafe || k == NodeKind.HandlerLit ||
+        k == NodeKind.ClosureLit || k == NodeKind.SupervisedStmt
 }
 
 /// A value read in place by its statement -- a condition, the right of `=`, an

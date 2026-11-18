@@ -431,28 +431,20 @@ fn Cursor mut @stmt() -> Node {
         }
         return @node(NodeKind.WithStmt, kids)
     }
-    // SUPERVISED (wave 274.11 Э.7 item 4): `supervised { body }` -- the
-    // D13 supervision statement the carrier writes (main.nv:286). The door
-    // is the with-statement's own class: a CONTEXTUAL word plus shape, not
-    // a lexer keyword (D13 keeps the keyword table closed). `supervised`
-    // alone, `supervised.x`, `supervised(...)` all stay ordinary
-    // expressions; only `supervised {` can be this form.
-    // THE NAMED HAZARD, probed and void: `Name {` is also the record-ctor
-    // expression shape, so this door would shadow a bare statement
-    // constructor of a type literally NAMED `supervised` -- but the ORACLE
-    // RESERVES the word (probed 2026-09-23: `type supervised { ... }`
-    // refuses "expected identifier, got `supervised`"), so no such type
-    // exists in the language and the contextual door loses nothing.
-    if @peek_ident(SUPERVISED_WORD) && @peek(skip: 1) == TokenKind.LBrace {
-        // The door's lookahead guarantees the body brace, so the block is
-        // taken directly -- a BARE `supervised` (no brace) never reaches
-        // this arm: it is an ordinary name statement, refused by the
-        // unknown-name door at typing (check/exprs.nv:526; measured
-        // 2026-09-23; the oracle, which RESERVES the word, refuses it at
-        // parse -- either way, refused not silent).
-        mut kids = []Node.of(@take()) // `supervised`
-        kids.push(@block())
-        return @node(NodeKind.SupervisedStmt, kids)
+    // SUPERVISED (wave 274.11 Э.7 item 4; the supervised-value wave):
+    // `supervised { body }` or `supervised(timeout: d, on_timeout: |e| f)
+    // { body }` -- the D13 supervision form the carrier writes. The door is
+    // the with-statement's own class: a CONTEXTUAL word plus shape, not a
+    // lexer keyword (D13 keeps the keyword table closed). `supervised`
+    // alone, `supervised.x` stay ordinary expressions; `supervised {` and
+    // `supervised (` can only be this form -- the ORACLE RESERVES the word
+    // (probed 2026-09-23: `type supervised { ... }` refuses "expected
+    // identifier, got `supervised`"), so no call loses its callee. ONE
+    // reader (@supervised_form, parse/closure.nv) for this door and @atom's
+    // value door: the node shape is one, position decides value-ness.
+    if @peek_ident(SUPERVISED_WORD) &&
+        (@peek(skip: 1) == TokenKind.LBrace || @peek(skip: 1) == TokenKind.LParen) {
+        return @supervised_form()
     }
     // SPAWN (wave 274.11 Э.7 item 4): `spawn { body }` -- the D13 pair of
     // `supervised`. Same contextual door, same probed-void hazard (the
