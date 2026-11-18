@@ -661,6 +661,12 @@ const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compi
 /// the form only where a typist judges it, and names the position elsewhere.
 const CLOSURE_LIT_POSITION_MSG = "outside the subset: a closure literal (`|params| ...`) is compiled only where its signature is given by the context -- `on_timeout:` of a `supervised` value (D22, D449); a closure in any other position is not compiled yet (E5, handler values)"
 
+/// A closure literal standing as a CALL ARGUMENT whose parameter is not a
+/// function type: the slot is the one D22 names (context 1), but the callee
+/// gives it no signature -- so there is nothing to type the params against,
+/// and the refusal names the cause rather than the general position bar.
+const CLOSURE_ARG_NEEDS_FN_MSG = "a closure literal takes its signature from the call's parameter, and this parameter is not a function type (`fn(...) -> ...`) -- D22 names the fn-call parameter as the context (E5, handler values)"
+
 /// `supervised(cancel: tok)` (D441 cancellation): the supervised-value wave
 /// compiles `timeout:`/`on_timeout:` (D442/D449), not cancellation -- refused
 /// by name rather than silently dropped (the carrier relay.nv writes it).

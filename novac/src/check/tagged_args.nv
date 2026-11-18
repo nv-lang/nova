@@ -9,7 +9,7 @@ module novac.check
 import ../tree.{Node}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind, SLICE_HEAD, EMPTY_CTOR}
-import ../sem.{decl_of_ty, ty_source_name, branch_children, leaf_text}
+import ../sem.{decl_of_ty, ty_source_name, branch_children, leaf_text, is_arg_node}
 import ../tree.{Node, NodeKind}
 
 /// Only the tag parser creates a leafless ArrayLit; explicit [] has brackets.
@@ -39,3 +39,11 @@ fn named_arg_is(c Node, want str) -> bool {
     if ak[0].kind_of() != NodeKind.LeafNode { return false }
     leaf_text(ak[0]) == want
 }
+
+/// The ARGUMENT SLOT of a call: the position D22 names as context 1 for a
+/// closure literal (`list.filter(|x| x > 0)` -- the signature comes from the
+/// callee's parameter). Syntax only -- the callee's parameter type is judged by
+/// the call's own typing door (`@type_arg_expecting`), never here; the walk
+/// holds no scope to ask it with.
+fn is_closure_arg_slot(kind NodeKind, c Node) -> bool =>
+    (kind == NodeKind.Call || kind == NodeKind.MethodCall) && is_arg_node(c)
