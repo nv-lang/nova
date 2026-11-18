@@ -58,18 +58,38 @@ a value (E2-b)».
 4. LINK (4) — linker command failed (в 141 тот же класс, обёртка
    сообщения изменилась).
 
-## Прогон 19 пакетных входов — NOT-MEASURED (контур, не компилятор)
+## Прогон 19 пакетных входов — ВЫПОЛНЕН (дополнение 2026-11-18, рецепт 141 восстановлен)
 
-Все 19 завершились «entry is not associated with a Nova workspace or
-installation»: драйверу нужен вход внутри workspace; 141 решала это
-scratch-инсталляцией со стейджингом пакетных программ (заметка «staged
-under $S\install141\target/carina-build»), чей рецепт жил в scratch той
-сессии и не сохранился. Данных о компиляторе эта нога не дала; standing
-reference — 141: 19/19 FAIL (18 E_NOVAC_SUBSET + 1 DEP nova-sdl). Для
-воспроизведения нужен рецепт стейджинга пакетов (у интегратора/владельца
-или восстановить по логам logs-packages/ здесь).
+Контур: копия nova-driver @ 0b01c838b + выживший `scratch-driver-141.patch`
+(пины пере-целенены на сид 030head), `NOVA_RT_DIR` = `<worktree>/novac`
+(дверь драйвера для внешних проектов: root = rt_dir.parent() обязан нести
+активы carina-seeds/carina-gate/novac), дескриптор воркtree временно
+подменён сид-дескриптором (verify-seed PASS; возвращён после прогона,
+дерево чистое). Логи: scratch logs-packages-141/ ×19.
 
-## Улики (scratch-opencode/measure-0.3-1118/)
+Итог: **19/19 FAIL — standing reference 141 подтвердился ровно**. Классы:
+E_NOVAC_SUBSET 18 + DEP 1 (nova-sdl, remote-not-found — не компилятор).
+
+Сверка первых диагностик с 141 (committed logs-packages/*.txt):
+
+| первая диагностика | 141 | rerun |
+|---|---|---|
+| fn declares a return type but its body ends without a value | 10 | 4 |
+| novac did not parse this … | 4 | 1 |
+| `#impl` derived only for Display/Equal/Serialize | 2 | 0 |
+| an effect attribute is read but not compiled yet | 1 | 0 |
+| handler literal only as a with-binding/local-binding init | 1 | 0 |
+| (нет JSON-диагностики — окружение линка) | 1 | 0 |
+| вне-диагностические (DEP/прочее) | 0 | 1 (nova-sdl) + 14 (E_NOVAC_SUBSET ниже фронта 141) |
+
+Толкование: волны между 05.11 и 18.11 закрыли/сдвинули верхние двери
+(#impl-деривация, эффектные атрибуты, handler-литералы) — 14 из 19 входов
+прошли их и отказываются E_NOVAC_SUBSET глубже по файлу; «body ends
+without a value» сократился 10→4. Направление то же, что на примерах:
+фронт уезжает вглубь, счёт FAIL стабилен (standing 19/19 воспроизведён).
+
+**Пакетная нога закрыта; NOT-MEASURED-оговорка снята.**
+# Улики (scratch-opencode/measure-0.3-1118/)
 
 table-118.tsv (118 строк, тот же порядок L001–L118), fail-diagnostics-118.tsv
 (55 строк: сообщение новое + 141 + SAME/DIFF), logs-118/ ×118,
