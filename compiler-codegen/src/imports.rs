@@ -2127,6 +2127,33 @@ fn resolve_one(
             continue;
         }
 
+        // Registry 221.1 (129c): an ABSOLUTE import name must be a module, not
+        // a file path. `import std.os.proc` resolves to the file proc.nv,
+        // which declares `module std.os` — merging that one file hides the
+        // sibling peers and reports missing types inside std. The declared
+        // module wins; the error points at the import line.
+        if matches!(imp.anchor, crate::ast::ImportAnchor::Package)
+            && imp.path.len() > peer_module.name.len()
+            && imp.path.starts_with(&peer_module.name)
+        {
+            let (line, col) = crate::source_index::file_text(importer_path)
+                .map(|src| byte_to_line_col(&src, imp.span.start))
+                .unwrap_or((0, 0));
+            return Err(anyhow!(
+                "{}:{}:{}: [E_IMPORT_PATH_NOT_MODULE] `{}` is a file path, not a module — the file declares `module {}`\n  \
+                 file:  {}\n  \
+                 hint: import the declared module: `import {}` (D29/D78; a file path\n  \
+                 appended to a module name merges that one file and hides its peers)",
+                importer_path.display(),
+                line,
+                col,
+                imp.path.join("."),
+                peer_module.name.join("."),
+                peer_path.display(),
+                peer_module.name.join("."),
+            ));
+        }
+
         // Plan 42.10: `_module.nv` peer — special module-config файл.
         // Его module-level attrs (Forbid / Cfg / Doc) пропагируются на
         // entry's module.attrs — applied ко всему compiled module.

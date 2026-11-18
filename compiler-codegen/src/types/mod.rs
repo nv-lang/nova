@@ -36552,6 +36552,30 @@ struct ScopeBinding {
     closure_free_vars: Option<Vec<String>>,
 }
 
+/// Registry 221.1 (129b): can this overload accept this call's argument list?
+///
+/// An effect check keyed by bare name used to walk EVERY namesake overload,
+/// so a 0-arg `f()` inherited the `Fs` row of a 3-arg `f` from another module
+/// of the merged unit (and a lambda parameter `f` inherited a global `f`).
+/// Arity is a cheap, sound filter for "this overload cannot be the callee".
+fn cap_call_arity_matches(fd: &FnDecl, args: &[CallArg]) -> bool {
+    // A spread can expand to any count — keep the overload as a candidate.
+    if args.iter().any(|a| matches!(a, CallArg::Spread(_))) {
+        return true;
+    }
+    let n = args.len();
+    let mut required = 0usize;
+    let mut variadic = false;
+    for p in &fd.params {
+        if p.is_variadic {
+            variadic = true;
+        } else if p.default.is_none() {
+            required += 1;
+        }
+    }
+    n >= required && (variadic || n <= fd.params.len())
+}
+
 /// Plan 16: capability state передаётся через walk как mutable.
 /// Push/pop при входе/выходе из forbid/realtime блоков.
 #[derive(Default, Clone)]
@@ -37421,19 +37445,46 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
-            ExprKind::Lambda { body, .. } => self.walk_expr(body, state, errors),
+            ExprKind::Lambda { params, body, .. } => {
+                // Registry 221.1 (129b): lambda params shadow same-named globals.
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for p in params {
+                    frame.insert(p.name.clone(), ScopeBinding { mutable: false, ty: p.ty.clone(), linear_pattern: false, closure_free_vars: None });
+                }
+                state.scopes.push(frame);
+                self.walk_expr(body, state, errors);
+                state.scopes.pop();
+            }
             // Plan 19, C5: CapabilityCtx обходит тело closure для
             // forbid/realtime проверок (D63/D64). Closure-light и
             // closure-full одинаково — walk by body kind.
-            ExprKind::ClosureLight { body, .. } => match body {
-                crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, state, errors),
-                crate::ast::ClosureBody::Block(b) => self.walk_block(b, state, errors),
-            },
-            ExprKind::ClosureFull(sb) => match &sb.body {
-                FnBody::Expr(e) => self.walk_expr(e, state, errors),
-                FnBody::Block(b) => self.walk_block(b, state, errors),
-                FnBody::External => {}
-            },
+            // Registry 221.1 (129b): push the closure params too — a call to a
+            // parameter must not inherit a same-named global's effects.
+            ExprKind::ClosureLight { params, body } => {
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for p in params {
+                    frame.insert(p.name.clone(), ScopeBinding { mutable: false, ty: None, linear_pattern: false, closure_free_vars: None });
+                }
+                state.scopes.push(frame);
+                match body {
+                    crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, state, errors),
+                    crate::ast::ClosureBody::Block(b) => self.walk_block(b, state, errors),
+                }
+                state.scopes.pop();
+            }
+            ExprKind::ClosureFull(sb) => {
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for p in &sb.params {
+                    frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()), linear_pattern: false, closure_free_vars: None });
+                }
+                state.scopes.push(frame);
+                match &sb.body {
+                    FnBody::Expr(e) => self.walk_expr(e, state, errors),
+                    FnBody::Block(b) => self.walk_block(b, state, errors),
+                    FnBody::External => {}
+                }
+                state.scopes.pop();
+            }
             ExprKind::Spawn(body) => {
                 // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
                 if state.const_init {
@@ -37630,7 +37681,7 @@ impl<'a> CapabilityCtx<'a> {
     /// Сейчас — только для Call'ов; forbid/realtime/with управляют
     /// state'ом, не вызывая check'ов на собственном узле.
     fn check_capabilities_at(&self, e: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
-        let ExprKind::Call { func, .. } = &e.kind else { return; };
+        let ExprKind::Call { func, args, .. } = &e.kind else { return; };
         // Path-form: `Type.method`, `Effect.op` или `[]T.method`.
         // Для `[]T.method()` парсер строит Member{obj: Path(["__array", T]), name}.
         let path: Vec<String> = match &func.kind {
@@ -37711,9 +37762,27 @@ impl<'a> CapabilityCtx<'a> {
         // (overloads обычно отличаются типом аргумента, не эффектами),
         // но если случится — программист дисамбигуирует через cast.
         if path.len() == 1 {
-            if let Some(overloads) = self.sig.fn_decls.get(&path[0]) {
-                for callee in overloads.iter() {
-                    self.check_callee_effects(callee, &path[0], state, e.span, errors);
+            // Registry 221.1 (129b): a LOCAL binding shadows a same-named
+            // global for every check, effects included. Without this a
+            // lambda/closure parameter `f` picked up the effect row of an
+            // unrelated top-level `f` from another module of the merged unit.
+            let locally_bound = state.scopes.iter().rev().any(|s| s.contains_key(&path[0]));
+            if !locally_bound {
+                if let Some(overloads) = self.sig.fn_decls.get(&path[0]) {
+                    for callee in overloads.iter() {
+                        // File-private decls of another file are invisible here.
+                        if callee.file_private && callee.span.file_id != e.span.file_id {
+                            continue;
+                        }
+                        // Registry 221.1 (129b): check only overloads that can
+                        // actually be called — a 0-arg call must not inherit
+                        // `Fs` from a 3-arg namesake in another module of the
+                        // merged unit.
+                        if !cap_call_arity_matches(callee, args) {
+                            continue;
+                        }
+                        self.check_callee_effects(callee, &path[0], state, e.span, errors);
+                    }
                 }
             }
         }
@@ -37724,6 +37793,9 @@ impl<'a> CapabilityCtx<'a> {
             if let Some(methods) = self.sig.method_table.get(&path[0]) {
                 if let Some(fns) = methods.get(&path[1]) {
                     for callee in fns {
+                        if !cap_call_arity_matches(callee, args) {
+                            continue;
+                        }
                         self.check_callee_effects(callee, &format!("{}.{}", path[0], path[1]), state, e.span, errors);
                     }
                 }

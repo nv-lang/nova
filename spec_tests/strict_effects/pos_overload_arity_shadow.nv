@@ -1,0 +1,27 @@
+// Registry 221.1 (129b) POSITIVE: a bare-name effect check must pick only the
+// overload the call can select, and a local binding must shadow a same-named
+// global. Before the fix `f()` inherited `Busy` from the 3-arg `f`, and the
+// local lambda `g` inherited `Busy` from the global `g`.
+// Must compile CLEAN with --strict-effects.
+
+module strict_effects.pos_overload_arity_shadow
+
+type Busy effect {
+    fn go() -> int
+}
+
+fn f() -> int => 1
+
+fn f(a str, b str, c int) Busy -> int => c
+
+fn g(a int) Busy -> int => a
+
+fn caller() -> int {
+    ro g = |x| x + 1
+    ro _ = g(1)
+    f()
+}
+
+test "arity and local shadow do not leak effects" {
+    assert(caller() == 1)
+}
