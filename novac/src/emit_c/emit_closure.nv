@@ -20,7 +20,8 @@
 
 module novac.emit_c
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, raw_node}
+import ../diag.{ice_at}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, file_decls, decl_fn_row}
 import ../sem.{c_type, c_ident, is_unit_ty}
@@ -227,4 +228,19 @@ fn Emitter mut @closure_clos_value(lit Node) -> str {
     @body.append("    ${v}->fn = (void*)novac_lambda_${@tag}${n}_body;\n")
     @body.append("    ${v}->env = (void*)${v}_env;\n")
     v
+}
+
+/// The closure VALUE at an expression position (E.11 wave, D22 context 1): the
+/// temporary the statement's hoist built (`@hoist_array_lits`), the same
+/// contract the array literal and the record constructor keep.
+fn Emitter mut @emit_closure_value(e Node) -> () {
+    ro tmp = @lit_tmp[raw_node(e.id_of())]
+    if tmp == "" {
+        ice_at(
+            "novac/src/emit_c/emit_closure.nv:216",
+            "emit: a closure literal in expression position was never hoisted (E.11 wave)")
+    } else {
+        // Hoisted: the temporary carries the closure value.
+    }
+    @body.append(tmp)
 }

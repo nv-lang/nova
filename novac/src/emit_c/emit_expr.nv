@@ -368,6 +368,8 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // Hoisted: the temporary carries the built record.
         }
         @body.append(rtmp)
+    } else if k == NodeKind.ClosureLit {
+        @emit_closure_value(e)
     } else if k == NodeKind.Name {
         @emit_name(e)
     } else if k == NodeKind.InterpStr {

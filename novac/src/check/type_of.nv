@@ -470,6 +470,21 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // the channel exists to close.
         return chan.type_if_known(e.id_of())
     }
+    if k == NodeKind.ClosureLit {
+        // DECIDED by the door that held a signature -- `@type_closure_lit`
+        // through the call's argument expectation (D22 context 1) or the
+        // `on_timeout:` slot: the literal's type IS that signature. Read,
+        // never redone; a silent channel is a pass-order violation, not a
+        // default (#652 class).
+        ro clos_t = chan.type_if_known(e.id_of())
+        if is_ty(clos_t) {
+            return clos_t
+        } else {
+            ice_at(
+                "novac/src/check/type_of.nv:480",
+                "check: a closure literal without its context signature reached the lattice (E.11)")
+        }
+    }
     if k == NodeKind.Name {
         ro nm = expr_leaf_name(e)
         if is_bool_literal(nm) { return ctx.prims.bool_id }

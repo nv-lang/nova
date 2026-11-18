@@ -138,7 +138,14 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // still a separate, already-named subset gap ("indexing is read but not
     // compiled yet", binds.nv) -- this fix only lets the call reach THAT
     // honest refusal instead of the misleading "omits a parameter" one.
-    k == NodeKind.Index
+    k == NodeKind.Index ||
+    // A CLOSURE LITERAL joins for the IDENTICAL reason (E.11 wave, D22
+    // context 1): `apply(|x| x * 2, 5)` was refused as a closure POSITION
+    // before anything could count it -- counting goes through `is_arg_node`,
+    // which asks here. The literal is still typed only where a door holds a
+    // signature (`@type_arg_expecting`, `@type_closure_lit`); `@type_expr`'s
+    // own arm refuses it by name elsewhere, the `Try` precedent.
+    k == NodeKind.ClosureLit
 }
 
 /// Is this a call to `println` in the source? A question about meaning, so the
