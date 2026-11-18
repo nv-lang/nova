@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// novac/src/check/closure_arg_test.nv -- the E.11 wave's LATCH (274.11,
+// captured 2026-11-18): what the closure-argument door admits, what it
+// refuses by name, and where the next wave starts.
+//
+// The wave opened ONE position -- D22 context 1, the fn-typed call parameter
+// -- and the three probes of the wave's step 1b moved from the position bar
+// to three DIFFERENT doors that are not this wave's: a fn-typed parameter in
+// a DECLARATION, the shell's missing Result instance, and the expression
+// form of `spawn`. These tests pin the achieved front so a later change
+// cannot roll it back silently, and pin each next door by the text that now
+// answers first, so the next wave starts from a measured place.
+//
+// Donor: none -- the door is D22's own rule; the test shape is check_test.nv's.
+// Guarded by: check-novac-module-tests.sh.
+module novac.check
+
+import ../source.{SourceText}
+import ../lex.{lex}
+import ../parse.{parse}
+import ../sem.{collect, InteropTable}
+import ../tree.{Node}
+
+/// The FIRST diagnostic's message for `text`, or "" when the text is clean.
+fn cam_first_msg(text str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
+    if diags.len() == 0 { return "" }
+    diags[0].message
+}
+
+test "closure-arg: a literal outside every door keeps the position bar" {
+    ro src = "module m\n\nfn g() -> int {\n    ro h = |x| x\n    1\n}\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("is compiled only where its signature is given by the context"), m)
+}
+
+test "closure-arg: a non-fn parameter refuses by name, not by position" {
+    ro src = "module m\n\nfn f(n int) -> int => n\n\nfn g() -> int => f(|x| x)\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("takes its signature from the call's parameter"), m)
+    assert(m.contains("is not a function type"), m)
+}
+
+test "closure-arg: a fn-typed parameter passes the position bar (front moves to the declaration door)" {
+    ro src = "module m\n\nfn apply(f fn(int) -> int, v int) -> int => f(v)\n\nfn g() -> int => apply(|x| x * 2, 5)\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("a parameter of function type"), m)
+    assert(!m.contains("|params|"), m)
+}
+
+test "closure-arg: `spawn(|| ...)` moves past the position bar to the spawn-expression door" {
+    ro src = "module m\n\nfn g() -> () {\n    spawn(|| println(1))\n}\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("`spawn` is not a callable novac knows in an expression"), m)
+    assert(!m.contains("|params|"), m)
+}
