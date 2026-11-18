@@ -244,17 +244,18 @@ nova_int (*_nova_supervisor_decide_fn)(void* scope, nova_int idx,
  *
  * 3. **On main-flow** (no fiber): longjmp directly to with-frame. */
 /* Plan 221.1 №108 followup (2026-07-25) — see effects.h `_nova_main_fiber_co`
- * doc comment for the full rationale. `!mco_running()` used to mean
- * "definitely main-flow, no coroutine, same-stack" — main-body becoming a
- * fiber (#108) broke that equivalence for plain top-level code with no
- * spawn/supervised boundary anywhere. This restores the original property:
- * true for genuine main-flow (pre-#108 builds, or any future non-fiber
- * caller) AND for the root main-fiber itself; false for any genuinely
- * spawned/detached child fiber (where the original cross-stack-longjmp UB
- * concern this gate exists for is still real). */
-static inline int nova_cross_effect_route_safe(void) {
+ * doc comment for the main-flow and root-fiber cases.
+ *
+ * Registry 221.1: a spawned fiber may route to an owner iframe on its own
+ * stack. An inherited owner on another stack uses the fallback. */
+static inline int nova_cross_effect_route_safe(NovaInterruptFrame* owner) {
     mco_coro* co = mco_running();
-    return !co || (void*)co == _nova_main_fiber_co;
+    if (!co || (void*)co == _nova_main_fiber_co) return 1;
+    if (!owner) return 0;
+    /* Integer addresses also cover an inherited frame on an unrelated stack. */
+    uintptr_t p = (uintptr_t)owner;
+    uintptr_t base = (uintptr_t)co->stack_base;
+    return p >= base && p - base < co->stack_size;
 }
 
 void nova_interrupt(nova_int value) {
@@ -274,7 +275,7 @@ void nova_interrupt(nova_int value) {
      * (default path ниже). */
     if (_nova_current_handler_iframe
         && _nova_interrupt_top != _nova_current_handler_iframe
-        && nova_cross_effect_route_safe()) {
+        && nova_cross_effect_route_safe(_nova_current_handler_iframe)) {
         /* owner != top — walk chain. Если intermediate DEFER_SCOPE frames
          * есть → fall through к top (defer cleanup → re-issue → propagate).
          * Если только WITHBLOCK frames (nested with) → skip directly к owner. */
@@ -364,7 +365,7 @@ void nova_interrupt_ptr(void* value) {
      * в fiber context (UB across coroutine boundary). */
     if (_nova_current_handler_iframe
         && _nova_interrupt_top != _nova_current_handler_iframe
-        && nova_cross_effect_route_safe()) {
+        && nova_cross_effect_route_safe(_nova_current_handler_iframe)) {
         int has_defer_between = 0;
         NovaInterruptFrame* p = _nova_interrupt_top;
         while (p && p != _nova_current_handler_iframe) {
@@ -415,7 +416,7 @@ void nova_interrupt_ptr(void* value) {
 }
 
 #ifdef _MSC_VER
-__declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
+__declspec(thread) NovaFailFrame*      _nova_fail_top_tls      = NULL;
 /* Plan 201 trace-per-fiber: combined last_error/throw_site/throw_trace
  * bucket (effects.h NovaFiberErrorState) + the ONE active-pointer swapped
  * per-fiber around mco_resume (runtime.c) / nova_supervised_step
@@ -423,20 +424,20 @@ __declspec(thread) NovaFailFrame*      _nova_fail_top      = NULL;
  * bucket for "outside any fiber" contexts; `_nova_error_state_p` starts
  * NULL and self-heals to it via `nova_error_state_active()` (effects.h). */
 __declspec(thread) NovaFiberErrorState  _nova_error_state_native = {0};
-__declspec(thread) NovaFiberErrorState* _nova_error_state_p      = NULL;
-__declspec(thread) NovaInterruptFrame* _nova_interrupt_top = NULL;
+__declspec(thread) NovaFiberErrorState* _nova_error_state_p_tls  = NULL;
+__declspec(thread) NovaInterruptFrame* _nova_interrupt_top_tls = NULL;
 /* Plan 61 followup #1: cross-effect throw routing slot. */
-__declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe = NULL;
+__declspec(thread) NovaInterruptFrame* _nova_current_handler_iframe_tls = NULL;
 __declspec(thread) NovaTestFrame*      _nova_test_frame    = NULL;
-__declspec(thread) NovaVtable_Fail*     _nova_handler_Fail     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
-__declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 typed erased slot */
+__declspec(thread) NovaVtable_Fail*     _nova_handler_Fail_tls     = NULL;  /* default NULL → Nova_Fail_fail falls back to nova_throw */
+__declspec(thread) NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* Plan 61 Ф.2 typed erased slot */
 /* Plan 175 Ф.2-v3: struct type stays hand-written (effects.h doc comment —
  * channels.h / runtime.c need a stable named type), so the TLS slot
  * definition stays HERE too (dispatch FUNCTIONS moved to generic codegen,
  * not this slot). */
-__declspec(thread) NovaVtable_Time*     _nova_handler_Time     = NULL;  /* default NULL → ambient #default_handler(Time) installs lazily (prelude) */
-__declspec(thread) NovaFiberQueue*     _nova_active_scope  = NULL;  /* active supervised scope for current thread */
-__declspec(thread) int                 _nova_active_slot   = -1;
+__declspec(thread) NovaVtable_Time*     _nova_handler_Time_tls     = NULL;  /* default NULL → ambient #default_handler(Time) installs lazily (prelude) */
+__declspec(thread) NovaFiberQueue*     _nova_active_scope_tls  = NULL;  /* active supervised scope for current thread */
+__declspec(thread) int                 _nova_active_slot_tls   = -1;
 /* Plan 44.5 Layer 5 deferred-unlock: set by fiber in park_with_unlock before
  * mco_yield; called by worker loop AFTER mco_resume returns (= after fiber is
  * truly MCO_SUSPENDED). Prevents race where cross-thread wake clears parked
@@ -448,25 +449,25 @@ __declspec(thread) volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7
  * stack for Application effect. Saved+initialized в `with Application = ...`
  * block prologue, fired LIFO + restored на exit. NULL outside Application
  * blocks → nova_app_register_finalizer becomes no-op. */
-__declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
+__declspec(thread) NovaFinalizerStack* _nova_active_finalizer_stack_tls = NULL;
 #else
-__thread NovaFailFrame*      _nova_fail_top      = NULL;
+__thread NovaFailFrame*      _nova_fail_top_tls      = NULL;
 /* Plan 201 trace-per-fiber: see MSVC branch above for rationale. */
 __thread NovaFiberErrorState  _nova_error_state_native = {0};
-__thread NovaFiberErrorState* _nova_error_state_p      = NULL;
-__thread NovaInterruptFrame* _nova_interrupt_top = NULL;
-__thread NovaInterruptFrame* _nova_current_handler_iframe = NULL;  /* Plan 61 fu#1 */
+__thread NovaFiberErrorState* _nova_error_state_p_tls  = NULL;
+__thread NovaInterruptFrame* _nova_interrupt_top_tls = NULL;
+__thread NovaInterruptFrame* _nova_current_handler_iframe_tls = NULL;  /* Plan 61 fu#1 */
 __thread NovaTestFrame*      _nova_test_frame    = NULL;
-__thread NovaVtable_Fail*     _nova_handler_Fail     = NULL;
-__thread NovaVtable_Fail_any* _nova_handler_Fail_any = NULL;  /* Plan 61 Ф.2 */
-__thread NovaVtable_Time*     _nova_handler_Time     = NULL;
-__thread NovaFiberQueue*     _nova_active_scope  = NULL;
-__thread int                 _nova_active_slot   = -1;
+__thread NovaVtable_Fail*     _nova_handler_Fail_tls     = NULL;
+__thread NovaVtable_Fail_any* _nova_handler_Fail_any_tls = NULL;  /* Plan 61 Ф.2 */
+__thread NovaVtable_Time*     _nova_handler_Time_tls     = NULL;
+__thread NovaFiberQueue*     _nova_active_scope_tls  = NULL;
+__thread int                 _nova_active_slot_tls   = -1;
 __thread void (*_nova_park_unlock_fn)(void*)  = NULL;
 __thread void*               _nova_park_unlock_arg = NULL;
 __thread volatile int*       _nova_preempt_ptr   = NULL;  /* Plan 44.7 */
 /* Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]: см. MSVC branch. */
-__thread NovaFinalizerStack* _nova_active_finalizer_stack = NULL;
+__thread NovaFinalizerStack* _nova_active_finalizer_stack_tls = NULL;
 #endif
 
 /* Plan 175 Ф.2-v3: `_nova_time_default_ctor` (Ф.2-v2 special-case hook) is
@@ -506,9 +507,13 @@ __thread NovaEffectRegistry _nova_effect_registry;
 typedef struct NovaEffectRootNode {
     NovaEffectRegistry* volatile reg;
     struct NovaEffectRootNode* next;
-    /* nova_effect_register_root: GC-only slots of this thread (per-E Fail). The
-     * array grows by publishing a fresh copy; the old one is never freed, so a
-     * collection that stopped this thread mid-growth still reads valid memory. */
+    /* nova_effect_register_root: extra GC-only slots of this thread (kept for
+     * a slot that must be scanned without joining the snapshot). Registry
+     * 221.1 №1987 (class): per-E `Fail_<E>` slots no longer use this path — they
+     * are registered as effect storage and therefore live in the snapshot.
+     * The array grows by publishing a fresh copy; the old one is never freed,
+     * so a collection that stopped this thread mid-growth still reads valid
+     * memory. */
     void** volatile* volatile extra;
     volatile int extra_n;
     int extra_cap;

@@ -3645,49 +3645,58 @@ typedef struct {
 } NovaVtable_Io;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Io* _nova_handler_Io = NULL;
+__declspec(thread) NovaVtable_Io* _nova_handler_Io_tls = NULL;
 #else
-__thread NovaVtable_Io* _nova_handler_Io = NULL;
+__thread NovaVtable_Io* _nova_handler_Io_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Io** _nova_handler_Io_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Io_tls; }
+#define _nova_handler_Io (*_nova_handler_Io_slot())
 
 static NovaVtable_Io* nova_fn_3std2io7real_io(void);
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Io_read_in(Nova_Vec____nova_byte* buf) {
     if (!_nova_handler_Io) { _nova_handler_Io = (NovaVtable_Io*)nova_gc_pin(nova_fn_3std2io7real_io()); }
-    if (!_nova_handler_Io) { nv_panic(nova_str_from_cstr("unhandled effect `Io.read_in`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Io->read_in(_nova_handler_Io->ctx, buf);
+    NovaVtable_Io* _nv_h = _nova_handler_Io;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Io.read_in`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->read_in(_nv_h->ctx, buf);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Io_write_out(Nova_Vec____nova_byte* data) {
     if (!_nova_handler_Io) { _nova_handler_Io = (NovaVtable_Io*)nova_gc_pin(nova_fn_3std2io7real_io()); }
-    if (!_nova_handler_Io) { nv_panic(nova_str_from_cstr("unhandled effect `Io.write_out`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Io->write_out(_nova_handler_Io->ctx, data);
+    NovaVtable_Io* _nv_h = _nova_handler_Io;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Io.write_out`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->write_out(_nv_h->ctx, data);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Io_write_err(Nova_Vec____nova_byte* data) {
     if (!_nova_handler_Io) { _nova_handler_Io = (NovaVtable_Io*)nova_gc_pin(nova_fn_3std2io7real_io()); }
-    if (!_nova_handler_Io) { nv_panic(nova_str_from_cstr("unhandled effect `Io.write_err`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Io->write_err(_nova_handler_Io->ctx, data);
+    NovaVtable_Io* _nv_h = _nova_handler_Io;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Io.write_err`: no active handler (missing `with Io = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->write_err(_nv_h->ctx, data);
 }
 
 static NovaVtable_Time* nova_fn_4time8duration9real_time(void);
 static inline nova_unit Nova_Time_sleep(NovaValue_Duration d) {
     if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
-    if (_nova_handler_Time->sleep) { return _nova_handler_Time->sleep(_nova_handler_Time->ctx, d.nanos); }
+    NovaVtable_Time* _nv_h = _nova_handler_Time;
+    if (_nv_h->sleep) { return _nv_h->sleep(_nv_h->ctx, d.nanos); }
     return time_sleep_ms((nova_int)((d.nanos + 999999) / 1000000));
 }
 
 static inline NovaValue_Timestamp Nova_Time_now(void) {
     if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
-    if (_nova_handler_Time->now) { int64_t _nv_w = _nova_handler_Time->now(_nova_handler_Time->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }
+    NovaVtable_Time* _nv_h = _nova_handler_Time;
+    if (_nv_h->now) { int64_t _nv_w = _nv_h->now(_nv_h->ctx); return (NovaValue_Timestamp){ .nanos = _nv_w }; }
     return (NovaValue_Timestamp){ .nanos = time_wall_unix_ms() * (int64_t)1000000 };
 }
 
 static inline NovaValue_Monotonic Nova_Time_now_monotonic(void) {
     if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
-    if (_nova_handler_Time->now_monotonic) { int64_t _nv_w = _nova_handler_Time->now_monotonic(_nova_handler_Time->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }
+    NovaVtable_Time* _nv_h = _nova_handler_Time;
+    if (_nv_h->now_monotonic) { int64_t _nv_w = _nv_h->now_monotonic(_nv_h->ctx); return (NovaValue_Monotonic){ .nanos = _nv_w }; }
     return (NovaValue_Monotonic){ .nanos = time_monotonic_ns() };
 }
 
 static inline nova_int Nova_Time_local_offset_sec(void) {
     if (!_nova_handler_Time) { _nova_handler_Time = (NovaVtable_Time*)nova_gc_pin(nova_fn_4time8duration9real_time()); }
-    if (_nova_handler_Time->local_offset_sec) { return _nova_handler_Time->local_offset_sec(_nova_handler_Time->ctx); }
+    NovaVtable_Time* _nv_h = _nova_handler_Time;
+    if (_nv_h->local_offset_sec) { return _nv_h->local_offset_sec(_nv_h->ctx); }
     return time_local_offset_sec();
 }
 
@@ -3722,140 +3731,168 @@ typedef struct {
 } NovaVtable_Fs;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Fs* _nova_handler_Fs = NULL;
+__declspec(thread) NovaVtable_Fs* _nova_handler_Fs_tls = NULL;
 #else
-__thread NovaVtable_Fs* _nova_handler_Fs = NULL;
+__thread NovaVtable_Fs* _nova_handler_Fs_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Fs** _nova_handler_Fs_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Fs_tls; }
+#define _nova_handler_Fs (*_nova_handler_Fs_slot())
 
 static NovaVtable_Fs* nova_fn_3std2fs7real_fs(void);
 static inline nova_int Nova_Fs_open(Nova_Vec____nova_byte* path, nova_int flags, nova_int mode) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.open`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->open(_nova_handler_Fs->ctx, path, flags, mode);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.open`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->open(_nv_h->ctx, path, flags, mode);
 }
 
 static inline nova_int Nova_Fs_close(nova_int fd) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.close`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->close(_nova_handler_Fs->ctx, fd);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.close`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->close(_nv_h->ctx, fd);
 }
 
 static inline nova_int Nova_Fs_read(nova_int fd, Nova_Vec____nova_byte* buf) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.read`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->read(_nova_handler_Fs->ctx, fd, buf);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.read`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->read(_nv_h->ctx, fd, buf);
 }
 
 static inline nova_int Nova_Fs_write(nova_int fd, Nova_Vec____nova_byte* data) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.write`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->write(_nova_handler_Fs->ctx, fd, data);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.write`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->write(_nv_h->ctx, fd, data);
 }
 
 static inline nova_int Nova_Fs_read_at(nova_int fd, Nova_Vec____nova_byte* buf, nova_int offset) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.read_at`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->read_at(_nova_handler_Fs->ctx, fd, buf, offset);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.read_at`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->read_at(_nv_h->ctx, fd, buf, offset);
 }
 
 static inline nova_int Nova_Fs_write_at(nova_int fd, Nova_Vec____nova_byte* data, nova_int offset) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.write_at`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->write_at(_nova_handler_Fs->ctx, fd, data, offset);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.write_at`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->write_at(_nv_h->ctx, fd, data, offset);
 }
 
 static inline int64_t Nova_Fs_seek(nova_int fd, int64_t offset, nova_int whence) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.seek`: no active handler (missing `with Fs = …` around this call)")); return (int64_t){0}; } return _nova_handler_Fs->seek(_nova_handler_Fs->ctx, fd, offset, whence);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.seek`: no active handler (missing `with Fs = …` around this call)")); return (int64_t){0}; } return _nv_h->seek(_nv_h->ctx, fd, offset, whence);
 }
 
 static inline nova_int Nova_Fs_sync_all(nova_int fd) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.sync_all`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->sync_all(_nova_handler_Fs->ctx, fd);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.sync_all`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->sync_all(_nv_h->ctx, fd);
 }
 
 static inline nova_int Nova_Fs_sync_data(nova_int fd) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.sync_data`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->sync_data(_nova_handler_Fs->ctx, fd);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.sync_data`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->sync_data(_nv_h->ctx, fd);
 }
 
 static inline nova_int Nova_Fs_stat(Nova_Vec____nova_byte* path, Nova_Vec____nova_byte* img) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.stat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->stat(_nova_handler_Fs->ctx, path, img);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.stat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->stat(_nv_h->ctx, path, img);
 }
 
 static inline nova_int Nova_Fs_lstat(Nova_Vec____nova_byte* path, Nova_Vec____nova_byte* img) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.lstat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->lstat(_nova_handler_Fs->ctx, path, img);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.lstat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->lstat(_nv_h->ctx, path, img);
 }
 
 static inline nova_int Nova_Fs_fstat(nova_int fd, Nova_Vec____nova_byte* img) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.fstat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->fstat(_nova_handler_Fs->ctx, fd, img);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.fstat`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->fstat(_nv_h->ctx, fd, img);
 }
 
 static inline nova_int Nova_Fs_mkdir(Nova_Vec____nova_byte* path, nova_int mode) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.mkdir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->mkdir(_nova_handler_Fs->ctx, path, mode);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.mkdir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->mkdir(_nv_h->ctx, path, mode);
 }
 
 static inline nova_int Nova_Fs_remove_file(Nova_Vec____nova_byte* path) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.remove_file`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->remove_file(_nova_handler_Fs->ctx, path);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.remove_file`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->remove_file(_nv_h->ctx, path);
 }
 
 static inline nova_int Nova_Fs_remove_dir(Nova_Vec____nova_byte* path) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.remove_dir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->remove_dir(_nova_handler_Fs->ctx, path);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.remove_dir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->remove_dir(_nv_h->ctx, path);
 }
 
 static inline nova_int Nova_Fs_rename(Nova_Vec____nova_byte* src, Nova_Vec____nova_byte* dst) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.rename`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->rename(_nova_handler_Fs->ctx, src, dst);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.rename`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->rename(_nv_h->ctx, src, dst);
 }
 
 static inline nova_int Nova_Fs_symlink(Nova_Vec____nova_byte* target, Nova_Vec____nova_byte* link) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.symlink`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->symlink(_nova_handler_Fs->ctx, target, link);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.symlink`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->symlink(_nv_h->ctx, target, link);
 }
 
 static inline nova_int Nova_Fs_chmod(Nova_Vec____nova_byte* path, nova_int mode) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.chmod`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->chmod(_nova_handler_Fs->ctx, path, mode);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.chmod`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->chmod(_nv_h->ctx, path, mode);
 }
 
 static inline nova_int Nova_Fs_copy_file(Nova_Vec____nova_byte* src, Nova_Vec____nova_byte* dst) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.copy_file`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->copy_file(_nova_handler_Fs->ctx, src, dst);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.copy_file`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->copy_file(_nv_h->ctx, src, dst);
 }
 
 static inline nova_int Nova_Fs_fsync_dir(Nova_Vec____nova_byte* path) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.fsync_dir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->fsync_dir(_nova_handler_Fs->ctx, path);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.fsync_dir`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->fsync_dir(_nv_h->ctx, path);
 }
 
 static inline nova_int Nova_Fs_scandir_open(Nova_Vec____nova_byte* path) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_open`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->scandir_open(_nova_handler_Fs->ctx, path);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_open`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->scandir_open(_nv_h->ctx, path);
 }
 
 static inline nova_int Nova_Fs_scandir_next(nova_int h) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_next`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->scandir_next(_nova_handler_Fs->ctx, h);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_next`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->scandir_next(_nv_h->ctx, h);
 }
 
 static inline nova_str Nova_Fs_scandir_name(nova_int h) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_name`: no active handler (missing `with Fs = …` around this call)")); return (nova_str){0}; } return _nova_handler_Fs->scandir_name(_nova_handler_Fs->ctx, h);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_name`: no active handler (missing `with Fs = …` around this call)")); return (nova_str){0}; } return _nv_h->scandir_name(_nv_h->ctx, h);
 }
 
 static inline nova_int Nova_Fs_scandir_kind(nova_int h) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_kind`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nova_handler_Fs->scandir_kind(_nova_handler_Fs->ctx, h);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_kind`: no active handler (missing `with Fs = …` around this call)")); return (nova_int){0}; } return _nv_h->scandir_kind(_nv_h->ctx, h);
 }
 
 static inline nova_unit Nova_Fs_scandir_close(nova_int h) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_close`: no active handler (missing `with Fs = …` around this call)")); return (nova_unit){0}; } return _nova_handler_Fs->scandir_close(_nova_handler_Fs->ctx, h);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.scandir_close`: no active handler (missing `with Fs = …` around this call)")); return (nova_unit){0}; } return _nv_h->scandir_close(_nv_h->ctx, h);
 }
 
 static inline _NovaTuple_2_8_nova_int_8_nova_str Nova_Fs_realpath(Nova_Vec____nova_byte* path) {
     if (!_nova_handler_Fs) { _nova_handler_Fs = (NovaVtable_Fs*)nova_gc_pin(nova_fn_3std2fs7real_fs()); }
-    if (!_nova_handler_Fs) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.realpath`: no active handler (missing `with Fs = …` around this call)")); return (_NovaTuple_2_8_nova_int_8_nova_str){0}; } return _nova_handler_Fs->realpath(_nova_handler_Fs->ctx, path);
+    NovaVtable_Fs* _nv_h = _nova_handler_Fs;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Fs.realpath`: no active handler (missing `with Fs = …` around this call)")); return (_NovaTuple_2_8_nova_int_8_nova_str){0}; } return _nv_h->realpath(_nv_h->ctx, path);
 }
 
 typedef struct {
@@ -3880,95 +3917,114 @@ typedef struct {
 } NovaVtable_Os;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Os* _nova_handler_Os = NULL;
+__declspec(thread) NovaVtable_Os* _nova_handler_Os_tls = NULL;
 #else
-__thread NovaVtable_Os* _nova_handler_Os = NULL;
+__thread NovaVtable_Os* _nova_handler_Os_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Os** _nova_handler_Os_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Os_tls; }
+#define _nova_handler_Os (*_nova_handler_Os_slot())
 
 static NovaVtable_Os* nova_fn_3std2os7real_os(void);
 static inline nova_int Nova_Os_arg_count(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.arg_count`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->arg_count(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.arg_count`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->arg_count(_nv_h->ctx);
 }
 
 static inline nova_str Nova_Os_arg_at(nova_int i) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.arg_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->arg_at(_nova_handler_Os->ctx, i);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.arg_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->arg_at(_nv_h->ctx, i);
 }
 
 static inline NovaOpt_nova_str Nova_Os_env_get(Nova_Vec____nova_byte* key) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_get`: no active handler (missing `with Os = …` around this call)")); return (NovaOpt_nova_str){0}; } return _nova_handler_Os->env_get(_nova_handler_Os->ctx, key);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_get`: no active handler (missing `with Os = …` around this call)")); return (NovaOpt_nova_str){0}; } return _nv_h->env_get(_nv_h->ctx, key);
 }
 
 static inline nova_bool Nova_Os_env_has(Nova_Vec____nova_byte* key) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_has`: no active handler (missing `with Os = …` around this call)")); return (nova_bool){0}; } return _nova_handler_Os->env_has(_nova_handler_Os->ctx, key);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_has`: no active handler (missing `with Os = …` around this call)")); return (nova_bool){0}; } return _nv_h->env_has(_nv_h->ctx, key);
 }
 
 static inline nova_int Nova_Os_env_set(Nova_Vec____nova_byte* key, Nova_Vec____nova_byte* val) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_set`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->env_set(_nova_handler_Os->ctx, key, val);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_set`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->env_set(_nv_h->ctx, key, val);
 }
 
 static inline nova_int Nova_Os_env_remove(Nova_Vec____nova_byte* key) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_remove`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->env_remove(_nova_handler_Os->ctx, key);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_remove`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->env_remove(_nv_h->ctx, key);
 }
 
 static inline nova_int Nova_Os_env_len(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_len`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->env_len(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_len`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->env_len(_nv_h->ctx);
 }
 
 static inline nova_str Nova_Os_env_key_at(nova_int i) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_key_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->env_key_at(_nova_handler_Os->ctx, i);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_key_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->env_key_at(_nv_h->ctx, i);
 }
 
 static inline nova_str Nova_Os_env_val_at(nova_int i) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_val_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->env_val_at(_nova_handler_Os->ctx, i);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.env_val_at`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->env_val_at(_nv_h->ctx, i);
 }
 
 static inline nova_str Nova_Os_cwd(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.cwd`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->cwd(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.cwd`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->cwd(_nv_h->ctx);
 }
 
 static inline nova_int Nova_Os_set_cwd(Nova_Vec____nova_byte* path) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.set_cwd`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->set_cwd(_nova_handler_Os->ctx, path);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.set_cwd`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->set_cwd(_nv_h->ctx, path);
 }
 
 static inline nova_str Nova_Os_temp_dir(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.temp_dir`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->temp_dir(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.temp_dir`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->temp_dir(_nv_h->ctx);
 }
 
 static inline nova_str Nova_Os_home_dir(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.home_dir`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->home_dir(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.home_dir`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->home_dir(_nv_h->ctx);
 }
 
 static inline nova_int Nova_Os_exit(nova_int code) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.exit`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->exit(_nova_handler_Os->ctx, code);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.exit`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->exit(_nv_h->ctx, code);
 }
 
 static inline nova_int Nova_Os_pid(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.pid`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nova_handler_Os->pid(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.pid`: no active handler (missing `with Os = …` around this call)")); return (nova_int){0}; } return _nv_h->pid(_nv_h->ctx);
 }
 
 static inline nova_str Nova_Os_hostname(void) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.hostname`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nova_handler_Os->hostname(_nova_handler_Os->ctx);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.hostname`: no active handler (missing `with Os = …` around this call)")); return (nova_str){0}; } return _nv_h->hostname(_nv_h->ctx);
 }
 
 static inline _NovaTuple_2_8_nova_int_8_nova_int Nova_Os_process_run(Nova_Vec____nova_byte* program, Nova_Vec____nova_byte* argv, nova_int argc, Nova_Vec____nova_byte* env, nova_int envc, nova_bool use_env, Nova_Vec____nova_byte* cwd) {
     if (!_nova_handler_Os) { _nova_handler_Os = (NovaVtable_Os*)nova_gc_pin(nova_fn_3std2os7real_os()); }
-    if (!_nova_handler_Os) { nv_panic(nova_str_from_cstr("unhandled effect `Os.process_run`: no active handler (missing `with Os = …` around this call)")); return (_NovaTuple_2_8_nova_int_8_nova_int){0}; } return _nova_handler_Os->process_run(_nova_handler_Os->ctx, program, argv, argc, env, envc, use_env, cwd);
+    NovaVtable_Os* _nv_h = _nova_handler_Os;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Os.process_run`: no active handler (missing `with Os = …` around this call)")); return (_NovaTuple_2_8_nova_int_8_nova_int){0}; } return _nv_h->process_run(_nv_h->ctx, program, argv, argc, env, envc, use_env, cwd);
 }
 
 typedef struct {
@@ -3999,125 +4055,150 @@ typedef struct {
 } NovaVtable_Proc;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Proc* _nova_handler_Proc = NULL;
+__declspec(thread) NovaVtable_Proc* _nova_handler_Proc_tls = NULL;
 #else
-__thread NovaVtable_Proc* _nova_handler_Proc = NULL;
+__thread NovaVtable_Proc* _nova_handler_Proc_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Proc** _nova_handler_Proc_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Proc_tls; }
+#define _nova_handler_Proc (*_nova_handler_Proc_slot())
 
 static NovaVtable_Proc* nova_fn_3std2os9real_proc(void);
 static inline NovaRes_NovaValue_Child_NovaValue_IoError* Nova_Proc_launch(NovaValue_Command cmd) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.launch`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_Child_NovaValue_IoError*){0}; } return _nova_handler_Proc->launch(_nova_handler_Proc->ctx, cmd);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.launch`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_Child_NovaValue_IoError*){0}; } return _nv_h->launch(_nv_h->ctx, cmd);
 }
 
 static inline NovaOpt_NovaValue_ChildPipe Nova_Proc_take_stdin(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.take_stdin`: no active handler (missing `with Proc = …` around this call)")); return (NovaOpt_NovaValue_ChildPipe){0}; } return _nova_handler_Proc->take_stdin(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.take_stdin`: no active handler (missing `with Proc = …` around this call)")); return (NovaOpt_NovaValue_ChildPipe){0}; } return _nv_h->take_stdin(_nv_h->ctx, child);
 }
 
 static inline NovaOpt_NovaValue_ChildPipe Nova_Proc_take_stdout(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.take_stdout`: no active handler (missing `with Proc = …` around this call)")); return (NovaOpt_NovaValue_ChildPipe){0}; } return _nova_handler_Proc->take_stdout(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.take_stdout`: no active handler (missing `with Proc = …` around this call)")); return (NovaOpt_NovaValue_ChildPipe){0}; } return _nv_h->take_stdout(_nv_h->ctx, child);
 }
 
 static inline NovaOpt_NovaValue_ChildPipe Nova_Proc_take_stderr(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.take_stderr`: no active handler (missing `with Proc = …` around this call)")); return (NovaOpt_NovaValue_ChildPipe){0}; } return _nova_handler_Proc->take_stderr(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.take_stderr`: no active handler (missing `with Proc = …` around this call)")); return (NovaOpt_NovaValue_ChildPipe){0}; } return _nv_h->take_stderr(_nv_h->ctx, child);
 }
 
 static inline nova_int Nova_Proc_child_pid(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_pid`: no active handler (missing `with Proc = …` around this call)")); return (nova_int){0}; } return _nova_handler_Proc->child_pid(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_pid`: no active handler (missing `with Proc = …` around this call)")); return (nova_int){0}; } return _nv_h->child_pid(_nv_h->ctx, child);
 }
 
 static inline NovaRes_NovaValue_ExitStatus_NovaValue_IoError* Nova_Proc_child_wait(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nova_handler_Proc->child_wait(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nv_h->child_wait(_nv_h->ctx, child);
 }
 
 static inline NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError* Nova_Proc_child_try_wait(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_try_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nova_handler_Proc->child_try_wait(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_try_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nv_h->child_try_wait(_nv_h->ctx, child);
 }
 
 static inline nova_unit Nova_Proc_child_release(NovaValue_Child child) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_release`: no active handler (missing `with Proc = …` around this call)")); return (nova_unit){0}; } return _nova_handler_Proc->child_release(_nova_handler_Proc->ctx, child);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_release`: no active handler (missing `with Proc = …` around this call)")); return (nova_unit){0}; } return _nv_h->child_release(_nv_h->ctx, child);
 }
 
 static inline NovaRes_nova_unit_NovaValue_IoError* Nova_Proc_child_kill(NovaValue_Child child, Nova_Signal* sig) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_kill`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nova_handler_Proc->child_kill(_nova_handler_Proc->ctx, child, sig);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_kill`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nv_h->child_kill(_nv_h->ctx, child, sig);
 }
 
 static inline NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError* Nova_Proc_child_wait_timeout(NovaValue_Child child, NovaValue_Duration d) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_wait_timeout`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nova_handler_Proc->child_wait_timeout(_nova_handler_Proc->ctx, child, d);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.child_wait_timeout`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nv_h->child_wait_timeout(_nv_h->ctx, child, d);
 }
 
 static inline NovaRes_nova_unit_NovaValue_IoError* Nova_Proc_kill_pid(nova_int pid, Nova_Signal* sig, nova_bool tree) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.kill_pid`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nova_handler_Proc->kill_pid(_nova_handler_Proc->ctx, pid, sig, tree);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.kill_pid`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nv_h->kill_pid(_nv_h->ctx, pid, sig, tree);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Proc_pipe_read(NovaValue_ChildPipe pipe, Nova_Vec____nova_byte* buf) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pipe_read`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Proc->pipe_read(_nova_handler_Proc->ctx, pipe, buf);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pipe_read`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->pipe_read(_nv_h->ctx, pipe, buf);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Proc_pipe_write(NovaValue_ChildPipe pipe, Nova_Vec____nova_byte* data) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pipe_write`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Proc->pipe_write(_nova_handler_Proc->ctx, pipe, data);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pipe_write`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->pipe_write(_nv_h->ctx, pipe, data);
 }
 
 static inline nova_unit Nova_Proc_pipe_close(NovaValue_ChildPipe pipe) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pipe_close`: no active handler (missing `with Proc = …` around this call)")); return (nova_unit){0}; } return _nova_handler_Proc->pipe_close(_nova_handler_Proc->ctx, pipe);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pipe_close`: no active handler (missing `with Proc = …` around this call)")); return (nova_unit){0}; } return _nv_h->pipe_close(_nv_h->ctx, pipe);
 }
 
 static inline NovaRes_NovaValue_PtyChild_NovaValue_IoError* Nova_Proc_pty_launch(NovaValue_Command cmd, NovaValue_PtySize size) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_launch`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_PtyChild_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_launch(_nova_handler_Proc->ctx, cmd, size);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_launch`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_PtyChild_NovaValue_IoError*){0}; } return _nv_h->pty_launch(_nv_h->ctx, cmd, size);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Proc_pty_read(NovaValue_PtyChild pty, Nova_Vec____nova_byte* buf) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_read`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_read(_nova_handler_Proc->ctx, pty, buf);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_read`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->pty_read(_nv_h->ctx, pty, buf);
 }
 
 static inline NovaRes_nova_int_NovaValue_IoError* Nova_Proc_pty_write(NovaValue_PtyChild pty, Nova_Vec____nova_byte* data) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_write`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_write(_nova_handler_Proc->ctx, pty, data);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_write`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_int_NovaValue_IoError*){0}; } return _nv_h->pty_write(_nv_h->ctx, pty, data);
 }
 
 static inline NovaRes_nova_unit_NovaValue_IoError* Nova_Proc_pty_resize(NovaValue_PtyChild pty, NovaValue_PtySize size) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_resize`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_resize(_nova_handler_Proc->ctx, pty, size);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_resize`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nv_h->pty_resize(_nv_h->ctx, pty, size);
 }
 
 static inline nova_int Nova_Proc_pty_pid(NovaValue_PtyChild pty) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_pid`: no active handler (missing `with Proc = …` around this call)")); return (nova_int){0}; } return _nova_handler_Proc->pty_pid(_nova_handler_Proc->ctx, pty);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_pid`: no active handler (missing `with Proc = …` around this call)")); return (nova_int){0}; } return _nv_h->pty_pid(_nv_h->ctx, pty);
 }
 
 static inline NovaRes_NovaValue_ExitStatus_NovaValue_IoError* Nova_Proc_pty_wait(NovaValue_PtyChild pty) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_wait(_nova_handler_Proc->ctx, pty);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nv_h->pty_wait(_nv_h->ctx, pty);
 }
 
 static inline NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError* Nova_Proc_pty_try_wait(NovaValue_PtyChild pty) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_try_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_try_wait(_nova_handler_Proc->ctx, pty);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_try_wait`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_NovaOpt_NovaValue_ExitStatus_NovaValue_IoError*){0}; } return _nv_h->pty_try_wait(_nv_h->ctx, pty);
 }
 
 static inline NovaRes_nova_unit_NovaValue_IoError* Nova_Proc_pty_kill(NovaValue_PtyChild pty, Nova_Signal* sig) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_kill`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nova_handler_Proc->pty_kill(_nova_handler_Proc->ctx, pty, sig);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_kill`: no active handler (missing `with Proc = …` around this call)")); return (NovaRes_nova_unit_NovaValue_IoError*){0}; } return _nv_h->pty_kill(_nv_h->ctx, pty, sig);
 }
 
 static inline nova_unit Nova_Proc_pty_close(NovaValue_PtyChild pty) {
     if (!_nova_handler_Proc) { _nova_handler_Proc = (NovaVtable_Proc*)nova_gc_pin(nova_fn_3std2os9real_proc()); }
-    if (!_nova_handler_Proc) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_close`: no active handler (missing `with Proc = …` around this call)")); return (nova_unit){0}; } return _nova_handler_Proc->pty_close(_nova_handler_Proc->ctx, pty);
+    NovaVtable_Proc* _nv_h = _nova_handler_Proc;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Proc.pty_close`: no active handler (missing `with Proc = …` around this call)")); return (nova_unit){0}; } return _nv_h->pty_close(_nv_h->ctx, pty);
 }
 
 typedef struct {
@@ -4127,20 +4208,24 @@ typedef struct {
 } NovaVtable_Random;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Random* _nova_handler_Random = NULL;
+__declspec(thread) NovaVtable_Random* _nova_handler_Random_tls = NULL;
 #else
-__thread NovaVtable_Random* _nova_handler_Random = NULL;
+__thread NovaVtable_Random* _nova_handler_Random_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Random** _nova_handler_Random_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Random_tls; }
+#define _nova_handler_Random (*_nova_handler_Random_slot())
 
 static NovaVtable_Random* nova_fn_7prelude7effects11real_random(void);
 static inline uint64_t Nova_Random_u64(void) {
     if (!_nova_handler_Random) { _nova_handler_Random = (NovaVtable_Random*)nova_gc_pin(nova_fn_7prelude7effects11real_random()); }
-    if (!_nova_handler_Random) { nv_panic(nova_str_from_cstr("unhandled effect `Random.u64`: no active handler (missing `with Random = …` around this call)")); return (uint64_t){0}; } return _nova_handler_Random->u64(_nova_handler_Random->ctx);
+    NovaVtable_Random* _nv_h = _nova_handler_Random;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Random.u64`: no active handler (missing `with Random = …` around this call)")); return (uint64_t){0}; } return _nv_h->u64(_nv_h->ctx);
 }
 
 static inline Nova_Vec____nova_byte* Nova_Random_bytes(nova_int n) {
     if (!_nova_handler_Random) { _nova_handler_Random = (NovaVtable_Random*)nova_gc_pin(nova_fn_7prelude7effects11real_random()); }
-    if (!_nova_handler_Random) { nv_panic(nova_str_from_cstr("unhandled effect `Random.bytes`: no active handler (missing `with Random = …` around this call)")); return (Nova_Vec____nova_byte*){0}; } return _nova_handler_Random->bytes(_nova_handler_Random->ctx, n);
+    NovaVtable_Random* _nv_h = _nova_handler_Random;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Random.bytes`: no active handler (missing `with Random = …` around this call)")); return (Nova_Vec____nova_byte*){0}; } return _nv_h->bytes(_nv_h->ctx, n);
 }
 
 typedef struct {
@@ -4150,17 +4235,21 @@ typedef struct {
 } NovaVtable_ResourceTrace;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_ResourceTrace* _nova_handler_ResourceTrace = NULL;
+__declspec(thread) NovaVtable_ResourceTrace* _nova_handler_ResourceTrace_tls = NULL;
 #else
-__thread NovaVtable_ResourceTrace* _nova_handler_ResourceTrace = NULL;
+__thread NovaVtable_ResourceTrace* _nova_handler_ResourceTrace_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_ResourceTrace** _nova_handler_ResourceTrace_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_ResourceTrace_tls; }
+#define _nova_handler_ResourceTrace (*_nova_handler_ResourceTrace_slot())
 
 static inline nova_unit Nova_ResourceTrace_on_resource_enter(nova_str label) {
-    if (!_nova_handler_ResourceTrace) { nv_panic(nova_str_from_cstr("unhandled effect `ResourceTrace.on_resource_enter`: no active handler (missing `with ResourceTrace = …` around this call)")); return (nova_unit){0}; } return _nova_handler_ResourceTrace->on_resource_enter(_nova_handler_ResourceTrace->ctx, label);
+    NovaVtable_ResourceTrace* _nv_h = _nova_handler_ResourceTrace;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `ResourceTrace.on_resource_enter`: no active handler (missing `with ResourceTrace = …` around this call)")); return (nova_unit){0}; } return _nv_h->on_resource_enter(_nv_h->ctx, label);
 }
 
 static inline nova_unit Nova_ResourceTrace_on_resource_exit(nova_str label, Nova_ScopeOutcome* outcome, nova_int duration_ms, nova_bool overrun) {
-    if (!_nova_handler_ResourceTrace) { nv_panic(nova_str_from_cstr("unhandled effect `ResourceTrace.on_resource_exit`: no active handler (missing `with ResourceTrace = …` around this call)")); return (nova_unit){0}; } return _nova_handler_ResourceTrace->on_resource_exit(_nova_handler_ResourceTrace->ctx, label, outcome, duration_ms, overrun);
+    NovaVtable_ResourceTrace* _nv_h = _nova_handler_ResourceTrace;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `ResourceTrace.on_resource_exit`: no active handler (missing `with ResourceTrace = …` around this call)")); return (nova_unit){0}; } return _nv_h->on_resource_exit(_nv_h->ctx, label, outcome, duration_ms, overrun);
 }
 
 typedef struct {
@@ -4169,13 +4258,16 @@ typedef struct {
 } NovaVtable_Supervisor;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Supervisor* _nova_handler_Supervisor = NULL;
+__declspec(thread) NovaVtable_Supervisor* _nova_handler_Supervisor_tls = NULL;
 #else
-__thread NovaVtable_Supervisor* _nova_handler_Supervisor = NULL;
+__thread NovaVtable_Supervisor* _nova_handler_Supervisor_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Supervisor** _nova_handler_Supervisor_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Supervisor_tls; }
+#define _nova_handler_Supervisor (*_nova_handler_Supervisor_slot())
 
 static inline Nova_Decision* Nova_Supervisor_on_child_fail(nova_int idx, void* err) {
-    if (!_nova_handler_Supervisor) { nv_panic(nova_str_from_cstr("unhandled effect `Supervisor.on_child_fail`: no active handler (missing `with Supervisor = …` around this call)")); return (Nova_Decision*){0}; } return _nova_handler_Supervisor->on_child_fail(_nova_handler_Supervisor->ctx, idx, err);
+    NovaVtable_Supervisor* _nv_h = _nova_handler_Supervisor;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Supervisor.on_child_fail`: no active handler (missing `with Supervisor = …` around this call)")); return (Nova_Decision*){0}; } return _nv_h->on_child_fail(_nv_h->ctx, idx, err);
 }
 
 typedef struct {
@@ -4185,10 +4277,12 @@ typedef struct {
 } NovaVtable_Application;
 
 #ifdef _MSC_VER
-__declspec(thread) NovaVtable_Application* _nova_handler_Application = NULL;
+__declspec(thread) NovaVtable_Application* _nova_handler_Application_tls = NULL;
 #else
-__thread NovaVtable_Application* _nova_handler_Application = NULL;
+__thread NovaVtable_Application* _nova_handler_Application_tls = NULL;
 #endif
+static inline NOVA_NOINLINE NovaVtable_Application** _nova_handler_Application_slot(void) { NOVA_SLOT_BARRIER(); return &_nova_handler_Application_tls; }
+#define _nova_handler_Application (*_nova_handler_Application_slot())
 
 static inline nova_unit Nova_Application_register_finalizer(void* f) {
     NovaClosBase* _nv_clos = (NovaClosBase*)(f);
@@ -4198,7 +4292,8 @@ static inline nova_unit Nova_Application_register_finalizer(void* f) {
 }
 
 static inline nova_int Nova_Application_default_exit_timeout_ms(void) {
-    if (!_nova_handler_Application) { nv_panic(nova_str_from_cstr("unhandled effect `Application.default_exit_timeout_ms`: no active handler (missing `with Application = …` around this call)")); return (nova_int){0}; } return _nova_handler_Application->default_exit_timeout_ms(_nova_handler_Application->ctx);
+    NovaVtable_Application* _nv_h = _nova_handler_Application;
+    if (!_nv_h) { nv_panic(nova_str_from_cstr("unhandled effect `Application.default_exit_timeout_ms`: no active handler (missing `with Application = …` around this call)")); return (nova_int){0}; } return _nv_h->default_exit_timeout_ms(_nv_h->ctx);
 }
 
 
@@ -8473,6 +8568,8 @@ typedef struct {
     int _nova_worker_slot;
     NovaFailFrame* _nova_saved_fail_top;
     NovaInterruptFrame* _nova_saved_interrupt_top;
+    NovaInterruptFrame* _nova_saved_handler_iframe;
+    NovaFinalizerStack* _nova_saved_finalizer_stack;
     NovaFiberQueue* _nova_fiber_scope;
     NovaEffectSnapshot* _nova_init_snapshot;
     nova_atomic_int _nova_fiber_state;
@@ -21184,6 +21281,8 @@ typedef struct {
     int _nova_worker_slot;
     NovaFailFrame* _nova_saved_fail_top;
     NovaInterruptFrame* _nova_saved_interrupt_top;
+    NovaInterruptFrame* _nova_saved_handler_iframe;
+    NovaFinalizerStack* _nova_saved_finalizer_stack;
     NovaFiberQueue* _nova_fiber_scope;
     NovaEffectSnapshot* _nova_init_snapshot;
     nova_atomic_int _nova_fiber_state;
@@ -26510,9 +26609,9 @@ int main(int argc, char** argv) {
     nova_gc_init();
     nova_consts_init();
     nova_os_set_args(argc, argv);
+    _nova_register_effects_fn = _nova_register_all_effects_;
     nova_runtime_auto_arm();
     nova_evloop_init();
-    _nova_register_effects_fn = _nova_register_all_effects_;
     _nova_register_all_effects_();
         _nova_throw_scope_timeout_fn = &_nova_throw_scope_timeout_impl;
         _nova_supervisor_decide_fn = &_nova_supervisor_decide_impl;

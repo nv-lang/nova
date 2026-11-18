@@ -1,0 +1,26 @@
+// Registry 221.1 #1988: a child resume must preserve the caller's stack.
+// ENV NOVA_MAXPROCS=1
+// ENV NOVA_AUTOARM=0
+// EXPECT_STDOUT outer finalizer fired
+
+module standalone.finalizer_after_local_resume
+
+import std.concurrency.nvchan.{Chan}
+import std.prelude.effects
+
+fn main() Io -> () {
+    ro done = Chan[int].new(1)
+    with Application = effect Application {
+        register_finalizer(f fn() -> ()) -> () { return () }
+        default_exit_timeout_ms() -> int { return 5000 }
+    } {
+        supervised {
+            spawn { println("child ran") }
+        }
+        Application.register_finalizer(|| done.tx.send(1))
+    }
+    match done.rx.try_recv() {
+        Some(_) => { println("outer finalizer fired") }
+        None => { println("outer finalizer lost") }
+    }
+}

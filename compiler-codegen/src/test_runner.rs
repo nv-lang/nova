@@ -3190,7 +3190,7 @@ fn codegen_to_c(
         // `EmitOutput::Single` wrapping the EXACT SAME string `emit_module`
         // would have produced (Ф.1 A4 doc) — the `Single` arm below is
         // therefore byte-identical to the pre-209 write.
-        let cu_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("cu").to_string();
+        let cu_name = unique_c_base(path);
         emitter.emit_module_multi_tu(&module, &cu_name)
             .map_err(|e| format!("codegen error: {:#}", e))?
     };

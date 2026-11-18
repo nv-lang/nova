@@ -1,0 +1,55 @@
+// finalizer_after_migration.nv — registry 221.1 №TBD (class): the
+// Application effect's per-fiber finalizer stack is TLS state that must
+// follow the fiber across a worker migration.
+//
+// Before the fix `_nova_active_finalizer_stack` was not saved/restored around
+// mco_resume. A fiber that suspended inside a `with Application = ...` block
+// and resumed on another worker found the slot empty there, so
+// `Application.register_finalizer` after the suspension silently pushed
+// nowhere and the finalizer never fired at block exit.
+//
+// Twelve detached workers on NOVA_MAXPROCS=4, twenty 1 ms sleeps inside the
+// block (migration windows), then one register_finalizer. Each finalizer
+// reports through a channel; the main fiber expects twelve reports.
+//
+// ENV NOVA_MAXPROCS=4
+// EXPECT_STDOUT all finalizers fired
+
+module standalone.finalizer_after_migration
+
+import std.concurrency.nvchan.{Chan, ChanTx}
+import std.prelude.effects
+
+fn worker(id int, done ChanTx[int]) Time -> () {
+    with Application = effect Application {
+        register_finalizer(f fn() -> ()) -> () {
+            return ()
+        }
+        default_exit_timeout_ms() -> int {
+            return 5000
+        }
+    } {
+        for _ in 0..20 { 1.to_millis().sleep() }
+        Application.register_finalizer(|| done.send(id))
+    }
+}
+
+fn main() Detach Time Io -> () {
+    ro done = Chan[int].new(16)
+    for id in 0..12 {
+        detach { worker(id, done.tx) }
+    }
+    mut got = 0
+    ro deadline = Time.now().unix_millis() + 15000
+    while got < 12 {
+        match done.rx.try_recv() {
+            Some(id) => { got += 1 }
+            None => {
+                if Time.now().unix_millis() >= deadline { break }
+                1.to_millis().sleep()
+            }
+        }
+    }
+    if got == 12 { println("all finalizers fired") }
+    else { println("finalizers lost: ${12 - got}") }
+}

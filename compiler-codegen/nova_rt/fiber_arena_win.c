@@ -222,16 +222,7 @@ static void _nova_fw_gc_push_region(char* lo, char* hi) {
  * Нужен только для пробы обеих сторон на ОДНОМ бинаре; в проде не
  * ставится. Читается ОДИН раз: это mark-фаза, getenv на каждый слот
  * стоил бы дороже самой проверки. */
-static int _nova_fw_slot_probe_flag = -1;
-static int _nova_fw_slot_probe_on(void) {
-    int v = _nova_fw_slot_probe_flag;
-    if (v < 0) {
-        const char* e = getenv("NOVA_GC_SLOT_PROBE");
-        v = (e && e[0] == '0' && e[1] == '\0') ? 0 : 1;
-        _nova_fw_slot_probe_flag = v;
-    }
-    return v;
-}
+static int _nova_fw_slot_probe_flag = 1;
 
 /* 221.1 №1857: effects.c -- the handler TLS slots of every thread (effects.h,
  * "THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS"). Declared here, not by
@@ -242,7 +233,6 @@ static void _nova_fw_push_eager(void* lo, void* hi) {
 }
 
 static void _nova_fw_gc_push_other_roots(void) {
-    size_t pushed = 0, arenas = 0;
     /* №1857: the installed effect handlers -- TLS is not scanned by Boehm. */
     nova_effect_roots_push(_nova_fw_push_eager);
     /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
@@ -263,7 +253,6 @@ static void _nova_fw_gc_push_other_roots(void) {
     for (NovaFiberArenaWin* a = _nova_fw_arena_list; a; a = a->next) {
         char* base = a->base;
         if (!base) continue;            /* retired */
-        arenas++;
         for (size_t slot = 0; slot < a->high_water; slot++) {
             if (!((a->used_bits[slot >> 6] >> (slot & 63)) & 1)) continue;
             char* slot_base = base + slot * a->slot_size;
@@ -286,7 +275,7 @@ static void _nova_fw_gc_push_other_roots(void) {
              * ВЫКЛЮЧАТЕЛЬ `NOVA_GC_SLOT_PROBE=0` возвращает ДОФИКСНОЕ поведение
              * буквально (читать без проверки), чтобы обе стороны пробы
              * показывались на ОДНОМ бинаре. */
-            if (_nova_fw_slot_probe_on()) {
+            if (_nova_fw_slot_probe_flag) {
                 MEMORY_BASIC_INFORMATION co_mbi;
                 if (!VirtualQuery(co, &co_mbi, sizeof(co_mbi))) continue;
                 if (co_mbi.State != MEM_COMMIT) continue;
@@ -306,7 +295,6 @@ static void _nova_fw_gc_push_other_roots(void) {
              * отфильтрует */
             _nova_fw_gc_push_region(slot_base + NOVA_FIBER_GUARD_SIZE,
                                     slot_base + a->slot_size);
-            pushed++;
         }
         /* native-стек потока-владельца — «подвешенные» scheduler-кадры,
          * пока поток крутит fiber (§П3.3); per-thread скан Boehm их не
@@ -319,7 +307,6 @@ static void _nova_fw_gc_push_other_roots(void) {
             }
         }
     }
-    NOVA_FW_DBG("gc_push: %zu arenas, %zu live fibers\n", arenas, pushed);
 }
 #endif /* NOVA_GC_BOEHM */
 
@@ -333,6 +320,11 @@ static BOOL CALLBACK _nova_fw_global_init(PINIT_ONCE once, PVOID param,
      * для не-arena фолтов сразу EXCEPTION_CONTINUE_SEARCH → невмешательство. */
     AddVectoredExceptionHandler(1, _nova_fw_veh);
 #ifdef NOVA_GC_BOEHM
+    /* Read configuration before publishing the stop-the-world callback.
+     * getenv and stdio can lock the CRT while their owner is suspended. */
+    const char* slot_probe = getenv("NOVA_GC_SLOT_PROBE");
+    _nova_fw_slot_probe_flag =
+        !(slot_probe && slot_probe[0] == '0' && slot_probe[1] == '\0');
     GC_set_push_other_roots(_nova_fw_gc_push_other_roots);
 #endif
     return TRUE;

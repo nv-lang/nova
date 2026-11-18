@@ -1179,6 +1179,8 @@ static void _nova_resume_restore_ctx_tls(void* vctx) {
         _nova_active_slot   = base->_nova_worker_slot;
         _nova_fail_top      = base->_nova_saved_fail_top;
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_current_handler_iframe  = base->_nova_saved_handler_iframe;
+        _nova_active_finalizer_stack  = base->_nova_saved_finalizer_stack;
         NovaFiberQueue* fscope = base->_nova_fiber_scope;
         int fslot = base->_nova_worker_slot;
         if (fslot < fscope->count && fscope->fiber_effect_snapshot[fslot]) {
@@ -1198,6 +1200,8 @@ static void _nova_resume_restore_ctx_tls(void* vctx) {
         _nova_active_slot   = -1;  /* slot is invalidated — no valid slot */
         _nova_fail_top      = base->_nova_saved_fail_top;
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_current_handler_iframe  = base->_nova_saved_handler_iframe;
+        _nova_active_finalizer_stack  = base->_nova_saved_finalizer_stack;
         /* Effect snapshot: slot is -1, skip snapshot restore (fiber is exiting soon). */
     } else if (base) {
         /* Before preamble (first run): restore saved fail/interrupt but
@@ -1205,6 +1209,8 @@ static void _nova_resume_restore_ctx_tls(void* vctx) {
          * allocate the home slot + set _nova_fiber_scope on first resume). */
         _nova_fail_top      = base->_nova_saved_fail_top;
         _nova_interrupt_top = base->_nova_saved_interrupt_top;
+        _nova_current_handler_iframe  = base->_nova_saved_handler_iframe;
+        _nova_active_finalizer_stack  = base->_nova_saved_finalizer_stack;
         /* Plan 83.10.4 Ф.3: restore spawn-time handler snapshot so fiber
          * sees parent's effect handlers on its FIRST run (before preamble). */
         if (base->_nova_init_snapshot) {
@@ -1218,6 +1224,8 @@ static void _nova_resume_save_ctx_tls(void* vctx) {
     if (!base) return;
     base->_nova_saved_fail_top      = _nova_fail_top;
     base->_nova_saved_interrupt_top = _nova_interrupt_top;
+    base->_nova_saved_handler_iframe = _nova_current_handler_iframe;
+    base->_nova_saved_finalizer_stack = _nova_active_finalizer_stack;
     /* Plan 83.4.2 Ф.2: save fiber's current handler-state (с учётом
      * with-блоков push/pop сделанных fiber'ом во время выполнения) обратно
      * в home scope's snapshot. */
@@ -1303,38 +1311,9 @@ static void _worker_main(void* arg) {
      * set by generated code in nova_fn_main.
      *
      * [M-worker-effects-fn-startup-race] (Plan 259 Слой 2, 2026-08-09):
-     * `_nova_register_effects_fn` is assigned by a PLAIN C statement emitted
-     * a few lines AFTER `nova_runtime_auto_arm()` in the generated main()
-     * (emit_c.rs::emit_main_wrapper — `nova_evloop_init(); ...;
-     * _nova_register_effects_fn = _nova_register_all_effects_;`). Before
-     * Плана 259 Слой 2 this was always safely set by the time ANY worker
-     * thread could exist (materialize_pool ran lazily, on the first
-     * user-level spawn — necessarily long after that assignment executed).
-     * Слой 2 moves materialize_pool INSIDE `nova_runtime_auto_arm()` itself,
-     * so worker threads (this function) now start running BEFORE main
-     * thread reaches that assignment line — a worker could reach here while
-     * `_nova_register_effects_fn` is still NULL, silently register only
-     * `Fail` for its own TLS effect-storage table, and later mis-resolve
-     * (or drop) any user effect handler (`ResourceTrace`, `Fail[TimeoutError]`,
-     * etc.) inherited by a fiber that lands on that worker — reproduced via
-     * spec_tests/conformance/standalone/m2217_15b_cancel_consume_shield_narrowed
-     * going from deterministic PASS to deterministic FAIL under Слой 2
-     * (exit_calls never reaching 1 — the ResourceTrace handler silently not
-     * firing on the worker the child fiber happened to land on).
-     *
-     * Fix: this is a one-time, sub-millisecond startup rendezvous (main sets
-     * the pointer within microseconds of returning from auto_arm — a few
-     * more prelude lines), so a short ACQUIRE spin-wait is correct AND
-     * effectively free — a bounded upper limit (2s) guards against ever
-     * hard-hanging worker startup if the plain (non-atomic, codegen-emitted,
-     * can't be changed from nova_rt) write side is somehow never observed;
-     * that upper bound should never be hit in practice and is defensive
-     * only. `__atomic_load_n(..., ACQUIRE)` forces re-read every iteration
-     * (not hoisted out of the loop) and is what actually gives the SECOND
-     * (this) thread a chance to observe the plain store promptly — a bare
-     * non-atomic re-read in a tight loop is legal for the compiler to hoist
-     * into a one-time read outside the loop, which would spin forever on a
-     * stale cached NULL. */
+     * Current codegen publishes the registrar before auto-arm can start
+     * any worker. Older generated C and embedded seeds assigned it after
+     * auto-arm. Keep the bounded wait for those callers. */
     {
         void (*fn)(void) = NULL;
         for (int _wait_iters = 0; _wait_iters < 2000; _wait_iters++) {
