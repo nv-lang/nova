@@ -33,11 +33,12 @@
 
 module novac.check
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, no_node}
+import ../lex.{TokenKind}
 import ../diag.{ice_at}
 import ../builtins.{TypeKind, HANDLER_CTOR}
 import ../names.{raw_decl}
-import ../sem.{branch_children, leaf_text, param_name_at, param_mode_at, ty_source_name}
+import ../sem.{branch_children, leaf_text, leaf_kind, param_name_at, param_mode_at, ty_source_name, ParamMode}
 import ../sem.{EffectDef, EffectTable, effect_op_ret_type_of}
 import ../types.{TyId, no_ty, is_ty}
 
@@ -381,4 +382,110 @@ fn effect_op_list(fx EffectTable, schema EffectDef) -> str {
         s.append(fx.ops[i].name)
     }
     s
+}
+
+/// THE HANDLER-LAMBDA TYPIST (E.13 wave, D31 -- narrowed by the 2026-11-19
+/// amendment): `with E = |args| body` where `E` declares EXACTLY one
+/// operation. The operation's schema is the context: the lambda's params are
+/// bound by position to the operation's parameter types, and the body is
+/// judged through the fn body's own doors (D61) with the operation's return
+/// as the expectation -- one return discipline, not a handler-flavoured copy.
+/// `interrupt` is NOT read (E2 horizon debt, lex.nv:380): a body that names
+/// it refuses as unknown, by name.
+///
+/// THE CAPTURE MARK is the closure-light one: every binding that exists now
+/// is outside the literal, so a read of one from the body is a capture.
+fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
+    ro schema = @ctx.effects.def_of(eff_name) ?? ice_at(
+        "novac/src/check/handler.nv:392",
+        "check: an effect declaration with no op schema reached the handler-lambda typist")
+    if schema.op_cnt != 1 {
+        @report_first_leaf_of(branch_children(lit), HANDLER_LAMBDA_MULTI_OP_MSG)
+        return
+    } else {
+        // The one operation is the whole schema.
+    }
+    ro sig = @ctx.effects.ops[schema.op_off]
+    ro kids = branch_children(lit)
+    // SILENT-OK: a literal with no body is the parser's recovery marker.
+    if kids.len() < 2 { return }
+    ro body = kids[kids.len() - 1]
+    ro before = @out.len()
+    @cap_marks.push(@scope.row_count())
+    @cap_owners.push(lit.id_of())
+    ro pmark = @scope.mark()
+    // Params ride between the pipes as Ident leaves; `_` binds nothing.
+    mut pi = 0
+    mut bad_arity = false
+    for i in 1..kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
+            if pi >= sig.param_cnt {
+                bad_arity = true
+            } else {
+                ro pname = leaf_text(c)
+                if pname != "_" {
+                    @scope.bind(pname, @ctx.effects.op_params[sig.param_off + pi], ParamMode.ModeRo)
+                } else {
+                    // The wildcard param: a position with no binding.
+                }
+            }
+            pi += 1
+        } else {
+            // A Comma separator or a pipe leaf.
+        }
+    }
+    if bad_arity || pi != sig.param_cnt {
+        @report_first_leaf_of(kids, HANDLER_LAMBDA_ARITY_MSG)
+    } else {
+        ro saved_ret = @ret_expect
+        ro saved_tail = @tail_value_body
+        ro saved_unit = @ret_unit
+        ro saved_ro = @ret_ro
+        ro saved_split = @sup_split_depth
+        @sup_split_depth = 0
+        @ret_ro = false
+        @ret_expect = sig.ret_id
+        // A `-> never` operation (D31's own `fail(value E) -> never`) has no
+        // normal completion: like a unit result, a block body is not asked
+        // for a tail value. The oracle accepts such bodies (probe p3).
+        ro unitish = @returns_unit(sig.ret_id) || ty_source_name(@ctx, sig.ret_id) == "never"
+        @ret_unit = unitish
+        match body.kind_of() {
+            NodeKind.Block => {
+                if unitish {
+                    @tail_value_body = no_node()
+                } else {
+                    @tail_value_body = body.id_of()
+                }
+                @type_block(body)
+            }
+            other => {
+                @type_tail_value(body)
+                @judge_return(body, @tail_type_of(body))
+            }
+        }
+        @ret_expect = saved_ret
+        @tail_value_body = saved_tail
+        @ret_unit = saved_unit
+        @ret_ro = saved_ro
+        @sup_split_depth = saved_split
+    }
+    @scope.release(pmark)
+    ro _ = @cap_marks.pop()
+    ro _ = @cap_owners.pop()
+    if @out.len() > before { return }
+    // THE HANDLER VALUE'S TYPE: the handler-type application `Effect[E]`,
+    // the same term the handler literal records (one concept, one term).
+    match @ctx.defs.type_decl(eff_name) {
+        Some(edecl) => {
+            ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice_at(
+                "novac/src/check/handler.nv:462",
+                "check: the Effect seed is not registered")
+            @record(lit, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
+        }
+        None => {
+            // SILENT-OK: the with-arm already refused the unknown name.
+        }
+    }
 }

@@ -965,7 +965,8 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // in emit as an ICE instead of being refused here by
                       // name (remark 5).
                       closure_pos: (kind == NodeKind.SupervisedStmt && named_arg_is(c, "on_timeout")) ||
-                      (kind == NodeKind.NamedArg && closure_pos && at == 2),
+                      (kind == NodeKind.NamedArg && closure_pos && at == 2) ||
+                      (kind == NodeKind.WithStmt && at > 0 && leaf_kind(children[at - 1]) == TokenKind.Assign),
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is
@@ -992,7 +993,6 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
         }
     }
 }
-
 
 // No silent type defaults (owner's rule 2026-08-14, the #652 class: a
 // quiet nova_int fallback bred a bug family in the current compiler). A

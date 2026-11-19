@@ -99,7 +99,14 @@ fn Checker mut @type_with_stmt(st Node) -> () {
         // factory the shell does not carry is refused here by W6's own
         // text, as in every other position (pipeline/with_test.nv).
         ro hmark = @out.len()
-        @type_expr(kids[bi + 2])
+        if kids[bi + 2].kind_of() == NodeKind.ClosureLit {
+            // THE HANDLER-LAMBDA (E.13 wave, D31): the effect named on the
+            // left is the context; the literal is typed against its single
+            // operation's schema (@type_with_handler_lambda, handler.nv).
+            @type_with_handler_lambda(kids[bi + 2], name)
+        } else {
+            @type_expr(kids[bi + 2])
+        }
         if @out.len() == hmark {
             ro hty = @tail_type_of(kids[bi + 2])
             if is_ty(hty) {

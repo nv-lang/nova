@@ -733,3 +733,13 @@ fn no_shell_instance_msg(head str, of str, arrives str) -> str =>
 /// A method whose `value` record receiver crosses by POINTER (D488 R3/R5) needs a
 /// PLACE to take the address of; a temporary receiver (`mk().m()`) has none yet.
 const VALUE_RECV_TEMP_MSG = "outside the subset: this method takes its `value` record receiver by pointer (D488), and the receiver here is a temporary -- novac does not spill it to a place yet (E2-b3)"
+
+/// `with E = |args| body` over an effect with TWO OR MORE operations (E.13
+/// wave, D31): the language's own rule -- the handler-lambda form exists
+/// only for effects with exactly one operation; everything else writes the
+/// handler literal `effect E { ... }` (D31, 04-effects.md:1515).
+const HANDLER_LAMBDA_MULTI_OP_MSG = "a handler-lambda (`with E = |args| body`) is compiled only for an effect with exactly ONE operation -- this effect declares more, so write the handler literal `effect E { ... }` (D31, 274.11 E13)"
+
+/// The handler-lambda's parameter count against the single operation's
+/// schema (E.13 wave, D31).
+const HANDLER_LAMBDA_ARITY_MSG = "a handler-lambda takes the parameters of its effect's ONE operation -- this one writes a different count than the operation declares (D31, 274.11 E13)"
