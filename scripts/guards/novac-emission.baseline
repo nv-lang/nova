@@ -178,6 +178,8 @@
 # 2026-11-03 (task #139): +1 on every fixture, shell-only (the v0.1.2 forward typedef, bd5349b93) -- see the dated entry above. Measured.
 # Oracle 0.1.6 shell: 26540 -> 26639 lines (+99 = 195 additions - 96 deletions).
 # CI 44376925299 measured +99 on all four fixtures; their non-shell line counts are unchanged.
+# 2026-11-19: df6a70d07 regenerated novac/src/emit_c/shell.tpl.c with the
+# 0f0b1bd6e oracle (+195/-96, net +99); all four probes shifted by +99.
 match_demo 26763
 # merge of p274-carina-k1 (#1703, integrator 2026-10-03): +1 C line per print statement -- the runtime flush that now ends each one, as the oracle's (#1655). Measured.
 # 2026-11-03 (task #139): +1 on every fixture, shell-only (the v0.1.2 forward typedef, bd5349b93) -- see the dated entry above. Measured.

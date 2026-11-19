@@ -221,7 +221,8 @@
 #   №711 (лишний return) и №714 (отсутствующий): здесь возврат ЕСТЬ, а тип
 #   у него чужой.
 # №721 (`use` как второй ввоз имён) — К2, в блокеры не идёт.
-# Task 135: measured no_route=1, new OPEN K1 entry 1945 (embed sidecars).
+# Task 135: measured # 2026-11-19: routes/caveats added for 1976/1994/1995; no_route 1 -> 0.
+no_route=0, new OPEN K1 entry 1945 (embed sidecars).
 # No repair task is assigned yet; do not claim CHINITSYA before routing.
 no_route=1
 # 2026-08-19, №445 — no_caveat 37 -> 36. Запись закрыта: все три её пункта
