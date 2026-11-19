@@ -1,0 +1,16 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #1913 positive control: the guard's suggested workaround --
+// bind the alias-over-fn field to a direct `fn(..)`-typed local, then call it.
+module standalone.fn_field_alias_bind_pos
+
+type Run alias fn() -> int
+
+type Holder { f Run }
+
+fn main() Io -> () {
+    ro h = Holder { f: fn() -> int => 42 }
+    ro g fn() -> int = h.f
+    ro v = g()
+    println("${v}")
+}

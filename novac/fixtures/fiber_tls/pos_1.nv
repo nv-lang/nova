@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 follow-up (fiber-TLS port, 2026-11-18): the effect-handler TLS slot
+// must survive a fiber being resumed on ANOTHER worker while the effect call
+// is on its stack (oracle 0.1.6, registry 221.1 No.1986). The oracle's own
+// fixture cannot be reused: it needs `detach` and nvchan, neither of which
+// the subset parses. This fixture keeps the class with the forms the subset
+// has: `supervised` with several `spawn` children, each suspending INSIDE the
+// Time effect (the suspension point), run with NOVA_MAXPROCS=4 so the
+// scheduler moves resumed fibers between worker threads. A lost handler slot
+// makes a child die with "unhandled effect" and the scope fails -- a red
+// smoke, not a silent pass.
+//
+// A CUSTOM `with Time = ...` handler is not writable here: Timestamp and
+// Monotonic carry module-private fields, and the handler-lambda for the
+// one-op Fail effect is the D31 wave's slot (still refused). The default
+// handler installs INTO the same `_nova_handler_Time` slot, so the slot walk
+// this fixture measures is the one the class names.
+//
+// ENV NOVA_MAXPROCS=4
+module fiber_tls.pos_1
+
+import std.time.duration
+
+fn child(n int) -> () {
+    for i in 0..n {
+        1.to_millis().sleep()
+    }
+}
+
+fn main() Io -> () {
+    supervised {
+        for i in 0..6 {
+            spawn { child(3) }
+        }
+    }
+    println("fiber tls ok")
+}
