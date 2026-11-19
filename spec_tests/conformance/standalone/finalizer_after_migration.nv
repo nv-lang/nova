@@ -43,7 +43,7 @@ fn main() Detach Time Io -> () {
     ro deadline = Time.now().unix_millis() + 15000
     while got < 12 {
         match done.rx.try_recv() {
-            Some(id) => { got = got + 1 }
+            Some(id) => { got += 1 }
             None => {
                 if Time.now().unix_millis() >= deadline { break }
                 1.to_millis().sleep()
