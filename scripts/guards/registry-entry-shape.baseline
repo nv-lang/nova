@@ -53,7 +53,9 @@
 #   предикатом рядом: две копии одного правила расходятся на первой же правке,
 #   и база начала бы держать не тот набор, который страж считает.
 #   ЗАМЕР ЗАСЕВА: неоформленных 343, строк реестра разобрано 1142.
-incomplete_entries=343
+# 2026-11-19: rows 1991-1993 ported verbatim from E.12 (e8a38b0ce);
+# their inherited incomplete fields are bookkeeping, not new work.
+incomplete_entries=344
 scanned_rows=1142
 incomplete_row=1
 incomplete_row=3
@@ -398,3 +400,4 @@ incomplete_row=424
 incomplete_row=432
 incomplete_row=433
 incomplete_row=451
+incomplete_row=1991

@@ -6,6 +6,6 @@
 
 module neg.import_path_not_module_neg
 
-import std.os.proc
+import std.os.proc  // nova:expect E_IMPORT_PATH_NOT_MODULE -- an absolute import name must be a declared module; the file module line wins
 
 fn main() {}
