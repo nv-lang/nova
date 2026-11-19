@@ -538,6 +538,11 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
     if k == NodeKind.ArrayLit {
         return Some(@emit_array_lit(e, ty))
     }
+    if k == NodeKind.ClosureLit {
+        // THE WITH-SLOT HANDLER-LAMBDA (E.13 wave, D31): its value is a
+        // vtable built from the literal's body -- the handler machinery.
+        return Some(@emit_handler_lit(e))
+    }
     if k == NodeKind.HandlerLit {
         // A handler value (E.9 step 3): its table and context are built
         // here, before the line that reads the table pointer.

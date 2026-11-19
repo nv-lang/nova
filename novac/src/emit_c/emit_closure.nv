@@ -24,12 +24,28 @@ import ../tree.{Node, NodeKind}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, file_decls, decl_fn_row}
 import ../sem.{c_type, c_ident, is_unit_ty}
+import ../types.{is_ty}
+import ../builtins.{TypeKind}
 import ../lower.{FnBuilder}
 
 /// Every closure-light literal of the functions mono reached, in the order of
 /// the file -- the index is the closure's C number. A literal of an unreached
 /// function is not emitted: its body's callees were never marked.
 fn Emitter mut @collect_closures(file Node) -> () {
+    @collect_closures_raw(file)
+    mut keep = []Node.new()
+    for lit in @closures {
+        if @is_closure_handler(lit) {
+            // The handler machinery's.
+        } else {
+            keep.push(lit)
+        }
+    }
+    @closures = keep
+}
+
+/// The raw walk: every closure literal of the reached functions.
+fn Emitter mut @collect_closures_raw(file Node) -> () {
     for c in file_decls(file) {
         if c.kind_of() != NodeKind.FnDecl { continue }
         match decl_fn_row(c, @ctx) {
@@ -41,6 +57,15 @@ fn Emitter mut @collect_closures(file Node) -> () {
             }
         }
     }
+}
+
+/// A WITH-SLOT handler-lambda belongs to the HANDLER machinery (a vtable,
+/// not a NovaClosBase): its recorded type is Effect[E], not a fn type this
+/// file could read. Filtered after collection -- the walker is free of
+/// Emitter state.
+fn Emitter @is_closure_handler(lit Node) -> bool {
+    ro t = @out.type_if_known(lit.id_of())
+    is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkApp
 }
 
 /// The closure literals under `n`, pre-order.

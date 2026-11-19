@@ -33,7 +33,16 @@ fn Lowerer mut @lower_with(st Node) -> () {
                 "novac/src/lower/lower_with.nv:32",
                 "lower: a with binding without its effect name reached the lowering")
         }
-        ro hexpr = kids[bi + 2]
+        mut hj = bi + 1
+        while hj < kids.len() {
+            ro hk = kids[hj]
+            if hk.kind_of() == NodeKind.LeafNode && leaf_text(hk) == "=" {
+                break
+            } else {
+                hj += 1
+            }
+        }
+        ro hexpr = kids[hj + 1]
         // The handler, evaluated ONCE into a local of its own type -- the
         // stack local is the GC root the thread slot is not (the runtime does
         // not scan thread-local storage).
@@ -41,7 +50,7 @@ fn Lowerer mut @lower_with(st Node) -> () {
         ro h = @ir.temp(hty)
         @lower_place(hexpr, h)
         swaps.push(HandlerSwap { eff: leaf_text(nm), prev: @ir.temp(hty), handler: h })
-        bi += 3
+        bi = hj + 2
         // The checker's reading (`check/with_typing.nv`): a leaf here is the
         // `,` before the next binding; the body is a branch.
         if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {

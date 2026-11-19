@@ -966,7 +966,7 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                       // name (remark 5).
                       closure_pos: (kind == NodeKind.SupervisedStmt && named_arg_is(c, "on_timeout")) ||
                       (kind == NodeKind.NamedArg && closure_pos && at == 2) ||
-                      (kind == NodeKind.WithStmt && at > 0 && leaf_kind(children[at - 1]) == TokenKind.Assign),
+                      (kind == NodeKind.WithStmt && at > 0 && children[at - 1].kind_of() == NodeKind.LeafNode && leaf_kind(children[at - 1]) == TokenKind.Assign),
                       // ELSE-IF CHAIN CONTINUATION (registry #1243): a nested
                       // `IfExpr` sitting in an `if`-value's own else-arm is
                       // the SAME value position as its parent -- `else if` is

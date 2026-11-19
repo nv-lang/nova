@@ -98,17 +98,34 @@ fn Checker mut @type_with_stmt(st Node) -> () {
         // the factories, NovaVtable_Fs/_Os and their registration. So a
         // factory the shell does not carry is refused here by W6's own
         // text, as in every other position (pipeline/with_test.nv).
+        // THE APPLICATION ON THE LEFT (E.13 wave, D31) sits between the
+        // name and `=`: `with Fail[E] = handler`. The handler is the child
+        // right AFTER the `=` leaf, wherever the application ended.
+        mut hj = bi + 1
+        while hj < kids.len() {
+            ro hk = kids[hj]
+            if hk.kind_of() == NodeKind.LeafNode && leaf_text(hk) == "=" {
+                break
+            } else {
+                hj += 1
+            }
+        }
+        if hj >= kids.len() || hj + 1 >= kids.len() {
+            // A malformed binding piece: the walk already spoke.
+            break
+        }
+        ro hexpr_at = hj + 1
         ro hmark = @out.len()
-        if kids[bi + 2].kind_of() == NodeKind.ClosureLit {
+        if kids[hexpr_at].kind_of() == NodeKind.ClosureLit {
             // THE HANDLER-LAMBDA (E.13 wave, D31): the effect named on the
             // left is the context; the literal is typed against its single
             // operation's schema (@type_with_handler_lambda, handler.nv).
-            @type_with_handler_lambda(kids[bi + 2], name)
+            @type_with_handler_lambda(kids[hexpr_at], name)
         } else {
-            @type_expr(kids[bi + 2])
+            @type_expr(kids[hexpr_at])
         }
         if @out.len() == hmark {
-            ro hty = @tail_type_of(kids[bi + 2])
+            ro hty = @tail_type_of(kids[hexpr_at])
             if is_ty(hty) {
                 ro hk = @ctx.tys.kind_of(hty)
                 // A VALUE-TYPE kind is refused. The condition names the kinds
@@ -117,7 +134,7 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                 // accepted in silence by a list that forgot it.
                 if hk != TypeKind.TkApp && hk != TypeKind.TkParam && hk != TypeKind.TkInfer &&
                     hk != TypeKind.TkEffect {
-                    @report_first_leaf_of(branch_children(kids[bi + 2]), "a `with` binding takes a handler for its effect, and `${ty_source_name(@ctx, hty)}` is a value type -- pass a handler (E4, wave 274.11)")
+                    @report_first_leaf_of(branch_children(kids[hexpr_at]), "a `with` binding takes a handler for its effect, and `${ty_source_name(@ctx, hty)}` is a value type -- pass a handler (E4, wave 274.11)")
                 } else {
                     // Not a value-type kind: a protocol/generic/unknown
                     // instance is accepted this wave, per the deferred
@@ -125,8 +142,8 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                     // RECORDED when typing did not (a call records its callee,
                     // not always its value): the lowering holds the handler in
                     // a local of this type (E.9 step 2, lower/lower_with.nv).
-                    if !is_ty(@chan.type_if_known(kids[bi + 2].id_of())) {
-                        @record(kids[bi + 2], hty)
+                    if !is_ty(@chan.type_if_known(kids[hexpr_at].id_of())) {
+                        @record(kids[hexpr_at], hty)
                     } else {
                         // Typing recorded it already.
                     }
@@ -141,7 +158,7 @@ fn Checker mut @type_with_stmt(st Node) -> () {
             // while typing; asking whether its type is a value type
             // would be the second death over the same cause.
         }
-        bi += 3
+        bi = hexpr_at + 1
         if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {
             bi += 1
         } else {
