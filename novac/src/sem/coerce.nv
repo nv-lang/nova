@@ -107,62 +107,70 @@ export fn attr_kids_name(kids []Node, word str) -> bool {
     false
 }
 
-/// Is a `#stable` attribute one of its D105 forms? Bare `#stable` is valid
-/// (D105: `since` is recommended, default `"unknown"`), and `since = "..."`
-/// names the release (D460). Any other argument is refused -- both oracles
-/// refuse `#stable(since = 123)` (acceptance finding 2026-11-18).
+/// Is a `#stable` attribute EXACTLY one of its D105 forms? The whole form is
+/// judged, not the presence of tokens: bare `#stable` (D105: `since` is
+/// recommended, default `"unknown"`), or `( since = "..." )` and nothing else.
+/// The first fix SKIPPED unknown tokens, so `#stable(123)` and
+/// `#stable(since = 123, "0.1")` passed (acceptance finding 2026-11-18).
 export fn attr_stable_takes_string(kids []Node) -> bool {
-    mut named = false
-    mut args = 0
-    mut since = false
-    mut eq = false
-    mut strlit = false
+    mut ks = []TokenKind.new()
+    mut ts = []str.new()
     for c in kids {
-        ro k = leaf_kind(c)
-        if k == TokenKind.Ident {
-            if !named {
-                named = true
-            } else if leaf_text(c) == "since" {
-                since = true
-                args += 1
-            } else {
-                return false
-            }
-        } else if k == TokenKind.Assign {
-            eq = true
-        } else if k == TokenKind.StrLit {
-            strlit = true
+        if c.kind_of() == NodeKind.LeafNode {
+            ks.push(leaf_kind(c))
+            ts.push(leaf_text(c))
         } else {
-            // Parens and commas: syntax, not values.
+            // A branch child (an interpolated string is one) is not a form
+            // leaf: the attribute's grammar is leaves only.
+            return false
         }
     }
-    if args == 0 && !eq && !strlit { return true }
-    since && eq && strlit && args == 1
+    if ks.len() == 2 { return true }
+    if ks.len() != 7 { return false }
+    ks[2] == TokenKind.LParen && ks[3] == TokenKind.Ident && ts[3] == "since" &&
+        ks[4] == TokenKind.Assign && ks[5] == TokenKind.StrLit && interp_slices(ts[5]).len() == 1 && !ts[5].contains("{") &&
+        ks[6] == TokenKind.RParen
 }
 
-/// Is a `#doc` attribute one of its D101/D105 forms? Bare `#doc "text"`, a
-/// marker form `#doc(inline)` / `#doc(no_inline)`, or named string arguments
-/// `#doc(summary = "...")`. Every `=` must carry a string, and a string must
-/// never stand without its `=` in the named form -- `#doc(summary = 123)` is
-/// refused by both oracles (acceptance finding 2026-11-18).
+/// Is a `#doc` attribute EXACTLY one of its D101/D105 forms? Judged as a whole
+/// grammar: the module string `#doc "..."`, or `#doc(...)` whose entries are
+/// the marker words `inline`/`no_inline` or the named string arguments
+/// `summary` / `section` / `test_handlers`, comma-separated, no trailing
+/// comma, nothing else. Counting strings and `=`s let `#doc(sparkle)` and
+/// `#doc(summary = 123, "padding")` pass (acceptance finding 2026-11-18).
 export fn attr_doc_takes_strings(kids []Node) -> bool {
-    mut eqs = 0
-    mut strs = 0
-    mut words = 0
-    mut named = false
+    mut ks = []TokenKind.new()
+    mut ts = []str.new()
     for c in kids {
-        ro k = leaf_kind(c)
-        if k == TokenKind.Ident {
-            if named { words += 1 } else { named = true }
-        } else if k == TokenKind.Assign { eqs += 1 }
-        else if k == TokenKind.StrLit { strs += 1 }
-        else {
-            // Parens and commas: syntax, not values.
+        if c.kind_of() == NodeKind.LeafNode {
+            ks.push(leaf_kind(c))
+            ts.push(leaf_text(c))
+        } else {
+            // Branch children never appear here; the guard stays explicit.
         }
     }
-    if eqs == 0 && strs == 1 { return true }
-    if eqs == 0 && strs == 0 { return words > 0 }
-    strs > 0 && eqs <= strs
+    if ks.len() == 3 && ks[2] == TokenKind.StrLit { return interp_slices(ts[2]).len() == 1 && !ts[2].contains("{") }
+    if ks.len() < 4 { return false }
+    ro last = ks.len() - 1
+    if ks[2] != TokenKind.LParen || ks[last] != TokenKind.RParen { return false }
+    mut i = 3
+    while i < last {
+        if ks[i] == TokenKind.Ident && (ts[i] == "inline" || ts[i] == "no_inline") {
+            i += 1
+        } else if i + 2 < last && ks[i] == TokenKind.Ident &&
+                  (ts[i] == "summary" || ts[i] == "section" || ts[i] == "test_handlers") &&
+                  ks[i + 1] == TokenKind.Assign && ks[i + 2] == TokenKind.StrLit &&
+                  interp_slices(ts[i + 2]).len() == 1 && !ts[i + 2].contains("{") {
+            i += 3
+        } else {
+            return false
+        }
+        if i == last { return true }
+        if ks[i] != TokenKind.Comma { return false }
+        i += 1
+        if i == last { return false }
+    }
+    false
 }
 
 /// Does this attribute's argument list name `word` AND NOTHING ELSE? The
