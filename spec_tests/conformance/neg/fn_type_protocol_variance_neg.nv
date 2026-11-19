@@ -34,7 +34,31 @@ fn act_write(mut x FnVarActEnv) -> int {
     x.read("a")
 }
 
+type NDeep protocol {
+    @deep() -> int
+}
+
+type NMid protocol {
+    use NDeep
+    @one() -> int
+}
+
+type NSlot protocol {
+    @one() -> int
+    @two() -> int
+}
+
+type NFound protocol {
+    use NMid
+    @two() -> int
+}
+
+fn takes_n(f fn(NSlot) -> int) -> () {}
+
+fn f_n(x NFound) -> int => x.one() + x.deep() + x.two()
+
 fn main() {
     takes_p1(f_p2)
     takes_read(act_write)
+    takes_n(f_n)
 }

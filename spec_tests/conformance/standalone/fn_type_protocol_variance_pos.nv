@@ -27,8 +27,67 @@ fn fn_var_takes_mut(f fn(mut FnVarActEnv) -> int) -> () {}
 
 fn fn_var_f_read(x FnVarActEnv) -> int => x.read("a")
 
+
+type FnVarBase protocol {
+    @read(k str) -> int
+}
+
+type FnVarEmbedSlot protocol {
+    @read(k str) -> int
+    @one() -> int
+}
+
+type FnVarEmbedFound protocol {
+    use FnVarBase
+    @one() -> int
+}
+
+fn fn_var_takes_embed(f fn(FnVarEmbedSlot) -> int) -> () {}
+
+fn fn_var_f_embed(x FnVarEmbedFound) -> int => 0
+
+type FnVarDeepSlot protocol {
+    @one() -> int
+    @deep() -> int
+    @two() -> int
+}
+
+type FnVarDeep protocol {
+    @deep() -> int
+}
+
+type FnVarMid protocol {
+    use FnVarDeep
+    @one() -> int
+}
+
+type FnVarDeepFound protocol {
+    use FnVarMid
+    @two() -> int
+}
+
+fn fn_var_takes_deep(f fn(FnVarDeepSlot) -> int) -> () {}
+
+fn fn_var_f_deep(x FnVarDeepFound) -> int => 0
+
+type FnVarDefSlot protocol {
+    @one() -> int
+}
+
+type FnVarDefFound protocol {
+    @one() -> int
+    @opt() -> int => 0
+}
+
+fn fn_var_takes_def(f fn(FnVarDefSlot) -> int) -> () {}
+
+fn fn_var_f_def(x FnVarDefFound) -> int => 0
+
 test "fn-type protocol parameters: sound contravariant directions compile" {
     fn_var_takes_p2(fn_var_f_p1)
     fn_var_takes_mut(fn_var_f_read)
+    fn_var_takes_embed(fn_var_f_embed)
+    fn_var_takes_deep(fn_var_f_deep)
+    fn_var_takes_def(fn_var_f_def)
     assert(true)
 }
