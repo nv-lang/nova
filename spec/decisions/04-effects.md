@@ -1071,9 +1071,8 @@ fn pipeline(s str) Fail[ParseError] -> int =>
 
 ```nova
 fn try_deposit(acc Account, amount money) Log -> bool {
-    // handler-лямбда (D31) — это лямбда (`=> expr`), без блок-формы
-    // (D22). Когда нужен блок с side-effect'ами — используем полный
-    // handler-литерал в блок-форме `op(p) { block }`.
+    // handler-лямбда (D31) следует D22: тело — выражение ИЛИ блок;
+    // блок-форма легальна (D22 п.6, 03-syntax.md:634-636).
     with Fail[DepositError] = effect Fail[DepositError] {
         fail(err) {
             Log.error("deposit failed: ${err}")
