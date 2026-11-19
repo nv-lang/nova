@@ -1,3 +1,10 @@
+# 2026-11-19, integrator: blockers 117 -> 116 — reg 1928 (array literal in an
+#   enum payload reinterpreted instead of element-wise conversion) is CLOSED
+#   by measure: fix ee695fffb is an ancestor of both the 0.1.7 candidate and
+#   main; RED/GREEN on the bytesprobe (parent 743817507 corrupts the payload,
+#   candidate prints 1,2,3 in all three positions); typed counter-directions
+#   refused by named E7301 (p1015_mono_reinterpret_positions_neg.nv, 51e90f203).
+#   no_route/no_caveat unchanged.
 # 2026-10-30, task 127: blockers 117 -> 116 — reg 1922 (the driver dropping
 #   the seed's stdout JSONL diagnostics on a failed Carina emit) is CLOSED by
 #   the class fix in nova-driver (emit_failure_detail assembles BOTH child
@@ -1646,7 +1653,7 @@ no_caveat=0
 # OPEN, BLOKIRUET TEG: DA (pinned B1 rejects three Oracle-era regression
 # examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
 # mandatory release corpus, not a verdict on which side is right).
-blockers=117
+blockers=116
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
