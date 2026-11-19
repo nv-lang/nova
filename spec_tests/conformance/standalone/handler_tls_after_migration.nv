@@ -56,7 +56,7 @@ fn round(workers int) Detach Time Io -> bool {
     ro deadline = Time.now().unix_millis() + 5000
     while got < workers {
         match done.rx.try_recv() {
-            Some(id) => { got = got + 1 }
+            Some(id) => { got += 1 }
             None => {
                 if Time.now().unix_millis() >= deadline { return false }
                 1.to_millis().sleep()
