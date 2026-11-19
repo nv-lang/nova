@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_MUT_MISMATCH
+//
+// D497 item 3 (D209 receiver-mut/consume, exact both directions): the callee
+// (FOUND) protocol method `one` declares a `mut` receiver; the slot (SLOT)
+// provides a read-only receiver. The callee would mutate through a ro slot —
+// refused. Param types and return match, coverage passes, so this is the named
+// receiver-axis refusal (distinct from the param-BINDING-mut contravariance of
+// class 1915, which stays E7301).
+module neg.fn_proto_method_mut_neg
+
+type PSlot protocol { @one() -> int }
+type QFound protocol { mut @one() -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_MUT_MISMATCH -- callee `mut @one` vs slot ro `@one`: receiver mut differs (D497 item 3 / D209)
+    takes(callee)
+}

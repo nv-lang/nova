@@ -1,3 +1,14 @@
+# 2026-11-19, integrator: blockers STAY 116 although reg 1994 (fn-type method
+#   signature compatibility at the protocol door) is CLOSED by measure in the
+#   0.1.7 rehearsal: D497 is ratified and implemented by d1a530cc7; the delegated
+#   acceptance returned FULL ACCEPTED (13 neg NEG-NO-ERROR -> PASS -> disabled
+#   NEG-NO-ERROR -> restore 14/14; D268 axes with Self, D209 all four directions,
+#   D448 effect rows, concrete-slot named refusal; erased/generic/Any stays
+#   permissive by design); corpus BEFORE==AFTER +14, controls 1915 2/0 d52 3/0
+#   d55 4/0, lint 1878/0. The counter does not move: row 1994's old marker was
+#   `БЛОКИРУЕТ ТЕГ` without the colon form the scanner matches, so it was never
+#   counted among the 116. No other row changes; baseline stays at the measured
+#   value. no_route/no_caveat unchanged.
 # 2026-11-19, integrator: blockers 117 -> 116 — reg 1913 (a call through an
 #   alias/newtype-over-fn record field) is CLOSED by measure in the 0.1.7
 #   rehearsal: the delegated acceptance v2 returned FULL ACCEPTED on ae464d350
