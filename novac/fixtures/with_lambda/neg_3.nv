@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 wave (D31, narrowed A): a GENERIC effect named WITHOUT its type
+// arguments -- the operation schema is written in the effect's parameters
+// (`fail(e E)`), and the application on the left is the only place that
+// fixes them. The oracle infers E from the body; novac says the gap by name.
+// NOVAC_EXPECT names the effect's type arguments on the left
+module with_lambda.neg_3
+
+type MyErr value { msg str }
+
+fn g() -> int {
+    with Fail = |_e| { println("caught") } {
+        1
+    }
+    2
+}
+
+fn main() {
+    println(g())
+}

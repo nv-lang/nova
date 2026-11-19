@@ -40,6 +40,7 @@ import ../builtins.{TypeKind, HANDLER_CTOR}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text, leaf_kind, param_name_at, param_mode_at, ty_source_name, ParamMode}
 import ../sem.{EffectDef, EffectTable, effect_op_ret_type_of}
+import ../sem.{applied_args, subst_type}
 import ../types.{TyId, no_ty, is_ty}
 
 /// ONE handler literal: resolve the effect name, judge every op against
@@ -217,7 +218,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
         }
         return
     }
-    ro lit_ret = effect_op_ret_type_of(okids, @ctx.types, @ctx.defs, @ctx.tys)
+    ro lit_ret = effect_op_ret_type_of(okids, []str.new(), []TyId.new(), @ctx.types, @ctx.defs, @ctx.tys)
     if !is_ty(lit_ret) {
         // TWO CAUSES, AND THEY ARE DIFFERENT SENTENCES (measured 2026-09-23 at
         // the nova-kim acceptance). In an ORDINARY run -- `@substs` empty, and a
@@ -395,7 +396,13 @@ fn effect_op_list(fx EffectTable, schema EffectDef) -> str {
 ///
 /// THE CAPTURE MARK is the closure-light one: every binding that exists now
 /// is outside the literal, so a read of one from the body is a capture.
-fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
+///
+/// `applied` is the effect's TYPE ON THE LEFT of the `with` (`Fail[MyErr]`),
+/// resolved by the caller through the one reference door: the schema of a
+/// generic effect is written in its own parameters, and this term fixes them.
+/// A non-generic effect brings the declaration's own term -- no arguments,
+/// and every substitution is the identity.
+fn Checker mut @type_with_handler_lambda(lit Node, eff_name str, applied TyId) -> () {
     ro schema = @ctx.effects.def_of(eff_name) ?? ice_at(
         "novac/src/check/handler.nv:392",
         "check: an effect declaration with no op schema reached the handler-lambda typist")
@@ -406,6 +413,10 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
         // The one operation is the whole schema.
     }
     ro sig = @ctx.effects.ops[schema.op_off]
+    // THE APPLICATION'S ARGUMENTS (E.13 wave, D31): empty for a non-generic
+    // effect -- and the caller refuses a generic one named without them, so a
+    // parameter here always has its slot.
+    ro args = applied_args(@ctx, applied)
     ro kids = branch_children(lit)
     // SILENT-OK: a literal with no body is the parser's recovery marker.
     if kids.len() < 2 { return }
@@ -425,7 +436,7 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
             } else {
                 ro pname = leaf_text(c)
                 if pname != "_" {
-                    @scope.bind(pname, @ctx.effects.op_params[sig.param_off + pi], ParamMode.ModeRo)
+                    @scope.bind(pname, subst_type(@ctx, @ctx.effects.op_params[sig.param_off + pi], args), ParamMode.ModeRo)
                 } else {
                     // The wildcard param: a position with no binding.
                 }
@@ -445,11 +456,14 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
         ro saved_split = @sup_split_depth
         @sup_split_depth = 0
         @ret_ro = false
-        @ret_expect = sig.ret_id
+        // The operation's return IN THIS APPLICATION: a generic effect's
+        // `-> E` means the argument written on the left.
+        ro ret = subst_type(@ctx, sig.ret_id, args)
+        @ret_expect = ret
         // A `-> never` operation (D31's own `fail(value E) -> never`) has no
         // normal completion: like a unit result, a block body is not asked
         // for a tail value. The oracle accepts such bodies (probe p3).
-        ro unitish = @returns_unit(sig.ret_id) || ty_source_name(@ctx, sig.ret_id) == "never"
+        ro unitish = @returns_unit(ret) || ty_source_name(@ctx, ret) == "never"
         @ret_unit = unitish
         match body.kind_of() {
             NodeKind.Block => {
@@ -483,13 +497,16 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
     ro _ = @cap_owners.pop()
     if @out.len() > before { return }
     // THE HANDLER VALUE'S TYPE: the handler-type application `Effect[E]`,
-    // the same term the handler literal records (one concept, one term).
+    // the same term the handler literal records (one concept, one term) --
+    // with the effect's OWN term, the application on the left when written,
+    // so the emitter can read the arguments back from this one place.
     match @ctx.defs.type_decl(eff_name) {
         Some(edecl) => {
             ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice_at(
                 "novac/src/check/handler.nv:462",
                 "check: the Effect seed is not registered")
-            @record(lit, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
+            ro eff_ty = if is_ty(applied) { applied } else { @ctx.types[raw_decl(edecl)].ty_id }
+            @record(lit, @ctx.tys.app(seed, []TyId.of(eff_ty)))
         }
         None => {
             // SILENT-OK: the with-arm already refused the unknown name.

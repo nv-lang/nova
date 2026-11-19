@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 wave (D31): the lambda's parameters ARE the operation's parameters --
+// `fail(value E)` takes one, and a literal writing a different count answers
+// a question the schema never asked.
+// NOVAC_EXPECT writes a different count than the operation declares
+module with_lambda.neg_4
+
+type MyErr value { msg str }
+
+fn g() -> int {
+    with Fail[MyErr] = |a, b| { println("caught") } {
+        1
+    }
+    2
+}
+
+fn main() {
+    println(g())
+}

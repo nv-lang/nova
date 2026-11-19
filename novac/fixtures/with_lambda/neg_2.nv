@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 wave (D31, narrowed A): a handler-lambda body that names `interrupt`
+// is refused BY NAME -- the word is not lexed (lex.nv:380, the keyword-parity
+// E2 debt), so nothing in novac can compile it. The narrowed D31 leaves
+// `interrupt` a named refusal of the E2 horizon.
+// NOVAC_EXPECT unknown name: nothing with this name is bound
+module with_lambda.neg_2
+
+type MyErr value { msg str }
+
+fn g() -> int {
+    with Fail[MyErr] = |e| { interrupt 0 } {
+        1
+    }
+    2
+}
+
+fn main() {
+    println(g())
+}

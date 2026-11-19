@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 wave (D31): the handler-lambda form exists ONLY for an effect with
+// exactly one operation -- two or more take the handler literal
+// `effect E { ... }`. Measured 2026-11-18: the oracle is WIDER than the
+// spec here (its two-op lambda is accepted), so the refusal follows D31 and
+// the oracle's acceptance is filed as a defect, not copied. `Fs` is the
+// shell's own effect (five operations), reachable by name without a custom
+// declaration.
+// NOVAC_EXPECT exactly ONE operation
+module with_lambda.neg_1
+
+import std.fs.{real_fs}
+
+fn g() -> int {
+    with Fs = |k| 0 {
+        1
+    }
+    2
+}
+
+fn main() {
+    println(g())
+}

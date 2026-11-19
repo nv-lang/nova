@@ -18,9 +18,9 @@ import ../tree.{Node, NodeKind}
 import ../builtins.{TypeKind, TIMEOUT_ERROR_TYPE}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text}
-import ../sem.{leaf_kind}
 import ../sem.{is_unit_ty, is_value_tail_kind}
 import ../sem.{ty_source_name, decl_of_ty}
+import ../sem.{first_ident_of, ty_of_type_ref}
 import ../types.{TyId, is_ty, no_ty}
 
 /// Type a `with` statement (E4 wave, 274.11): the effect bindings resolve, the
@@ -42,14 +42,35 @@ fn Checker mut @type_with_stmt(st Node) -> () {
     mut bi = 1
     while bi + 2 < kids.len() {
         ro nm = kids[bi]
-        if nm.kind_of() != NodeKind.LeafNode || leaf_kind(nm) != TokenKind.Ident {
+        // THE EFFECT'S NAME RIDES IN AN `EffectItem` (E.13 wave, D31), the
+        // shape a signature's effect_list uses: `Fs` and `Fail[MyErr]` are
+        // the same piece, and the application is KEPT -- a generic effect's
+        // operation types are written in its parameters, and this is the
+        // only place that fixes them.
+        if nm.kind_of() != NodeKind.EffectItem {
             // A planted Err (missing name): the walk already spoke.
             break
         }
-        ro name = leaf_text(nm)
+        ro name = first_ident_of(nm)
+        if name == "" {
+            // An effect item with no name: the walk's Err child spoke.
+            break
+        }
+        ro nk = branch_children(nm)
+        // The name leaf: the head of the flat type-reference run. The item
+        // itself is the fallback, so a nameless shape refuses at nothing
+        // (the walk's Err child already spoke).
+        ro name_leaf = if nk.len() > 0 { nk[0] } else { nm }
+        // THE APPLICATION, resolved through the ONE reference door (the same
+        // one every signature position reads). `Fail` alone answers the
+        // declaration's own term; `Fail[MyErr]` answers the application --
+        // and an application novac cannot read answers no type, which the
+        // handler-lambda door below names.
+        mut eff_applied = no_ty()
+        mut eff_tparams = 0
         match @ctx.defs.type_decl(name) {
             None => {
-                match nm {
+                match name_leaf {
                     Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point (E4, wave 274.11)")
                     Branch { .. } => {}
                 }
@@ -69,7 +90,7 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                     } else {
                         "a record"
                     }
-                    match nm {
+                    match name_leaf {
                         Leaf(t) => @refuse(t, "a `with` binding names an effect, and `${name}` is ${what}, not one (E4, wave 274.11)")
                         Branch { .. } => {}
                     }
@@ -77,6 +98,11 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                     // A TkEffect kind: the name is a valid handler
                     // target, and the handler expression is typed below
                     // regardless of which arm of this match ran.
+                    ro row = @ctx.types[raw_decl(d)]
+                    eff_tparams = row.tparam_cnt
+                    eff_applied = ty_of_type_ref(branch_children(nm), 0, no_ty(),
+                                                 []str.new(), []TyId.new(),
+                                                 @ctx.types, @ctx.defs, @ctx.tys)
                 }
             }
         }
@@ -120,7 +146,18 @@ fn Checker mut @type_with_stmt(st Node) -> () {
             // THE HANDLER-LAMBDA (E.13 wave, D31): the effect named on the
             // left is the context; the literal is typed against its single
             // operation's schema (@type_with_handler_lambda, handler.nv).
-            @type_with_handler_lambda(kids[hexpr_at], name)
+            //
+            // A GENERIC EFFECT NEEDS ITS ARGUMENTS WRITTEN: the schema's
+            // operation types are the effect's own PARAMETERS, and the
+            // application on the left is the one place that fixes them.
+            // The oracle infers `E` from the body; novac does not, so a
+            // bare name here is the subset's debt, said by name -- never
+            // an unresolved parameter carried into emission.
+            if eff_tparams > 0 && (!is_ty(eff_applied) || @ctx.tys.kind_of(eff_applied) != TypeKind.TkApp) {
+                @report_first_leaf_of(nk, HANDLER_LAMBDA_ARGS_MSG)
+            } else {
+                @type_with_handler_lambda(kids[hexpr_at], name, eff_applied)
+            }
         } else {
             @type_expr(kids[hexpr_at])
         }

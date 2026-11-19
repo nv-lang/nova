@@ -21,9 +21,11 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
 import ../diag.{ice_at}
-import ../sem.{branch_children, leaf_text, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty, ty_source_name}
+import ../sem.{branch_children, leaf_text, leaf_kind, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty, ty_source_name}
 import ../sem.{effect_vtable_c, CaptureRow, EffectDef, EffectOpSig}
+import ../sem.{applied_args, subst_type, is_never_ty}
 import ../builtins.{TypeKind}
 import ../sem.{c_ident}
 import ../types.{TyId, is_ty}
@@ -75,23 +77,34 @@ fn collect_lits(n Node, mut out []Node) -> () {
     }
 }
 
-/// Is this closure literal the WITH-SLOT handler (E.13 wave, D31)? The
-/// typist records the handler-type application `Effect[E]` -- the one TkApp
-/// a closure value carries, which no argument-position literal has.
+/// Is this the WITH-SLOT handler (E.13 wave, D31)? TWO facts, and the KIND is
+/// the first: a CLOSURE literal (`|args| body`) whose typist recorded the
+/// handler-type application `Effect[E]`. The type alone does not answer --
+/// a handler LITERAL records the same `Effect[E]` -- and reading it alone
+/// made every literal take this arm (measured 2026-11-19: the with_lit
+/// emission iced on a parameter list read off a literal's own children).
 fn Emitter @is_handler_lambda(lit Node) -> bool {
+    if lit.kind_of() != NodeKind.ClosureLit { return false }
     ro t = @out.type_if_known(lit.id_of())
     is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkApp
 }
 
-/// The lambda's parameter NAMES, in order (the Ident leaves between the
-/// pipes; `_` is a name here, the emit side spells it uniquely).
+/// The lambda's parameter NAMES, in order -- the IDENT leaves between the
+/// pipes (`_` is a name here, the emit side spells it uniquely). The pipes
+/// themselves are leaves too, and reading every leaf made the closing `|`
+/// a parameter of the synthesized op (measured 2026-11-19, the first
+/// emission of a handler-lambda).
 fn hlamb_param_names(lit Node) -> []str {
     mut out = []str.new()
     ro kids = branch_children(lit)
     if kids.len() < 2 { return out }
     for i in 1..kids.len() - 1 {
         ro c = kids[i]
-        if c.kind_of() == NodeKind.LeafNode { out.push(leaf_text(c)) } else { }
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
+            out.push(leaf_text(c))
+        } else {
+            // A Comma separator or a pipe leaf: neither names a parameter.
+        }
     }
     out
 }
@@ -265,7 +278,14 @@ fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
 /// sequence, the checker's `@type_handler_op` precedent (P21).
 fn Emitter mut @lower_op_body(body Node, ret TyId) -> () {
     if body.kind_of() == NodeKind.Block {
-        @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
+        // A `-> never` operation asks no value of its block either: the
+        // checker types such a body with `@tail_value_body` cleared (the
+        // `unitish` rule, check/handler.nv), and asking the lowering for a
+        // value here made it place the body's last STATEMENT as one --
+        // `println("x")` then went through the generic call door with no
+        // callee recorded (measured 2026-11-19, the D31 emission ICE).
+        ro wants_value = !is_unit_ty(@ctx, ret) && !is_never_ty(@ctx.tys, ret)
+        @lo.lower_block_stmts_fn(body, wants_value)
         // SILENT-OK: the block is lowered; the expression form below is
         // the other shape, not a fallback.
         return
@@ -273,15 +293,31 @@ fn Emitter mut @lower_op_body(body Node, ret TyId) -> () {
     @lo.lower_place(body, @lo.ir.ret_place())
 }
 
+/// The type arguments the handled effect is applied to (`with Fail[MyErr]`),
+/// read back from the ONE type the typist recorded for the literal -- the
+/// `Effect[<applied effect>]` application. Empty for a non-generic effect;
+/// the substitution is then the identity.
+fn Emitter @hlam_args(lit Node) -> []TyId {
+    ro t = @out.type_of(lit.id_of())
+    if !is_ty(t) { return []TyId.new() }
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return []TyId.new() }
+    applied_args(@ctx, @ctx.tys.arg(t, 0))
+}
+
 /// The C signature of the lambda's single synthesis op: the schema's
 /// parameter TYPES, the lambda's own parameter NAMES (the body reads them).
+/// A GENERIC effect's schema is written in its parameters, so every type is
+/// substituted with the application on the left of the `with` -- the same
+/// arguments the typist used to judge the body, read from the same record.
 fn Emitter @hlam_signature(n int, lit Node, sig EffectOpSig) -> str {
     ro names = hlamb_param_names(lit)
+    ro args = @hlam_args(lit)
     consume s = StringBuilder.new()
-    s.append("static ${c_type(@ctx, sig.ret_id)} novac_hop_${@tag}${n}_${sig.name}(void* _novac_ctx")
+    s.append("static ${c_type(@ctx, subst_type(@ctx, sig.ret_id, args))} novac_hop_${@tag}${n}_${sig.name}(void* _novac_ctx")
     mut j = 0
     for pname in names {
-        s.append(", ${c_type(@ctx, @ctx.effects.op_params[sig.param_off + j])} ${c_ident(pname)}")
+        ro pty = subst_type(@ctx, @ctx.effects.op_params[sig.param_off + j], args)
+        s.append(", ${c_type(@ctx, pty)} ${c_ident(pname)}")
         j += 1
     }
     s.append(")")
@@ -299,9 +335,10 @@ fn Emitter mut @emit_hlam_op_fn(n int, lit Node, sig EffectOpSig, has_caps bool)
     }
     ro kids = branch_children(lit)
     ro body = kids[kids.len() - 1]
-    @lo.ir = FnBuilder.new(sig.ret_id)
+    ro ret = subst_type(@ctx, sig.ret_id, @hlam_args(lit))
+    @lo.ir = FnBuilder.new(ret)
     @cur_lit = n
-    @lower_op_body(body, sig.ret_id)
+    @lower_op_body(body, ret)
     @lo.ir.end_body()
     @print_body(@lo.ir.finish())
     @cur_lit = 0 - 1

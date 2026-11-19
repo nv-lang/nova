@@ -743,3 +743,10 @@ const HANDLER_LAMBDA_MULTI_OP_MSG = "a handler-lambda (`with E = |args| body`) i
 /// The handler-lambda's parameter count against the single operation's
 /// schema (E.13 wave, D31).
 const HANDLER_LAMBDA_ARITY_MSG = "a handler-lambda takes the parameters of its effect's ONE operation -- this one writes a different count than the operation declares (D31, 274.11 E13)"
+
+/// A generic effect named WITHOUT its type arguments on the left of a
+/// handler-lambda (E.13 wave, D31): the operation schema is written in the
+/// effect's own parameters, and the application is the only place that fixes
+/// them. novac does not infer them from the body (the oracle does); the gap
+/// is named rather than carried into emission as an unresolved parameter.
+const HANDLER_LAMBDA_ARGS_MSG = "a handler-lambda on a generic effect names the effect's type arguments on the left -- write `with Fail[MyErr] = |e| ...`; novac does not infer them from the body (D31, 274.11 E13)"

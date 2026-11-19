@@ -949,9 +949,9 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                                      c.kind_of() == NodeKind.Param,
                       // THE `with` BINDING'S HANDLER SLOT (registry 1312):
                       // every other direct child of a WithStmt is a leaf
-                      // (`with`, name, `=`, `,`) or the body Block, so a
-                      // literal standing directly under it IS in the slot
-                      // `@type_with_stmt` types.
+                      // (`with`, `=`, `,`), the effect's `EffectItem` (E.13)
+                      // or the body Block, so a literal standing directly
+                      // under it IS in the slot `@type_with_stmt` types.
                       handler_pos: kind == NodeKind.WithStmt,
                       if_branch: value_if && c.kind_of() == NodeKind.Block,
                       if_tail: at == if_tail_at,

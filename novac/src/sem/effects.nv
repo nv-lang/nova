@@ -118,6 +118,16 @@ export fn EffectTable @def_of(name str) -> Option[EffectDef] {
 fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
                                     types []TypeDef, defs DefTable, mut tys Interner) -> () {
     ro start = fx.ops.len()
+    // THE DECLARATION'S OWN TYPE PARAMETERS are the frame its operations are
+    // written in (`export type Fail[E] effect { fn fail(e E) -> never }` is
+    // ABOUT `E`). Read here, at collection, because the declaration's node is
+    // gone afterwards and no consumer could recover them: an operation's `E`
+    // resolves to the parameter's TERM, which only an application
+    // (`Fail[MyErr]`) fixes. Until this frame the type was `no_ty()` -- the
+    // parameter was lost, and the emitter iced on it.
+    ro dk = branch_children(decl)
+    ro tps = generic_names(dk)
+    ro prow = sig_param_rows(tps, tys)
     for m in branch_children(decl) {
         if m.kind_of() != NodeKind.EffectOp { continue }
         ro mk = branch_children(m)
@@ -129,12 +139,12 @@ fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
             ro pk = branch_children(pm)
             ro pt = match param_type_at(pk) {
                 None => no_ty()
-                Some(tat) => ty_of_type_ref(pk, tat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+                Some(tat) => ty_of_type_ref(pk, tat, no_ty(), tps, prow, types, defs, tys)
             }
             fx.op_params.push(pt)
             pcnt += 1
         }
-        fx.ops.push(EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, types, defs, tys),
+        fx.ops.push(EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, tps, prow, types, defs, tys),
                                   param_off: poff, param_cnt: pcnt })
     }
     fx.add(tname, start, fx.ops.len() - start)
@@ -151,6 +161,11 @@ fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
         Some(ed) => ed.op_off
         None => ice_at("novac/src/sem/effects.nv:152", "sem: pass 2 sees an effect pass 1 did not register")
     }
+    // The declaration's own type parameters -- the frame below is the same one
+    // the harvested side reads (see `fill_harvested_effect_ops`).
+    ro dk = branch_children(decl)
+    ro tps = generic_names(dk)
+    ro prow = sig_param_rows(tps, tys)
     for m in branch_children(decl) {
         if m.kind_of() != NodeKind.EffectOp { continue }
         ro mk = branch_children(m)
@@ -163,12 +178,12 @@ fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
             ro pk = branch_children(pm)
             ro pt = match param_type_at(pk) {
                 None => no_ty()
-                Some(tat) => ty_of_type_ref(pk, tat, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+                Some(tat) => ty_of_type_ref(pk, tat, no_ty(), tps, prow, types, defs, tys)
             }
             fx.op_params.push(pt)
             pcnt += 1
         }
-        fx.ops[oi] = EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, types, defs, tys),
+        fx.ops[oi] = EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, tps, prow, types, defs, tys),
                                    param_off: poff, param_cnt: pcnt }
         oi += 1
     }
@@ -181,14 +196,19 @@ fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
 /// the one reference door for everything else) so the handed schema, the
 /// own schema and the LITERAL's annotation cannot drift apart on one
 /// signature: one reader, three readers' worth of call sites (P18).
-export fn effect_op_ret_type_of(mk []Node, types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
+///
+/// `tps`/`param_rows` are the declaration's OWN type parameters (the frame
+/// a generic effect is written in) -- empty for a handler LITERAL, whose
+/// return is written out in full.
+export fn effect_op_ret_type_of(mk []Node, tps []str, param_rows []TyId,
+                                types []TypeDef, defs DefTable, mut tys Interner) -> TyId {
     for c in mk {
         if c.kind_of() != NodeKind.RetType { continue }
         ro rk = branch_children(c)
         if rk.len() < 2 { return no_ty() }
         if ret_is_unit(rk) { return ty_or_none(types, defs, UNIT_TYPE_NAME) }
         ro from = if is_mode_leaf(rk[1]) { 2 } else { 1 }
-        return ty_of_type_ref(rk, from, no_ty(), []str.new(), []TyId.new(), types, defs, tys)
+        return ty_of_type_ref(rk, from, no_ty(), tps, param_rows, types, defs, tys)
     }
     no_ty()
 }

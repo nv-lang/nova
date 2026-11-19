@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 wave (D31, narrowed A): `with Fail[E] = |args| body` -- the
+// EXPRESSION body form (D22 point 6: the tail of the literal IS its body).
+// The operation is `fail(value E) -> never`, so no value is asked of the
+// expression; it runs for its effect.
+module with_lambda.pos_2
+
+type MyErr value { code int }
+
+fn note() -> int {
+    println("noted")
+    0
+}
+
+fn guarded() -> int {
+    with Fail[MyErr] = |_e| note() {
+        println("body")
+    }
+    3
+}
+
+fn main() {
+    println(guarded())
+}
