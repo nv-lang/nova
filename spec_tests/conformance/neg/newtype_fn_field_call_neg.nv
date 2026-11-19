@@ -1,0 +1,14 @@
+// EXPECT_COMPILE_ERROR E_FN_FIELD_ALIAS_UNSUPPORTED
+//
+// Registry 221.1 #1913: the same unsupported field-call form with a
+// newtype-over-fn field (not an alias).
+module neg.newtype_fn_field_call_neg
+
+type Run fn() -> int
+
+type Holder { f Run }
+
+fn main() -> () {
+    ro v = (Holder { f: fn() -> int => 42 }.f)()  // nova:expect E_FN_FIELD_ALIAS_UNSUPPORTED -- newtype-over-fn field call is not lowered; use a direct fn field or a typed local
+    ro _ = v
+}
