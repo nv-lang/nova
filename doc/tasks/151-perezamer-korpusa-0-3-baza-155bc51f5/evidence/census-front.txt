@@ -1,0 +1,72 @@
+ 11  outside the subset: a closure literal (`|params| ...`) is co
+      L074 examples/flagship/aggregator/regressions/spawn_capture_value_struct/spawn_capture_value_struct.nv
+      L078 examples/flagship/aggregator/src/app/aggregate.nv
+      L079 examples/flagship/aggregator/src/app/aggregate_test.nv
+      L080 examples/flagship/aggregator/src/app/emit.nv
+      L081 examples/flagship/aggregator/src/app/live.nv
+      L082 examples/flagship/aggregator/src/app/live_test.nv
+  8  novac did not parse this -- and it cannot tell whether the f
+      L064 examples/effects/serde_fs_build.nv
+      L086 examples/flagship/http_proxy_chain/src/config.nv
+      L087 examples/flagship/http_proxy_chain/src/http.nv
+      L088 examples/flagship/http_proxy_chain/src/main.nv
+      L089 examples/flagship/http_proxy_chain/src/relay.nv
+      L090 examples/flagship/http_proxy_chain/src/upstream.nv
+  4  nova: Carina-generated C compile/link failed: compiler error
+      L072 examples/flagship/aggregator/regressions/nested_spawn_scope_var/nested_spawn_scope_var.nv
+      L109 examples/tour/greeter/core.nv
+      L110 examples/tour/greeter/loud.nv
+      L118 examples/typed_pointers/unsafe_fn_keyword.nv
+  4  outside the subset: this type declares several static method
+      L094 examples/net/echo_client.nv
+      L095 examples/net/echo_server.nv
+      L101 examples/tls/echo_client.nv
+      L102 examples/tls/echo_server.nv
+  3  outside the subset: effect `Counter` has no runtime pieces i
+      L062 examples/effects/effects.nv
+      L063 examples/effects/effects_d61.nv
+      L106 examples/tour/effects_tour.nv
+  3  outside the subset: this type form is not compiled yet (slic
+      L066 examples/ffi/ptr_basics.nv
+      L067 examples/ffi/sqlite_mini.nv
+      L108 examples/tour/ffi_tour.nv
+  3  outside the subset: an effect attribute is read but not comp
+      L076 examples/flagship/aggregator/src/api/report_json.nv
+      L077 examples/flagship/aggregator/src/api/report_json_test.nv
+      L084 examples/flagship/aggregator/src/domain/domain.nv
+  2  this cast is no conversion the language has: `() as int` -- 
+      L068 examples/flagship/aggregator/regressions/const_receiver_generic_ext_ice/const_receiver_generic_ext_ice.nv
+      L071 examples/flagship/aggregator/regressions/monotonic_now_bare_binding/monotonic_now_bare_binding.nv
+  2  `break` and `continue` stand only inside the body of a `for`
+      L096 examples/os/agent_runner.nv
+      L097 examples/os/pty_session.nv
+  1  outside the subset: a spread `...xs` inside an array literal
+      L008 examples/basics/demo.nv
+  1  unknown name: nothing with this name is bound at this point
+      L065 examples/effects/spawn_demo.nv
+  1  this variant name is declared by more than one sum in scope 
+      L069 examples/flagship/aggregator/regressions/errorkind_variant_arity_collision/errorkind_variant_arity_collision.nv
+  1  outside the subset: an interpolation slot of a non-primitive
+      L070 examples/flagship/aggregator/regressions/interp_to_str_fallback_valuerecord_recv/interp_to_str_fallback_valuerecord_recv.nv
+  1  outside the E1 subset: generic parameters are not compiled y
+      L073 examples/flagship/aggregator/regressions/serde_encode_pointer_op/serde_encode_pointer_op.nv
+  1  outside the subset: an array literal is compiled only as an 
+      L075 examples/flagship/aggregator/regressions/spawn_throw_multifield_payload/spawn_throw_multifield_payload.nv
+  1  outside the subset: effect `Audit` has no runtime pieces in 
+      L092 examples/getting_started.nv
+  1  outside the subset: a handler literal is compiled only as a 
+      L099 examples/real_world/orm_decorators.nv
+  1  outside the subset: `#impl` of this protocol is derived only
+      L100 examples/real_world/orm_demo.nv
+  1  outside the subset: `defer` is not compiled yet -- running t
+      L105 examples/tour/consume_tour.nv
+  1  outside the subset: the shell novac links into carries no `R
+      L107 examples/tour/errors.nv
+  1  in the instance of `to_uppercase`: outside the subset: `[]T.
+      L113 examples/tour/modules_tour.nv
+  1  a bare `None` here has no type to take: it stands for an Opt
+      L114 examples/tour/patterns.nv
+  1  outside the subset: a format specifier in string interpolati
+      L115 examples/tour/strings_tour.nv
+  1  outside the subset: an extern nova fn declaration -- only th
+      L117 examples/typed_pointers/basic_pointer.nv

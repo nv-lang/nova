@@ -5,7 +5,7 @@ source_date: 2026-07-26
 
 > **Informative translation; the Russian text is normative.**
 >
-> Russian original (normative): [conversions.md](conversions.md)
+> Russian original (normative): [conversions.ru.md](conversions.ru.md)
 
 # Nova — type conversions
 
@@ -30,7 +30,8 @@ details in the "`from`/`try_from` naming" section below.
 | `.to_str()` | universal conversion of a value **to a string** (bare-`T` blanket + specializations) | `42.to_str()`, `bs.to_str()` |
 | `T.from(v)` / `T.try_from(v)` | a concrete static constructor — a **naming convention**, NOT a protocol/auto-derive. Legal ONLY when the source is a **concept** rather than a carrier value: for a value the canon is a method on the source, `x.to_*()` (`nv-coding-style` §1а, 2026-07-09; lint `W_STATIC_CONVERSION`) | `Complex.from_polar(r, phi)` |
 | `consume @into_TARGET()` | consuming ownership transfer (a concrete name on the source) | `sb.into_str()`, `wb.into_bytes()` |
-| `#coerce` | declarative **implicit** zero-cost conversion in a position with a known expected type (view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
+| `#coerce` on a function | declarative **implicit** zero-cost conversion in a position with a known expected type (D429, view/finalize) | `w.write(s)` — `str` implicitly `.bytes()` |
+| `#coerce` on a sum declaration | opt-in for direct wrapping under D496; constructor cost, not a zero-cost guarantee | the unique unary variant of the exact payload type |
 
 > **Implicit coercion is a property of the POSITION, not of the value** (D429 R9/R10, owner 2026-09-10). In a position with a known expected type — a typed binding, an argument, a return — the bare value is the canonical form and the pair is inserted for you. Inside an expression there is no expected type, and the same operation is always written by its own name: `s.bytes().len()`, `sb.into_str().trim()`. `as` never invokes a `#coerce` pair (R10): `as` is the closed, spec-listed table of casts; a `#coerce` pair is user code. There is no third spelling by design.
 
@@ -391,11 +392,23 @@ ro e Row = n as Row            // ok
 ro g Row = Row(d)              // ERROR E_NEWTYPE_CTOR_SELF -- d is already Row
 ```
 
-Sums are untouched: the variant of the value's EXACT type (`SqlValue.Int(x)` for an `int`, `I32(x)` for an `i32`; a literal takes the D44 default, registry 1637) is still inserted for ANY expression the
-checker accepts -- a variable, a call, a field read, not only a literal (D55,
-clarified 2026-10-01) -- there the compiler DERIVES the only matching variant
-instead of inventing the author's claim. For the old softness on your own newtype, declare it as a
-[`#coerce`](decisions/02-types.md#d429) pair.
+**Sums follow [D496](decisions/02-types.md#d496) (owner's normative decision of 2026-11-18, not yet implemented).**
+`#coerce` annotates the target sum declaration, not a variant or a pair.
+
+| Source | Implicit wrapping into the expected sum |
+|---|---|
+| Already typed value (variable, call, field) | Only with `#coerce` on the target sum and exactly one matching variant with exactly one parameter of the source's exact type after generic substitution |
+| Literal (scalar or collection, record/map) | The D55 exception remains independent of the attribute; sum-wrap still requires unary arity and an unambiguous variant |
+
+A literal container, including `ro v JsonValue = {name: "Jon", age: 45}`, does not permit
+lifting a nested already typed variable into a strict sum. Two matching unary variants are
+ambiguous; variants with 0 or 2+ parameters require an explicit `Type.Variant`.
+Exact type wins before wrapping: an existing `Sum` is not wrapped into itself. No new numeric widening
+(D491) or coercion chains (D429 R4, one step) are introduced. The `throw`/`?`/`??` channels obey the same
+conditions, not general sum-widening: std must annotate target sums or use explicit constructors.
+Other type, effect and ownership requirements remain; the semantics of `as` are not extended.
+The newtype rule above is unchanged: its former softness requires a FUNCTION
+[`#coerce`](decisions/02-types.md#d429) pair within that mechanism's limits, not an attribute on the newtype.
 
 **A variant constructor is judged against the expected instance (D55 amend,
 2026-10-01).** The payload is checked against the variant's field in the
@@ -464,6 +477,12 @@ truthy, a known bug-class.
 ---
 
 ## Zero-cost implicit conversions — `#coerce` ([D429](decisions/02-types.md#d429), Plan 214/214.1)
+
+This section covers FUNCTION pairs view/finalize only; their constraints are unchanged.
+The SUM attribute in [D496](decisions/02-types.md#d496) is a different carrier, enabling
+a built-in constructor, not a new pair function; D429 R11 still forbids duplicate function pairs.
+Sum-wrap cost follows D477/D488 and plan 172.14, with no guarantee of stack placement or zero
+allocations. This does not remove the zero-cost guarantees of view/finalize below.
 
 Separately from the explicit mechanisms above — the declarative `#coerce`
 attribute on a **unary** function declares an **implicit** conversion `I → O`,
