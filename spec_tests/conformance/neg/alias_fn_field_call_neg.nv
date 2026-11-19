@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_FN_FIELD_ALIAS_UNSUPPORTED
+//
+// Registry 221.1 #1913: a call through a record field whose type is an alias
+// over a function type used to pass the checker and emit the field as
+// `void *`; the program printed an address instead of the result.
+module neg.alias_fn_field_call_neg
+
+type Run alias fn() -> int
+
+type Holder { f Run }
+
+fn main() -> () {
+    ro v = (Holder { f: fn() -> int => 42 }.f)()  // nova:expect E_FN_FIELD_ALIAS_UNSUPPORTED -- alias-over-fn field call is not lowered; use a direct fn field or a typed local
+    ro _ = v
+}

@@ -1,0 +1,13 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #1913 positive control: a direct `fn(..)` field call is
+// supported and must stay accepted; the guard covers only alias/newtype
+// over `fn(..)`.
+module standalone.fn_field_direct_pos
+
+type Holder { f fn() -> int }
+
+fn main() Io -> () {
+    ro v = (Holder { f: fn() -> int => 42 }.f)()
+    println("${v}")
+}
