@@ -44,6 +44,10 @@ type FnVarEmbedFound protocol {
 
 fn fn_var_takes_embed(f fn(FnVarEmbedSlot) -> int) -> () {}
 
+// CHECK-ONLY: the embed/deep/default bodies return 0 instead of calling the
+// inherited method; such a call hits a separate codegen ICE
+// (E_CODEGEN_TYPE_UNKNOWN, separate OPEN row). This pin proves the checker
+// accepts the contravariant slot, not end-to-end inherited dispatch.
 fn fn_var_f_embed(x FnVarEmbedFound) -> int => 0
 
 type FnVarDeepSlot protocol {
