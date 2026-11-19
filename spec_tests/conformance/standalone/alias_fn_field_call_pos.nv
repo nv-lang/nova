@@ -1,0 +1,14 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #1913: full call-through. A call through an alias-over-fn
+// record field must invoke the function and print its value, not an address.
+module standalone.alias_fn_field_call_pos
+
+type Run alias fn() -> int
+
+type Holder { f Run }
+
+fn main() Io -> () {
+    ro v = (Holder { f: fn() -> int => 42 }.f)()
+    println("${v}")
+}

@@ -19466,7 +19466,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let mangled = Self::mangle_field_name(&f.name);
             self.line(&format!("{} {};", ty_c, mangled));
             // Plan 14 Ф.4: fn-typed field sig registry mirror.
-            if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+            if let Some(TypeRef::Func { params: fp, return_type, .. }) = self.resolve_fn_typeref(&f.ty) {
                 let ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                         &format!("value-record `{}` fn-typed field `{}` param", name, f.name),
@@ -19722,7 +19722,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 14 Ф.4: записываем fn-typed поля в реестр sig'ов
             // record-полей. Использует Member-call routing для эмита
             // closure-call (`obj.f(x)` → NOVA_CLOS_CALL_*).
-            if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+            if let Some(TypeRef::Func { params: fp, return_type, .. }) = self.resolve_fn_typeref(&f.ty) {
                 // Plan 70 PhaseA2.3: strict — record fn-typed field sig.
                 let ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
