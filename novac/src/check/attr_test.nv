@@ -78,3 +78,136 @@ test "decl-attr: the name question reads the OWN name -- #unstable stable is not
     ro m = dat_first_msg(src)
     assert(m.contains("a declaration attribute outside the set the subset reads"), m)
 }
+
+
+// THE FULL MALFORMED MATRIX of the second acceptance (2026-11-18).
+
+test "decl-attr: malformed s1 is refused" {
+    ro src = "module m\n\n#stable(123)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s2 is refused" {
+    ro src = "module m\n\n#stable(true)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s3 is refused" {
+    ro src = "module m\n\n#stable(1 + 2)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s4 is refused" {
+    ro src = "module m\n\n#stable(since = \"0.1\", 123)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s5 is refused" {
+    ro src = "module m\n\n#stable(since = 123, \"0.1\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s6 is refused" {
+    ro src = "module m\n\n#stable(= \"0.1\" since)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s7 is refused" {
+    ro src = "module m\n\n#stable(since = \"0.1\" + \"0.2\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed s8 is refused" {
+    ro src = "module m\n\n#stable(feature = \"x\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d1 is refused" {
+    ro src = "module m\n\n#doc(sparkle)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d2 is refused" {
+    ro src = "module m\n\n#doc(summary)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d3 is refused" {
+    ro src = "module m\n\n#doc(sparkle = \"x\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d4 is refused" {
+    ro src = "module m\n\n#doc(summary = 123, \"padding\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d5 is refused" {
+    ro src = "module m\n\n#doc(summary = \"x\", section = 123, \"padding\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d6 is refused" {
+    ro src = "module m\n\n#doc(summary \"x\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d7 is refused" {
+    ro src = "module m\n\n#doc(summary = \"x\" + 123)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d8 is refused" {
+    ro src = "module m\n\n#doc inline\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: malformed d9 is refused" {
+    ro src = "#doc \"".concat("$").concat("{123}\"").concat("\nmodule m\n\nfn f() -> int => 1\n")
+    assert(dat_first_msg(src) != "", src)
+}
+
+test "decl-attr: legal l1 is accepted" {
+    ro src = "#stable\nmodule m\n\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l2 is accepted" {
+    ro src = "module m\n\n#stable(since = \"0.1\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l3 is accepted" {
+    ro src = "#doc \"module docs\"\nmodule m\n\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l4 is accepted" {
+    ro src = "#doc \"\"\nmodule m\n\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l5 is accepted" {
+    ro src = "module m\n\n#doc(summary = \"text\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l6 is accepted" {
+    ro src = "module m\n\n#doc(section = \"Name\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l7 is accepted" {
+    ro src = "module m\n\n#doc(test_handlers = \"my.handlers\")\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l8 is accepted" {
+    ro src = "module m\n\n#doc(inline)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: legal l9 is accepted" {
+    ro src = "module m\n\n#doc(no_inline)\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
