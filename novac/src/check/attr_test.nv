@@ -52,3 +52,29 @@ test "decl-attr: control -- #impl(Deserialize) keeps its own refusal" {
     ro m = dat_first_msg(src)
     assert(m.contains("not synthesized yet"), m)
 }
+
+// THE ACCEPTANCE FINDINGS (2026-11-18, independent review): the canonical
+// string form of D101 must parse; typed arguments must be validated, not just
+// the attribute name; and the name question must read the OWN name only.
+test "decl-attr: the module form `#doc \"text\"` parses and is accepted" {
+    ro src = "#doc \"module docs\"\nmodule m\n\nfn f() -> int => 1\n"
+    assert(dat_first_msg(src) == "", dat_first_msg(src))
+}
+
+test "decl-attr: #stable(since = 123) is refused -- a string literal is the form" {
+    ro src = "module m\n\n#stable(since = 123)\nfn f() -> int => 1\n"
+    ro m = dat_first_msg(src)
+    assert(m.contains("string literal"), m)
+}
+
+test "decl-attr: #doc(summary = 123) is refused -- a string literal is the form" {
+    ro src = "module m\n\n#doc(summary = 123)\nfn f() -> int => 1\n"
+    ro m = dat_first_msg(src)
+    assert(m.contains("string literal"), m)
+}
+
+test "decl-attr: the name question reads the OWN name -- #unstable stable is not #stable" {
+    ro src = "module m\n\n#unstable stable\nfn f() -> int => 1\n"
+    ro m = dat_first_msg(src)
+    assert(m.contains("a declaration attribute outside the set the subset reads"), m)
+}
