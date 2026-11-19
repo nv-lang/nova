@@ -1932,9 +1932,13 @@
 # 2026-11-19: 0.1.7 line debt closure: rows 1986-1993 restored, 129b/129c numbered
 # 1999/2000; union with main 2d097fd2a adds main 1998 and rows 1909/max 2000;
 # gaps 1991-1998 are filled by the union.
-rows=1909
+# 2026-11-19, integrator (owner word "include the fix in release 0.1.7"): row 2001
+#   added (item 19 root 3 exit-drain hang class: nested supervised scopes + bare-park
+#   sync waiters never cancelled at pre-exit; K1 P1, BLOKIRUET TEG: DA). Recount:
+#   rows 1909 -> 1910, max 2000 -> 2001, duplicates 0; no new gap (2001 past old max).
+rows=1910
 
-max=2000
+max=2001
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

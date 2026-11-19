@@ -1673,7 +1673,12 @@ no_caveat=0
 # examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
 # mandatory release corpus, not a verdict on which side is right).
 # 2026-11-19: 1913 is now explicitly a tag blocker until the full call-through is accepted.
-blockers=116
+# 2026-11-19, integrator (owner word "include the fix in release 0.1.7"): 116 -> 117,
+# row 2001 filed OPEN, BLOKIRUET TEG: DA. Item 19 root 3 exit-drain hang class:
+# parked fibers in nested supervised scopes + bare-parked sync waiters never
+# cancelled at pre-exit. Fix lands in fix/item19-root3-nested off rehearsal 1a27968af;
+# closure only by independent whole-class measure, carrier fix not acceptance.
+blockers=117
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

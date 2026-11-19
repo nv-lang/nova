@@ -256,6 +256,28 @@ static inline nova_unit Nova_Condvar_method_wait_Mutex(Nova_Condvar* cv,
     /* Fiber resumed (either notify or spurious wake).
      * Spurious wakeup contract: caller must use predicate loop or wait_until. */
     Nova_Mutex_method_lock(m);
+    /* [item 19 root 3] observe scope cancel on resume: a bare cancel wake must
+     * throw CANCEL, not return into the caller's predicate loop (which would
+     * re-wait on an unchanged predicate and park forever). m is re-held here,
+     * so the caller's guard releases it on CANCEL unwind. Unlink the waiter
+     * from cv's list if still present (a cancel wake does not dequeue it) so a
+     * later notify cannot dereference a dangling stack waiter. Lock order
+     * m -> cv->mu matches the enqueue path above. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&cv->mu);
+            NovaCondvarWaiter* it = cv->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else cv->head = w.next;
+                if (w.next) w.next->prev = w.prev; else cv->tail = w.prev;
+            }
+            nova_mutex_unlock(&cv->mu);
+            nova_sync_throw_cancel(_cs);
+        }
+    }
     return NOVA_UNIT;
 }
 
@@ -303,6 +325,24 @@ static inline nova_unit Nova_Condvar_method_wait_ReentrantMutex(
 
     /* Re-acquire as count=1 (intentional: not restoring original count). */
     Nova_ReentrantMutex_method_lock(rm);
+    /* [item 19 root 3] observe scope cancel on resume (see wait_Mutex): rm is
+     * re-held, caller cleanup releases it on CANCEL unwind; unlink a still-
+     * linked waiter so a later notify cannot deref a dangling stack waiter. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&cv->mu);
+            NovaCondvarWaiter* it = cv->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else cv->head = w.next;
+                if (w.next) w.next->prev = w.prev; else cv->tail = w.prev;
+            }
+            nova_mutex_unlock(&cv->mu);
+            nova_sync_throw_cancel(_cs);
+        }
+    }
     return NOVA_UNIT;
 }
 
@@ -405,6 +445,24 @@ static inline Nova_WaitResult* Nova_Condvar_method_wait_for(
 
     /* Resumed: check which path fired (timer vs notify). Re-acquire m. */
     Nova_Mutex_method_lock(m);
+    /* [item 19 root 3] observe scope cancel on resume (see wait_Mutex). Nullify
+     * handle->waiter under cv->mu so a pending timer_cb becomes a no-op. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&cv->mu);
+            NovaCondvarWaiter* it = cv->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else cv->head = w.next;
+                if (w.next) w.next->prev = w.prev; else cv->tail = w.prev;
+            }
+            if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            nova_mutex_unlock(&cv->mu);
+            nova_sync_throw_cancel(_cs);
+        }
+    }
     return w.timed_out
         ? nova_make_WaitResult_TimedOut()
         : nova_make_WaitResult_Notified();

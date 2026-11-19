@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT links 8, spawned 8
+// EXPECT_TIMEOUT_MS 120000
+//
+// item 19 root 3 (residual exit-drain hang), pin fixture for the NESTED
+// supervised-scope carrier. The released 0.1.6 runtime fixed roots 1 and 2
+// (registration race + lost wake) for DETACHED fibers — direct children of
+// the orphan scope, the shape of item19_child_pipes_exit.nv. The Canopus
+// hub still hung on exit (hubtest dump 2026-11-19, reason=
+// pre-exit-drain-10s-remote-1): orphan cancel_req=1 pending_remote stuck,
+// ~8 parked pipe fibers whose parent_scope is a NESTED supervised scope
+// (neither the orphan nor a worker scope), every worker scope cancel_req=0.
+//
+// Mechanism (verified by dump + code read), TWO gaps:
+//  1. A detached fiber driving a NESTED supervised scope spins in
+//     nova_supervised_run_impl's join loop pumping workers; it never passes a
+//     nova_fiber_yield safepoint, so it never observes the cancel the
+//     orphan-drain stop sets on its OWN parent (the orphan scope). The nested
+//     scope q is therefore never cancelled and its parked children never
+//     released. Fix: an ancestor-cancel propagation gate in the join loop
+//     delivers the parent's cancel to q, cascading level by level, and
+//     RE-DELIVERS on a throttle while q still has outstanding children (a
+//     one-shot fan-out misses fibers that park after it ran).
+//  2. Even with q cancelled, the bare-parked sync waiters (nvchan.recv parks
+//     on a Condvar via nova_sched_park_with_unlock, NO stop_cb) were skipped:
+//     cancel_worker_fibers' bare-park fallback was driver-mode-gated, so in
+//     armed M:N mode nobody woke them. Fix: the bare fallback now wakes
+//     matched parked slots unconditionally (goready's single-winner CAS plus
+//     the park predicate re-check absorb any spurious/double wake), and the
+//     Mutex/Condvar/ReentrantMutex lock+wait resume paths observe the scope
+//     cancel and throw CANCEL (unlinking their waiter) instead of re-parking.
+//
+// This fixture reproduces that carrier: each link detaches a fiber that
+// enters a NESTED supervised scope and spawns three remote children into
+// it — a pipe reader parked on uv_read (the echoer child stays alive with
+// its stdin held open by a writer parked on a channel nobody sends to, so
+// no EOF ever arrives), the writer itself, and a keeper holding the Child
+// handle parked on another silent channel. main returns while all of them
+// are parked; the pin is that the runtime's pre-exit orphan-drain completes
+// on its own (no exit_process here on purpose).
+//
+// RED on the unpatched 0.1.7 rehearsal line (1a27968af): the run prints its
+// line and then never exits (orphan cancel_req=1 pending_remote=8, eight
+// join-loop drivers RUNNING/READY, nested scopes cancel_req=0); the runner
+// kills it at EXPECT_TIMEOUT_MS. GREEN on the fix build: every run prints
+// the line AND exits by itself with pending_remote reaching 0. The detached
+// carrier (item19_child_pipes_exit.nv) must stay green too — same class,
+// both carriers.
+//
+// Platform helpers use only binaries guaranteed on this repo's CI runners
+// (`findstr` on Windows, `cat` on POSIX), same policy as
+// d453_os_process_run_test.nv and item19_child_pipes_exit.nv.
+
+module standalone.item19_nested_scopes_exit
+
+import std.io.{write_all}
+import std.os.{Command, Child, ChildStdin, ChildStdout, Stdio}
+import std.concurrency.nvchan.{Chan, ChanTx, ChanRx}
+
+#cfg(target_os = "windows")
+fn echoer() -> Command => Command.new("findstr").arg(".*")
+
+#cfg(!target_os = "windows")
+fn echoer() -> Command => Command.new("cat")
+
+fn pipe_in(o Option[ChildStdin]) -> ChildStdin {
+    match o {
+        Some(consume s) => s
+        None => panic("no stdin")
+    }
+}
+
+fn pipe_out(o Option[ChildStdout]) -> ChildStdout {
+    match o {
+        Some(consume s) => s
+        None => panic("no stdout")
+    }
+}
+
+fn reader(consume rx ChildStdout, got ChanTx[int]) Proc -> () {
+    mut buf []u8 = []u8.new()
+    buf.resize(4096, 0 as u8)
+    mut reading = true
+    while reading {
+        match rx.read(buf) {
+            Ok(0) => { reading = false }
+            Ok(n) => { ro ok = got.send(n) }
+            Err(e) => { reading = false }
+        }
+    }
+    rx.close()
+    ro end = got.send(-1)
+}
+
+fn writer(consume tx ChildStdin, lines ChanRx[str]) Proc -> () {
+    // Parks on recv forever: nobody sends and the channel is never closed.
+    // Holding tx open keeps the echoer's stdin open, so the reader never
+    // sees EOF either — both stay parked until the exit-drain cancels them.
+    mut waiting = true
+    while waiting {
+        match lines.recv() {
+            Some(line) => {
+                match write_all(tx, "${line}\n") {
+                    Ok(x) => ()
+                    Err(e) => { waiting = false }
+                }
+            }
+            None => { waiting = false }
+        }
+    }
+    tx.close()
+}
+
+fn keeper(consume child Child, hold ChanRx[int]) Proc -> () {
+    ro x = hold.recv()
+    child.release()
+}
+
+fn link(got ChanTx[int]) Proc Detach Time -> () {
+    mut cmd = echoer()
+    cmd.stdin(Stdio.Piped)
+    cmd.stdout(Stdio.Piped)
+    match cmd.start() {
+        Err(e) => ()
+        Ok(consume child) => {
+            detach consume child {
+                consume win = pipe_in(child.take_stdin())
+                consume rout = pipe_out(child.take_stdout())
+                ro lines = Chan[str].new(4)
+                ro hold = Chan[int].new(4)
+                supervised {
+                    spawn consume rout { reader(rout, got) }
+                    spawn consume win { writer(win, lines.rx) }
+                    spawn consume child { keeper(child, hold.rx) }
+                }
+            }
+        }
+    }
+}
+
+fn main() Proc Io Detach Time -> () {
+    ro got = Chan[int].new(64)
+    mut i = 0
+    while i < 8 {
+        link(got.tx)
+        i += 1
+    }
+    println("links ${i}, spawned ${i}")
+    // No exit_process here on purpose: the pin is that the runtime's
+    // pre-exit orphan-drain completes on its own.
+}

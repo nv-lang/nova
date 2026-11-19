@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT primitives 6 parked
+// EXPECT_TIMEOUT_MS 120000
+//
+// item 19 root 3 — class probe for the BARE-PARK sync primitives beyond
+// nvchan. The nested-scope fixture (item19_nested_scopes_exit.nv) proves the
+// ancestor-cancel propagation gate (gap 1) and the nvchan Condvar/Mutex
+// cancel-aware resume (gap 2). This probe proves gap 2's cancel-aware resume
+// for the REST of the bare-park class: Semaphore, CountDownLatch, WaitGroup,
+// Barrier, RwLock, Once. Each primitive parks a fiber on a
+// nova_sched_park_with_unlock slot with NO stop_cb; before the fix the
+// exit-drain's bare wake was driver-mode-gated (skipped in armed M:N) and the
+// resume path re-parked forever, so a nested supervised scope full of such
+// waiters never drained.
+//
+// Carrier shape is the same as the nested-scope fixture: every park_* detaches
+// a fiber that drives a NESTED supervised scope (the join-loop driver that
+// never passes a nova_fiber_yield safepoint) whose spawned children park bare
+// on the primitive. main returns while all are parked; the pin is that the
+// runtime's pre-exit orphan-drain completes on its own (no exit_process).
+//
+// RwLock and Once are parked deterministically: the detached fiber itself
+// takes the write lock / wins Once.start() BEFORE entering the supervised
+// scope, so the spawned reader / Once.run() waiter is guaranteed to park (no
+// acquire-order race), then releases/commits after the scope drains.
+//
+// RED on the unpatched 0.1.7 rehearsal line (1a27968af): prints the line then
+// never exits (orphan cancel_req=1, nested scopes cancel_req=0, parked
+// primitive waiters never released). GREEN on the fix build: prints the line
+// AND exits by itself with pending_remote reaching 0. Run with
+// NOVA_ORPHAN_DRAIN_GRACE_SECS=2 to drain ahead of the 10s watchdog dump.
+
+module standalone.item19_sync_primitives_exit
+
+import std.runtime.sync.{RwLock, WaitGroup, Once, Semaphore, Barrier, CountDownLatch}
+
+fn park_semaphore() Proc Detach Time -> () {
+    detach {
+        mut sem = Semaphore.new(0)
+        supervised {
+            spawn { sem.acquire_n(1) }
+        }
+    }
+}
+
+fn park_latch() Proc Detach Time -> () {
+    detach {
+        mut latch = CountDownLatch.new(1)
+        supervised {
+            spawn { latch.await() }
+        }
+    }
+}
+
+fn park_waitgroup() Proc Detach Time -> () {
+    detach {
+        mut wg = WaitGroup.new()
+        wg.add(1)
+        supervised {
+            spawn { wg.wait() }
+        }
+    }
+}
+
+fn park_barrier() Proc Detach Time -> () {
+    detach {
+        mut bar = Barrier.new(2)
+        supervised {
+            spawn { ro idx = bar.wait() }
+        }
+    }
+}
+
+fn park_rwlock() Proc Detach Time -> () {
+    detach {
+        mut rw = RwLock.new()
+        consume g = rw.write()
+        supervised {
+            spawn { consume rg = rw.read(); rg.unlock() }
+        }
+        g.unlock()
+    }
+}
+
+fn park_once() Proc Detach Time -> () {
+    detach {
+        mut once = Once.new()
+        match once.start() {
+            Some(consume g) => {
+                supervised {
+                    spawn { ro r = once.run() }
+                }
+                g.commit()
+            }
+            None => ()
+        }
+    }
+}
+
+fn main() Proc Io Detach Time -> () {
+    park_semaphore()
+    park_latch()
+    park_waitgroup()
+    park_barrier()
+    park_rwlock()
+    park_once()
+    println("primitives 6 parked")
+    // No exit_process here on purpose: the pin is that the runtime's
+    // pre-exit orphan-drain completes on its own.
+}

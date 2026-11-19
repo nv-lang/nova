@@ -2636,14 +2636,19 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
      * (`cb && hdl` below) can ONLY belong to a net.c-style async op — never
      * a driver-routed sleep. Running the `cb(hdl)` branch unconditionally is
      * therefore safe in driver mode: it can never race the driver's own
-     * armed_sleeps_head walk (disjoint fiber sets). The double-wake race the
-     * original comment warned about is specifically the BARE-park fallback
-     * branch (`else if (parked_at)`, no stop_cb) — THAT one still matches a
-     * driver-routed sleeping fiber (bare-parked, no stop_cb, same as a
-     * network op that hasn't registered its pending handle yet) and must
-     * stay driver-exclusive to avoid double-dispatch. Fix: gate only the
-     * bare-park fallback on driver-mode; let the stop_cb branch run always. */
-    bool driver_mode = nova_driver_is_started();
+     * armed_sleeps_head walk (disjoint fiber sets).
+     *
+     * [item 19 root 3] The bare-park fallback is NO LONGER driver-gated. The
+     * original gate feared a double-wake against the driver's CANCEL_SCOPE
+     * close_cb for a driver-routed sleep (also bare-parked, no stop_cb). That
+     * race is structurally defused by the goready single-winner CAS (one
+     * dispatch) plus the driver sleep's CLOSED-stage park_until predicate (an
+     * early bare wake is absorbed — the fiber re-parks until the driver closes
+     * the timer, then throws CANCEL). Gating the bare branch silently dropped
+     * cancel for every sync-primitive waiter (Mutex/Condvar/ReentrantMutex
+     * park with no stop_cb), so a nested supervised scope's parked children
+     * were never released at pre-exit and the orphan drain hung. See the bare
+     * branch below for the full rationale. */
     /* Cast from `struct NovaFiberQueue*` (forward-declared in runtime.h) to
      * `NovaFiberQueue*` (anonymous typedef from fibers.h) for sched helpers. */
     NovaFiberQueue* tscope = (NovaFiberQueue*)target_scope;
@@ -2692,14 +2697,28 @@ void nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* target_scope) {
                  * backend wake. SYNC stop_cbs wake on their own; the extra
                  * wake coalesces (R4 no-op). */
                 nova_sched_wake(&w->scope, j);
-            } else if (!driver_mode && j < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, j)) {
-                /* Bare park (no registered stop_cb): direct dispatch_ready.
-                 * Driver-exclusive when driver_mode — a driver-routed sleep
-                 * is ALSO bare-parked with no stop_cb; touching it here too
-                 * would double-wake against the driver's own CANCEL_SCOPE/
-                 * armed_sleeps_head close_cb CAS (original heisenbug this fn
-                 * documents). Unchanged from pre-fix behavior when driver is
-                 * not started (bootstrap/single-thread mode). */
+            } else if (j < nova_sched_cap_acq(st) && *nova_sched_parked_at(st, j)) {
+                /* [item 19 root 3] Bare park (no registered stop_cb): direct
+                 * wake. This reaches the sync-primitive waiters (Mutex/Condvar/
+                 * ReentrantMutex lock+wait park via nova_sched_park_with_unlock
+                 * with NO stop_cb) that a nested supervised scope's cancel must
+                 * release at pre-exit — previously skipped in driver mode, so a
+                 * nvchan.recv condvar waiter parked forever and the orphan
+                 * scope's pending_remote never reached 0.
+                 *
+                 * The old driver-mode gate feared a double-wake against the
+                 * driver's CANCEL_SCOPE close_cb for a driver-routed sleep (also
+                 * bare-parked, no stop_cb). That is now structurally defused:
+                 * nova_sched_wake is a single-winner CAS (goready R2/R3/R4), so
+                 * a concurrent driver close_cb wake coalesces to ONE dispatch;
+                 * and a driver sleep parks under nova_sched_park_until with a
+                 * CLOSED-stage predicate, so an early bare wake is absorbed —
+                 * the fiber re-parks until the driver genuinely closes the
+                 * timer, then observes cancel_scope->cancel_requested and throws
+                 * CANCEL (fibers.h _nova_sleep_via_driver post-park check). The
+                 * sync waiters likewise observe cancel on resume (their own
+                 * post-park nova_sync_cancel_scope check) and throw instead of
+                 * re-parking. No double-dispatch, no permanent park. */
                 nova_sched_wake(&w->scope, j);
             }
             /* else: fiber not yet parked; FIX 2b in _nova_sleep_via_libuv
