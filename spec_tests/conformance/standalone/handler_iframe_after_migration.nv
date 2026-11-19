@@ -1,0 +1,69 @@
+// handler_iframe_after_migration.nv — registry 221.1 №1988 (class): a
+// handler-arm cross-effect interrupt must still reach the OUTER with-block
+// after the fiber has been resumed on another worker.
+//
+// The outer `Fail[UpErr]` handler arm sleeps (migration window) and only then
+// performs `interrupt`. Routing past the inner `Fail[LowErr]` with-block uses
+// the saved handler iframe, which is restored on resume. If the interrupt
+// lands on the inner block instead, the outer body returns its own normal
+// value and the report is lost — so the fixture distinguishes the two paths.
+//
+// The route is allowed in a fiber only while the owner frame lies on the
+// fiber's OWN stack; the cross-stack inherited-handler case keeps the old
+// fallback. Twelve detached workers on NOVA_MAXPROCS=4.
+//
+// ENV NOVA_MAXPROCS=4
+// EXPECT_STDOUT all routed
+
+module standalone.handler_iframe_after_migration
+
+import std.concurrency.nvchan.{Chan, ChanTx}
+
+type LowErr | LowReason(str)
+type UpErr | UpReason(str)
+
+fn lower() Fail[LowErr] -> int {
+    throw LowReason("low")
+}
+
+fn outer_arm() Time -> str {
+    for _ in 0..20 { 1.to_millis().sleep() }
+    interrupt "from-arm"
+}
+
+fn run_one() Time Fail[UpErr] -> str {
+    ro _inner = with Fail[LowErr] = |_e| throw UpReason("from-inner") {
+        ro _ = lower()
+        "inner-normal"
+    }
+    "outer-normal"
+}
+
+fn worker(id int, done ChanTx[int]) Time -> () {
+    ro r = with Fail[UpErr] = |_e| outer_arm() {
+        run_one()
+    }
+    if r == "from-arm" {
+        ro sent = done.send(id)
+    }
+}
+
+fn main() Detach Time Io -> () {
+    ro done = Chan[int].new(16)
+    for id in 0..12 {
+        detach { worker(id, done.tx) }
+    }
+    mut got = 0
+    ro deadline = Time.now().unix_millis() + 15000
+    while got < 12 {
+        match done.rx.try_recv() {
+            Some(id) => { got += 1 }
+            None => {
+                if Time.now().unix_millis() >= deadline { break }
+                1.to_millis().sleep()
+            }
+        }
+    }
+    if got == 12 { println("all routed") }
+    else { println("lost: ${12 - got}") }
+}

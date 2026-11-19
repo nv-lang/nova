@@ -190,6 +190,12 @@ impl CEmitter {
             "    NovaFailFrame* _nova_saved_fail_top;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaInterruptFrame* _nova_saved_interrupt_top;");
+        // Registry 221.1 №1988 (class): fiber-scoped handler context restored
+        // on every resume. MUST mirror NovaSpawnCtxBase (fibers.h).
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaInterruptFrame* _nova_saved_handler_iframe;");
+        let _ = writeln!(self.lambda_forward_decls,
+            "    NovaFinalizerStack* _nova_saved_finalizer_stack;");
         let _ = writeln!(self.lambda_forward_decls,
             "    NovaFiberQueue* _nova_fiber_scope;");
         let _ = writeln!(self.lambda_forward_decls,
@@ -413,6 +419,8 @@ impl CEmitter {
         self.line(&format!("{ctx_var}->_nova_worker_slot = -1;"));
         self.line(&format!("{ctx_var}->_nova_saved_fail_top = NULL;"));
         self.line(&format!("{ctx_var}->_nova_saved_interrupt_top = NULL;"));
+        self.line(&format!("{ctx_var}->_nova_saved_handler_iframe = NULL;"));
+        self.line(&format!("{ctx_var}->_nova_saved_finalizer_stack = NULL;"));
         self.line(&format!("{ctx_var}->_nova_fiber_scope = NULL;"));
 
         // Plan 83.4.5.4: capture parent TLS snapshot for handler inheritance.

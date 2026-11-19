@@ -123,10 +123,19 @@ typedef struct NovaFiberAnchor {
 
 /* Thread-local fail stack */
 #ifdef _MSC_VER
-__declspec(thread) extern NovaFailFrame* _nova_fail_top;
+__declspec(thread) extern NovaFailFrame* _nova_fail_top_tls;
 #else
-extern __thread NovaFailFrame* _nova_fail_top;
+extern __thread NovaFailFrame* _nova_fail_top_tls;
 #endif
+/* Registry 221.1 №1988 (class): every fiber-scoped TLS slot is re-read on the
+ * current thread through a noinline accessor. The fiber may be resumed on
+ * another worker; a cached address of the old thread's slot would point at
+ * empty/foreign state (see nova_rt.h, "Effect-handler TLS slots"). */
+static inline NOVA_NOINLINE NovaFailFrame** nova_fail_top_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_fail_top_tls;
+}
+#define _nova_fail_top (*nova_fail_top_slot())
 
 static inline void nova_fail_push(NovaFailFrame* f) {
     f->is_cleanup = 0;  /* Plan 173 Ф.4 #6: default; codegen marks cleanup frames */
@@ -303,11 +312,17 @@ typedef struct {
 
 #ifdef _MSC_VER
 __declspec(thread) extern NovaFiberErrorState  _nova_error_state_native;
-__declspec(thread) extern NovaFiberErrorState* _nova_error_state_p;
+__declspec(thread) extern NovaFiberErrorState* _nova_error_state_p_tls;
 #else
 extern __thread NovaFiberErrorState  _nova_error_state_native;
-extern __thread NovaFiberErrorState* _nova_error_state_p;
+extern __thread NovaFiberErrorState* _nova_error_state_p_tls;
 #endif
+/* Registry 221.1 №1988 (class): fiber-scoped slot, re-read per access. */
+static inline NOVA_NOINLINE NovaFiberErrorState** nova_error_state_p_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_error_state_p_tls;
+}
+#define _nova_error_state_p (*nova_error_state_p_slot())
 
 /* Self-healing accessor — guarantees a non-NULL bucket regardless of
  * thread-startup ordering. `_nova_error_state_p` starts NULL on a fresh
@@ -1133,7 +1148,7 @@ typedef struct NovaInterruptFrame {
 } NovaInterruptFrame;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top;
+__declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top_tls;
 /* Plan 61 followup #1: handler-arm interrupt context. Set ДО invoke
  * handler-arm body в Nova_Fail_fail / nova_throw_typed; restored после.
  * `interrupt v` в handler-arm body использует этот slot вместо
@@ -1141,11 +1156,22 @@ __declspec(thread) extern NovaInterruptFrame* _nova_interrupt_top;
  * (outer Fail handler делает `interrupt v`) jump'тся в inner with-block
  * вместо outer's. См. simplifications [M-plan-61-cross-effect-throw]
  * resolution. */
-__declspec(thread) extern NovaInterruptFrame* _nova_current_handler_iframe;
+__declspec(thread) extern NovaInterruptFrame* _nova_current_handler_iframe_tls;
 #else
-extern __thread NovaInterruptFrame* _nova_interrupt_top;
-extern __thread NovaInterruptFrame* _nova_current_handler_iframe;
+extern __thread NovaInterruptFrame* _nova_interrupt_top_tls;
+extern __thread NovaInterruptFrame* _nova_current_handler_iframe_tls;
 #endif
+/* Registry 221.1 №1988 (class): both are fiber-scoped and re-read per access. */
+static inline NOVA_NOINLINE NovaInterruptFrame** nova_interrupt_top_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_interrupt_top_tls;
+}
+#define _nova_interrupt_top (*nova_interrupt_top_slot())
+static inline NOVA_NOINLINE NovaInterruptFrame** nova_handler_iframe_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_current_handler_iframe_tls;
+}
+#define _nova_current_handler_iframe (*nova_handler_iframe_slot())
 
 static inline void nova_interrupt_push(NovaInterruptFrame* f) {
     /* Default kind = WITHBLOCK. Caller can override (см.
@@ -1711,10 +1737,19 @@ typedef struct NovaVtable_Fail {
 } NovaVtable_Fail;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaVtable_Fail* _nova_handler_Fail;
+__declspec(thread) extern NovaVtable_Fail* _nova_handler_Fail_tls;
 #else
-extern __thread NovaVtable_Fail* _nova_handler_Fail;
+extern __thread NovaVtable_Fail* _nova_handler_Fail_tls;
 #endif
+/* Registry 221.1 №1986: the slot is thread-scoped, the fiber is not. Every
+ * access re-computes the address on the current thread through a noinline
+ * call, so a fiber resumed on another worker cannot read the old thread's
+ * slot (see nova_rt.h, "Effect-handler TLS slots"). */
+static inline NOVA_NOINLINE NovaVtable_Fail** nova_handler_Fail_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_handler_Fail_tls;
+}
+#define _nova_handler_Fail (*nova_handler_Fail_slot())
 
 /* Inline dispatch: Nova_Fail_fail(msg). Codegen emits this from
  * Stmt::Throw. With user handler installed → handler runs (e.g. records
@@ -1781,10 +1816,16 @@ typedef struct NovaVtable_Fail_any {
 } NovaVtable_Fail_any;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaVtable_Fail_any* _nova_handler_Fail_any;
+__declspec(thread) extern NovaVtable_Fail_any* _nova_handler_Fail_any_tls;
 #else
-extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any;
+extern __thread NovaVtable_Fail_any* _nova_handler_Fail_any_tls;
 #endif
+/* Registry 221.1 №1986: same re-read rule as `_nova_handler_Fail`. */
+static inline NOVA_NOINLINE NovaVtable_Fail_any** nova_handler_Fail_any_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_handler_Fail_any_tls;
+}
+#define _nova_handler_Fail_any (*nova_handler_Fail_any_slot())
 
 /* Plan 61 Ф.2: typed throw — фолдит на правильный slot по dispatch
  * precedence. Codegen emits this для `throw expr` где expr type != nova_str
@@ -1952,10 +1993,16 @@ typedef struct {
 } NovaVtable_Time;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaVtable_Time* _nova_handler_Time;
+__declspec(thread) extern NovaVtable_Time* _nova_handler_Time_tls;
 #else
-extern __thread NovaVtable_Time* _nova_handler_Time;
+extern __thread NovaVtable_Time* _nova_handler_Time_tls;
 #endif
+/* Registry 221.1 №1986: same re-read rule as `_nova_handler_Fail`. */
+static inline NOVA_NOINLINE NovaVtable_Time** nova_handler_Time_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_handler_Time_tls;
+}
+#define _nova_handler_Time (*nova_handler_Time_slot())
 
 /* ──────────────────────────────────────────────────────────────────
  * Plan 110.9.3 V1.1 [M-110.9.3-register-finalizer-lifo]:
@@ -1990,10 +2037,16 @@ typedef struct {
 } NovaFinalizerStack;
 
 #ifdef _MSC_VER
-__declspec(thread) extern NovaFinalizerStack* _nova_active_finalizer_stack;
+__declspec(thread) extern NovaFinalizerStack* _nova_active_finalizer_stack_tls;
 #else
-extern __thread NovaFinalizerStack* _nova_active_finalizer_stack;
+extern __thread NovaFinalizerStack* _nova_active_finalizer_stack_tls;
 #endif
+/* Registry 221.1 №1988 (class): fiber-scoped slot, re-read per access. */
+static inline NOVA_NOINLINE NovaFinalizerStack** nova_active_finalizer_stack_slot(void) {
+    NOVA_SLOT_BARRIER();
+    return &_nova_active_finalizer_stack_tls;
+}
+#define _nova_active_finalizer_stack (*nova_active_finalizer_stack_slot())
 
 /* Push closure (fn + env) onto active stack. No-op if no active stack
  * or fn==NULL. */
@@ -2098,15 +2151,15 @@ extern __thread NovaEffectRegistry _nova_effect_registry;
  *                              block dies with it; the callback must not read it).
  * nova_effect_roots_push    -- mark phase, world stopped: `push(lo, hi)` for each
  *                              registered slot of each live thread.
- * nova_effect_register_root -- a TLS handler slot that is a GC root but NOT part of
- *                              the per-fiber snapshot: the per-E `_nova_handler_Fail_<E>`
- *                              slots of `with Fail[E]` (emit_c.rs, emit_with). They never
- *                              were in the snapshot (registry entries are positional
- *                              and the per-E set is per program), so registering them
- *                              as effect storage would change what a fiber inherits;
- *                              this records them for the GC only. Called by the
- *                              installer right after its TLS store, on the thread
- *                              whose slot it wrote; idempotent per (thread, slot). */
+ * nova_effect_register_root -- records an extra GC-only slot of this thread.
+ *                              Registry 221.1 №1987 (class): the per-E
+ *                              `_nova_handler_Fail_<E>` slots are NOW registered
+ *                              as effect storage in `_nova_register_all_effects_`
+ *                              (per-thread registry, deterministic order), so they
+ *                              are GC roots AND part of the per-fiber snapshot;
+ *                              codegen no longer calls this for them. The API is
+ *                              kept for a slot that must be GC-scanned without
+ *                              joining the snapshot. Idempotent per (thread, slot). */
 void nova_effect_roots_publish(void);
 void nova_effect_roots_retract(void);
 void nova_effect_roots_push(void (*push)(void* lo, void* hi));
