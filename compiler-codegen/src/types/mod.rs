@@ -25218,6 +25218,98 @@ impl<'a> TypeCheckCtx<'a> {
     /// collapse to `Any` on BOTH sides via the SAME `resolved_cat_of` and stay permissive
     /// (`cat_compatible_rt`'s `(Any, _) | (_, Any) => true` arm), so this cannot regress
     /// any currently-accepted erased-generic fn-type call site.
+    /// №1915 (221.1) narrow door: at an fn-type boundary, two parameters that
+    /// are BOTH declared protocols are compared structurally (parameter
+    /// contravariance): the SLOT's protocol must satisfy every non-default
+    /// method the FOUND protocol requires, otherwise a callee that demands
+    /// more than the slot guarantees could be called (P2 in a fn(P1) slot).
+    /// The reverse (a less demanding callee) stays accepted. Mutability is
+    /// contravariant too: a `mut` callee parameter in a non-mut slot is
+    /// rejected; a non-mut callee in a `mut` slot is safe and accepted.
+    /// Anything that is not a pair of declared protocols stays on the
+    /// permissive `resolved_cat_of` path (p1642/p1401/a_q3 closures and
+    /// erased/generic shapes keep their Any-collapse).
+    /// Effective method set of a declared protocol, including `use`-embedded
+    /// protocols. `required_only` drops default-body methods (a callee does not
+    /// demand those). `None` — an embed cannot be resolved here (undecidable;
+    /// the caller stays permissive).
+    fn protocol_method_set(
+        &self,
+        td: &TypeDecl,
+        required_only: bool,
+        seen: &mut HashSet<String>,
+    ) -> Option<HashSet<(String, usize)>> {
+        let TypeDeclKind::Protocol { methods, embeds } = &td.kind else {
+            return None;
+        };
+        let mut out: HashSet<(String, usize)> = HashSet::new();
+        for m in methods {
+            if !required_only || m.default_body.is_none() {
+                out.insert((m.name.clone(), m.params.len()));
+            }
+        }
+        for e in embeds {
+            let TypeRef::Named { path, .. } = e else { return None; };
+            let name = path.last()?;
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let etd = self.types_get_here(name)?;
+            out.extend(self.protocol_method_set(etd, required_only, seen)?);
+        }
+        Some(out)
+    }
+
+    fn fn_param_protocol_mut_mismatch(&self, ep: &TypeRef, fp: &TypeRef) -> bool {
+        fn peel(mut t: &TypeRef) -> &TypeRef {
+            loop {
+                t = match t {
+                    TypeRef::Readonly(inner, _)
+                    | TypeRef::Uninit(inner, _)
+                    | TypeRef::Ref(inner, _) => inner.as_ref(),
+                    _ => return t,
+                };
+            }
+        }
+        fn mut_flag(t: &TypeRef) -> bool {
+            match t {
+                TypeRef::Mut(..) => true,
+                TypeRef::Readonly(inner, _) | TypeRef::Uninit(inner, _) | TypeRef::Ref(inner, _) => {
+                    mut_flag(inner)
+                }
+                _ => false,
+            }
+        }
+        let proto = |t: &TypeRef| -> Option<&'a TypeDecl> {
+            let TypeRef::Named { path, .. } = t else { return None; };
+            let name = path.last()?;
+            match self.types_get_here(name) {
+                Some(td) if matches!(td.kind, TypeDeclKind::Protocol { .. }) => Some(td),
+                _ => None,
+            }
+        };
+        let (Some(exp_td), Some(found_td)) = (proto(peel(ep)), proto(peel(fp))) else {
+            return false;
+        };
+        let mut seen = HashSet::new();
+        let Some(found_required) = self.protocol_method_set(found_td, true, &mut seen) else {
+            return false;
+        };
+        let mut seen = HashSet::new();
+        let Some(exp_provided) = self.protocol_method_set(exp_td, false, &mut seen) else {
+            return false;
+        };
+        // The slot's protocol must provide every method the callee's protocol
+        // requires (default bodies discharge themselves).
+        let slot_lacks = found_required
+            .iter()
+            .any(|m| !exp_provided.contains(m));
+        if slot_lacks {
+            return true;
+        }
+        mut_flag(fp) && !mut_flag(ep)
+    }
+
     fn fn_type_mismatch_found(
         &self,
         expr: &Expr,
@@ -25279,6 +25371,10 @@ impl<'a> TypeCheckCtx<'a> {
         // serves — the conflict needs its own window with those carriers
         // decoded (registry row stays OPEN with the protocol recorded).
         for (ep, fp) in exp_params.iter().zip(found_params.iter()) {
+            // №1915: protocol identity + mutability at the fn-type boundary.
+            if self.fn_param_protocol_mut_mismatch(ep, fp) {
+                return Some(Self::typeref_display(found_peeled));
+            }
             let ecat = self.resolved_cat_of(ep, exp_gs);
             let fcat = self.resolved_cat_of(fp, expr_gs);
             if !cat_compatible_rt(&fcat, &ecat) {

@@ -1,0 +1,34 @@
+// Registry 221.1 №1915 POSITIVE (parameter contravariance): a callee that
+// demands LESS than the fn-type slot guarantees is safe and stays accepted.
+// P1 into fn(P2) (P2 has one more method), ActEnv into fn(mut ActEnv).
+// The same file is the sound-direction control for the negative fixture.
+
+module standalone.fn_type_protocol_variance_pos
+
+type FnVarP1 protocol {
+    @one() -> int
+}
+
+type FnVarP2 protocol {
+    @one() -> int
+    @two() -> int
+}
+
+type FnVarActEnv protocol {
+    @read(key str) -> int
+    mut @write(key str, v int) -> ()
+}
+
+fn fn_var_takes_p2(f fn(FnVarP2) -> int) -> () {}
+
+fn fn_var_f_p1(x FnVarP1) -> int => x.one()
+
+fn fn_var_takes_mut(f fn(mut FnVarActEnv) -> int) -> () {}
+
+fn fn_var_f_read(x FnVarActEnv) -> int => x.read("a")
+
+test "fn-type protocol parameters: sound contravariant directions compile" {
+    fn_var_takes_p2(fn_var_f_p1)
+    fn_var_takes_mut(fn_var_f_read)
+    assert(true)
+}

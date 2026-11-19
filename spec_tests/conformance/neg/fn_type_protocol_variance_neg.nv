@@ -1,0 +1,40 @@
+// Registry 221.1 №1915 NEGATIVE: an fn-type parameter that demands MORE than
+// the slot guarantees is rejected. P2 in fn(P1), and a `mut` protocol callee
+// parameter in a non-mut slot.
+// EXPECT_COMPILE_ERROR E7301
+
+module neg.fn_type_protocol_variance_neg
+
+type FnVarP1 protocol {
+    @one() -> int
+}
+
+type FnVarP2 protocol {
+    @one() -> int
+    @two() -> int
+}
+
+type FnVarReadEnv protocol {
+    @read(key str) -> int
+}
+
+type FnVarActEnv protocol {
+    @read(key str) -> int
+    mut @write(key str, v int) -> ()
+}
+
+fn takes_p1(f fn(FnVarP1) -> int) -> () {}
+
+fn f_p2(x FnVarP2) -> int => x.two()
+
+fn takes_read(f fn(FnVarReadEnv) -> int) -> () {}
+
+fn act_write(mut x FnVarActEnv) -> int {
+    x.write("a", 1)
+    x.read("a")
+}
+
+fn main() {
+    takes_p1(f_p2)
+    takes_read(act_write)
+}
