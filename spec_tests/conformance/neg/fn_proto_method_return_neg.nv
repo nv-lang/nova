@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_RETURN_MISMATCH
+//
+// D497 item 2 (return axis): the callee (FOUND) protocol method `one` returns
+// `str`; the slot (SLOT) provides `int`. Parameters match (both unit), coverage
+// passes, so the named return-axis refusal fires. Exact return-type equality
+// (D268 axes, no variance).
+module neg.fn_proto_method_return_neg
+
+type PSlot protocol { @one() -> int }
+type QFound protocol { @one() -> str }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_RETURN_MISMATCH -- callee `one() -> str` vs slot `one() -> int`: return types differ (D497 item 2)
+    takes(callee)
+}

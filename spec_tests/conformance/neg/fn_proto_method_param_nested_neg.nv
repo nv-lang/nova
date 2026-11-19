@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_PARAM_MISMATCH
+//
+// D497 item 2 CLASS AUDIT (nested fn-type parameter): the method parameter is
+// itself a fn-type. The callee (FOUND) `one` demands `fn(str) -> int`, the slot
+// (SLOT) provides `fn(int) -> int`. Structural equality recurses into the nested
+// fn-type render (`fn(str) -> int` != `fn(int) -> int`), so the param axis refuses
+// even though the outer (name, arity) matches. Proves the axis is not a shallow
+// name-only compare.
+module neg.fn_proto_method_param_nested_neg
+
+type PSlot protocol { @one(f fn(int) -> int) -> int }
+type QFound protocol { @one(f fn(str) -> int) -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_PARAM_MISMATCH -- nested fn param fn(str) vs fn(int) differs structurally (D497 item 2)
+    takes(callee)
+}

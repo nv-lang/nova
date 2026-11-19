@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_PARAM_MISMATCH
+//
+// D497 item 2 (registry 221.1 row 1994, remainder of class 1915): the fn-type
+// boundary door compares the FULL method signature, not just (name, arity).
+// The callee (FOUND) protocol method `one` demands an `str` parameter; the slot
+// (SLOT) protocol provides `int`. Exact structural equality (D268 axes, no
+// variance) refuses the pair. Coverage passes (both have `one`/1), so this is
+// the named param-axis refusal, not the generic E7301 coverage refusal.
+module neg.fn_proto_method_param_neg
+
+type PSlot protocol { @one(x int) -> int }
+type QFound protocol { @one(x str) -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_PARAM_MISMATCH -- callee `one(x str)` vs slot `one(x int)`: param types differ (D497 item 2)
+    takes(callee)
+}

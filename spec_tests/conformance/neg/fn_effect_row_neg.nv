@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_FN_EFFECT_ROW_MISSING
+//
+// D497 item 5 (D448 inclusion, LOWER bound): the fn-type SLOT demands effect
+// `Io` (`fn() Io -> int`), but the passed function value carries no effect row
+// (`fn callee() -> int`). A signature's effect row is a lower bound the value
+// must carry: expected.effects subset-of found.effects. The slot demands Io the
+// value lacks -> refused. Direction is D448 (later/authoritative), NOT the older
+// D62 erasure direction. The reverse (empty slot, effectful value) is accepted.
+module neg.fn_effect_row_neg
+
+fn takes(f fn() Io -> int) -> () {}
+fn callee() -> int => 0
+
+fn main() {
+    // nova:expect E_FN_EFFECT_ROW_MISSING -- slot fn() Io demands Io, value callee() carries none (D497 item 5 / D448)
+    takes(callee)
+}

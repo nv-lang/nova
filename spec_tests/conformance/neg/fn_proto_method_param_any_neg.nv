@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_PARAM_MISMATCH
+//
+// D497 item 2 (registry 221.1 row 1994), DELIBERATE refusal pin: a method
+// PARAMETER typed `any` in the slot vs `int` in the found protocol. Item 2
+// compares method signatures by exact structural equality (D268 axes, no
+// variance), so `any` != `int` refuses. This is NOT the item 7 Any-collapse:
+// that permissive rule is the fn-TYPE boundary `fn(int)` in a `fn(any)` slot
+// (see standalone/fn_proto_full_sig_pos), not a parameter inside a protocol
+// method. The two doors are distinct; item 2 stays exact here.
+module neg.fn_proto_method_param_any_neg
+
+type PSlot protocol { @one(x any) -> int }
+type QFound protocol { @one(x int) -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_PARAM_MISMATCH -- item 2 exact equality: method param any != int
+    takes(callee)
+}

@@ -1,0 +1,15 @@
+// EXPECT_COMPILE_ERROR E_FN_EFFECT_ROW_MISSING
+//
+// D497 item 5 (registry 221.1 row 1994), CLASS carrier: a MULTI-effect slot row.
+// The slot demands `Io Net`, the value carries only `Io` — inclusion
+// expected.effects subset-of found.effects fails on `Net` (D448 lower bound),
+// proving the door judges the whole row, not a single effect.
+module neg.fn_effect_row_multi_neg
+
+fn takes(f fn() Io Net -> int) -> () {}
+fn callee() Io -> int => 0
+
+fn main() {
+    // nova:expect E_FN_EFFECT_ROW_MISSING -- slot demands Io Net, value carries only Io: Net missing
+    takes(callee)
+}
