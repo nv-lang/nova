@@ -19,6 +19,7 @@ import ../tree.{Node, NodeKind}
 import ../builtins.{COERCE_ATTR, REALTIME_ATTR, STABLE_ATTR, DOC_ATTR}
 import ../builtins.{IMPL_ATTR, DISPLAY_PROTO, EQUAL_PROTO, SERIALIZE_PROTO}
 import ../sem.{branch_children, attr_kids_name, attr_args_among, attr_has_args, leaf_text, cfg_attr_state, decl_fn_row}
+import ../sem.{attr_stable_takes_string, attr_doc_takes_strings}
 import ../sem.{FnRow, no_row}
 
 /// An `import` declaration, judged by the subset walk.
@@ -112,11 +113,25 @@ fn Checker mut @judge_attr(attr Node, children []Node) -> () {
         // every file, so the day the oracle starts policing the
         // guarantee, this decision reddens there. See the doc of
         // REALTIME_ATTR for the measurement behind it.
-    } else if attr_kids_name(children, STABLE_ATTR) || attr_kids_name(children, DOC_ATTR) {
+    } else if attr_kids_name(children, STABLE_ATTR) {
         // READ AND IGNORED (E.12 wave, 274.11): `#stable` is D460's freeze
-        // marker and `#doc` is documentation metadata -- neither carries
-        // compiled behaviour, so there is nothing to enforce or emit. Measured
-        // against the oracle 0.1.5: both accepted on a module and on a `fn`.
+        // marker. The FORM is judged too (acceptance finding 2026-11-18):
+        // `since = "..."` is the marker's own shape, and a non-string argument
+        // passed silently before -- both oracles refuse it.
+        if attr_stable_takes_string(children) {
+            // The marker names a release; nothing is compiled.
+        } else {
+            @reject_first_leaf_of(children, STABLE_ARG_MSG)
+        }
+    } else if attr_kids_name(children, DOC_ATTR) {
+        // `#doc` is documentation metadata (D101/D105). Its string form is
+        // part of what it is; `#doc(summary = 123)` passed silently before
+        // (acceptance finding) and both oracles refuse it.
+        if attr_doc_takes_strings(children) {
+            // Documentation only; nothing is compiled.
+        } else {
+            @reject_first_leaf_of(children, DOC_ARG_MSG)
+        }
     } else if attr_kids_name(children, "cfg") && cfg_attr_state(attr, @ctx.target_os) != (0 - 1) {
         // D99 target_os predicates are evaluated by the pipeline and their
         // function applicability is retained on FnDef (D495).

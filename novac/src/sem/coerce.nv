@@ -91,36 +91,78 @@ fn attr_names(attr Node, word str) -> bool => attr_kids_name(branch_children(att
 /// already opened the node has. One implementation, two entrances: `check`
 /// judges the form from inside the walk, the collectors from outside it.
 export fn attr_kids_name(kids []Node, word str) -> bool {
+    // THE OWN NAME ONLY (acceptance finding 2026-11-18): the first identifier
+    // after `#`. The scan used to ask EVERY leaf before `(` -- the name and its
+    // modifier words alike -- so `#unstable stable` answered YES to `#stable`
+    // and both oracles refuse that form. No caller asks about a modifier word
+    // (`#realtime nogc` asks for `realtime`), so the first identifier is the
+    // whole question; the `(` stop stays as a second floor.
     for c in kids {
-        // THE SCAN STOPS AT THE ARGUMENT LIST, and this stop is younger than the
-        // loop around it (2026-09-18). Until that day the cursor stopped at `(`,
-        // so an attribute's children were its NAME and its modifier words only --
-        // `#realtime nogc` gives `realtime` and `nogc`, and asking "does it name
-        // this word" over all of them was exactly right. Once the cursor began
-        // taking `#impl(Display)` whole, the argument became a child too, and
-        // without this stop `#impl(coerce)` would answer YES to "is this
-        // `#coerce`" -- one attribute read as a different one.
-        //
-        // Nothing in the tree spells it that way today (`#impl(Serialize)`,
-        // `#impl(Display)`, `#impl(Debug)`; protocol names are capitalised),
-        // which is why this is written now rather than after a defect: the
-        // hazard arrived with a change of mine, and the cheapest moment to close
-        // it is the one where it is still visible.
-        if leaf_kind(c) == TokenKind.LParen {
-            break
-        } else {
-            // A name or a modifier word: still part of what the attribute says.
-        }
-        // A two-armed match and NOT `if Some(...)`, and the difference is
-        // measured: the if-form needs an `else` with a reason anyway (P31), so
-        // for an empty second case it is LONGER, not shorter. `if Some(...)`
-        // wins where the second case carries a VALUE or a terminator.
+        if leaf_kind(c) == TokenKind.LParen { return false }
         match c.ident_str() {
-            Some(t) => { if t == word { return true } }
+            Some(t) => { return t == word }
             None => {}
         }
     }
     false
+}
+
+/// Is a `#stable` attribute one of its D105 forms? Bare `#stable` is valid
+/// (D105: `since` is recommended, default `"unknown"`), and `since = "..."`
+/// names the release (D460). Any other argument is refused -- both oracles
+/// refuse `#stable(since = 123)` (acceptance finding 2026-11-18).
+export fn attr_stable_takes_string(kids []Node) -> bool {
+    mut named = false
+    mut args = 0
+    mut since = false
+    mut eq = false
+    mut strlit = false
+    for c in kids {
+        ro k = leaf_kind(c)
+        if k == TokenKind.Ident {
+            if !named {
+                named = true
+            } else if leaf_text(c) == "since" {
+                since = true
+                args += 1
+            } else {
+                return false
+            }
+        } else if k == TokenKind.Assign {
+            eq = true
+        } else if k == TokenKind.StrLit {
+            strlit = true
+        } else {
+            // Parens and commas: syntax, not values.
+        }
+    }
+    if args == 0 && !eq && !strlit { return true }
+    since && eq && strlit && args == 1
+}
+
+/// Is a `#doc` attribute one of its D101/D105 forms? Bare `#doc "text"`, a
+/// marker form `#doc(inline)` / `#doc(no_inline)`, or named string arguments
+/// `#doc(summary = "...")`. Every `=` must carry a string, and a string must
+/// never stand without its `=` in the named form -- `#doc(summary = 123)` is
+/// refused by both oracles (acceptance finding 2026-11-18).
+export fn attr_doc_takes_strings(kids []Node) -> bool {
+    mut eqs = 0
+    mut strs = 0
+    mut words = 0
+    mut named = false
+    for c in kids {
+        ro k = leaf_kind(c)
+        if k == TokenKind.Ident {
+            if named { words += 1 } else { named = true }
+        } else if k == TokenKind.Assign { eqs += 1 }
+        else if k == TokenKind.StrLit { strs += 1 }
+        else {
+            // Parens and commas: syntax, not values.
+        }
+    }
+    if eqs == 0 && strs == 1 { return true }
+    if eqs == 0 && strs == 0 { return words > 0 }
+    strs > 0 && eqs <= strs
 }
 
 /// Does this attribute's argument list name `word` AND NOTHING ELSE? The

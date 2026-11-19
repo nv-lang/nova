@@ -386,6 +386,16 @@ const IMPORT_ALIAS_MSG = "outside the subset: an `import ... as ...` alias arriv
 /// refuses it one layer later, by name.
 const ATTR_MSG = "outside the subset: a declaration attribute outside the set the subset reads -- `#coerce`, `#impl(P)`, `#realtime`, `#cfg`, `#stable`, `#doc`; any other attribute may change what the declaration means and is refused by name (274.11 E12)"
 
+/// `#stable` with arguments that are not its own form (D460): the marker names
+/// a release through `since = "..."`. A non-string argument names no release
+/// and is refused as the form error it is (acceptance finding 2026-11-18:
+/// `#stable(since = 123)` passed silently before).
+const STABLE_ARG_MSG = "the `#stable` attribute takes `since = \"...\"` -- a string literal naming the releasing version (D460); any other argument names no release"
+
+/// `#doc` without a string literal (D101/D105): the module form is
+/// `#doc \"...\"`, the typed form `#doc(name = \"...\")`.
+const DOC_ARG_MSG = "a `#doc` attribute takes a string literal -- `#doc \"...\"` for the module form or `#doc(name = \"...\")` (D101, D105)"
+
 /// `#impl(P)` for a protocol other than `Display` / `Equal` / `Serialize` --
 /// `Deserialize` first of all: its derived `.deserialize` is a STATIC method
 /// whose body reads a cursor per field (D341), a synthesis of its own.
