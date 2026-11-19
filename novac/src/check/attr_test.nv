@@ -211,3 +211,26 @@ test "decl-attr: legal l9 is accepted" {
     ro src = "module m\n\n#doc(no_inline)\nfn f() -> int => 1\n"
     assert(dat_first_msg(src) == "", dat_first_msg(src))
 }
+// THIRD ACCEPTANCE (2026-11-19): a REGULAR string may hold braces, an
+// escaped dollar before `{`, and a unicode escape -- D44/D467. Only a real
+// interpolation slot is not a regular string (D101). Raw/backtick module
+// doc: both oracles accept while D101 says regular -- an inherited gap,
+// recorded here, not enforced.
+test "decl-attr: regular doc strings with braces, escapes and unicode are accepted" {
+    {
+        ro src = "#doc \"json { key }\"\nmodule m\n\nfn f() -> int => 1\n"
+        assert(dat_first_msg(src) == "", dat_first_msg(src))
+    }
+    {
+        ro src = "#doc \"cost \\$5 {name}\"\nmodule m\n\nfn f() -> int => 1\n"
+        assert(dat_first_msg(src) == "", dat_first_msg(src))
+    }
+    {
+        ro src = "#doc \"u{41}\"\nmodule m\n\nfn f() -> int => 1\n"
+        assert(dat_first_msg(src) == "", dat_first_msg(src))
+    }
+    {
+        ro src = "module m\n\n#doc(summary = \"json { key }\")\nfn f() -> int => 1\n"
+        assert(dat_first_msg(src) == "", dat_first_msg(src))
+    }
+}
