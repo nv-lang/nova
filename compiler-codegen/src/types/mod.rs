@@ -9893,10 +9893,8 @@ impl<'a> TypeCheckCtx<'a> {
         if path.len() != 1 || self.method_overloads(&path[0], name).is_some() {
             return None;
         }
-        match self.infer_expr_type(func, scope)? {
-            TypeRef::Func { return_type: Some(rt), .. } => Some(*rt),
-            _ => None,
-        }
+        let fn_ty = self.infer_expr_type(func, scope)?;
+        self.peel_func_return_depth(&fn_ty, 0).flatten()
     }
 
     /// [реестр 221.1 №493, K1] D45 (`03-syntax.md`): "block-body — `-> T`
@@ -10918,65 +10916,6 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Registry 221.1 #1913: a call through a record field whose type is an
-    /// alias/newtype over a function type is not lowered correctly (the field
-    /// reaches C emission as `void *`). A direct `fn(..)` field is supported;
-    /// this guard turns the unsupported alias/newtype form into a named
-    /// diagnostic instead of silently calling an address.
-    fn check_alias_fn_field_call(
-        &self,
-        call: &Expr,
-        obj: &Expr,
-        name: &str,
-        scope: &HashMap<String, TypeRef>,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        let mut recv = match self.infer_expr_type(obj, scope) {
-            Some(t) => t,
-            None => return,
-        };
-        while let TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) = recv {
-            recv = *inner;
-        }
-        let TypeRef::Named { path, .. } = recv else { return };
-        let Some(type_name) = path.last() else { return; };
-        if self.method_overloads(type_name, name).is_some() {
-            return;
-        }
-        let Some(td) = self.types_get_here(type_name) else { return; };
-        let field_ty = match &td.kind {
-            TypeDeclKind::Record(fields) => {
-                fields.iter().find(|f| f.name == name).map(|f| &f.ty)
-            }
-            TypeDeclKind::NamedTuple(fields) => {
-                fields.iter().find(|f| f.name == name).map(|f| &f.ty)
-            }
-            _ => None,
-        };
-        let Some(field_ty) = field_ty else { return; };
-        let mut field: &TypeRef = field_ty;
-        loop {
-            match field {
-                TypeRef::Readonly(inner, _)
-                | TypeRef::Mut(inner, _)
-                | TypeRef::Uninit(inner, _) => field = inner.as_ref(),
-                _ => break,
-            }
-        }
-        if !matches!(field, TypeRef::Named { .. }) || !self.typeref_is_func_compatible(field) {
-            return;
-        }
-        errors.push(Diagnostic::new(
-            format!(
-                "[E_FN_FIELD_ALIAS_UNSUPPORTED] cannot call field `{name}` of `{type_name}`: \
-                 its type is an alias/newtype over `fn(...)`, and this field-call lowering \
-                 is not supported; bind the value to a `fn(...)`-typed local or parameter, \
-                 or declare the field as a direct `fn(...)` type"
-            ),
-            call.span,
-        ));
-    }
-
     fn f1_expr_inner(
         &self,
         e: &Expr,
@@ -11522,9 +11461,6 @@ impl<'a> TypeCheckCtx<'a> {
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
                 self.in_call_func.set(false);
-                if let ExprKind::Member { obj, name } = &func.kind {
-                    self.check_alias_fn_field_call(e, obj, name, scope, errors);
-                }
                 // Plan 174.5 §3/§4: write-cap check for the pointer WRITE-
                 // method family (`.write`/`.write_at`/`.write_unaligned`/
                 // `.write_volatile`/`.copy_from`/`.copy_from_nonoverlapping`)
@@ -29014,7 +28950,11 @@ impl<'a> TypeCheckCtx<'a> {
         if matches!(field_ty, TypeRef::Func { .. }) {
             return None;
         }
-        Some(self.subst_receiver_generics(field_ty, &td.generics, args))
+        let substituted = self.subst_receiver_generics(field_ty, &td.generics, args);
+        if let Some(Some(ret)) = self.peel_func_return_depth(&substituted, 0) {
+            return Some(ret);
+        }
+        Some(substituted)
     }
 
     /// 172.1.2 C6(a): посев типов closure-параметров из СУБСТИТУИРОВАННОЙ

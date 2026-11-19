@@ -1,3 +1,10 @@
+# 2026-11-19, integrator: blockers 117 -> 116 — reg 1913 (a call through an
+#   alias/newtype-over-fn record field) is CLOSED by measure in the 0.1.7
+#   rehearsal: the delegated acceptance v2 returned FULL ACCEPTED on ae464d350
+#   (fix line over fa5a8ffd3); both carriers and both registration sites are
+#   proven RED/GREEN (addresses -> 42), 6/6 fn_field, d52/d55 10/10, 10 guards
+#   rc=0, lint 0; CI 10/10. The guard E_FN_FIELD_ALIAS_UNSUPPORTED is removed
+#   by the same fix (superseded). no_route/no_caveat unchanged.
 # 2026-11-19, integrator: blockers 117 -> 116 — reg 1928 (array literal in an
 #   enum payload reinterpreted instead of element-wise conversion) is CLOSED
 #   by measure: fix ee695fffb is an ancestor of both the 0.1.7 candidate and
@@ -1654,6 +1661,7 @@ no_caveat=0
 # OPEN, BLOKIRUET TEG: DA (pinned B1 rejects three Oracle-era regression
 # examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
 # mandatory release corpus, not a verdict on which side is right).
+# 2026-11-19: 1913 is now explicitly a tag blocker until the full call-through is accepted.
 blockers=116
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
