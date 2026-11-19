@@ -462,7 +462,14 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str) -> () {
             }
             other => {
                 @type_tail_value(body)
-                @judge_return(body, @tail_type_of(body))
+                if unitish {
+                    // A `-> never` operation (or unit): the expression form
+                    // has no value to judge -- the oracle accepts
+                    // `|_| 0` for such an effect (probe p3), and the field's
+                    // body runs for its effect, not for a result.
+                } else {
+                    @judge_return(body, @tail_type_of(body))
+                }
             }
         }
         @ret_expect = saved_ret

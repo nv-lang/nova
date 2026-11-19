@@ -407,19 +407,22 @@ fn Cursor mut @stmt() -> Node {
     if with_stmt {
         mut kids = []Node.of(@take()) // `with`
         while true {
-            @push_expected(kids, TokenKind.Ident) // the effect's name
-            kids.push(@take())
+            @push_expected(kids, TokenKind.Ident) // the effect's name (taken)
             if @peek() == TokenKind.LBracket {
                 // THE APPLICATION ON THE LEFT (E.13 wave, D31): `with
-                // Fail[TimeoutError] = handler` -- the effect's type
-                // argument, kept in the tree as written (the checker and
-                // the lowering skip it; the emitter needs the base name).
+                // Fail[TimeoutError] = handler` names the effect with its
+                // type argument. The tokens are CONSUMED, not kept: the
+                // with node's children are the door's pieces (name, `=`,
+                // handler), and a raw bracket leaf under it reads as an
+                // unparsed form to the walk (measured 2026-11-19). Every
+                // consumer needs the BASE name only -- the schema, the C
+                // table and the slot are all keyed by it.
                 mut depth = 0
                 while !@at_eof() {
                     ro k = @peek()
                     if k == TokenKind.LBracket { depth += 1 } else { }
                     if k == TokenKind.RBracket { depth -= 1 } else { }
-                    kids.push(@take())
+                    ro _dropped = @take()
                     if depth == 0 { break }
                 }
             } else {
@@ -436,8 +439,43 @@ fn Cursor mut @stmt() -> Node {
             // a leading `|`/`||` is the closure-light marker, so the brace
             // after it belongs to the LAMBDA body, not to the with body --
             // the `@head_expr` stop-before-brace rule would split it.
-            if @peek() == TokenKind.Pipe || @peek() == TokenKind.PipePipe {
-                kids.push(@closure_lit())
+            if @peek() == TokenKind.Pipe && @peek(skip: 1) == TokenKind.Pipe {
+                // The bare `|| {}` form reads as the closure-light zero-param
+                // literal; the lexer folds `||` into ONE PipePipe token.
+            } else {
+                // A handler that is not a closure: the head-expr discipline.
+            }
+            if @peek() == TokenKind.PipePipe || @peek() == TokenKind.Pipe {
+                // A CLOSURE-LITERAL HANDLER (E.13 wave, D31), read HERE and
+                // not by `@closure_lit`: that reader lifts the constructor
+                // restriction for its body, and in this header the brace
+                // after the value is the WITH's body -- `@head_expr`'s rule.
+                mut ck = []Node.new()
+                if @peek() == TokenKind.PipePipe {
+                    ck.push(@take())
+                } else {
+                    ck.push(@take()) // `|`
+                    while !@at_eof() && @peek() != TokenKind.Pipe {
+                        ro before = @i
+                        if @peek() == TokenKind.Ident {
+                            ck.push(@take())
+                        } else {
+                            ck.push(@node(NodeKind.Err, []Node.of(@take())))
+                        }
+                        @push_if(ck, TokenKind.Comma)
+                        if @i == before { break }
+                    }
+                    @push_expected(ck, TokenKind.Pipe)
+                }
+                if @peek() == TokenKind.LBrace {
+                    ck.push(@block())
+                } else {
+                    ro saved = @no_ctor
+                    @no_ctor = true
+                    ck.push(@expr())
+                    @no_ctor = saved
+                }
+                kids.push(@node(NodeKind.ClosureLit, ck))
             } else {
                 kids.push(@head_expr())
             }
