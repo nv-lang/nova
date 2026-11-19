@@ -2,6 +2,62 @@
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
+/// A timed-out child is killed with its descendants: a test binary may leave
+/// a grandchild that holds pipes or keeps running after the direct child is
+/// gone. On Unix the child gets its own process group; on Windows `taskkill
+/// /T` walks the tree.
+#[cfg(unix)]
+fn configure_process_group(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_group(_cmd: &mut Command) {}
+
+#[cfg(windows)]
+fn kill_process_tree(child: &mut Child) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let pid = child.id().to_string();
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid, "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
+#[cfg(unix)]
+fn kill_process_tree(child: &mut Child) {
+    let pid = child.id() as libc::pid_t;
+    // Never signal our own group if the caller supplied a child spawned
+    // outside run_with_timeout.
+    let group = unsafe { libc::getpgid(pid) };
+    if group == pid {
+        unsafe {
+            libc::kill(-pid, libc::SIGKILL);
+        }
+    } else {
+        let _ = child.kill();
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn kill_process_tree(child: &mut Child) {
+    let _ = child.kill();
+}
+
+fn reap_with_timeout(child: &mut Child, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+        }
+    }
+}
+
 pub fn wait_with_timeout(
     child: &mut Child,
     timeout: Duration,
@@ -17,10 +73,10 @@ pub fn wait_with_timeout(
             return Ok(Some(status));
         }
         if start.elapsed() >= timeout {
-            // Best-effort kill. На Windows TerminateProcess, на Unix SIGKILL.
+            kill_process_tree(child);
             let _ = child.kill();
-            // Дренируем zombie, иначе fd-leak.
-            let _ = child.wait();
+            // Do not block forever if the kill itself did not land.
+            reap_with_timeout(child, Duration::from_secs(5));
             return Ok(None);
         }
         let poll_ms = poll_steps_ms[step.min(poll_steps_ms.len() - 1)];
@@ -125,6 +181,7 @@ pub struct CapturedOutput {
 pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<CapturedOutput> {
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    configure_process_group(&mut cmd);
     let start = Instant::now();
     let mut child = cmd.spawn()?;
 
@@ -190,4 +247,72 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> std::io::Result<
         stderr: stderr_bytes,
         elapsed: start.elapsed(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn marker_writer() {
+        if let Some(marker) = std::env::var_os("NOVA_TREE_KILL_MARKER") {
+            std::thread::sleep(Duration::from_secs(2));
+            let _ = std::fs::write(PathBuf::from(marker), b"alive");
+        }
+    }
+
+    #[test]
+    fn tree_kill_helper() {
+        if std::env::var_os("NOVA_TREE_KILL_HELPER").is_none() {
+            return;
+        }
+        let marker =
+            std::env::var("NOVA_TREE_KILL_MARKER").expect("marker path is set by the parent");
+
+        let mut grandchild =
+            Command::new(std::env::current_exe().expect("the test binary is known"));
+        grandchild
+            .arg("--exact")
+            .arg("process::tests::marker_writer")
+            .arg("--nocapture");
+        grandchild.env("NOVA_TREE_KILL_MARKER", &marker);
+        grandchild
+            .spawn()
+            .expect("the helper must be able to start the marker writer");
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    #[test]
+    fn timeout_kills_process_tree() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock before the epoch")
+            .as_nanos();
+        let marker = std::env::temp_dir().join(format!(
+            "nova-tree-kill-{}-{}.txt",
+            std::process::id(),
+            unique
+        ));
+        let _ = std::fs::remove_file(&marker);
+
+        let mut cmd = Command::new(std::env::current_exe().expect("the test binary is known"));
+        cmd.arg("--exact")
+            .arg("process::tests::tree_kill_helper")
+            .arg("--nocapture");
+        cmd.env("NOVA_TREE_KILL_HELPER", "1");
+        cmd.env("NOVA_TREE_KILL_MARKER", &marker);
+
+        let out = run_with_timeout(cmd, Duration::from_millis(500))
+            .expect("the helper test binary must start");
+        assert!(
+            out.status.is_none(),
+            "the helper must be killed by the timeout"
+        );
+
+        std::thread::sleep(Duration::from_secs(3));
+        let survived = marker.exists();
+        let _ = std::fs::remove_file(&marker);
+        assert!(!survived, "a grandchild survived the timeout");
+    }
 }
