@@ -165,3 +165,8 @@
 #   three FULL ACCEPTED and closed in the 0.1.7 rehearsal 95895fbc4 after
 #   CI 10/10 success; guards re-run on the merged tree.
 2003 2004 2005
+# 2026-11-21, integrator closure by measure: reg 2001 FULL ACCEPTED at e74d8b165,
+#   merged into e67a0bcb1, CI 10/10 success without human acquittal.
+#   Closed counter stays 1382: the guard already counted the prior FIXED status;
+#   pin the number instead. Newly closed since baseline: 670 -> 669.
+2001

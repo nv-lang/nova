@@ -1708,7 +1708,10 @@ no_caveat=0
 # parked fibers in nested supervised scopes + bare-parked sync waiters never
 # cancelled at pre-exit. Fix lands in fix/item19-root3-nested off rehearsal 1a27968af;
 # closure only by independent whole-class measure, carrier fix not acceptance.
-blockers=117
+# 2026-11-21, integrator closure by measure: reg 2001 FULL ACCEPTED at e74d8b165,
+#   merged into e67a0bcb1; CI 10/10 success after reruns, no human acquittal.
+#   Closure scanner measures 117 -> 116; rows 1914/max 2006 and arch 69010 unchanged.
+blockers=116
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
