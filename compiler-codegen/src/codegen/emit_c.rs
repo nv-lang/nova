@@ -14593,6 +14593,73 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_c->_nova_fiber_anchor = NULL;");
     }
 
+    /// reg 2003: a `spawn` body that evaluates to a zero-argument fn VALUE
+    /// (a closure literal or a closure-typed variable) must be INVOKED in the
+    /// fiber. Emitting it and discarding the value silently dropped the body
+    /// (build rc0, child printed nothing). Returns the callable's C return
+    /// type when the body is such a value.
+    fn spawn_body_zero_arg_fn_ret(&mut self, body: &Expr) -> Option<String> {
+        use crate::types::ResolvedType as R;
+        if body.id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&body.id).cloned() {
+                match &rt {
+                    R::Func { params, ret, .. } if params.is_empty() => {
+                        return Some(self.resolved_type_to_c(ret)
+                            .unwrap_or_else(|_| "nova_unit".to_string()));
+                    }
+                    R::Named { name, args, .. } if args.is_empty() => {
+                        if let Some(crate::ast::TypeRef::Func { params, return_type, .. }) =
+                            self.fn_newtype_sigs.get(name).cloned()
+                        {
+                            if params.is_empty() {
+                                return Some(match return_type.as_ref() {
+                                    Some(rt) => self.type_ref_to_c(rt)
+                                        .unwrap_or_else(|_| "nova_unit".to_string()),
+                                    None => "nova_unit".to_string(),
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // AST fallback: the checker channel may not key a bare literal.
+        let (closure_body, has_params) = match &body.kind {
+            ExprKind::Lambda { params, body, .. } => {
+                (Some((**body).clone()), !params.is_empty())
+            }
+            ExprKind::ClosureLight { params, body } => {
+                let e = match body {
+                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()),
+                        b.span,
+                    ),
+                };
+                (Some(e), !params.is_empty())
+            }
+            ExprKind::ClosureFull(sb) => {
+                let e = match &sb.body {
+                    crate::ast::FnBody::Expr(e) => Some(e.clone()),
+                    crate::ast::FnBody::Block(b) => Some(Expr::new(
+                        ExprKind::Block(b.clone()),
+                        b.span,
+                    )),
+                    crate::ast::FnBody::External => None,
+                };
+                (e, !sb.params.is_empty())
+            }
+            _ => (None, true),
+        };
+        if has_params {
+            return None;
+        }
+        let e = closure_body?;
+        Some(self.closure_channel_ret_c(body.id)
+            .unwrap_or_else(|| self.infer_lambda_return_type_with_params(&e, &[], &[])))
+    }
+
     fn emit_spawn(&mut self, body: &Expr) -> Result<String, String> {
         // D50/D71: spawn разрешён только внутри structured-scope.
         // В bootstrap-codegen — только supervised. Вне scope — compile error.
@@ -15187,8 +15254,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.leave_defer_scope(block_id);
             }
             _ => {
+                // reg 2003: a zero-arg fn VALUE body is an invocation, not a
+                // value to discard (the silent output-loss class).
+                let callable_ret = if saved_parfor.is_none() {
+                    self.spawn_body_zero_arg_fn_ret(body)
+                } else {
+                    None
+                };
                 let v = self.emit_expr(body)?;
-                emit_parfor_send(self, &v);
+                if let Some(ret_c) = callable_ret {
+                    let call = self.emit_clos_call_dispatch(&v, &[], &ret_c, &[])?;
+                    self.line(&format!("(void)({});", call));
+                } else {
+                    emit_parfor_send(self, &v);
+                }
             }
         }
 

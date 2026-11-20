@@ -1,0 +1,13 @@
+// EXPECT_STDOUT block
+//
+// Registry 221.1 #2003 block-form CONTROL: `spawn { ... }` already executed
+// before the fix and must stay on the same path.
+module standalone.spawn_block_control_pos
+
+fn main() Io -> () {
+    supervised {
+        spawn {
+            println("block")
+        }
+    }
+}
