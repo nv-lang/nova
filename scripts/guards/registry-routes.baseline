@@ -1,3 +1,8 @@
+# 2026-11-20, integrator closure by measure: blockers 119 -> 116 — rows 2003,
+#   2004 and 2005 are CLOSED after FULL ACCEPTED and green rehearsal CI on
+#   95895fbc4; the scanner was re-run on the edited registry (116 open tag
+#   blockers). 2006 stays OPEN non-blocker (owner scope) and adds none; 2001 is
+#   a lawful gap in the rehearsal. no_route/no_caveat unchanged.
 # 2026-11-20, reg 2005 filed on the A line (docs-only; number issued by the
 #   integrator): blockers 117 -> 118 — row 2005 BLOCKS TAG 0.1.7 (capture-env
 #   closure inside spawn: C CFAIL undeclared `_c`/`x`). Fix rides the stacked
@@ -1698,7 +1703,7 @@ no_caveat=0
 # examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
 # mandatory release corpus, not a verdict on which side is right).
 # 2026-11-19: 1913 is now explicitly a tag blocker until the full call-through is accepted.
-blockers=119
+blockers=116
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
