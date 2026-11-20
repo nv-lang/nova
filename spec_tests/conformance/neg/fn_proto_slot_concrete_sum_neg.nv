@@ -1,0 +1,18 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_SLOT_CONCRETE_DEMAND
+//
+// D497 item 4 CLASS AUDIT (sum nominal): the concrete nominal demanded in the
+// protocol slot is a SUM type (SumBox), not a record. Proves the concrete-nominal
+// refusal covers record/sum/newtype/named-tuple, not only records. Companion to
+// fn_proto_slot_concrete_neg.
+module neg.fn_proto_slot_concrete_sum_neg
+
+type PSlot protocol { @one() -> int }
+type SumBox | A | B(int)
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x SumBox) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_SLOT_CONCRETE_DEMAND -- concrete sum SumBox demanded in protocol slot PSlot (D497 item 4)
+    takes(callee)
+}

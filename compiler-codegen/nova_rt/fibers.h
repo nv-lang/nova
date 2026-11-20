@@ -3328,6 +3328,28 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
             if (_v >= 0) _ods_secs = _v;
         }
     }
+    /* [reg 2001, owner word 2026-11-20: the hub must exit without a pre-exit
+     * dump within 10s] The periodic orphan stop above waits `grace` (default
+     * 10s) from the last CHANGE of remote, while the watchdog dump fires at
+     * the same 10s boundary from drain entry — so a drain that cancels at the
+     * boundary dumps even though it then completes. Ask cancellable children
+     * to unwind early: once the exit drain has been stuck for 1s, deliver the
+     * orphan cancel immediately. Parked pipe/channel/sync children then
+     * unwind and pending_remote reaches 0 well inside the watchdog window.
+     * The 10s periodic stop stays as the fallback for late parks. This is a
+     * deliberate narrowing of the #791 exit grace for the orphan drain by the
+     * owner's word; NOVA_ORPHAN_EARLY_CANCEL_MS=0 restores the previous
+     * grace-only behaviour. */
+    int      _ods_early_ms = 1000;
+    {
+        const char* _ods_early_env = getenv("NOVA_ORPHAN_EARLY_CANCEL_MS");
+        if (_ods_early_env && _ods_early_env[0]) {
+            int _v = atoi(_ods_early_env);
+            if (_v >= 0) _ods_early_ms = _v;
+        }
+    }
+    uint64_t _ods_first = uv_hrtime();
+    bool     _ods_early_done = false;
     uint64_t _ods_mark = uv_hrtime();
     int      _ods_last = -1;
     {
@@ -3372,6 +3394,12 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
              * deliver_cancel is safe to repeat — stop_cbs are CAS/idempotent
              * guarded and spurious wakes are absorbed by park predicates. */
             if (_ods_is_orphan && _ods_secs > 0) {
+                if (!_ods_early_done && _ods_early_ms > 0
+                    && (uv_hrtime() - _ods_first) / 1000000ULL
+                       >= (uint64_t)_ods_early_ms) {
+                    _ods_early_done = true;
+                    nova_scope_deliver_cancel(q, NULL);
+                }
                 if (remote != _ods_last) {
                     _ods_last = remote;
                     _ods_mark = uv_hrtime();
@@ -3910,6 +3938,8 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * `_dl_fired` so the tail throws a typed TimeoutError. */
     int64_t _dl_ns    = q->deadline_ns;
     bool    _dl_fired = false;
+    /* [item 19 root 3] throttle clock for ancestor-cancel re-delivery (below). */
+    int64_t _r3_redeliver_ns = 0;
     /* Plan 173.0 Ф.2 R2 tripwire: latch BEFORE the drain loop starts — every
      * remote child was spawned into `q` on this thread earlier in program
      * order (see NovaChildError comment). nova_scope_grow_children asserts
@@ -3954,6 +3984,66 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             }
             _dl_fired = true;
             nova_scope_deliver_cancel(q, NULL);
+        }
+        /* [item 19 root 3] ancestor-cancel propagation gate. The join loop
+         * exits only when every child is done; cancellation reaches it by
+         * releasing the children (deliver_cancel on q). But a fiber driving
+         * a NESTED supervised scope observes cancellation only on q itself
+         * (deadline gate above, bound token) — never on the scope it was
+         * SPAWNED INTO. At pre-exit the orphan-drain stop sets cancel on the
+         * orphan scope; a detached fiber whose parent_scope IS the orphan
+         * sits in THIS loop driving its nested q (cancel_req=0), pumping
+         * (worker_pump_scope / deadline_run_once) without ever passing a
+         * nova_fiber_yield safepoint — so the parent's flag is never seen,
+         * q is never cancelled, q's parked pipe children never get their
+         * stop_cb (the cancel_worker_fibers walk matches parent_scope==q,
+         * and nobody calls it for q), and the orphan's pending_remote never
+         * reaches 0 (measured: item19_nested_scopes_exit RED dump — orphan
+         * cancel_req=1 remote=8, eight join-loop drivers RUNNING/READY
+         * parked=0, nested scopes cancel_req=0, pipe fibers parked with a
+         * live _pp_stop_cb; the Canopus hub hang of 2026-11-19 is the same
+         * shape). Propagate: when the driving fiber's own parent scope is
+         * cancelled and q is not, deliver the SAME cancel to q — the
+         * existing fan-out then releases q's parked children, they unwind
+         * CANCEL, remote reaches 0, the loop exits. Cascades through deeper
+         * nesting level by level (each driver's parent is the scope above).
+         * Healthy scopes: no ancestor is cancelled, this is one atomic load
+         * per iteration; token/deadline paths are unchanged. Same parent-scope
+         * fallback identity as nova_fiber_yield's cancel check (ctx set once
+         * at spawn, never repointed).
+         *
+         * RE-DELIVERY: a one-shot deliver_cancel(q) races children that park
+         * AFTER the fan-out ran — they miss the wake and, with q already
+         * flagged, a fire-once gate never reaches them again (measured: 8/12
+         * clean exits, orphan pending_remote stalled at the count of stuck
+         * join-loop drivers, their nested q's children still parked). So while
+         * the ancestor is cancelled and q still has outstanding children
+         * (alive>0 || pending_remote>0), re-deliver the cancel on a 20ms
+         * throttle until q drains. deliver_cancel is idempotent and always
+         * re-runs the fan-out; the throttle keeps the cold drain path off the
+         * hot pump loop. Once q drains (alive==0 && remote==0) the loop exits
+         * and re-delivery stops. */
+        {
+            mco_coro* _r3_co = mco_running();
+            NovaSpawnCtxBase* _r3_base =
+                _r3_co ? (NovaSpawnCtxBase*)mco_get_user_data(_r3_co) : NULL;
+            NovaFiberQueue* _r3_parent =
+                _r3_base ? _r3_base->_nova_parent_scope : NULL;
+            if (_r3_parent && _r3_parent != q
+                && nova_abool_load(&_r3_parent->cancel_requested)) {
+                bool _r3_qflag = nova_abool_load(&q->cancel_requested);
+                int _r3_remote = (int)nova_aint_load(&q->pending_remote);
+                if (!_r3_qflag) {
+                    nova_scope_deliver_cancel(q, _r3_parent->cancel_reason_ptr);
+                    _r3_redeliver_ns = time_monotonic_ns();
+                } else if (alive > 0 || _r3_remote > 0) {
+                    int64_t _r3_now = time_monotonic_ns();
+                    if (_r3_now - _r3_redeliver_ns >= 20000000) {
+                        nova_scope_deliver_cancel(q, _r3_parent->cancel_reason_ptr);
+                        _r3_redeliver_ns = _r3_now;
+                    }
+                }
+            }
         }
         if (alive == 0) {
             /* Plan 44.5 Layer 5: local done — но могут быть remote
@@ -4404,6 +4494,40 @@ static inline void nova_fiber_yield(void) {
      * cleanup-timeout marker — outer ConsumeScope fail-frame catches. */
     nv_shield_check_deadline();
     mco_yield(co);
+}
+
+/* [item 19 root 3] Cancel observation for bare-park sync ops (Mutex/Condvar/
+ * ReentrantMutex lock+wait). These park via nova_sched_park_with_unlock with NO
+ * stop_cb, so the cancel fan-out reaches them only as a bare nova_sched_wake;
+ * on resume they MUST observe the scope cancel and throw CANCEL instead of
+ * re-parking forever (a nvchan.recv predicate loop would otherwise re-wait on
+ * an empty buffer and keep the orphan scope's pending_remote > 0 at pre-exit).
+ * Same scope identity as nova_fiber_yield: _nova_active_scope first, then the
+ * fiber's spawn-time parent (a worker fiber's active scope is the worker's
+ * bookkeeping scope, never the cancelled user scope). A ConsumeScope shield
+ * defers the throw (cleanup must complete), matching nova_fiber_yield.
+ * Returns the cancelled scope, or NULL when not cancelled / shielded. */
+static inline NovaFiberQueue* nova_sync_cancel_scope(void) {
+    mco_coro* co = mco_running();
+    if (!co) return NULL;
+    NovaFiberQueue* s = _nova_active_scope;
+    bool hit = s && nova_abool_load(&s->cancel_requested);
+    if (!hit) {
+        NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
+        if (base && base->_nova_parent_scope && base->_nova_parent_scope != s
+            && nova_abool_load(&base->_nova_parent_scope->cancel_requested)) {
+            s = base->_nova_parent_scope;
+            hit = true;
+        }
+    }
+    if (!hit || nova_cancel_mask_load(co) != 0) return NULL;
+    return s;
+}
+
+/* Throw CANCEL with the scope's bound reason (mirrors nova_fiber_yield). */
+static inline void nova_sync_throw_cancel(NovaFiberQueue* s) {
+    nova_throw_cancel_reason(nova_str_from_cstr("scope cancelled"),
+                             s->cancel_reason_ptr);
 }
 
 /* Plan 175 (owner TODO closure, 2026-07-10): `vclock.park_until(deadline_ms)`

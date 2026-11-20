@@ -1,0 +1,19 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_MUT_MISMATCH
+//
+// D497 item 3 CLASS AUDIT (reverse direction, D209 all four directions): the
+// slot (SLOT) protocol method `one` declares a `mut` receiver; the callee
+// (FOUND) provides read-only. D209 receiver-mut is EXACT equality, not
+// contravariant — the reverse direction is refused too (a ro callee cannot
+// discharge a mut slot's guarantee). Companion to fn_proto_method_mut_neg.
+module neg.fn_proto_method_mut_rev_neg
+
+type PSlot protocol { mut @one() -> int }
+type QFound protocol { @one() -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_MUT_MISMATCH -- slot `mut @one` vs callee ro `@one`: reverse receiver-mut direction (D497 item 3 / D209)
+    takes(callee)
+}

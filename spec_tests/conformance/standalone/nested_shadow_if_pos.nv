@@ -1,0 +1,16 @@
+// EXPECT_STDOUT rebound
+// EXPECT_STDOUT 10
+//
+// Registry 221.1 #2004: a different-type shadow inside an if-block must not
+// change the outer binding's type after the block.
+module standalone.nested_shadow_if_pos
+
+fn main() Io -> () {
+    ro outer = 10
+    if true {
+        ro outer = "inner"
+        ro outer = "rebound"
+        println(outer)
+    }
+    println("${outer}")
+}

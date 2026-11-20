@@ -1,0 +1,13 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #2003 capture follow-up: a zero-arg closure spawned in a
+// fiber may capture an immutable outer local; the closure body must read it
+// from its own env, not from the spawn ctx.
+module standalone.spawn_closure_capture_pos
+
+fn main() Io -> () {
+    ro base = 40
+    supervised {
+        spawn(|| println("${base + 2}"))
+    }
+}

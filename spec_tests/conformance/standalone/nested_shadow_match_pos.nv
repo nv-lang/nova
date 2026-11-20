@@ -1,0 +1,17 @@
+// EXPECT_STDOUT inner
+// EXPECT_STDOUT 10
+//
+// Registry 221.1 #2004: same class through a match-arm body.
+module standalone.nested_shadow_match_pos
+
+fn main() Io -> () {
+    ro outer = 10
+    match 1 {
+        1 => {
+            ro outer = "inner"
+            println(outer)
+        }
+        _ => {}
+    }
+    println("${outer}")
+}

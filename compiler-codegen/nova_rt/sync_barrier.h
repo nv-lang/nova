@@ -269,6 +269,22 @@ static inline nova_int Nova_Barrier_method_wait(Nova_Barrier* b) {
     _nova_barrier_enqueue(b, &w);
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &b->mu);
+    /* [item 19 root 3] cancel-aware resume: completion/reset detach the waiter
+     * list before waking, so a still-linked waiter was woken by a scope-cancel
+     * bare wake — dequeue and throw CANCEL. A detached waiter completed or was
+     * broken; fall through to the normal resume handling below. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&b->mu);
+            NovaBarrierWaiter* it = b->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) _nova_barrier_dequeue(b, &w);
+            nova_mutex_unlock(&b->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed. Reason: broken (reset/timeout) or normal completion. */
     if (w.broken) {
         Nova_Fail_fail(nova_str_from_cstr("Barrier.wait(): barrier was reset or timed out by another party"));
@@ -342,6 +358,19 @@ static inline nova_int Nova_Barrier_method_wait_with_action(Nova_Barrier* b, voi
     _nova_barrier_enqueue(b, &w);
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &b->mu);
+    /* [item 19 root 3] cancel-aware resume (see wait()). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&b->mu);
+            NovaBarrierWaiter* it = b->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) _nova_barrier_dequeue(b, &w);
+            nova_mutex_unlock(&b->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     if (w.broken) {
         Nova_Fail_fail(nova_str_from_cstr("Barrier.wait_with_action(): barrier was reset or timed out"));
         nova_throw(nova_str_from_cstr("Barrier.wait_with_action(): barrier was reset or timed out"));
@@ -468,6 +497,23 @@ static inline NovaOpt_nova_int Nova_Barrier_method_wait_for(Nova_Barrier* b, voi
     /* Park atomically with mutex release (prevents lost-wakeup race). */
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &b->mu);
+    /* [item 19 root 3] cancel-aware resume (see wait()). Nullify the timer
+     * handle under b->mu so a pending timer_cb becomes a no-op. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&b->mu);
+            NovaBarrierWaiter* it = b->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                _nova_barrier_dequeue(b, &w);
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&b->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed: timed_out=true (timer fired for us), broken=true (other timeout/reset),
      * or neither (normal completion — _nova_barrier_complete_round nulled handle->waiter). */
     if (w.timed_out || w.broken) {

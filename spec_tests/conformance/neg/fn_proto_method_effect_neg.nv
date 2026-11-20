@@ -1,0 +1,21 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_EFFECT_MISSING
+//
+// D497 item 6 (method effect rows, D448 inclusion by analogy, integrator Q4):
+// for the matched method `one`, the callee (FOUND) requires effect `Io`
+// (`@one() Io -> int`); the slot (SLOT) method carries no effect (`@one() -> int`).
+// required.effects(FOUND) subset-of provided.effects(SLOT) fails: the slot method
+// does not carry an effect the callee's method declares -> refused. Param types,
+// return and receiver all match, coverage passes, so this is the named
+// method-effect-axis refusal. The reverse (slot carries MORE effects) is accepted.
+module neg.fn_proto_method_effect_neg
+
+type PSlot protocol { @one() -> int }
+type QFound protocol { @one() Io -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_EFFECT_MISSING -- callee method `one() Io` requires Io, slot method `one()` carries none (D497 item 6 / D448)
+    takes(callee)
+}

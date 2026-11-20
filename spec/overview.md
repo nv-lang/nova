@@ -107,6 +107,11 @@ language explicitly optimized for the pair "LLM writes, human reviews".
 3. **Structural typing + type inference everywhere.**
 4. **Protocols + data instead of classes.** No inheritance. Structural
    contracts via `protocol` (see [decisions/01-philosophy.md#d1](decisions/01-philosophy.md#d1), [decisions/02-types.md#d42](decisions/02-types.md#d42)).
+   At fn-type protocol boundaries, the expected slot must provide every method
+   required by the found callee; method parameter/return types and receiver
+   mutability/consume match exactly, while effect rows use inclusion
+   ([D497](decisions/02-types.md#d497)). Plain value assignments and unresolved
+   generic/Any cases are outside this tightening.
 5. **Contracts in the signature.** `requires`/`ensures`/`invariant` —
    optional, but statically checked where possible.
 6. **Structured concurrency on top of an M:N scheduler (runtime codename —

@@ -1,0 +1,15 @@
+// EXPECT_STDOUT call
+//
+// Registry 221.1 #2003 `spawn(f())` CONTROL: a Call body already ran before
+// the fix and must not be rewritten by the fn-value invocation path.
+module standalone.spawn_call_control_pos
+
+fn emit() {
+    println("call")
+}
+
+fn main() Io -> () {
+    supervised {
+        spawn(emit())
+    }
+}

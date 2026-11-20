@@ -9893,10 +9893,8 @@ impl<'a> TypeCheckCtx<'a> {
         if path.len() != 1 || self.method_overloads(&path[0], name).is_some() {
             return None;
         }
-        match self.infer_expr_type(func, scope)? {
-            TypeRef::Func { return_type: Some(rt), .. } => Some(*rt),
-            _ => None,
-        }
+        let fn_ty = self.infer_expr_type(func, scope)?;
+        self.peel_func_return_depth(&fn_ty, 0).flatten()
     }
 
     /// [реестр 221.1 №493, K1] D45 (`03-syntax.md`): "block-body — `-> T`
@@ -10918,65 +10916,6 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Registry 221.1 #1913: a call through a record field whose type is an
-    /// alias/newtype over a function type is not lowered correctly (the field
-    /// reaches C emission as `void *`). A direct `fn(..)` field is supported;
-    /// this guard turns the unsupported alias/newtype form into a named
-    /// diagnostic instead of silently calling an address.
-    fn check_alias_fn_field_call(
-        &self,
-        call: &Expr,
-        obj: &Expr,
-        name: &str,
-        scope: &HashMap<String, TypeRef>,
-        errors: &mut Vec<Diagnostic>,
-    ) {
-        let mut recv = match self.infer_expr_type(obj, scope) {
-            Some(t) => t,
-            None => return,
-        };
-        while let TypeRef::Readonly(inner, _) | TypeRef::Mut(inner, _) = recv {
-            recv = *inner;
-        }
-        let TypeRef::Named { path, .. } = recv else { return };
-        let Some(type_name) = path.last() else { return; };
-        if self.method_overloads(type_name, name).is_some() {
-            return;
-        }
-        let Some(td) = self.types_get_here(type_name) else { return; };
-        let field_ty = match &td.kind {
-            TypeDeclKind::Record(fields) => {
-                fields.iter().find(|f| f.name == name).map(|f| &f.ty)
-            }
-            TypeDeclKind::NamedTuple(fields) => {
-                fields.iter().find(|f| f.name == name).map(|f| &f.ty)
-            }
-            _ => None,
-        };
-        let Some(field_ty) = field_ty else { return; };
-        let mut field: &TypeRef = field_ty;
-        loop {
-            match field {
-                TypeRef::Readonly(inner, _)
-                | TypeRef::Mut(inner, _)
-                | TypeRef::Uninit(inner, _) => field = inner.as_ref(),
-                _ => break,
-            }
-        }
-        if !matches!(field, TypeRef::Named { .. }) || !self.typeref_is_func_compatible(field) {
-            return;
-        }
-        errors.push(Diagnostic::new(
-            format!(
-                "[E_FN_FIELD_ALIAS_UNSUPPORTED] cannot call field `{name}` of `{type_name}`: \
-                 its type is an alias/newtype over `fn(...)`, and this field-call lowering \
-                 is not supported; bind the value to a `fn(...)`-typed local or parameter, \
-                 or declare the field as a direct `fn(...)` type"
-            ),
-            call.span,
-        ));
-    }
-
     fn f1_expr_inner(
         &self,
         e: &Expr,
@@ -11522,9 +11461,6 @@ impl<'a> TypeCheckCtx<'a> {
                 self.in_call_func.set(true);
                 self.f1_expr(func, gs, scope, errors);
                 self.in_call_func.set(false);
-                if let ExprKind::Member { obj, name } = &func.kind {
-                    self.check_alias_fn_field_call(e, obj, name, scope, errors);
-                }
                 // Plan 174.5 §3/§4: write-cap check for the pointer WRITE-
                 // method family (`.write`/`.write_at`/`.write_unaligned`/
                 // `.write_volatile`/`.copy_from`/`.copy_from_nonoverlapping`)
@@ -11719,6 +11655,9 @@ impl<'a> TypeCheckCtx<'a> {
                                         ));
                                     }
                                     Compat::CoerceConflict { msg } => {
+                                        errors.push(Diagnostic::new(msg, arg.expr().span));
+                                    }
+                                    Compat::FnDoor { msg } => {
                                         errors.push(Diagnostic::new(msg, arg.expr().span));
                                     }
                                     Compat::RecordLit { faults } => {
@@ -14910,6 +14849,9 @@ impl<'a> TypeCheckCtx<'a> {
             // already a fully-formed diagnostic (see `Compat::CoerceConflict`
             // doc).
             Compat::CoerceConflict { msg } => {
+                errors.push(Diagnostic::new(msg, value.span));
+            }
+            Compat::FnDoor { msg } => {
                 errors.push(Diagnostic::new(msg, value.span));
             }
             Compat::RecordLit { faults } => {
@@ -19044,6 +18986,14 @@ impl<'a> TypeCheckCtx<'a> {
                                     ),
                                 );
                             }
+                            Compat::FnDoor { msg } if generic_param => {
+                                errors.push(
+                                    Diagnostic::new(msg, arg.expr().span).with_note_at(
+                                        format!("parameter `{}` declared here", param.name),
+                                        param.span,
+                                    ),
+                                );
+                            }
                             Compat::Narrowing { from, to } => {
                                 // [M-172.1-sync-extern-narrowing-migration]: extern-callee
                                 // (builtin sync/atomics API) — enforcement отложен до
@@ -19153,6 +19103,9 @@ impl<'a> TypeCheckCtx<'a> {
                     ));
                 }
                 Compat::CoerceConflict { msg } => {
+                    errors.push(Diagnostic::new(msg, arg_expr.span));
+                }
+                Compat::FnDoor { msg } => {
                     errors.push(Diagnostic::new(msg, arg_expr.span));
                 }
                 Compat::RecordLit { faults } => {
@@ -20417,6 +20370,14 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 // Plan 214.1 (D429 amend, R3'): see `Compat::CoerceConflict` doc.
                 Compat::CoerceConflict { msg } => {
+                    errors.push(
+                        Diagnostic::new(msg, arg.expr().span).with_note_at(
+                            format!("parameter `{}` declared here", param.name),
+                            param.span,
+                        ),
+                    );
+                }
+                Compat::FnDoor { msg } => {
                     errors.push(
                         Diagnostic::new(msg, arg.expr().span).with_note_at(
                             format!("parameter `{}` declared here", param.name),
@@ -23104,6 +23065,9 @@ impl<'a> TypeCheckCtx<'a> {
             Compat::CoerceConflict { msg } => {
                 errors.push(Diagnostic::new(msg, value.span));
             }
+            Compat::FnDoor { msg } => {
+                errors.push(Diagnostic::new(msg, value.span));
+            }
             Compat::RecordLit { faults } => {
                 errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)));
             }
@@ -24714,9 +24678,11 @@ impl<'a> TypeCheckCtx<'a> {
             }
             // №45 (221.1) [M-fn-type-expected-any-bypass]: same-shaped narrow re-check,
             // this time for the fn-typed source of the `Any` collapse (see doc comment
-            // on `fn_type_mismatch_found`).
-            if let Some(found) = self.fn_type_mismatch_found(expr, expected, expr_gs, exp_gs, scope) {
-                return Compat::Bad { found };
+            // on `fn_type_mismatch_found`). D497 (registry 1994): the door now returns
+            // a full `Compat` — `Bad` (E7301) for coverage/param-mut, named `FnDoor`
+            // diagnostics for the full-signature axes.
+            if let Some(c) = self.fn_type_mismatch_found(expr, expected, expr_gs, exp_gs, scope) {
+                return c;
             }
             return Compat::Ok;
         }
@@ -25280,6 +25246,259 @@ impl<'a> TypeCheckCtx<'a> {
     /// collapse to `Any` on BOTH sides via the SAME `resolved_cat_of` and stay permissive
     /// (`cat_compatible_rt`'s `(Any, _) | (_, Any) => true` arm), so this cannot regress
     /// any currently-accepted erased-generic fn-type call site.
+    /// №1915 (221.1) narrow door: at an fn-type boundary, two parameters that
+    /// are BOTH declared protocols are compared structurally (parameter
+    /// contravariance): the SLOT's protocol must satisfy every non-default
+    /// method the FOUND protocol requires, otherwise a callee that demands
+    /// more than the slot guarantees could be called (P2 in a fn(P1) slot).
+    /// The reverse (a less demanding callee) stays accepted. Mutability is
+    /// contravariant too: a `mut` callee parameter in a non-mut slot is
+    /// rejected; a non-mut callee in a `mut` slot is safe and accepted.
+    /// Anything that is not a pair of declared protocols stays on the
+    /// permissive `resolved_cat_of` path (p1642/p1401/a_q3 closures and
+    /// erased/generic shapes keep their Any-collapse).
+    /// Effective method set of a declared protocol, including `use`-embedded
+    /// protocols. `required_only` drops default-body methods (a callee does not
+    /// demand those). `None` — an embed cannot be resolved here (undecidable;
+    /// the caller stays permissive).
+    fn protocol_method_set(
+        &self,
+        td: &TypeDecl,
+        required_only: bool,
+        seen: &mut HashSet<String>,
+    ) -> Option<HashMap<(String, usize), ProtoMethodSig>> {
+        let TypeDeclKind::Protocol { methods, embeds } = &td.kind else {
+            return None;
+        };
+        let mut out: HashMap<(String, usize), ProtoMethodSig> = HashMap::new();
+        for m in methods {
+            if !required_only || m.default_body.is_none() {
+                out.insert(
+                    (m.name.clone(), m.params.len()),
+                    ProtoMethodSig {
+                        params: m.params.clone(),
+                        ret: m.return_type.clone(),
+                        receiver_mut: m.receiver_mut,
+                        receiver_consume: m.receiver_consume,
+                        effects: m.effects.clone(),
+                    },
+                );
+            }
+        }
+        for e in embeds {
+            let TypeRef::Named { path, .. } = e else { return None; };
+            let name = path.last()?;
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let etd = self.types_get_here(name)?;
+            out.extend(self.protocol_method_set(etd, required_only, seen)?);
+        }
+        Some(out)
+    }
+
+    /// D497 (registry 221.1 row 1994): the fn-type boundary door for ONE
+    /// parameter pair. SLOT = `ep` (expected fn-type parameter), FOUND = `fp`
+    /// (the callee's parameter). Returns the refusal `Compat`, or `None` when
+    /// accepted / undecidable-permissive. Coverage (п.1) and param-binding-mut
+    /// refusals stay `Bad` (generic E7301 — the class-1915 pins keep their code);
+    /// the full-signature axes (п.2/3/4/6) are named `FnDoor` diagnostics.
+    /// Anything that is not a decidable concrete pair stays on the permissive
+    /// `resolved_cat_of` path (p1642/p1401/a_q3, erased/generic/Any — п.7).
+    fn fn_param_protocol_door(
+        &self,
+        ep: &TypeRef,
+        fp: &TypeRef,
+        found_display: &str,
+    ) -> Option<Compat> {
+        fn peel(mut t: &TypeRef) -> &TypeRef {
+            loop {
+                t = match t {
+                    TypeRef::Readonly(inner, _)
+                    | TypeRef::Uninit(inner, _)
+                    | TypeRef::Ref(inner, _) => inner.as_ref(),
+                    _ => return t,
+                };
+            }
+        }
+        fn mut_flag(t: &TypeRef) -> bool {
+            match t {
+                TypeRef::Mut(..) => true,
+                TypeRef::Readonly(inner, _) | TypeRef::Uninit(inner, _) | TypeRef::Ref(inner, _) => {
+                    mut_flag(inner)
+                }
+                _ => false,
+            }
+        }
+        let proto = |t: &TypeRef| -> Option<&'a TypeDecl> {
+            let TypeRef::Named { path, .. } = t else { return None; };
+            let name = path.last()?;
+            match self.types_get_here(name) {
+                Some(td) if matches!(td.kind, TypeDeclKind::Protocol { .. }) => Some(td),
+                _ => None,
+            }
+        };
+        let ep_peeled = peel(ep);
+        let fp_peeled = peel(fp);
+        match (proto(ep_peeled), proto(fp_peeled)) {
+            (Some(exp_td), Some(found_td)) => {
+                let mut seen = HashSet::new();
+                let Some(found_required) = self.protocol_method_set(found_td, true, &mut seen) else {
+                    return None;
+                };
+                let mut seen = HashSet::new();
+                let Some(exp_provided) = self.protocol_method_set(exp_td, false, &mut seen) else {
+                    return None;
+                };
+                // п.1 coverage: the slot's protocol must provide every method the
+                // callee's protocol requires (default bodies discharge themselves).
+                // Direction fixed: required(FOUND) ⊆ provided(SLOT), NOT inverted.
+                let slot_lacks = found_required
+                    .keys()
+                    .any(|k| !exp_provided.contains_key(k));
+                if slot_lacks {
+                    return Some(Compat::Bad { found: found_display.to_string() });
+                }
+                // Param-binding-mut contravariance (class 1915): a `mut` callee
+                // parameter in a non-mut slot is rejected; the reverse is safe.
+                if mut_flag(fp) && !mut_flag(ep) {
+                    return Some(Compat::Bad { found: found_display.to_string() });
+                }
+                // п.2/3/6: full signature on each matched required(FOUND) method.
+                for (k, found_sig) in &found_required {
+                    if let Some(slot_sig) = exp_provided.get(k) {
+                        if let Some(c) = self.proto_method_sig_mismatch(found_sig, slot_sig, &k.0) {
+                            return Some(c);
+                        }
+                    }
+                }
+                None
+            }
+            (Some(_), None) => {
+                // п.4: a concrete nominal callee parameter demanded in a protocol
+                // slot. A protocol slot does not guarantee nominal identity (no
+                // nominal subtyping). Primitives / generic / erased stay permissive.
+                if self.is_concrete_nominal(fp_peeled) {
+                    return Some(Compat::FnDoor {
+                        msg: format!(
+                            "[E_FN_PROTO_SLOT_CONCRETE_DEMAND] fn-type parameter slot `{}` is a \
+                             protocol, but the callee demands the concrete nominal type `{}`: a \
+                             protocol slot does not guarantee nominal identity (no nominal \
+                             subtyping; D497 item 4, rejected.md `use Parent` is composition not \
+                             inheritance). Give the callee a protocol-typed parameter.",
+                            Self::typeref_display(ep_peeled),
+                            Self::typeref_display(fp_peeled),
+                        ),
+                    });
+                }
+                None
+            }
+            // SLOT not a protocol → the existing resolved_cat_of path decides.
+            _ => None,
+        }
+    }
+
+    /// D497 п.2/3/6: compare a required (FOUND/callee) protocol method against the
+    /// provided (SLOT/expected) method on every signature axis. Both sides are
+    /// protocol declarations, so `Self` is one symbolic marker on both (string
+    /// equality suffices — no receiver-name substitution needed, unlike the
+    /// `#impl` FnDecl-vs-protocol path). `None` ⇒ signatures match.
+    fn proto_method_sig_mismatch(
+        &self,
+        found: &ProtoMethodSig,
+        slot: &ProtoMethodSig,
+        name: &str,
+    ) -> Option<Compat> {
+        // п.2 param types: exact structural equality (D268 axes, no variance),
+        // plus param binding-mode (`mut`/`consume`) which is part of the signature.
+        for (fp, sp) in found.params.iter().zip(slot.params.iter()) {
+            let ft = normalize_type_str(&render_type_ref(&fp.ty));
+            let st = normalize_type_str(&render_type_ref(&sp.ty));
+            if ft != st {
+                return Some(Compat::FnDoor {
+                    msg: format!(
+                        "[E_FN_PROTO_METHOD_PARAM_MISMATCH] protocol method `{}`: the callee \
+                         (FOUND) requires parameter `{}` of type `{}`, but the slot (SLOT) \
+                         provides `{}` (D497 item 2: exact structural signature, no variance).",
+                        name, fp.name, render_type_ref(&fp.ty), render_type_ref(&sp.ty),
+                    ),
+                });
+            }
+            if fp.is_mut != sp.is_mut || fp.consume != sp.consume {
+                return Some(Compat::FnDoor {
+                    msg: format!(
+                        "[E_FN_PROTO_METHOD_PARAM_MISMATCH] protocol method `{}`: parameter `{}` \
+                         binding-mode differs between callee (FOUND) and slot (SLOT) — `mut` / \
+                         `consume` must match exactly (D497 item 2 / D268).",
+                        name, fp.name,
+                    ),
+                });
+            }
+        }
+        // п.2 return type: exact (None and Unit are both unit).
+        let unit_or_none = |r: &Option<TypeRef>| matches!(r, None | Some(TypeRef::Unit(_)));
+        if !(unit_or_none(&found.ret) && unit_or_none(&slot.ret)) {
+            let fr = found.ret.as_ref().map(render_type_ref).unwrap_or_else(|| "()".into());
+            let sr = slot.ret.as_ref().map(render_type_ref).unwrap_or_else(|| "()".into());
+            if normalize_type_str(&fr) != normalize_type_str(&sr) {
+                return Some(Compat::FnDoor {
+                    msg: format!(
+                        "[E_FN_PROTO_METHOD_RETURN_MISMATCH] protocol method `{}`: callee (FOUND) \
+                         returns `{}`, slot (SLOT) provides `{}` (D497 item 2: exact return type).",
+                        name, fr, sr,
+                    ),
+                });
+            }
+        }
+        // п.3 receiver mut/consume: exact match, all four directions (D209).
+        if found.receiver_mut != slot.receiver_mut
+            || found.receiver_consume != slot.receiver_consume
+        {
+            let qual = |m: &ProtoMethodSig| {
+                if m.receiver_consume { "consume" } else if m.receiver_mut { "mut" } else { "ro" }
+            };
+            return Some(Compat::FnDoor {
+                msg: format!(
+                    "[E_FN_PROTO_METHOD_MUT_MISMATCH] protocol method `{}`: callee (FOUND) \
+                     declares `{}` receiver, slot (SLOT) provides `{}` — receiver mut/consume must \
+                     match exactly in both directions (D497 item 3 / D209).",
+                    name, qual(found), qual(slot),
+                ),
+            });
+        }
+        // п.6 method effect rows: required.effects(FOUND) ⊆ provided.effects(SLOT).
+        let missing = effect_row_missing(&found.effects, &slot.effects);
+        if !missing.is_empty() {
+            return Some(Compat::FnDoor {
+                msg: format!(
+                    "[E_FN_PROTO_METHOD_EFFECT_MISSING] protocol method `{}`: callee (FOUND) \
+                     requires effect(s) `{}` that the slot (SLOT) method does not carry (D497 \
+                     item 6 / D448 inclusion: required.effects subset-of provided.effects).",
+                    name, missing.join(", "),
+                ),
+            });
+        }
+        None
+    }
+
+    /// D497 п.4: is `t` a concrete nominal value type (record / sum / newtype /
+    /// named-tuple, or an alias resolving to one)? Protocols, effects, type-sets,
+    /// opaque externals and primitives are NOT concrete nominals here. Undecidable
+    /// (no declaration) stays permissive.
+    fn is_concrete_nominal(&self, t: &TypeRef) -> bool {
+        let TypeRef::Named { path, .. } = t else { return false; };
+        let Some(name) = path.last() else { return false; };
+        let Some(td) = self.types_get_here(name) else { return false; };
+        match &td.kind {
+            TypeDeclKind::Record(_)
+            | TypeDeclKind::Sum(_)
+            | TypeDeclKind::Newtype(_)
+            | TypeDeclKind::NamedTuple(_) => true,
+            TypeDeclKind::Alias(target) => self.is_concrete_nominal(target),
+            _ => false,
+        }
+    }
+
     fn fn_type_mismatch_found(
         &self,
         expr: &Expr,
@@ -25287,7 +25506,7 @@ impl<'a> TypeCheckCtx<'a> {
         expr_gs: &GenericScope,
         exp_gs: &GenericScope,
         scope: &HashMap<String, TypeRef>,
-    ) -> Option<String> {
+    ) -> Option<Compat> {
         fn peel(mut t: &TypeRef) -> &TypeRef {
             loop {
                 t = match t {
@@ -25299,7 +25518,7 @@ impl<'a> TypeCheckCtx<'a> {
                 };
             }
         }
-        let TypeRef::Func { params: exp_params, return_type: exp_ret, .. } = peel(expected) else {
+        let TypeRef::Func { params: exp_params, return_type: exp_ret, effects: exp_effects, .. } = peel(expected) else {
             return None; // Tuple/other Any-source — untouched, unrelated to this fix
         };
         // №101/p1642 (2026-11-15): a CLOSURE literal's inferred Func shape is
@@ -25309,7 +25528,7 @@ impl<'a> TypeCheckCtx<'a> {
         }
         let found_tr = self.infer_expr_type(expr, scope)?;
         let found_peeled = peel(&found_tr);
-        let TypeRef::Func { params: found_params, return_type: found_ret, .. } = found_peeled else {
+        let TypeRef::Func { params: found_params, return_type: found_ret, effects: found_effects, .. } = found_peeled else {
             return None; // arg's own type isn't a decidable fn-type here — undecidable, permissive
         };
         // №101/p1401 (2026-11-15): a found signature with ANY unresolved
@@ -25331,8 +25550,9 @@ impl<'a> TypeCheckCtx<'a> {
         {
             return None;
         }
+        let found_display = Self::typeref_display(found_peeled);
         if exp_params.len() != found_params.len() {
-            return Some(Self::typeref_display(found_peeled));
+            return Some(Compat::Bad { found: found_display });
         }
         // №1915 ATTEMPT REVERTED (2026-11-15): LOSSLESS categories here
         // (from_type_ref instead of resolved_cat_of) fixed the registry
@@ -25340,11 +25560,19 @@ impl<'a> TypeCheckCtx<'a> {
         // whose fn-slot shapes the permissive Any-collapse legitimately
         // serves — the conflict needs its own window with those carriers
         // decoded (registry row stays OPEN with the protocol recorded).
+        // D497 (registry 1994): the named full-signature axes are gated INSIDE
+        // `fn_param_protocol_door` to decidable concrete protocol pairs, so the
+        // permissive `resolved_cat_of` path below is unchanged for everything else.
         for (ep, fp) in exp_params.iter().zip(found_params.iter()) {
+            // D497 п.1/2/3/4/6: protocol identity, full method signature,
+            // receiver-mut/consume, concrete-nominal-in-protocol-slot.
+            if let Some(c) = self.fn_param_protocol_door(ep, fp, &found_display) {
+                return Some(c);
+            }
             let ecat = self.resolved_cat_of(ep, exp_gs);
             let fcat = self.resolved_cat_of(fp, expr_gs);
             if !cat_compatible_rt(&fcat, &ecat) {
-                return Some(Self::typeref_display(found_peeled));
+                return Some(Compat::Bad { found: found_display });
             }
         }
         match (exp_ret.as_deref(), found_ret.as_deref()) {
@@ -25352,12 +25580,30 @@ impl<'a> TypeCheckCtx<'a> {
                 let ecat = self.resolved_cat_of(er, exp_gs);
                 let fcat = self.resolved_cat_of(fr, expr_gs);
                 if !cat_compatible_rt(&fcat, &ecat) {
-                    return Some(Self::typeref_display(found_peeled));
+                    return Some(Compat::Bad { found: found_display });
                 }
             }
             (None, None) => {}
             // unit-returning vs value-returning — a genuine, decidable mismatch.
-            _ => return Some(Self::typeref_display(found_peeled)),
+            _ => return Some(Compat::Bad { found: found_display }),
+        }
+        // D497 п.5: fn-type effect rows by D448 inclusion — the SLOT's row is a
+        // LOWER bound the value must carry: expected.effects ⊆ found.effects. An
+        // empty slot row demands nothing (accepts any value). Refuse only when the
+        // slot demands an effect the (decidable) found fn-type does not carry.
+        // Closure literals / never / generic pieces already returned None above
+        // (п.7 permissive); erased/Any shapes keep their Any-collapse.
+        let missing = effect_row_missing(exp_effects, found_effects);
+        if !missing.is_empty() {
+            return Some(Compat::FnDoor {
+                msg: format!(
+                    "[E_FN_EFFECT_ROW_MISSING] fn-type slot demands effect(s) `{}` that the passed \
+                     function value does not carry (D497 item 5 / D448: a signature's effect row is \
+                     a LOWER bound — expected.effects subset-of found.effects). Add the effect(s) to \
+                     the value's fn-type, or discharge them before passing.",
+                    missing.join(", "),
+                ),
+            });
         }
         None
     }
@@ -28918,7 +29164,11 @@ impl<'a> TypeCheckCtx<'a> {
         if matches!(field_ty, TypeRef::Func { .. }) {
             return None;
         }
-        Some(self.subst_receiver_generics(field_ty, &td.generics, args))
+        let substituted = self.subst_receiver_generics(field_ty, &td.generics, args);
+        if let Some(Some(ret)) = self.peel_func_return_depth(&substituted, 0) {
+            return Some(ret);
+        }
+        Some(substituted)
     }
 
     /// 172.1.2 C6(a): посев типов closure-параметров из СУБСТИТУИРОВАННОЙ
@@ -30357,6 +30607,20 @@ impl<'a> TypeCheckCtx<'a> {
 }
 
 /// Ф.1: результат проверки совместимости.
+/// D497 (registry 1994): the full signature of one protocol method, cloned from
+/// `EffectMethod` so the fn-door can compare a required (FOUND/callee) method
+/// against the provided (SLOT/expected) method on every axis — param types and
+/// binding-mode, return type, receiver mut/consume, effect row. Keyed by
+/// (name, arity) in `protocol_method_set`; the key set is the coverage check.
+#[derive(Clone)]
+struct ProtoMethodSig {
+    params: Vec<crate::ast::Param>,
+    ret: Option<TypeRef>,
+    receiver_mut: bool,
+    receiver_consume: bool,
+    effects: Vec<TypeRef>,
+}
+
 enum Compat {
     /// Совместимо.
     Ok,
@@ -30381,6 +30645,14 @@ enum Compat {
     /// of which declaration provides it (see `generic_coerce_lookup` doc for
     /// why decl-time R3 dedup can't catch this for generic patterns).
     CoerceConflict { msg: String },
+    /// D497 (registry 221.1 row 1994, remainder of class 1915): the fn-type
+    /// boundary door refused a value on a FULL-signature axis (method param /
+    /// return / receiver-mut/consume, concrete-nominal-in-protocol-slot, fn or
+    /// method effect-row inclusion). `msg` is a fully-formed `[E_FN_...]`-prefixed
+    /// diagnostic text pushed verbatim by callers (mirrors `CoerceConflict`'s
+    /// ready-made shape). Distinct from `Bad` (generic E7301): the coverage and
+    /// param-mut refusals of class 1915 stay `Bad` so their pins keep E7301.
+    FnDoor { msg: String },
     /// Registry 221.1 #1448/#1096: an anonymous record literal against a
     /// record type, with the faults of its fields (wrong type, missing,
     /// undeclared) as ready diagnostics, each at its own span
@@ -36614,6 +36886,30 @@ struct ScopeBinding {
     closure_free_vars: Option<Vec<String>>,
 }
 
+/// Registry 221.1 (129b): can this overload accept this call's argument list?
+///
+/// An effect check keyed by bare name used to walk EVERY namesake overload,
+/// so a 0-arg `f()` inherited the `Fs` row of a 3-arg `f` from another module
+/// of the merged unit (and a lambda parameter `f` inherited a global `f`).
+/// Arity is a cheap, sound filter for "this overload cannot be the callee".
+fn cap_call_arity_matches(fd: &FnDecl, args: &[CallArg]) -> bool {
+    // A spread can expand to any count — keep the overload as a candidate.
+    if args.iter().any(|a| matches!(a, CallArg::Spread(_))) {
+        return true;
+    }
+    let n = args.len();
+    let mut required = 0usize;
+    let mut variadic = false;
+    for p in &fd.params {
+        if p.is_variadic {
+            variadic = true;
+        } else if p.default.is_none() {
+            required += 1;
+        }
+    }
+    n >= required && (variadic || n <= fd.params.len())
+}
+
 /// Plan 16: capability state передаётся через walk как mutable.
 /// Push/pop при входе/выходе из forbid/realtime блоков.
 #[derive(Default, Clone)]
@@ -37483,19 +37779,46 @@ impl<'a> CapabilityCtx<'a> {
                     }
                 }
             }
-            ExprKind::Lambda { body, .. } => self.walk_expr(body, state, errors),
+            ExprKind::Lambda { params, body, .. } => {
+                // Registry 221.1 (129b): lambda params shadow same-named globals.
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for p in params {
+                    frame.insert(p.name.clone(), ScopeBinding { mutable: false, ty: p.ty.clone(), linear_pattern: false, closure_free_vars: None });
+                }
+                state.scopes.push(frame);
+                self.walk_expr(body, state, errors);
+                state.scopes.pop();
+            }
             // Plan 19, C5: CapabilityCtx обходит тело closure для
             // forbid/realtime проверок (D63/D64). Closure-light и
             // closure-full одинаково — walk by body kind.
-            ExprKind::ClosureLight { body, .. } => match body {
-                crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, state, errors),
-                crate::ast::ClosureBody::Block(b) => self.walk_block(b, state, errors),
-            },
-            ExprKind::ClosureFull(sb) => match &sb.body {
-                FnBody::Expr(e) => self.walk_expr(e, state, errors),
-                FnBody::Block(b) => self.walk_block(b, state, errors),
-                FnBody::External => {}
-            },
+            // Registry 221.1 (129b): push the closure params too — a call to a
+            // parameter must not inherit a same-named global's effects.
+            ExprKind::ClosureLight { params, body } => {
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for p in params {
+                    frame.insert(p.name.clone(), ScopeBinding { mutable: false, ty: None, linear_pattern: false, closure_free_vars: None });
+                }
+                state.scopes.push(frame);
+                match body {
+                    crate::ast::ClosureBody::Expr(e) => self.walk_expr(e, state, errors),
+                    crate::ast::ClosureBody::Block(b) => self.walk_block(b, state, errors),
+                }
+                state.scopes.pop();
+            }
+            ExprKind::ClosureFull(sb) => {
+                let mut frame: HashMap<String, ScopeBinding> = HashMap::new();
+                for p in &sb.params {
+                    frame.insert(p.name.clone(), ScopeBinding { mutable: p.is_mut, ty: Some(p.ty.clone()), linear_pattern: false, closure_free_vars: None });
+                }
+                state.scopes.push(frame);
+                match &sb.body {
+                    FnBody::Expr(e) => self.walk_expr(e, state, errors),
+                    FnBody::Block(b) => self.walk_block(b, state, errors),
+                    FnBody::External => {}
+                }
+                state.scopes.pop();
+            }
             ExprKind::Spawn(body) => {
                 // Plan 173.3 addendum ([M-const-init-concurrency-gate]).
                 if state.const_init {
@@ -37692,7 +38015,7 @@ impl<'a> CapabilityCtx<'a> {
     /// Сейчас — только для Call'ов; forbid/realtime/with управляют
     /// state'ом, не вызывая check'ов на собственном узле.
     fn check_capabilities_at(&self, e: &Expr, state: &CapState, errors: &mut Vec<Diagnostic>) {
-        let ExprKind::Call { func, .. } = &e.kind else { return; };
+        let ExprKind::Call { func, args, .. } = &e.kind else { return; };
         // Path-form: `Type.method`, `Effect.op` или `[]T.method`.
         // Для `[]T.method()` парсер строит Member{obj: Path(["__array", T]), name}.
         let path: Vec<String> = match &func.kind {
@@ -37773,9 +38096,27 @@ impl<'a> CapabilityCtx<'a> {
         // (overloads обычно отличаются типом аргумента, не эффектами),
         // но если случится — программист дисамбигуирует через cast.
         if path.len() == 1 {
-            if let Some(overloads) = self.sig.fn_decls.get(&path[0]) {
-                for callee in overloads.iter() {
-                    self.check_callee_effects(callee, &path[0], state, e.span, errors);
+            // Registry 221.1 (129b): a LOCAL binding shadows a same-named
+            // global for every check, effects included. Without this a
+            // lambda/closure parameter `f` picked up the effect row of an
+            // unrelated top-level `f` from another module of the merged unit.
+            let locally_bound = state.scopes.iter().rev().any(|s| s.contains_key(&path[0]));
+            if !locally_bound {
+                if let Some(overloads) = self.sig.fn_decls.get(&path[0]) {
+                    for callee in overloads.iter() {
+                        // File-private decls of another file are invisible here.
+                        if callee.file_private && callee.span.file_id != e.span.file_id {
+                            continue;
+                        }
+                        // Registry 221.1 (129b): check only overloads that can
+                        // actually be called — a 0-arg call must not inherit
+                        // `Fs` from a 3-arg namesake in another module of the
+                        // merged unit.
+                        if !cap_call_arity_matches(callee, args) {
+                            continue;
+                        }
+                        self.check_callee_effects(callee, &path[0], state, e.span, errors);
+                    }
                 }
             }
         }
@@ -37786,6 +38127,9 @@ impl<'a> CapabilityCtx<'a> {
             if let Some(methods) = self.sig.method_table.get(&path[0]) {
                 if let Some(fns) = methods.get(&path[1]) {
                     for callee in fns {
+                        if !cap_call_arity_matches(callee, args) {
+                            continue;
+                        }
                         self.check_callee_effects(callee, &format!("{}.{}", path[0], path[1]), state, e.span, errors);
                     }
                 }
@@ -42157,6 +42501,25 @@ fn mode_axis_candidate_desc(f: &FnDecl) -> String {
         format!("{}{} {}", mode, p.name, render_type_ref(&p.ty))
     }).collect();
     format!("{}{}({})", recv, f.name, params.join(", "))
+}
+
+/// D497 п.5/6 (D448 inclusion): effect names present in `required` but absent
+/// from `provided` (last-path-segment convention, mirrors `CapabilityCtx` and
+/// `strict_effects::effect_names`). Empty result ⇒ required ⊆ provided. Sorted
+/// for deterministic diagnostics.
+fn effect_row_missing(required: &[TypeRef], provided: &[TypeRef]) -> Vec<String> {
+    let names = |es: &[TypeRef]| -> HashSet<String> {
+        es.iter()
+            .filter_map(|e| match e {
+                TypeRef::Named { path, .. } => path.last().cloned(),
+                _ => None,
+            })
+            .collect()
+    };
+    let prov = names(provided);
+    let mut miss: Vec<String> = names(required).into_iter().filter(|n| !prov.contains(n)).collect();
+    miss.sort();
+    miss
 }
 
 pub(crate) fn render_type_ref(t: &TypeRef) -> String {

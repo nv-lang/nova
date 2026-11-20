@@ -1,3 +1,8 @@
+# 2026-11-19, integrator: 552 -> 553 — the 0.1.7 rehearsal line carries one
+#   more unpinned negative than main 991b59a: neg/fn_type_protocol_variance_neg.nv
+#   arrived with reg 1915 on the line (f66 baseline was already 553). The 1913
+#   fix branch measured 552 against main and its baseline edit does not apply
+#   to the union; the rehearsal keeps the measured union value, no new debt.
 # 2026-08-19  550 -> 551, и это НЕ отступление от правила.
 #   Многофайловая neg-фикстура `neg/d65_exhaustive_crossmod_collision/`
 #   (№705, окно W6): раннер читает EXPECT_COMPILE_ERROR с ВХОДНОГО
@@ -60,4 +65,5 @@
 #   neg/n_match_arm_width_negative_literal_uint.nv размечена попутно: её код
 #   переведён на E_LIT_OUT_OF_RANGE (D489, пример `None => -1`), и пин поставлен
 #   на строку литерала.
+# 2026-11-19: two 1913 guard negatives converted to positive call-through pins.
 unpinned_neg_fixtures=553

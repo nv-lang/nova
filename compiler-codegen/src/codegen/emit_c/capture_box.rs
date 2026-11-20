@@ -43,8 +43,21 @@ impl CEmitter {
     /// parameter, a value record by pointer), so its value is `(*local)` and the
     /// fallback of a NULL box is the local itself.
     pub(super) fn capture_box(&mut self, name: &str, box_ty: &str, ptr_src: bool) -> String {
+        // Inside a spawn body a mut capture already has a shared box: the
+        // spawn ctx holds `T*` pointing at the CALLER's local. Reuse it so
+        // closure writes reach the original, instead of boxing a copy.
+        if let Some(ptr) = self.spawn_capture_box_ptr(name) {
+            self.var_boxed.insert(name.to_string(), ptr.clone());
+            return ptr;
+        }
         let local = Self::mangle_field_name(name);
-        let copy_src = if ptr_src { format!("(*{local})") } else { local.clone() };
+        let copy_src = match self.spawn_capture_access(name) {
+            // Inside a spawn body the source lives in the spawn ctx; for a
+            // by-pointer capture the access already yields the value.
+            Some(src) => src,
+            None if ptr_src => format!("(*{local})"),
+            None => local.clone(),
+        };
         if let Some(existing) = self.var_boxed.get(name).cloned() {
             // A box first made on another path (a sibling `with`, an untaken branch)
             // may still be NULL here.

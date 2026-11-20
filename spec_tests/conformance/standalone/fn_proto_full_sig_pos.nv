@@ -1,0 +1,51 @@
+// D497 (registry 221.1 row 1994) POSITIVE control: the sound directions of the
+// full-signature fn-door stay accepted. Companion to the neg fixtures
+// fn_proto_method_{param,param_nested,return,mut,mut_rev,consume,effect}_neg,
+// fn_proto_slot_concrete{,_sum}_neg and fn_effect_row_neg. CHECK-ONLY bodies
+// (return 0, no inherited-method calls — registry 1995 ICE is out of scope).
+module standalone.fn_proto_full_sig_pos
+
+// item 2: identical method signatures (param type, return, receiver) accept.
+type SigSlot protocol { @one(x int) -> int }
+type SigFound protocol { @one(x int) -> int }
+fn sig_takes(f fn(SigSlot) -> int) -> () {}
+fn sig_callee(x SigFound) -> int => 0
+
+// item 1: coverage contravariance — callee demands LESS (one) than the slot
+// guarantees (one, two); the reverse of the neg coverage carrier, accepted.
+type CovSlot protocol { @one() -> int  @two() -> int }
+type CovFound protocol { @one() -> int }
+fn cov_takes(f fn(CovSlot) -> int) -> () {}
+fn cov_callee(x CovFound) -> int => 0
+
+// item 6: the slot method carries MORE effects (Io) than the callee requires
+// (none) — required.effects(FOUND) subset-of provided.effects(SLOT) holds.
+type EffSlot protocol { @one() Io -> int }
+type EffFound protocol { @one() -> int }
+fn eff_takes(f fn(EffSlot) -> int) -> () {}
+fn eff_callee(x EffFound) -> int => 0
+
+// item 3: receiver mut MATCHES on both sides (exact equality satisfied).
+type MutSlot protocol { mut @one() -> int }
+type MutFound protocol { mut @one() -> int }
+fn mut_takes(f fn(MutSlot) -> int) -> () {}
+fn mut_callee(x MutFound) -> int => 0
+
+// item 5: an empty slot effect-row demands nothing — accepts an effectful value
+// (D448: expected.effects {} subset-of found.effects {Io}).
+fn fn_eff_takes(f fn() -> int) -> () {}
+fn fn_eff_callee() Io -> int => 0
+
+// item 7: fn(int) in a fn(any) slot stays permissive (Any-collapse untouched).
+fn any_takes(f fn(any) -> int) -> () {}
+fn int_callee(x int) -> int => x
+
+test "D497 full-signature fn-door: sound directions compile" {
+    sig_takes(sig_callee)
+    cov_takes(cov_callee)
+    eff_takes(eff_callee)
+    mut_takes(mut_callee)
+    fn_eff_takes(fn_eff_callee)
+    any_takes(int_callee)
+    assert(true)
+}

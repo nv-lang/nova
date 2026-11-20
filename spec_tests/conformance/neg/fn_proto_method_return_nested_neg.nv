@@ -1,0 +1,17 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_METHOD_RETURN_MISMATCH
+//
+// D497 item 2 (registry 221.1 row 1994), CLASS carrier: the method RETURN type
+// is a nested fn-type. `@one() -> fn(int) -> int` vs `-> fn(str) -> int` — the
+// return comparison recurses through the fn-type, not just a bare nominal.
+module neg.fn_proto_method_return_nested_neg
+
+type PSlot protocol { @one() -> fn(int) -> int }
+type QFound protocol { @one() -> fn(str) -> int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x QFound) -> int => 0
+
+fn main() {
+    // nova:expect E_FN_PROTO_METHOD_RETURN_MISMATCH -- nested fn return int->int vs str->int differs
+    takes(callee)
+}

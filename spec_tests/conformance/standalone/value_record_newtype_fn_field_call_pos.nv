@@ -1,0 +1,15 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #1913: full call-through on the VALUE-RECORD registration site
+// (`emit_value_record_type`). A call through a newtype-over-fn field of a
+// `type Holder value` must invoke the function and print its value, not an address.
+module standalone.value_record_newtype_fn_field_call_pos
+
+type Run fn() -> int
+
+type Holder value { f Run }
+
+fn main() Io -> () {
+    ro v = (Holder { f: fn() -> int => 42 }.f)()
+    println("${v}")
+}

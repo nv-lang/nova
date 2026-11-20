@@ -1,3 +1,25 @@
+# 2026-11-20, 0.1.7 rehearsal merge of waves A(2003)+C(2005)+B(2004):
+#   emit_c 68890 -> 69010 (+120) measured on the MERGED file (+79 A,
+#   +23 C, +18 B). Emit-layer by necessity in all three: invocation
+#   of an already-typed fn value in the fiber, capture-env emission
+#   in that fiber, and restoring the outer type view after a C block.
+#   `infer` stays 243 actual (baseline max 247); the checker channel
+#   is respected.
+# 2026-11-20, reg 2003+2005 (waves A and C, owner word): emit_c 68890 ->
+#   68992 (+102). +79 from reg 2003 (non-Block spawn body lowered to an
+#   invocation; checked-signature probe + NovaClos dispatch) and +23 from reg
+#   2005 (lambda body isolation from spawn captures, env populate through
+#   spawn_capture_access, shared mut box). Emit-layer by necessity: both
+#   decisions are "how to call/capture an already-typed value inside the
+#   fiber", not checker facts. RED/GREEN on the 2003 forms and both capture
+#   forms; controls unchanged. `infer` did not grow.
+# 2026-11-20, reg 2004 (wave B, owner word): emit_c 68890 -> 68908 (+18).
+#   Nested-block emission now restores the outer type view after the C brace
+#   in if/else (`emit_block_into`), while/for/loop bodies and match-arm
+#   blocks — the same snapshot `emit_block_expr` already performed. Emit-layer
+#   by necessity: the damage is a flat codegen type map, not a checker fact.
+#   RED/GREEN on if/while/for/match shadows, bare-block control unchanged.
+#   `infer` did not grow.
 # 2026-09-18 (интегратор, окно nova-ff): emit_c 68091 -> 68117 (+26).
 #   СТОРОНА РОСТА — ОТ КАНАЛА, и я это называю прямо, а не прячу за словом
 #   «фикс». Строки добавлены фиксом №1155: алиас newtype над АНОНИМНЫМ
@@ -1322,7 +1344,9 @@
 #   `nova check std/src` 158/26 неизменно (до и после), полный `std`-набор
 #   79/79, `spec_tests/conformance` 327/2 (оба FAIL воспроизведены на ДОкоммитном
 #   бинаре байт-в-байт — не регрессия).
-lines=68890
+# 2026-11-19: measured on the 0.1.7 line (028891fc5 base): emit_c=68890;
+# the line carries the 0.1.6 shell, the old 68857 baseline was stale here.
+lines=69010
 infer=247
 infer=247
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):

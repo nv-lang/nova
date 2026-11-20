@@ -14593,6 +14593,73 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         self.line("_c->_nova_fiber_anchor = NULL;");
     }
 
+    /// reg 2003: a `spawn` body that evaluates to a zero-argument fn VALUE
+    /// (a closure literal or a closure-typed variable) must be INVOKED in the
+    /// fiber. Emitting it and discarding the value silently dropped the body
+    /// (build rc0, child printed nothing). Returns the callable's C return
+    /// type when the body is such a value.
+    fn spawn_body_zero_arg_fn_ret(&mut self, body: &Expr) -> Option<String> {
+        use crate::types::ResolvedType as R;
+        if body.id.is_set() {
+            if let Some(rt) = self.resolved_types.get(&body.id).cloned() {
+                match &rt {
+                    R::Func { params, ret, .. } if params.is_empty() => {
+                        return Some(self.resolved_type_to_c(ret)
+                            .unwrap_or_else(|_| "nova_unit".to_string()));
+                    }
+                    R::Named { name, args, .. } if args.is_empty() => {
+                        if let Some(crate::ast::TypeRef::Func { params, return_type, .. }) =
+                            self.fn_newtype_sigs.get(name).cloned()
+                        {
+                            if params.is_empty() {
+                                return Some(match return_type.as_ref() {
+                                    Some(rt) => self.type_ref_to_c(rt)
+                                        .unwrap_or_else(|_| "nova_unit".to_string()),
+                                    None => "nova_unit".to_string(),
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // AST fallback: the checker channel may not key a bare literal.
+        let (closure_body, has_params) = match &body.kind {
+            ExprKind::Lambda { params, body, .. } => {
+                (Some((**body).clone()), !params.is_empty())
+            }
+            ExprKind::ClosureLight { params, body } => {
+                let e = match body {
+                    crate::ast::ClosureBody::Expr(e) => (**e).clone(),
+                    crate::ast::ClosureBody::Block(b) => Expr::new(
+                        ExprKind::Block(b.clone()),
+                        b.span,
+                    ),
+                };
+                (Some(e), !params.is_empty())
+            }
+            ExprKind::ClosureFull(sb) => {
+                let e = match &sb.body {
+                    crate::ast::FnBody::Expr(e) => Some(e.clone()),
+                    crate::ast::FnBody::Block(b) => Some(Expr::new(
+                        ExprKind::Block(b.clone()),
+                        b.span,
+                    )),
+                    crate::ast::FnBody::External => None,
+                };
+                (e, !sb.params.is_empty())
+            }
+            _ => (None, true),
+        };
+        if has_params {
+            return None;
+        }
+        let e = closure_body?;
+        Some(self.closure_channel_ret_c(body.id)
+            .unwrap_or_else(|| self.infer_lambda_return_type_with_params(&e, &[], &[])))
+    }
+
     fn emit_spawn(&mut self, body: &Expr) -> Result<String, String> {
         // D50/D71: spawn разрешён только внутри structured-scope.
         // В bootstrap-codegen — только supervised. Вне scope — compile error.
@@ -15187,8 +15254,20 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 self.leave_defer_scope(block_id);
             }
             _ => {
+                // reg 2003: a zero-arg fn VALUE body is an invocation, not a
+                // value to discard (the silent output-loss class).
+                let callable_ret = if saved_parfor.is_none() {
+                    self.spawn_body_zero_arg_fn_ret(body)
+                } else {
+                    None
+                };
                 let v = self.emit_expr(body)?;
-                emit_parfor_send(self, &v);
+                if let Some(ret_c) = callable_ret {
+                    let call = self.emit_clos_call_dispatch(&v, &[], &ret_c, &[])?;
+                    self.line(&format!("(void)({});", call));
+                } else {
+                    emit_parfor_send(self, &v);
+                }
             }
         }
 
@@ -19466,7 +19545,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             let mangled = Self::mangle_field_name(&f.name);
             self.line(&format!("{} {};", ty_c, mangled));
             // Plan 14 Ф.4: fn-typed field sig registry mirror.
-            if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+            if let Some(TypeRef::Func { params: fp, return_type, .. }) = self.resolve_fn_typeref(&f.ty) {
                 let ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
                         &format!("value-record `{}` fn-typed field `{}` param", name, f.name),
@@ -19722,7 +19801,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             // Plan 14 Ф.4: записываем fn-typed поля в реестр sig'ов
             // record-полей. Использует Member-call routing для эмита
             // closure-call (`obj.f(x)` → NOVA_CLOS_CALL_*).
-            if let TypeRef::Func { params: fp, return_type, .. } = &f.ty {
+            if let Some(TypeRef::Func { params: fp, return_type, .. }) = self.resolve_fn_typeref(&f.ty) {
                 // Plan 70 PhaseA2.3: strict — record fn-typed field sig.
                 let ptys: Vec<String> = fp.iter()
                     .map(|t| self.type_ref_to_c(t).map_err(|e| self.err_no_int_fallback(
@@ -32232,6 +32311,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// CPU-bound fiber on a large/unbounded loop monopolises its worker,
     /// exactly what the per-iteration safepoint prevents).
     fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
+        // Loop bodies are C blocks too: restore the outer type view after the
+        // body so a different-type shadow does not leak past the loop (reg 2004).
+        let saved_var_types = self.var_types.clone();
+        let saved_ref_params = self.ref_params.clone();
         self.loop_scope_floor.push(self.defer_scopes.len());
         let block_id = self.enter_defer_scope(body, true);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
@@ -32253,6 +32336,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         self.leave_defer_scope(block_id);
         self.loop_scope_floor.pop();
+        self.var_types = saved_var_types;
+        self.ref_params = saved_ref_params;
         Ok(())
     }
 
@@ -36545,6 +36630,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             format!("(*_c->{})", Self::mangle_field_name(name))
         })
+    }
+
+    /// reg 2003 follow-up: the spawn ctx's POINTER field for a by-pointer
+    /// capture (`_c->name`, type `T*`), usable as the shared mut box. `None`
+    /// for by-value captures and outside spawn bodies.
+    fn spawn_capture_box_ptr(&self, name: &str) -> Option<String> {
+        let caps = self.current_spawn_captures.as_ref()?;
+        if !caps.contains(name) { return None; }
+        let by_value = self.current_spawn_capture_by_value.as_ref()
+            .map(|s| s.contains(name)).unwrap_or(false);
+        if by_value {
+            None
+        } else {
+            Some(format!("_c->{}", Self::mangle_field_name(name)))
+        }
     }
 
     /// Plan 217 (D-новый, гибрид C): thin wrapper around `emit_expr_inner`.
@@ -49952,6 +50052,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Emit a block's statements and assign its trailing value (or NOVA_UNIT) into `tmp`.
     fn emit_block_into(&mut self, tmp: &str, ty: &str, block: &Block) -> Result<(), String> {
+        // Same block-scope restore as `emit_block_expr`: a `let` whose name
+        // shadows an outer binding of a DIFFERENT type must not overwrite the
+        // outer binding's type once this `{ }` closes (reg 2004).
+        let saved_var_types = self.var_types.clone();
+        let saved_ref_params = self.ref_params.clone();
         let block_id = self.enter_defer_scope(block, false);
         // Plan 125: detect divergence BEFORE emitting stmts (helper inspects
         // structure, not side effects).
@@ -49999,6 +50104,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Cleanup AFTER assigning result (defer should not affect tmp).
         self.leave_defer_scope(block_id);
+        self.var_types = saved_var_types;
+        self.ref_params = saved_ref_params;
         Ok(())
     }
 
@@ -52513,6 +52620,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             MatchArmBody::Block(b) => {
                 // Plan 20 Ф.4/Ф.8: match-arm body — defer scope.
                 // Trailing value присваивается ПОСЛЕ defer cleanup.
+                // Same block-scope restore as emit_block_into (reg 2004).
+                let saved_var_types = self.var_types.clone();
+                let saved_ref_params = self.ref_params.clone();
                 let block_id = self.enter_defer_scope(b, false);
                 for stmt in &b.stmts {
                     self.emit_stmt(stmt)?;
@@ -52532,6 +52642,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 self.leave_defer_scope(block_id);
+                self.var_types = saved_var_types;
+                self.ref_params = saved_ref_params;
             }
         }
         Ok(())
@@ -56648,7 +56760,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let clo_scope = self.enter_capture_body(&params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), !free_vars.is_empty(), |bd, fr| crate::free_idents::collect_truly_free_idents(body, bd, fr)); // #1441
+        // The closure body is its own C function: its free vars resolve through
+        // `_env` (locals unpacked above), never through the enclosing spawn ctx
+        // (`_c->name`). Same clear/restore as the trailing-block body.
+        let prev_spawn_caps = std::mem::replace(&mut self.current_spawn_captures, None);
+        let prev_spawn_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, None);
         let body_val = self.emit_expr_in_place(body, &ret_c_ty)?;
+        self.current_spawn_captures = prev_spawn_caps;
+        self.current_spawn_capture_by_value = prev_spawn_by_value;
         if ret_c_ty == "nova_unit" {
             self.line(&format!("{};", body_val));
             self.line("return NOVA_UNIT;");
@@ -56762,11 +56881,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Env stores the box pointer — safe even if closure escapes scope.
                 self.line(&format!("{}->{} = {};", env_tmp, field, box_var));
             } else {
-                // Immutable: snapshot value (no escape risk). RHS `name`
-                // stays the bare identifier — a value-read position, where
-                // an active outer capture-alias macro is supposed to (and
-                // correctly does) expand it to `_c->name`.
-                self.line(&format!("{}->{} = {};", env_tmp, field, Self::mangle_field_name(name)));
+                // Immutable: snapshot value (no escape risk). Inside a spawn
+                // body the value lives in the spawn ctx, not in a local of the
+                // fiber function; read it through `spawn_capture_access`.
+                let rhs = self.spawn_capture_access(name)
+                    .unwrap_or_else(|| Self::mangle_field_name(name));
+                self.line(&format!("{}->{} = {};", env_tmp, field, rhs));
             }
         }
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", clos_struct, clos_tmp, clos_struct, clos_struct));

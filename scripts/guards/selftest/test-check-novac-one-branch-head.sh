@@ -32,7 +32,7 @@ ok()  { echo "  ok: $1"; cases=$((cases+1)); }
 bad() { echo "  FAIL: $1" >&2; fails=$((fails+1)); }
 
 mk() {
-    # mk <корень> — здоровое дерево: пять дверей, каждая печатает свою голову
+    # mk <корень> — здоровое дерево: восемь дверей, каждая печатает свою голову
     rm -rf "$1"; mkdir -p "$1/novac/src/emit_c"
     cat > "$1/novac/src/emit_c/emit_flow.nv" <<'EOF'
 module novac.emit_c
@@ -65,12 +65,24 @@ fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
     @body.append("    if (${v}_init) {")
 }
 EOF
+    cat > "$1/novac/src/emit_c/emit_supervised.nv" <<'EOF'
+module novac.emit_c
+fn Emitter mut @emit_sup_frames_open() -> () {
+    @body.append("    if (setjmp(_novac_sup.jmp) != 0) {")
+}
+fn Emitter mut @emit_sup_end_ok() -> () {
+    @body.append("    if (_novac_sup_ok) {")
+}
+fn Emitter mut @emit_sup_outer_fail() -> () {
+    @body.append("    if (_novac_sup_timeout) {")
+}
+EOF
 }
 
 # ── 1. здоровое дерево — зелено ───────────────────────────────────────────
 mk "$T/healthy"
 if python "$G" "$T/healthy" >/dev/null 2>&1; then
-    ok "здоровое дерево: три двери, голов четыре — зелено"
+    ok "здоровое дерево: восемь дверей, голов девять — зелено"
 else
     bad "здоровое дерево сочтено больным: [$(python "$G" "$T/healthy" 2>&1 | tail -1)]"
 fi

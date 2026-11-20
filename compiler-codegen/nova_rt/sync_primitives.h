@@ -981,6 +981,34 @@ static inline Nova_MutexGuard* Nova_Mutex_method_lock(Nova_Mutex* m) {
          * lost-wakeup race (unlock cannot fire before park is registered). */
         nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                      (void(*)(void*))nova_mutex_unlock, &m->mu);
+        /* [item 19 root 3] Resumed by unlock (ownership transferred), by the
+         * lock_for timer, or by a scope-cancel bare wake. Observe cancel and
+         * throw CANCEL rather than return into a cancelled scope. Membership
+         * under m->mu distinguishes the cases: unlock() dequeues the waiter
+         * BEFORE transferring ownership, so a waiter still linked was woken
+         * without ownership (cancel/timer) — unlink it so no dangling stack
+         * waiter remains; a dequeued waiter owns the lock (locked stays true),
+         * which the caller's guard releases on CANCEL unwind. */
+        {
+            NovaFiberQueue* _cs = nova_sync_cancel_scope();
+            if (_cs) {
+                nova_mutex_lock(&m->mu);
+                NovaMutexWaiter* it = m->head;
+                bool linked = false;
+                while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+                if (linked) {
+                    if (w.prev) w.prev->next = w.next; else m->head = w.next;
+                    if (w.next) w.next->prev = w.prev; else m->tail = w.prev;
+                }
+                nova_mutex_unlock(&m->mu);
+                /* Throw only if still linked (woken without ownership). A
+                 * dequeued waiter was granted the lock by unlock() even though
+                 * the scope is also cancelled — fall through so the guard below
+                 * takes ownership and releases it on the later CANCEL unwind;
+                 * throwing here would leak the locked mutex with no owner. */
+                if (linked) nova_sync_throw_cancel(_cs);
+            }
+        }
         /* Resumed: lock ownership transferred from unlock() — no re-check needed. */
     }
     /* Allocate and return the MutexGuard (Plan 103.9). */
@@ -1077,6 +1105,25 @@ static inline nova_bool Nova_Mutex_method_lock_for(Nova_Mutex* m,
     /* Park atomically with mu release. */
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &m->mu);
+    /* [item 19 root 3] observe scope cancel on resume (see lock() fiber path):
+     * a still-linked waiter was woken without ownership — unlink it; a dequeued
+     * waiter either owns the lock (guard releases on unwind) or timed out. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&m->mu);
+            NovaMutexWaiter* it = m->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else m->head = w.next;
+                if (w.next) w.next->prev = w.prev; else m->tail = w.prev;
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&m->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed: either lock transferred (timed_out=false) or timer fired (timed_out=true). */
     return !w.timed_out;
 }
@@ -1299,6 +1346,26 @@ static inline Nova_ReadGuard* Nova_RwLock_method_read(Nova_RwLock* rw) {
         rw->reader_tail = &w;
         nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                      (void(*)(void*))nova_mutex_unlock, &rw->mu);
+        /* [item 19 root 3] cancel-aware resume (see Mutex lock): the wake path
+         * dequeues the waiter before granting, so a still-linked waiter was
+         * woken without a read grant — unlink and throw CANCEL. A dequeued
+         * waiter holds a read count; fall through so the guard below releases
+         * it on the later CANCEL unwind (throwing here would leak the count). */
+        {
+            NovaFiberQueue* _cs = nova_sync_cancel_scope();
+            if (_cs) {
+                nova_mutex_lock(&rw->mu);
+                NovaRwLockWaiter* it = rw->reader_head;
+                bool linked = false;
+                while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+                if (linked) {
+                    if (w.prev) w.prev->next = w.next; else rw->reader_head = w.next;
+                    if (w.next) w.next->prev = w.prev; else rw->reader_tail = w.prev;
+                }
+                nova_mutex_unlock(&rw->mu);
+                if (linked) nova_sync_throw_cancel(_cs);
+            }
+        }
     }
     Nova_ReadGuard* _g = (Nova_ReadGuard*)nova_alloc(sizeof(Nova_ReadGuard));
     _g->ptr = (nova_int)(uintptr_t)rw;
@@ -1352,6 +1419,23 @@ static inline nova_bool Nova_RwLock_method_read_for(Nova_RwLock* rw, void* timeo
     }
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &rw->mu);
+    /* [item 19 root 3] cancel-aware resume (see read() fiber path). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&rw->mu);
+            NovaRwLockWaiter* it = rw->reader_head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else rw->reader_head = w.next;
+                if (w.next) w.next->prev = w.prev; else rw->reader_tail = w.prev;
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&rw->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     return !w.timed_out;
 }
 
@@ -1403,6 +1487,25 @@ static inline Nova_WriteGuard* Nova_RwLock_method_write(Nova_RwLock* rw) {
         rw->writer_tail = &w;
         nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                      (void(*)(void*))nova_mutex_unlock, &rw->mu);
+        /* [item 19 root 3] cancel-aware resume (see read() fiber path): a
+         * still-linked waiter was woken without write ownership — unlink and
+         * throw; a dequeued waiter owns the write lock, fall through so the
+         * guard releases it on the later CANCEL unwind. */
+        {
+            NovaFiberQueue* _cs = nova_sync_cancel_scope();
+            if (_cs) {
+                nova_mutex_lock(&rw->mu);
+                NovaRwLockWaiter* it = rw->writer_head;
+                bool linked = false;
+                while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+                if (linked) {
+                    if (w.prev) w.prev->next = w.next; else rw->writer_head = w.next;
+                    if (w.next) w.next->prev = w.prev; else rw->writer_tail = w.prev;
+                }
+                nova_mutex_unlock(&rw->mu);
+                if (linked) nova_sync_throw_cancel(_cs);
+            }
+        }
     }
     Nova_WriteGuard* _g = (Nova_WriteGuard*)nova_alloc(sizeof(Nova_WriteGuard));
     _g->ptr = (nova_int)(uintptr_t)rw;
@@ -1460,6 +1563,23 @@ static inline nova_bool Nova_RwLock_method_write_for(Nova_RwLock* rw, void* time
     }
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &rw->mu);
+    /* [item 19 root 3] cancel-aware resume (see write() fiber path). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&rw->mu);
+            NovaRwLockWaiter* it = rw->writer_head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else rw->writer_head = w.next;
+                if (w.next) w.next->prev = w.prev; else rw->writer_tail = w.prev;
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&rw->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     if (w.timed_out) {
         /* Timer won: update write_waiting flag (may have become false). */
         nova_mutex_lock(&rw->mu);
@@ -1624,6 +1744,28 @@ static inline nova_unit Nova_ReentrantMutex_method_lock(Nova_ReentrantMutex* rm)
     rm->tail = &w;
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &rm->mu);
+    /* [item 19 root 3] observe scope cancel on resume (see Mutex lock fiber
+     * path): unlock() dequeues the waiter before transferring ownership, so a
+     * still-linked waiter was woken without ownership — unlink it; a dequeued
+     * waiter owns the lock (caller cleanup releases on CANCEL unwind). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&rm->mu);
+            NovaReMutexWaiter* it = rm->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else rm->head = w.next;
+                if (w.next) w.next->prev = w.prev; else rm->tail = w.prev;
+            }
+            nova_mutex_unlock(&rm->mu);
+            /* Throw only if still linked: a dequeued waiter owns the lock
+             * (grant raced the cancel) — return so caller cleanup releases it
+             * on the later CANCEL unwind instead of leaking ownership. */
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     return NOVA_UNIT;
 }
 
@@ -1714,6 +1856,23 @@ static inline nova_bool Nova_ReentrantMutex_method_lock_for(
     }
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &rm->mu);
+    /* [item 19 root 3] observe scope cancel on resume (see lock() fiber path). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&rm->mu);
+            NovaReMutexWaiter* it = rm->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else rm->head = w.next;
+                if (w.next) w.next->prev = w.prev; else rm->tail = w.prev;
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&rm->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     return !w.timed_out;
 }
 
@@ -1889,6 +2048,25 @@ static inline nova_unit Nova_WaitGroup_method_wait(Nova_WaitGroup* wg) {
     wg->tail = &w;
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &wg->mu);
+    /* [item 19 root 3] cancel-aware resume: done() detaches the whole waiter
+     * list before waking, so a still-linked waiter was woken by a scope-cancel
+     * bare wake (count never reached 0) — unlink and throw CANCEL. A detached
+     * waiter was released by done(); fall through and return normally. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&wg->mu);
+            NovaWGWaiter* it = wg->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else wg->head = w.next;
+                if (w.next) w.next->prev = w.prev; else wg->tail = w.prev;
+            }
+            nova_mutex_unlock(&wg->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     return NOVA_UNIT;
 }
 
@@ -1979,6 +2157,23 @@ static inline nova_bool Nova_Once_method_run(Nova_Once* o) {
     o->waiters = &w;
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &o->mu);
+    /* [item 19 root 3] cancel-aware resume: done() detaches the waiter list
+     * before waking, so a still-linked waiter was woken by a scope-cancel bare
+     * wake (state never reached DONE) — unlink and throw CANCEL. A detached
+     * waiter saw done(); fall through and return false. Singly-linked list:
+     * unlink via pointer-to-pointer (handles head and interior uniformly). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&o->mu);
+            NovaOnceWaiter** pp = &o->waiters;
+            bool linked = false;
+            while (*pp) { if (*pp == &w) { linked = true; break; } pp = &(*pp)->next; }
+            if (linked) *pp = w.next;
+            nova_mutex_unlock(&o->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Woken by done() — state is NOVA_ONCE_DONE. */
     return false;
 }
@@ -2117,6 +2312,19 @@ static inline nova_unit Nova_Once_method_call_once(Nova_Once* o, NovaClosBase* b
         o->waiters     = &_oc_w;
         nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                      (void(*)(void*))nova_mutex_unlock, &o->mu);
+        /* [item 19 root 3] cancel-aware resume (see Once.run fiber path). */
+        {
+            NovaFiberQueue* _cs = nova_sync_cancel_scope();
+            if (_cs) {
+                nova_mutex_lock(&o->mu);
+                NovaOnceWaiter** pp = &o->waiters;
+                bool linked = false;
+                while (*pp) { if (*pp == &_oc_w) { linked = true; break; } pp = &(*pp)->next; }
+                if (linked) *pp = _oc_w.next;
+                nova_mutex_unlock(&o->mu);
+                if (linked) nova_sync_throw_cancel(_cs);
+            }
+        }
         /* Woken by runner — check resulting state. */
         _st = __atomic_load_n(&o->state, __ATOMIC_ACQUIRE);
         if (_st == NOVA_ONCE_DONE) return NOVA_UNIT;

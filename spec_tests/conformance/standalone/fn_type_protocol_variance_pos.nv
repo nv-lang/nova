@@ -1,0 +1,97 @@
+// Registry 221.1 №1915 POSITIVE (parameter contravariance): a callee that
+// demands LESS than the fn-type slot guarantees is safe and stays accepted.
+// P1 into fn(P2) (P2 has one more method), ActEnv into fn(mut ActEnv).
+// The same file is the sound-direction control for the negative fixture.
+
+module standalone.fn_type_protocol_variance_pos
+
+type FnVarP1 protocol {
+    @one() -> int
+}
+
+type FnVarP2 protocol {
+    @one() -> int
+    @two() -> int
+}
+
+type FnVarActEnv protocol {
+    @read(key str) -> int
+    mut @write(key str, v int) -> ()
+}
+
+fn fn_var_takes_p2(f fn(FnVarP2) -> int) -> () {}
+
+fn fn_var_f_p1(x FnVarP1) -> int => x.one()
+
+fn fn_var_takes_mut(f fn(mut FnVarActEnv) -> int) -> () {}
+
+fn fn_var_f_read(x FnVarActEnv) -> int => x.read("a")
+
+
+type FnVarBase protocol {
+    @read(k str) -> int
+}
+
+type FnVarEmbedSlot protocol {
+    @read(k str) -> int
+    @one() -> int
+}
+
+type FnVarEmbedFound protocol {
+    use FnVarBase
+    @one() -> int
+}
+
+fn fn_var_takes_embed(f fn(FnVarEmbedSlot) -> int) -> () {}
+
+// CHECK-ONLY: the embed/deep/default bodies return 0 instead of calling the
+// inherited method; such a call hits a separate codegen ICE
+// (E_CODEGEN_TYPE_UNKNOWN, separate OPEN row). This pin proves the checker
+// accepts the contravariant slot, not end-to-end inherited dispatch.
+fn fn_var_f_embed(x FnVarEmbedFound) -> int => 0
+
+type FnVarDeepSlot protocol {
+    @one() -> int
+    @deep() -> int
+    @two() -> int
+}
+
+type FnVarDeep protocol {
+    @deep() -> int
+}
+
+type FnVarMid protocol {
+    use FnVarDeep
+    @one() -> int
+}
+
+type FnVarDeepFound protocol {
+    use FnVarMid
+    @two() -> int
+}
+
+fn fn_var_takes_deep(f fn(FnVarDeepSlot) -> int) -> () {}
+
+fn fn_var_f_deep(x FnVarDeepFound) -> int => 0
+
+type FnVarDefSlot protocol {
+    @one() -> int
+}
+
+type FnVarDefFound protocol {
+    @one() -> int
+    @opt() -> int => 0
+}
+
+fn fn_var_takes_def(f fn(FnVarDefSlot) -> int) -> () {}
+
+fn fn_var_f_def(x FnVarDefFound) -> int => 0
+
+test "fn-type protocol parameters: sound contravariant directions compile" {
+    fn_var_takes_p2(fn_var_f_p1)
+    fn_var_takes_mut(fn_var_f_read)
+    fn_var_takes_embed(fn_var_f_embed)
+    fn_var_takes_deep(fn_var_f_deep)
+    fn_var_takes_def(fn_var_f_def)
+    assert(true)
+}

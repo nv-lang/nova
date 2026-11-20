@@ -231,6 +231,7 @@ impl<'a> TypeCheckCtx<'a> {
                     value.span,
                 )),
                 Compat::CoerceConflict { msg } => faults.push((msg, value.span)),
+                Compat::FnDoor { msg } => faults.push((msg, value.span)),
                 Compat::RecordLit { faults: inner } => faults.extend(inner),
             }
         }
@@ -329,6 +330,7 @@ impl<'a> TypeCheckCtx<'a> {
                     value.span,
                 )),
                 Compat::CoerceConflict { msg } => errors.push(Diagnostic::new(msg, value.span)),
+                Compat::FnDoor { msg } => errors.push(Diagnostic::new(msg, value.span)),
                 Compat::RecordLit { faults } => {
                     errors.extend(faults.into_iter().map(|(m, s)| Diagnostic::new(m, s)))
                 }

@@ -1,0 +1,20 @@
+// EXPECT_COMPILE_ERROR E_FN_PROTO_SLOT_CONCRETE_DEMAND
+//
+// D497 item 4: the fn-type parameter SLOT is a protocol (PSlot), but the callee
+// (FOUND) demands a concrete nominal record type (RecBox). A protocol slot does
+// not guarantee nominal identity — there is no nominal subtyping (rejected.md:
+// `use Parent` is composition, not inheritance), so `fn(RecBox)` cannot fill a
+// `fn(PSlot)` slot even if RecBox happens to satisfy PSlot. The reverse
+// (protocol callee in a concrete slot) stays on the existing satisfaction path.
+module neg.fn_proto_slot_concrete_neg
+
+type PSlot protocol { @one() -> int }
+type RecBox { v int }
+
+fn takes(f fn(PSlot) -> int) -> () {}
+fn callee(x RecBox) -> int => x.v
+
+fn main() {
+    // nova:expect E_FN_PROTO_SLOT_CONCRETE_DEMAND -- concrete record RecBox demanded in protocol slot PSlot (D497 item 4)
+    takes(callee)
+}

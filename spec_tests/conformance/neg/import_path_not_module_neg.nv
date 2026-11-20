@@ -1,0 +1,11 @@
+// Registry 221.1 (129c) NEGATIVE: an absolute import name must be a module.
+// `std.os.proc` is a file path; proc.nv declares `module std.os`. The error
+// must be reported at the import line, not as unknown types inside std.
+
+// EXPECT_COMPILE_ERROR E_IMPORT_PATH_NOT_MODULE
+
+module neg.import_path_not_module_neg
+
+import std.os.proc  // nova:expect E_IMPORT_PATH_NOT_MODULE -- an absolute import name must be a declared module; the file module line wins
+
+fn main() {}

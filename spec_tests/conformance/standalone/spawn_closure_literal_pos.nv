@@ -1,0 +1,12 @@
+// EXPECT_STDOUT lit
+//
+// Registry 221.1 #2003: `spawn` of a zero-arg closure literal must INVOKE the
+// closure in the child fiber; before the fix the body was emitted as a value
+// and silently discarded (build/run rc0, no output).
+module standalone.spawn_closure_literal_pos
+
+fn main() Io -> () {
+    supervised {
+        spawn(|| println("lit"))
+    }
+}
