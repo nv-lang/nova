@@ -244,6 +244,25 @@ static inline nova_unit Nova_CountDownLatch_method_await(Nova_CountDownLatch* cd
     cdl->tail = &w;
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &cdl->mu);
+    /* [item 19 root 3] cancel-aware resume: _nova_cdl_wake_all detaches the
+     * waiter list before waking, so a still-linked waiter was woken by a
+     * scope-cancel bare wake (count never reached 0) — unlink and throw CANCEL.
+     * A detached waiter was released by count_down(); fall through and return. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&cdl->mu);
+            NovaCDLWaiter* it = cdl->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else cdl->head = w.next;
+                if (w.next) w.next->prev = w.prev; else cdl->tail = w.prev;
+            }
+            nova_mutex_unlock(&cdl->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed: count reached 0 — all waiters woken. */
     return NOVA_UNIT;
 }
@@ -346,6 +365,24 @@ static inline nova_bool Nova_CountDownLatch_method_await_for(Nova_CountDownLatch
     /* Park atomically with mu release. */
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &cdl->mu);
+    /* [item 19 root 3] cancel-aware resume (see await()). Nullify the timer
+     * handle under cdl->mu so a pending timer_cb becomes a no-op. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&cdl->mu);
+            NovaCDLWaiter* it = cdl->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else cdl->head = w.next;
+                if (w.next) w.next->prev = w.prev; else cdl->tail = w.prev;
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&cdl->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed: either count==0 (timed_out=false) or timer fired (timed_out=true). */
     return !w.timed_out;
 }

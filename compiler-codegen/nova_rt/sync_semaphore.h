@@ -177,6 +177,27 @@ static inline nova_unit Nova_Semaphore_method_acquire_n(Nova_Semaphore* s, nova_
      * Prevents lost-wakeup race (release_n cannot fire before park registered). */
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &s->mu);
+    /* [item 19 root 3] cancel-aware resume: _nova_sem_wake_waiters dequeues the
+     * waiter and deducts permits BEFORE waking, so a still-linked waiter was
+     * woken by a scope-cancel bare wake (no permit granted) — unlink and throw
+     * CANCEL. A dequeued waiter holds permits; fall through so the caller's
+     * Permit guard releases them on the later CANCEL unwind (throwing here
+     * would leak the permits). */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&s->mu);
+            NovaSemaphoreWaiter* it = s->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else s->head = w.next;
+                if (w.next) w.next->prev = w.prev; else s->tail = w.prev;
+            }
+            nova_mutex_unlock(&s->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed: permits already decremented by _nova_sem_wake_waiters. */
     return NOVA_UNIT;
 }
@@ -327,6 +348,24 @@ static inline nova_bool Nova_Semaphore_method_acquire_for(Nova_Semaphore* s,
     /* Park atomically with mu release. */
     nova_sched_park_with_unlock(_nova_active_scope, _nova_active_slot,
                                  (void(*)(void*))nova_mutex_unlock, &s->mu);
+    /* [item 19 root 3] cancel-aware resume (see acquire_n). Nullify the timer
+     * handle under s->mu so a pending timer_cb becomes a no-op. */
+    {
+        NovaFiberQueue* _cs = nova_sync_cancel_scope();
+        if (_cs) {
+            nova_mutex_lock(&s->mu);
+            NovaSemaphoreWaiter* it = s->head;
+            bool linked = false;
+            while (it) { if (it == &w) { linked = true; break; } it = it->next; }
+            if (linked) {
+                if (w.prev) w.prev->next = w.next; else s->head = w.next;
+                if (w.next) w.next->prev = w.prev; else s->tail = w.prev;
+                if (w.tlf_handle) w.tlf_handle->waiter = NULL;
+            }
+            nova_mutex_unlock(&s->mu);
+            if (linked) nova_sync_throw_cancel(_cs);
+        }
+    }
     /* Resumed: timed_out=false → permit acquired; timed_out=true → timeout. */
     return !w.timed_out;
 }
