@@ -3328,6 +3328,28 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
             if (_v >= 0) _ods_secs = _v;
         }
     }
+    /* [reg 2001, owner word 2026-11-20: the hub must exit without a pre-exit
+     * dump within 10s] The periodic orphan stop above waits `grace` (default
+     * 10s) from the last CHANGE of remote, while the watchdog dump fires at
+     * the same 10s boundary from drain entry — so a drain that cancels at the
+     * boundary dumps even though it then completes. Ask cancellable children
+     * to unwind early: once the exit drain has been stuck for 1s, deliver the
+     * orphan cancel immediately. Parked pipe/channel/sync children then
+     * unwind and pending_remote reaches 0 well inside the watchdog window.
+     * The 10s periodic stop stays as the fallback for late parks. This is a
+     * deliberate narrowing of the #791 exit grace for the orphan drain by the
+     * owner's word; NOVA_ORPHAN_EARLY_CANCEL_MS=0 restores the previous
+     * grace-only behaviour. */
+    int      _ods_early_ms = 1000;
+    {
+        const char* _ods_early_env = getenv("NOVA_ORPHAN_EARLY_CANCEL_MS");
+        if (_ods_early_env && _ods_early_env[0]) {
+            int _v = atoi(_ods_early_env);
+            if (_v >= 0) _ods_early_ms = _v;
+        }
+    }
+    uint64_t _ods_first = uv_hrtime();
+    bool     _ods_early_done = false;
     uint64_t _ods_mark = uv_hrtime();
     int      _ods_last = -1;
     {
@@ -3372,6 +3394,12 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
              * deliver_cancel is safe to repeat — stop_cbs are CAS/idempotent
              * guarded and spurious wakes are absorbed by park predicates. */
             if (_ods_is_orphan && _ods_secs > 0) {
+                if (!_ods_early_done && _ods_early_ms > 0
+                    && (uv_hrtime() - _ods_first) / 1000000ULL
+                       >= (uint64_t)_ods_early_ms) {
+                    _ods_early_done = true;
+                    nova_scope_deliver_cancel(q, NULL);
+                }
                 if (remote != _ods_last) {
                     _ods_last = remote;
                     _ods_mark = uv_hrtime();
