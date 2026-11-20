@@ -1,0 +1,16 @@
+// EXPECT_STDOUT inner
+// EXPECT_STDOUT 10
+//
+// Registry 221.1 #2004: same class through a while body.
+module standalone.nested_shadow_while_pos
+
+fn main() Io -> () {
+    ro outer = 10
+    mut go = true
+    while go {
+        ro outer = "inner"
+        println(outer)
+        go = false
+    }
+    println("${outer}")
+}

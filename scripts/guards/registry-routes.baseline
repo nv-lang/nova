@@ -17,6 +17,12 @@
 #   output). Fix line `fix/spawn-closure-2003` from 1a27968af; RED/GREEN on
 #   literal/variable/compute forms with block and Call controls. no_route /
 #   no_caveat unchanged.
+# 2026-11-20, reg 2004 fix wave (owner word: 0.1.7 blocker, separate wave):
+#   blockers 116 -> 117 — new row 2004 BLOCKS TAG 0.1.7: a different-type
+#   shadow in a nested block leaves the outer binding typed wrong after the
+#   brace (C CFAIL at the next use). Fix line `fix/nested-scope-type-2004`
+#   from 1a27968af; RED/GREEN on if/while/for/match shadows, block control.
+#   no_route/no_caveat unchanged.
 # 2026-11-19, integrator: blockers STAY 116 although reg 1994 (fn-type method
 #   signature compatibility at the protocol door) is CLOSED by measure in the
 #   0.1.7 rehearsal: D497 is ratified and implemented by d1a530cc7; the delegated
@@ -1692,7 +1698,7 @@ no_caveat=0
 # examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
 # mandatory release corpus, not a verdict on which side is right).
 # 2026-11-19: 1913 is now explicitly a tag blocker until the full call-through is accepted.
-blockers=118
+blockers=119
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed

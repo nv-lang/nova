@@ -1,0 +1,15 @@
+// EXPECT_STDOUT inner
+// EXPECT_STDOUT 10
+//
+// Registry 221.1 #2004 CONTROL: a bare block-expr already restored its scope
+// before this wave and must stay on the same path.
+module standalone.nested_shadow_block_control_pos
+
+fn main() Io -> () {
+    ro outer = 10
+    {
+        ro outer = "inner"
+        println(outer)
+    }
+    println("${outer}")
+}
