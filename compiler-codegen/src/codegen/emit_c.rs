@@ -36626,6 +36626,21 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         })
     }
 
+    /// reg 2003 follow-up: the spawn ctx's POINTER field for a by-pointer
+    /// capture (`_c->name`, type `T*`), usable as the shared mut box. `None`
+    /// for by-value captures and outside spawn bodies.
+    fn spawn_capture_box_ptr(&self, name: &str) -> Option<String> {
+        let caps = self.current_spawn_captures.as_ref()?;
+        if !caps.contains(name) { return None; }
+        let by_value = self.current_spawn_capture_by_value.as_ref()
+            .map(|s| s.contains(name)).unwrap_or(false);
+        if by_value {
+            None
+        } else {
+            Some(format!("_c->{}", Self::mangle_field_name(name)))
+        }
+    }
+
     /// Plan 217 (D-новый, гибрид C): thin wrapper around `emit_expr_inner`.
     /// Central choke-point for the auto-cleanup receiver-call disarm
     /// (`disarm_auto_cleanup_receiver_call`) — rather than hunting down
@@ -56727,7 +56742,14 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             }
         }
         let clo_scope = self.enter_capture_body(&params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), !free_vars.is_empty(), |bd, fr| crate::free_idents::collect_truly_free_idents(body, bd, fr)); // #1441
+        // The closure body is its own C function: its free vars resolve through
+        // `_env` (locals unpacked above), never through the enclosing spawn ctx
+        // (`_c->name`). Same clear/restore as the trailing-block body.
+        let prev_spawn_caps = std::mem::replace(&mut self.current_spawn_captures, None);
+        let prev_spawn_by_value = std::mem::replace(&mut self.current_spawn_capture_by_value, None);
         let body_val = self.emit_expr_in_place(body, &ret_c_ty)?;
+        self.current_spawn_captures = prev_spawn_caps;
+        self.current_spawn_capture_by_value = prev_spawn_by_value;
         if ret_c_ty == "nova_unit" {
             self.line(&format!("{};", body_val));
             self.line("return NOVA_UNIT;");
@@ -56841,11 +56863,12 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                 // Env stores the box pointer — safe even if closure escapes scope.
                 self.line(&format!("{}->{} = {};", env_tmp, field, box_var));
             } else {
-                // Immutable: snapshot value (no escape risk). RHS `name`
-                // stays the bare identifier — a value-read position, where
-                // an active outer capture-alias macro is supposed to (and
-                // correctly does) expand it to `_c->name`.
-                self.line(&format!("{}->{} = {};", env_tmp, field, Self::mangle_field_name(name)));
+                // Immutable: snapshot value (no escape risk). Inside a spawn
+                // body the value lives in the spawn ctx, not in a local of the
+                // fiber function; read it through `spawn_capture_access`.
+                let rhs = self.spawn_capture_access(name)
+                    .unwrap_or_else(|| Self::mangle_field_name(name));
+                self.line(&format!("{}->{} = {};", env_tmp, field, rhs));
             }
         }
         self.line(&format!("{}* {} = ({}*)nova_alloc(sizeof({}));", clos_struct, clos_tmp, clos_struct, clos_struct));

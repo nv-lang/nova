@@ -1,3 +1,10 @@
+# 2026-11-20, reg 2005 fix wave (owner word: fix the capture defect found
+#   while closing 2003): blockers 117 -> 118 — new row 2005 BLOCKS TAG 0.1.7:
+#   a closure literal capturing an outer local inside spawn fails C emission
+#   (undeclared `_c`/`base`; mut capture also undeclared and shares a copy
+#   instead of the caller's cell). Fix line `fix/spawn-closure-capture-2005`
+#   from 98755e005; RED/GREEN on immutable and mut captures. no_route /
+#   no_caveat unchanged.
 # 2026-11-20, reg 2003 fix wave (owner word: 0.1.7 blocker, separate wave):
 #   blockers 116 -> 117 — new row 2003 BLOCKS TAG 0.1.7: a zero-arg
 #   fn-value `spawn` body was silently not invoked (build/run rc0, no
@@ -1679,7 +1686,7 @@ no_caveat=0
 # examples as E_NOVAC_LANG citing D54/D406 -- an unresolved divergence in the
 # mandatory release corpus, not a verdict on which side is right).
 # 2026-11-19: 1913 is now explicitly a tag blocker until the full call-through is accepted.
-blockers=117
+blockers=118
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
