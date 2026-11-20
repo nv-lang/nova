@@ -4,6 +4,13 @@
 #   wave-C branch; this line files the row and records the route. Also fixes
 #   row 2003's route marker to the real branch name. no_route/no_caveat
 #   unchanged.
+# 2026-11-20, reg 2005 fix wave (owner word: fix the capture defect found
+#   while closing 2003): blockers 117 -> 118 — new row 2005 BLOCKS TAG 0.1.7:
+#   a closure literal capturing an outer local inside spawn fails C emission
+#   (undeclared `_c`/`base`; mut capture also undeclared and shares a copy
+#   instead of the caller's cell). Fix line `fix/spawn-closure-capture-2005`
+#   from 98755e005; RED/GREEN on immutable and mut captures. no_route /
+#   no_caveat unchanged.
 # 2026-11-20, reg 2003 fix wave (owner word: 0.1.7 blocker, separate wave):
 #   blockers 116 -> 117 — new row 2003 BLOCKS TAG 0.1.7: a zero-arg
 #   fn-value `spawn` body was silently not invoked (build/run rc0, no

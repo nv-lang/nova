@@ -1,10 +1,11 @@
-# 2026-11-20, reg 2003 (wave A, owner word): emit_c 68890 -> 68969 (+79).
-#   The non-Block spawn-body arm now lowers a zero-arg fn VALUE to an
-#   invocation: helper probing the checked signature (`resolved_types` with an
-#   AST fallback for literals) plus NovaClos dispatch. Emit-layer by necessity:
-#   the decision is how to CALL an already-typed value inside the fiber, not a
-#   checker fact. RED/GREEN on closure literal/variable/computed forms, with
-#   block and `spawn(f())` controls unchanged. `infer` did not grow.
+# 2026-11-20, reg 2003+2005 (waves A and C, owner word): emit_c 68890 ->
+#   68992 (+102). +79 from reg 2003 (non-Block spawn body lowered to an
+#   invocation; checked-signature probe + NovaClos dispatch) and +23 from reg
+#   2005 (lambda body isolation from spawn captures, env populate through
+#   spawn_capture_access, shared mut box). Emit-layer by necessity: both
+#   decisions are "how to call/capture an already-typed value inside the
+#   fiber", not checker facts. RED/GREEN on the 2003 forms and both capture
+#   forms; controls unchanged. `infer` did not grow.
 # 2026-09-18 (интегратор, окно nova-ff): emit_c 68091 -> 68117 (+26).
 #   СТОРОНА РОСТА — ОТ КАНАЛА, и я это называю прямо, а не прячу за словом
 #   «фикс». Строки добавлены фиксом №1155: алиас newtype над АНОНИМНЫМ
@@ -1331,7 +1332,7 @@
 #   бинаре байт-в-байт — не регрессия).
 # 2026-11-19: measured on the 0.1.7 line (028891fc5 base): emit_c=68890;
 # the line carries the 0.1.6 shell, the old 68857 baseline was stale here.
-lines=68969
+lines=68992
 infer=247
 infer=247
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):

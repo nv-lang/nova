@@ -1,0 +1,15 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #2003 capture follow-up: a mut capture of a zero-arg closure
+// spawned in a fiber must share the caller's storage (a copy would print 0).
+module standalone.spawn_closure_capture_mut_pos
+
+fn main() Io -> () {
+    mut n = 0
+    supervised {
+        spawn(|| {
+            n = 42
+        })
+    }
+    println("${n}")
+}

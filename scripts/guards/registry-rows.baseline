@@ -3,6 +3,10 @@
 #   1911, max 2003 -> 2005. Hole 2004 is lawful (row 2004, nested-shadow, is
 #   reserved on wave B); 2001-2002 remain lawful as recorded below. The fix
 #   itself lives on the stacked wave-C branch; this line only files the row.
+# 2026-11-20, reg 2005 fix wave (owner word: fix the capture defect found
+#   while closing 2003): row 2005 added; rows 1910 -> 1911, max 2003 -> 2005.
+#   Hole 2004 is lawful: row 2004 (nested-scope type-to-C, wave B) is reserved
+#   on its own line. 2001-2002 remain lawful as recorded below.
 # 2026-11-20, reg 2003 fix wave (owner word: 0.1.7 blocker, separate wave):
 #   row 2003 added; rows 1909 -> 1910, max 2000 -> 2003. Holes 2001-2002
 #   are lawful: row 2001 (item 19 full hub) and row 2002 (v9b) are reserved
