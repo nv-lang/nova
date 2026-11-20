@@ -525,7 +525,9 @@ fn Emitter mut @build_value(e Node, ty TyId) -> Option[str] {
         if @out.has_callee(e.id_of()) {
             match @out.callee_of(e.id_of()).target {
                 CalleeVariant(v) => return Some(@emit_variant_ctor(e, v, ty))
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => {}
+                // A local fn callee (door A) is recorded on free calls only,
+                // never a RecordCtor -- the construction shapes below own it.
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => {}
             }
         } else {
             // No callee: a record's construction, built below.

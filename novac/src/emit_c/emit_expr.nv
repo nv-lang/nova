@@ -428,7 +428,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     }
                     return
                 }
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
+                // A local fn callee (door A) is recorded on free CALLS
+                // only -- a field access never carries one.
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) =>
                     ice_at("novac/src/emit_c/emit_expr.nv:494", "emit: a field access resolved to a non-variant callee")
             }
         } else {
@@ -498,7 +500,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     // A file sum's variant: its maker, below.
                 }
                 @body.append("${@variant_maker(v, nt)}(")
-                @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr))
+                @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr), false)
                 @body.append(")")
                 return
             }
@@ -508,12 +510,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
             CalleeSynthDisplay(_) => ice_at(
                 "novac/src/emit_c/emit_expr.nv:570",
                 "emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
+            CalleeLocal(_) => ice_at(
+                "novac/src/emit_c/emit_expr.nv:575",
+                "emit: a method call resolved to a local fn callee -- door A records locals on free calls only; a method resolves by its receiver type's rows")
             CalleeEffectOp(op) => {
                 // `Os.arg_count()` (E.9 step 2): the shell's dispatcher, which
                 // runs the installed handler or the effect's default one --
                 // the handler is never looked up at the call site.
                 @body.append("${effect_op_dispatcher_c(op.eff, op.op)}(")
-                @emit_bound_args(kids, 3, false, e.id_of(), no_row())
+                @emit_bound_args(kids, 3, false, e.id_of(), no_row(), false)
                 @body.append(")")
                 return
             }
@@ -553,7 +558,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // recorded binding -- not a special case bolted onto the front. The
         // written arguments start at child 3 (receiver, dot, name).
         // A static method takes no receiver: its slots are its written arguments.
-        @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
+        @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row(), false)
         @body.append(if deref { "))" } else { ")" })
     } else if k == NodeKind.Call && @out.embed_row_at(e.id_of()) >= 0 {
         // `embed("path")` (D412): the checker noted the door's row; the blob is printed.
@@ -626,7 +631,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 }
                 if ctor {
                     @body.append("((${c_struct(@ctx, rt)}){")
-                    @emit_bound_args(kids, 1, false, e.id_of(), row)
+                    @emit_bound_args(kids, 1, false, e.id_of(), row, false)
                     @body.append("})")
                     return
                 } else {
@@ -644,6 +649,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 } else {
                     @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
                 }
+            }
+            // A LOCAL fn callee (door A): the call goes through the value's
+            // NovaClosBase pair, never a symbol -- its own door prints the
+            // whole expression (emit_local_call.nv).
+            CalleeLocal(t) => {
+                @emit_local_call(e, kids, t)
+                return
             }
             // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
             // its representation at runtime -- zero cost, D-newtype. So the
@@ -677,7 +689,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // named argument may stand anywhere among the named ones, and an omitted
         // one is filled from the declaration. Which argument means which
         // parameter is the CHECKER's decision, and this reads it.
-        @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr))
+        @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr), false)
         @body.append(")")
     } else if k == NodeKind.Index {
         // Two checked forms, one door (D470 section 5: an index is the call

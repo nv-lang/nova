@@ -47,6 +47,9 @@ fn Emitter @diverges(e Node) -> bool {
     if !@out.has_callee(e.id_of()) { return false }
     match @out.callee_of(e.id_of()).target {
         CalleeFn(row) => is_never_ty(@ctx.tys, @ctx.fns.rows[raw_row(row)].ret_id)
+        // A LOCAL fn callee (door A): the term's result is the fact, the
+        // same question the row's return answers above.
+        CalleeLocal(t) => is_never_ty(@ctx.tys, @ctx.tys.arg(t, @ctx.tys.arg_count(t) - 1))
         // A construction returns its type; a display returns unit. An effect
         // operation's own `-> never` is not a channel fact here (it has no
         // callable row): registry 221.1 #1818 names that edge.
@@ -94,6 +97,9 @@ fn Emitter mut @emit_diverging_stmt(e Node) -> () {
 fn Emitter @arg_slot_ty(id NodeId, s int) -> TyId {
     match @out.callee_of(id).target {
         CalleeVariant(v) => @ctx.payload_types[@ctx.variant_rows[raw_vrow(v)].payload_off + s]
+        // A LOCAL fn callee (door A): the term's own parameter is the slot's
+        // type -- the same truth the row gives a declared callee.
+        CalleeLocal(t) => @ctx.tys.arg(t, s)
         CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => ice_at(
             "novac/src/emit_c/emit_never.nv:97",
             "emit_c: a diverging argument outside a variant's payload passed the checker -- its slot has no type here")

@@ -137,7 +137,9 @@ export fn call_returns_recv_ref(ctx Ctx, out CheckOut, e Node) -> bool {
     if e.kind_of() != NodeKind.MethodCall || !out.has_callee(e.id_of()) { return false }
     match out.callee_of(e.id_of()).target {
         CalleeFn(r) => row_returns_recv_ref(ctx, r)
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+        // A local fn callee (door A) is recorded on free calls only; a type
+        // carries no receiver-return fact.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
     }
 }
 

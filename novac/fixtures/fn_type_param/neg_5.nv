@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT type arguments on a local function value
+// EXPECT_COMPILE_ERROR
+module fn_type_param.neg_5
+
+// A local fn value's signature is the one it was BOUND with: it declares no
+// type parameters of its own, so type arguments at the call are a permanent
+// language error, not a generic instantiation.
+// nova:expect E_NOVAC_LANG
+fn apply(f fn(int) -> int, x int) -> int => f[int](x)
+
+fn main() -> () {
+    println(apply(|x| x, 1))
+}

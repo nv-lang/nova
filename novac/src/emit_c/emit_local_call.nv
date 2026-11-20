@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: the shell's own supervised-handler call (emit_supervised.nv,
+// `@emit_sup_outer_fail`): the ABI cast names the handler's OWN signature,
+// env stands as argument zero, the fn pointer is read off NovaClosBase.
+// NOT taken: the payload cast of the timeout arm (a local call's arguments
+// are typed values, not a void* payload).
+// Role: the emission of a call through a LOCAL fn value (plan 274.11 door
+//       A, D43/D22) -- one expression, the supervised cast's shape.
+// Used by: emit_expr.nv (the Call arm's CalleeLocal decision).
+// Guarded by: the fn_type_param fixtures (pos_2 runs the call),
+//             check-novac-file-size.py.
+// novac/src/emit_c/emit_local_call.nv -- calling a local of function type.
+//
+// The checker recorded `CalleeLocal(TyId)`: the fn term is the whole
+// signature. The value is the binding's NovaClosBase* (sem/mangle.nv's TkFn
+// layout), so the call reads its fn and env pair and casts the pointer to
+// the term's OWN C signature -- result last arg, parameters before it, env
+// first -- exactly the shape the supervised wave measured off the shell.
+// The callee's C name prints TWICE (fn read, env read): the binding read
+// rides the CALL node (the callee itself is a bare Ident leaf), and a
+// binding's name is a pure read with no effect to duplicate.
+
+module novac.emit_c
+
+import ../tree.{Node}
+import ../diag.{ice_at}
+import ../sem.{c_type, no_row}
+import ../types.{TyId}
+
+/// The indirect call: cast, fn read, env, then the written arguments in
+/// slot order through the one bound-args door (a local has no defaults).
+fn Emitter mut @emit_local_call(e Node, kids []Node, t TyId) -> () {
+    ro binding = @out.binding_read(e.id_of())
+    if binding < 0 {
+        ice_at("novac/src/emit_c/emit_local_call.nv:36",
+            "emit_c: a local fn call without its binding read -- door A records the read on the call node")
+    } else {
+        // The read is the door's invariant; the name is what it prints by.
+    }
+    ro callee = @lo.ir.binding_c_name(binding)
+    ro arity = @ctx.tys.arg_count(t) - 1
+    ro ret = @ctx.tys.arg(t, arity)
+    @body.append("((")
+    @body.append("${c_type(@ctx, ret)}(*)(void*")
+    for i in 0..arity {
+        @body.append(", ${c_type(@ctx, @ctx.tys.arg(t, i))}")
+    }
+    @body.append("))(((NovaClosBase*)(")
+    @body.append(callee)
+    @body.append("))->fn))(((NovaClosBase*)(")
+    @body.append(callee)
+    @body.append("))->env")
+    @emit_bound_args(kids, 1, false, e.id_of(), no_row(), true)
+    @body.append(")")
+}

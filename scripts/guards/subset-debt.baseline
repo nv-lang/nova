@@ -519,6 +519,17 @@ refusals=145
 # RHS reads the previous binding and native runtime/self-build fixtures pass.
 # undated=52 and undated_by_door=68 stay: the removed refusal was dated (274.7 B9).
 refusals=150
+# 2026-11-21, plan 274.11 door A (D43/D22): 150 -> 151. FN_PARAM_MSG is removed --
+#   a concrete fn-typed parameter BINDS and the body calls through the value
+#   (check/local_call.nv, fixtures fn_type_param/pos_1..2, run proofs 10 and 7/16/9).
+#   Two DATED refusals enter at the local-call door: a named argument to a fn value
+#   (E4, pinned fn_type_param/neg_4) and a non-concrete fn signature (E2-b2,
+#   defensive -- measured unreachable from a complete program today: generic bodies
+#   are typed only at concrete instances and door B refuses the literal first;
+#   gen2/gen3 probes 2026-11-20). The door's three permanent language errors
+#   (non-fn callee, arity, type arguments) go through LangError, not subset debt.
+#   undated=52 and undated_by_door=68 stay: both new refusals are dated.
+refusals=151
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT the local function value's signature takes
+// EXPECT_COMPILE_ERROR
+module fn_type_param.neg_3
+
+// The arity of a local call is the VALUE's signature, counted positionally:
+// two arguments against a one-parameter fn type is a permanent language
+// error. The refusal lands on the callee leaf, in the declaration's body.
+// nova:expect E_NOVAC_LANG
+fn apply(f fn(int) -> int, x int) -> int => f(x, x)
+
+fn main() -> () {
+    println(apply(|x| x, 1))
+}

@@ -36,7 +36,9 @@ fn Emitter mut @emit_name(e Node) -> () {
                         ro ty = @out.type_if_known(e.id_of())
                         if @is_option_inst(ty) { @emit_option_none(ty) } else { @body.append("${c_maker(@ctx, v)}()") }
                     }
-                    CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
+                    // A local fn callee (door A) is recorded on the CALL
+                    // node, never a bare name -- this match cannot see one.
+                    CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) =>
                         ice_at("novac/src/emit_c/emit_names.nv", "emit: a bare name resolved to a non-variant callee")
                 }
             } else {

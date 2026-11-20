@@ -5,10 +5,13 @@
 //
 // The wave opened ONE position -- D22 context 1, the fn-typed call parameter
 // -- and the three probes of the wave's step 1b moved from the position bar
-// to three DIFFERENT doors that are not this wave's: a fn-typed parameter in
-// a DECLARATION, the shell's missing Result instance, and the expression
-// form of `spawn`. These tests pin the achieved front so a later change
-// cannot roll it back silently, and pin each next door by the text that now
+// to three DIFFERENT doors: a fn-typed parameter in a DECLARATION, the
+// shell's missing Result instance, and the expression form of `spawn`.
+// Door A (2026-11-20, plan 274.11, D43/D22) OPENED the declaration door:
+// its front pin converts to a CLEAN check, and the local-call door's own
+// refusals are pinned below. The Result instance and `spawn` remain the
+// next doors. These tests pin the achieved front so a later change cannot
+// roll it back silently, and pin each next door by the text that now
 // answers first, so the next wave starts from a measured place.
 //
 // Donor: none -- the door is D22's own rule; the test shape is check_test.nv's.
@@ -67,11 +70,14 @@ test "closure-arg: a non-fn parameter refuses by name, not by position" {
     assert(m.contains("is not a function type"), m)
 }
 
-test "closure-arg: a fn-typed parameter passes the position bar (front moves to the declaration door)" {
+test "closure-arg: a fn-typed parameter binds and the body calls through it (door A, D43/D22)" {
+    // The declaration door's front pin CONVERTED: before door A this very
+    // text was refused ("a parameter of function type", measured RED on the
+    // base seed 2026-11-20). Now the parameter binds, the literal takes its
+    // signature from door B, and `f(v)` calls through the value -- clean.
     ro src = "module m\n\nfn apply(f fn(int) -> int, v int) -> int => f(v)\n\nfn g() -> int => apply(|x| x * 2, 5)\n"
     ro m = cam_first_msg(src)
-    assert(m.contains("a parameter of function type"), m)
-    assert(!m.contains("|params|"), m)
+    assert(m == "", m)
 }
 
 test "closure-arg: `spawn(|| ...)` moves past the position bar to the spawn-expression door" {
@@ -110,4 +116,49 @@ test "closure-arg: a fn-typed call parameter gives the literal its signature (E.
     ro bad = "module m\n\nfn g() -> () {\n    ro r = 5.twice(|x, y| x)\n    println(r)\n}\n"
     ro mb = cam_msgs_handed(bad, handed)
     assert(mb.contains("parameter(s) here"), mb)
+}
+
+
+test "local-call: a non-fn local is a language error, the binding itself is clean" {
+    ro src = "module m\n\nfn g() -> () {\n    ro x = 5\n    println(x(1))\n}\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("is bound to a non-function type"), m)
+    // NON-VACUITY CONTROL: the same binding WITHOUT the call is clean -- the
+    // refusal is the call door's, not the binding's.
+    ro ok = "module m\n\nfn g() -> () {\n    ro x = 5\n    println(x)\n}\n"
+    assert(cam_first_msg(ok) == "", cam_first_msg(ok))
+}
+
+test "local-call: arity is the value's signature, counted positionally" {
+    ro src = "module m\n\nfn apply(f fn(int) -> int, x int) -> int => f(x, x)\n\nfn g() -> int => apply(|x| x, 1)\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("writes 2 argument(s)"), m)
+    assert(m.contains("signature takes 1"), m)
+}
+
+test "local-call: a named argument has no parameter name to bind (E4)" {
+    ro src = "module m\n\nfn apply(f fn(int) -> int, x int) -> int => f(x: x)\n\nfn g() -> int => apply(|x| x, 1)\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("a named argument to a local function value"), m)
+    assert(m.contains("(E4)"), m)
+}
+
+test "local-call: type arguments on a bound signature are a language error" {
+    ro src = "module m\n\nfn apply(f fn(int) -> int, x int) -> int => f[int](x)\n\nfn g() -> int => apply(|x| x, 1)\n"
+    ro m = cam_first_msg(src)
+    assert(m.contains("type arguments on a local function value"), m)
+}
+
+test "local-call: a fn-typed parameter SHADOWS a declared namesake (the scope outranks the registry)" {
+    // The declared `f` takes TWO ints; the local `f` is fn(int) -> int. A
+    // one-argument call `f(v)` is clean ONLY if the local outranks the
+    // registry -- the registry row would refuse the arity. That is the
+    // discriminating control: the same call against the declaration alone
+    // (no local) must refuse.
+    ro src = "module m\n\nfn f(a int, b int) -> int => a + b\n\nfn g(f fn(int) -> int, v int) -> int => f(v)\n"
+    ro m = cam_first_msg(src)
+    assert(m == "", m)
+    ro bare = "module m\n\nfn f(a int, b int) -> int => a + b\n\nfn g(v int) -> int => f(v)\n"
+    ro mb = cam_first_msg(bare)
+    assert(mb != "", mb)
 }

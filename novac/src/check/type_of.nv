@@ -233,8 +233,10 @@ fn fluent_receiver(e Node, ctx Ctx, chan CheckOut) -> Option[Node] {
             }
         }
         // A variant, a construction, a synthesized display and an effect
-        // operation hand out a fresh value, never the receiver.
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => None
+        // operation hand out a fresh value, never the receiver. A LOCAL fn
+        // callee (door A) is recorded on free calls only, never a method --
+        // and a value it returns is fresh, never the receiver.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => None
     }
 }
 
@@ -250,8 +252,10 @@ fn call_hands_ro_view(e Node, ctx Ctx, chan CheckOut) -> bool {
     match chan.callee_of(e.id_of()).target {
         CalleeFn(row) => ctx.fns.rows[raw_row(row)].ret_ro
         // A variant, a construction, a synthesized display and an effect
-        // operation hand out a fresh value: no view.
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+        // operation hand out a fresh value: no view. A LOCAL fn callee's
+        // (door A) result is a fresh value too -- its type carries no `ro`
+        // return mode, that is a declaration's fact.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
     }
 }
 
@@ -856,6 +860,16 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // `assert(..)` and `panic(..)` are no row's calls either: the intrinsic
         // door noted the call and recorded its type (`()`, `never`).
         if chan.contract_of(e.id_of()).is_some() { return chan.type_of(e.id_of()) }
+        // A LOCAL fn callee (door A, check/local_call.nv): the name may be
+        // absent from every registry, or shadow a row of it -- the fn term's
+        // RESULT is the type, read from the channel's decision before any
+        // name lookup, never re-resolved.
+        if chan.has_callee(e.id_of()) {
+            match chan.callee_of(e.id_of()).local_fn_type() {
+                Some(t) => { return ctx.tys.arg(t, ctx.tys.arg_count(t) - 1) }
+                None => {}
+            }
+        }
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
         ro cname = call_callee_text(branch_children(e))
@@ -934,6 +948,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 CalleeEffectOp(_) => ice_at(
                     "novac/src/check/type_of.nv:919",
                     "check: a type in call position recorded as an effect operation -- an operation's head is an EFFECT, never a type in call position")
+                // A LOCAL fn callee (door A) whose name shadows a declared
+                // type: the early read above answers first, so this arm is
+                // the same truth kept explicit -- the call goes through the
+                // value, and its type is the fn term's result.
+                CalleeLocal(t) => ctx.tys.arg(t, ctx.tys.arg_count(t) - 1)
             }
         }
         // Nothing recorded: the form was refused (a record's positional
@@ -953,6 +972,6 @@ fn decided_variant(chan CheckOut, e Node, first VariantRow) -> VariantRow {
     if !chan.has_callee(e.id_of()) { return first }
     match chan.callee_of(e.id_of()).target {
         CalleeVariant(v) => v
-        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => first
+        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => first
     }
 }

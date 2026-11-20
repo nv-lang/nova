@@ -1,0 +1,115 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: rustc `FnCtxt::check_expr_call` resolving a callee to a LOCAL of
+// fn type and calling through the value; Go `types2` calling a variable of
+// signature type. NOT taken: overload sets on a local (a value has ONE
+// signature, the type it was bound with).
+// Role: layer 7's free-call door, the LOCAL step -- a bound name of function
+//       type is called through its value (D43/D22, plan 274.11 door A),
+//       never through a symbol of the registry.
+// Used by: check/calls.nv (`@type_free_call`, before the registry lookup).
+// Guarded by: check-novac-file-size.py (calls.nv stood at the 1000-line cap,
+//             so the door lives in its own co-equal file), the fn_type_param
+//             fixtures, check/closure_arg_test.nv.
+// novac/src/check/local_call.nv -- calling a local of function type.
+//
+// A fn-typed PARAMETER binds since door A (params.nv admits the KwFn shape);
+// this file is the other half -- the call `f(v)` inside the body. The
+// decision is recorded as `CalleeLocal(TyId)`: the TYPE is the whole fact
+// (the same row-less shape CalleeCtor and CalleeSynthDisplay carry), and the
+// emitter calls through the value's NovaClosBase fn/env pair, never by a
+// symbol. A local can hold a fn type only as a parameter today: a fn NAME
+// in value position is refused upstream ("unknown name", measured on the
+// base 2026-11-20, da-alias probe), so no alias of a declared function can
+// reach this door wearing a value it does not have.
+
+module novac.check
+
+import ../tree.{Node, NodeKind}
+import ../builtins.{TypeKind}
+import ../sem.{is_arg_node, arg_expr_of, identity_slots, generic_names, CalleeTarget}
+import ../types.{no_ty}
+
+/// The LOCAL step of the free-call door: `true` when the name is a bound
+/// local and this door answered for the call (a decision or a refusal by
+/// name), `false` when the name is not bound and the registry step owns it.
+///
+/// A bound local OUTRANKS the registry: the scope is what the body reads,
+/// and a parameter named like a declared function shadows it (the Name
+/// rule's own order, exprs.nv). A bound local that is NOT a function is
+/// refused by name -- calling an int is a language error, not subset debt.
+fn Checker mut @type_local_call(e Node, kids []Node, cname str) -> bool {
+    // SILENT-OK: not a local -- the registry step of the free-call door owns this name.
+    if !@scope.is_bound(cname) { return false }
+    ro t = @scope.type_of_name(cname)
+    if @ctx.tys.kind_of(t) != TypeKind.TkFn {
+        @reject_first_leaf_of(kids,
+            "this value is not a function -- `${cname}` is bound to a non-function type, and only a function value is callable")
+        return true
+    }
+    // The signature must be CONCRETE: a slot still naming a type parameter
+    // has no instance to call through. The declaration door BINDS a generic
+    // fn-typed parameter (door A); this names the boundary at the call, for
+    // a value that reached the scope non-concrete. Measured 2026-11-20
+    // (gen2/gen3 probes): a generic body is typed only at a concrete
+    // instance, and door B refuses the literal at a generic fn parameter
+    // first -- so no complete program reaches this refusal today; it stands
+    // as the dated boundary for the wave that types generic bodies.
+    if !@ctx.tys.is_concrete(t) {
+        @report_first_leaf_of(kids,
+            "outside the subset: this local function value's signature still names unbound type parameters -- a generic fn value is not compiled yet (E2-b2)")
+        return true
+    }
+    if generic_names(kids).len() > 0 {
+        @reject_first_leaf_of(kids,
+            "type arguments on a local function value: its signature is the one it was bound with, and declares no parameters of its own")
+        return true
+    }
+    ro arity = @ctx.tys.arg_count(t) - 1
+    // The arguments are counted and judged POSITIONALLY: a fn type carries
+    // no parameter names, so a named argument has nothing to bind to.
+    mut written = 0
+    for c in kids {
+        if !is_arg_node(c) { continue }
+        if c.kind_of() == NodeKind.NamedArg {
+            @report_first_leaf_of(kids,
+                "outside the subset: a named argument to a local function value -- its type carries no parameter names to bind (E4)")
+            return true
+        }
+        written += 1
+    }
+    if written != arity {
+        @reject_first_leaf_of(kids,
+            "this call writes ${written} argument(s) -- the local function value's signature takes ${arity}")
+        return true
+    }
+    // ARGUMENTS FIRST, the free-call door's own order: each argument meets
+    // its parameter's type as its expectation, so a closure literal at a
+    // fn-typed parameter of the VALUE takes its signature from door B.
+    ro before = @out.len()
+    ro saved_expect = @value_expect
+    @value_expect = no_ty()
+    mut argi = 0
+    for c in kids {
+        if !is_arg_node(c) { continue }
+        @type_arg_expecting(arg_expr_of(c), @ctx.tys.arg(t, argi))
+        argi += 1
+    }
+    @value_expect = saved_expect
+    if @out.len() > before {
+        // SILENT-OK: an argument refused itself; the cause was said once, at
+        // the argument. The call is answered for -- the registry step must
+        // not speak a second cause over it.
+        return true
+    }
+    @record_arg_types(kids, 1)
+    // The callee is READ like any other name: the binding read the emitter
+    // prints by, and the capture note a closure body's read needs. The read
+    // rides the CALL node -- the parser leaves the callee a bare Ident LEAF
+    // (parse/expr.nv:852), which carries no node identity of its own.
+    @chan.record_binding_read(e.id_of(), @scope.owner, @scope.row_of(cname))
+    @note_if_capture(e, cname)
+    @chan.record_callee(e.id_of(), CalleeTarget.CalleeLocal(t), []TyId.new(), identity_slots(arity))
+    @record(e, @ctx.tys.arg(t, arity))
+    // SILENT-OK: the decision and the binding read are recorded above; this only answers the door.
+    return true
+}

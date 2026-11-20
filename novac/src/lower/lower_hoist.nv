@@ -332,7 +332,9 @@ fn Lowerer mut @spill_value_receiver(call Node) -> () {
     if call.kind_of() != NodeKind.MethodCall || !@out.has_callee(call.id_of()) { return }
     ro row = match @out.callee_of(call.id_of()).target {
         CalleeFn(r) => r
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => no_row()
+        // A local fn callee (door A) is recorded on free calls only -- this
+        // door spills a METHOD's receiver, and a local has no row anyway.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => no_row()
     }
     if raw_row(row) < 0 || !@ctx.in_program(row) || !row_recv_by_pointer(@ctx, row) { return }
     ro recv = branch_children(call)[0]
