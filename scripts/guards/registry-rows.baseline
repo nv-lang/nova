@@ -1934,11 +1934,15 @@
 #   2007 (oracle accepts two-op handler lambda, D31 forbids), 2008 (smoke-cache
 #   stale emission false-red, priority K3 per neighbour 1998), 2009 (interrupt
 #   not lexed/typed, horizon E2). rows 1902->1905, max 2004->2009.
-rows=1905
+# 2026-11-20, E.11 remainder (wave/e11-closure-args): reg 2010 added from the
+#   integrator assignment (closure-arg vs composite fn-parameter, @param_expect
+#   returns no_ty; carriers L078-L083 as class evidence). rows 1905->1906.
+rows=1906
 
 # 2026-11-20, integrator-assigned reg 2002/2004: maximum is 2004.
 # 2026-11-20, integrator-assigned reg 2007/2008/2009: maximum is 2009.
-max=2009
+# 2026-11-20, integrator-assigned reg 2010 (E.11 closure-arg door): maximum is 2010.
+max=2010
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.

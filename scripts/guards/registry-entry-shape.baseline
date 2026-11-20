@@ -53,8 +53,10 @@
 #   предикатом рядом: две копии одного правила расходятся на первой же правке,
 #   и база начала бы держать не тот набор, который страж считает.
 #   ЗАМЕР ЗАСЕВА: неоформленных 343, строк реестра разобрано 1142.
+# 2026-11-20, E.11 reg 2010 (wave/e11-closure-args): one COMPLETE row added
+#   (K2 + KLASS + caveat + Status + route), incomplete unchanged. scanned 1142->1143.
 incomplete_entries=343
-scanned_rows=1142
+scanned_rows=1143
 incomplete_row=1
 incomplete_row=3
 incomplete_row=4

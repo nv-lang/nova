@@ -18,7 +18,7 @@ module novac.check
 import ../source.{SourceText}
 import ../lex.{lex}
 import ../parse.{parse}
-import ../sem.{collect, InteropTable}
+import ../sem.{collect, InteropTable, branch_children}
 import ../tree.{Node}
 
 /// The FIRST diagnostic's message for `text`, or "" when the text is clean.
@@ -28,6 +28,30 @@ fn cam_first_msg(text str) -> str {
     ro (diags, _) = check(tree, src, collect(tree, []Node.new(), InteropTable.new()))
     if diags.len() == 0 { return "" }
     diags[0].message
+}
+
+/// ALL diagnostic messages for `text` against declarations HANDED in `handed`,
+/// joined by newlines (a bodyless signature is harvested as a method row). The
+/// join lets a control find the core's arity refusal even when the declaration
+/// door speaks first -- the argument door's reach is proven by the core message
+/// appearing ANYWHERE, not only at diags[0].
+fn cam_msgs_handed(text str, handed str) -> str {
+    ro src = SourceText { text }
+    ro tree = parse(lex(text))
+    ro htree = parse(lex(handed))
+    mut decls = []Node.new()
+    for c in branch_children(htree) {
+        match c {
+            Branch { .. } => { decls.push(c) }
+            Leaf(_) => {}
+        }
+    }
+    ro (diags, _) = check(tree, src, collect(tree, decls, InteropTable.new()))
+    mut acc = ""
+    for d in diags {
+        acc = "${acc}${d.message}\n"
+    }
+    acc
 }
 
 test "closure-arg: a literal outside every door keeps the position bar" {
@@ -55,4 +79,35 @@ test "closure-arg: `spawn(|| ...)` moves past the position bar to the spawn-expr
     ro m = cam_first_msg(src)
     assert(m.contains("`spawn` is not a callable novac knows in an expression"), m)
     assert(!m.contains("|params|"), m)
+}
+
+test "closure-arg: a fn-typed call parameter gives the literal its signature (E.11 door B, reg 2010)" {
+    // A bodyless method on the builtin int is HANDED and harvested as a method
+    // row: @twice(f fn(int) -> int). The receiver 5 fixes the parameter type,
+    // the literal |x| x * 2 carries fn(int) -> int. Before door B the argument
+    // expectation returned no_ty for the composite fn parameter (is_concrete
+    // false) and the literal was refused by name: "takes its signature from the
+    // call's parameter ... is not a function type". Door B (@type_closure_arg)
+    // substitutes the receiver bindings into the parameter, types the body and
+    // records the concrete signature -- the refusal is left behind.
+    //
+    // The GENERIC inference (U read back from the body, F=R bound before the
+    // total substitution types.nv:501) is the same door's TkParam-result arm;
+    // it is pinned on the corpus by the optmap fixture (std Option.map, binary
+    // port1 CLOSURE_ARG_NEEDS_FN_MSG -> port4 declaration door), because a
+    // freshly-handed GENERIC declaration meets the E2-b2 generic-decl bar in
+    // this harness before the argument door -- a separate subset front.
+    ro handed = "module hand\n\nfn int @twice(f fn(int) -> int) -> int\n"
+    ro src = "module m\n\nfn g() -> () {\n    ro r = 5.twice(|x| x * 2)\n    println(r)\n}\n"
+    ro m = cam_msgs_handed(src, handed)
+    assert(!m.contains("takes its signature from the call's parameter"), m)
+    assert(!m.contains("is compiled only where its signature is given by the context"), m)
+    // NON-VACUITY CONTROL: a wrong-arity literal at the SAME fn parameter must
+    // reach the core's arity door ("takes 1 parameter(s) here ... writes 2").
+    // That message is spoken ONLY by @type_closure_core, which door B calls
+    // after admitting the literal -- so its presence proves the argument door
+    // actually typed this closure, not that the probe died earlier unresolved.
+    ro bad = "module m\n\nfn g() -> () {\n    ro r = 5.twice(|x, y| x)\n    println(r)\n}\n"
+    ro mb = cam_msgs_handed(bad, handed)
+    assert(mb.contains("parameter(s) here"), mb)
 }
