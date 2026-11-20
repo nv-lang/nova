@@ -264,6 +264,7 @@ fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
     ro ok = branch_children(op)
     ro body = ok[ok.len() - 1]
     @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(op)
     @cur_lit = n
     @lower_op_body(body, ret)
     @lo.ir.end_body()
@@ -337,6 +338,7 @@ fn Emitter mut @emit_hlam_op_fn(n int, lit Node, sig EffectOpSig, has_caps bool)
     ro body = kids[kids.len() - 1]
     ro ret = subst_type(@ctx, sig.ret_id, @hlam_args(lit))
     @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(lit)
     @cur_lit = n
     @lower_op_body(body, ret)
     @lo.ir.end_body()
@@ -390,11 +392,13 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
 /// context: the name is no local there, and the context slot already holds
 /// the pointer (for `mut`) or the copy.
 fn Emitter @capture_source(c CaptureRow) -> str {
+    ro binding = @out.capture_binding(c)
     for oc in @owner_captures() {
-        if oc.bind_row == c.bind_row { return "_novac_cap->${c_ident(c.name)}" }
+        if @out.capture_binding(oc) == binding { return "_novac_cap->${c_ident(oc.name)}" }
     }
-    if c.by_ref { return "&${c_ident(c.name)}" }
-    c_ident(c.name)
+    ro name = @lo.ir.binding_c_name(binding)
+    if c.by_ref { return "&${name}" }
+    name
 }
 
 /// The captures of the closure whose function is being emitted -- a literal's

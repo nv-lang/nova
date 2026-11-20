@@ -26,7 +26,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 import ../diag.{ice_at}
 import ../sem.{param_name_at, param_type_at, param_mode_at, leaf_kind, leaf_text, raw_row, FnRow}
-import ../sem.{generic_head_cnt, shape_of, is_value_record}
+import ../sem.{generic_head_cnt, shape_of, is_value_record, branch_children}
 import ../types.{no_ty, is_ty}
 
 /// One parameter of a declaration: bind its name to its type in the scope.
@@ -40,17 +40,18 @@ import ../types.{no_ty, is_ty}
 /// `pk[1]` read the MODE as the name and the name as the type the moment a
 /// parameter is written `fn take(mut v int)`, and the failure wore a lie for a
 /// face: `int` refused as a type novac does not know.
-fn Checker mut @bind_param(pk []Node, row FnRow, slot int) -> bool {
+fn Checker mut @bind_param(pm Node, row FnRow, slot int) -> bool {
+    ro pk = branch_children(pm)
     match param_type_at(pk) {
         // No type declared: a recovery shape the parse already refused, and
         // there is nothing here to look up.
         None => true
-        Some(tat) => @bind_typed_param(pk, tat, row, slot)
+        Some(tat) => @bind_typed_param(pm, pk, tat, row, slot)
     }
 }
 
 /// The same parameter, with the slot of its type already located.
-fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> bool {
+fn Checker mut @bind_typed_param(pm Node, pk []Node, tat int, row FnRow, slot int) -> bool {
     // `param_type_at` locates the type AFTER the name, so a located type means
     // the name was located too; its absence here is a broken invariant.
     ro nat = param_name_at(pk) ?? ice_at(
@@ -168,6 +169,6 @@ fn Checker mut @bind_typed_param(pk []Node, tat int, row FnRow, slot int) -> boo
     // The parameter's own MODE goes into the scope: inside the body `a` of
     // `fn f(mut a Acc)` IS a mut place, and passing it on must select the mut
     // overload (P14 rule 2).
-    @scope.bind(leaf_text(nnode), pt, param_mode_at(pk))
+    @bind_source(pm.id_of(), leaf_text(nnode), pt, param_mode_at(pk))
     true
 }

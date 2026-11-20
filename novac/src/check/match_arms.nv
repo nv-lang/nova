@@ -167,6 +167,13 @@ fn Checker mut @type_match_stmt(m Node) -> () {
 /// guards through the same door (`@type_arm` owns them), the BODY walked as
 /// a block or a statement, and the answer deliberately not asked.
 fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
+    ro lexical = @scope.lexical
+    @scope.lexical = binding_scope_of(arm)
+    @type_arm_stmt_in_scope(arm, scr_t)
+    @scope.lexical = lexical
+}
+
+fn Checker mut @type_arm_stmt_in_scope(arm Node, scr_t TyId) -> () {
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
     if ak.len() < 1 {
@@ -477,7 +484,7 @@ fn Checker mut @bind_name_pattern(pat Node, ty TyId, ak []Node, dmode ParamMode,
         None => dmode
     }
     @record(pattern_name_node(pat), ty)
-    @scope.bind(nm, ty, mode)
+    @bind_source(pat.id_of(), nm, ty, mode)
     true
 }
 
@@ -679,7 +686,7 @@ fn Checker mut @bind_field_shorthand(f Node, ft TyId, ak []Node, dmode ParamMode
         None => dmode
     }
     @record(patfield_name_node(f), ft)
-    @scope.bind(patfield_name(f), ft, mode)
+    @bind_source(f.id_of(), patfield_name(f), ft, mode)
     true
 }
 
@@ -751,6 +758,14 @@ fn Checker mut @type_arm_block_value(b Node) -> TyId => @type_block_value(b, fal
 /// first arm's. None means the arm reported a diagnostic and has no type to
 /// offer.
 fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
+    ro lexical = @scope.lexical
+    @scope.lexical = binding_scope_of(arm)
+    ro result = @type_arm_in_scope(arm, scr_t)
+    @scope.lexical = lexical
+    result
+}
+
+fn Checker mut @type_arm_in_scope(arm Node, scr_t TyId) -> Option[TyId] {
     // An arm's binders live in the arm and nowhere else.
     ro mark = @scope.mark()
     ro ak = branch_children(arm)

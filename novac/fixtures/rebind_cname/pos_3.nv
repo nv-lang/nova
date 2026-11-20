@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_3
+
+fn main() -> () {
+    ro value = 1
+    ro first = effect Random { u64() -> u64 => value as u64 }
+    ro value = 2
+    ro second = effect Random { u64() -> u64 => value as u64 }
+    with Random = first {
+        ro old = Random.u64()
+        assert(old == 1 as u64)
+        println(old)
+    }
+    with Random = second {
+        ro current = Random.u64()
+        assert(current == 2 as u64)
+        println(current)
+    }
+}

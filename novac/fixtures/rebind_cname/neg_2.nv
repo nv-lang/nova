@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT is not consumed before the end of its scope
+// EXPECT_COMPILE_ERROR
+module rebind_cname.neg_2
+
+type Tx consume { id int }
+
+fn Tx consume @commit() -> () { println(@id) }
+
+fn main() -> () {
+    // nova:expect E_NOVAC_LANG
+    consume current = Tx { id: 1 }
+    consume current = Tx { id: 2 }
+    current.commit()
+}

@@ -63,6 +63,7 @@ fn Emitter mut @emit_module_value_inits() -> () {
         ro ty = @out.type_of(cd.init[0].id_of())
         @body.append("static ${c_type(@ctx, ty)} ${module_value_init_c_name(cd.name)}(void) {\n")
         @lo.ir = FnBuilder.new(ty)
+        @lo.seed_source_bindings(cd.init[0])
         @lo.lower_place(cd.init[0], @lo.ir.ret_place())
         @lo.ir.end_body()
         @print_body(@lo.ir.finish())

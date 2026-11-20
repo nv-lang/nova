@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT that captures no `mut` binding
+// EXPECT_COMPILE_ERROR
+module rebind_cname.neg_3
+
+fn main() -> () {
+    mut shared = 3
+    // nova:expect E_NOVAC_SUBSET
+    ro held = effect Random { u64() -> u64 => shared as u64 }
+    with Random = held { println(Random.u64()) }
+}

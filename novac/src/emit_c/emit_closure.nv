@@ -187,6 +187,7 @@ fn Emitter mut @emit_closure_fn(n int) -> () {
     }
     ro saved = @lo.ir
     @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(lit)
     @cur_closure = n
     match body.kind_of() {
         NodeKind.Block => @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))

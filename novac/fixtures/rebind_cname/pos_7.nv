@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_7
+
+ro ANSWER = if true { ro x = 3; x } else { 0 }
+ro NEXT = if true { ro x = ANSWER; ro x = x + 1; x } else { 0 }
+
+fn main() -> () {
+    assert(ANSWER == 3)
+    assert(NEXT == 4)
+    println(ANSWER)
+    println(NEXT)
+}

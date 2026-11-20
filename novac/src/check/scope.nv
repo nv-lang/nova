@@ -18,6 +18,7 @@ module novac.check
 import ../names.{NameTable, NamespaceId}
 import ../sem.{ParamMode}
 import ../types.{TyId, no_ty, is_ty}
+import ../tree.{NodeId, no_node}
 
 // ---- the type lattice: the checker's own, not the registry's --------------
 //
@@ -37,6 +38,9 @@ import ../types.{TyId, no_ty, is_ty}
 /// binding — one record, they only travel together. Shadowing = last bind
 /// wins (the door's put overwrites).
 type Scope {
+    owner NodeId
+    lexical NodeId
+    binding_site NodeId
     names NameTable /// name -> row in `binds` (NsLocals namespace).
     binds []Binding /// What each binding row holds: its type AND how it was bound.
     /// The undo trail: for every binding made, the row its name pointed at
@@ -58,6 +62,7 @@ type Scope {
 /// Empty scope with the NsLocals namespace.
 fn Scope.new() -> Scope =>
     {
+        owner: no_node(), lexical: no_node(), binding_site: no_node(),
         names: NameTable.new(NamespaceId.NsLocals),
         binds: []Binding.new(),
         shadowed: []int.new(),

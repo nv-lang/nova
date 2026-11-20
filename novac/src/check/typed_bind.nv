@@ -60,5 +60,5 @@ fn Checker mut @type_declared_bind(kids []Node, dt TyId) -> () {
     } else {
         // The initializer's own door recorded it: one writer per node.
     }
-    @scope.bind(vname, dt, bind_mode_at(kids))
+    @bind_source(@scope.binding_site, vname, dt, bind_mode_at(kids))
 }

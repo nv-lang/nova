@@ -251,6 +251,13 @@ fn Checker mut @type_fn(f Node) -> () {
         Some(at) => leaf_text(kids[at])
     }
     @scope = Scope.new()
+    @scope.owner = f.id_of()
+    @scope.lexical = f.id_of()
+    for c in kids {
+        if c.kind_of() == NodeKind.Block || c.kind_of() == NodeKind.FnExprBody {
+            @scope.lexical = c.id_of()
+        }
+    }
     // An instance's row is HANDED (`inst_row`): its body may come from another
     // tree, whose node ids the file's table does not know.
     ro row = match if raw_row(@inst_row) >= 0 { Some(@inst_row) } else { decl_fn_row(f, @ctx) } {
@@ -301,7 +308,7 @@ fn Checker mut @type_fn(f Node) -> () {
         if rfd.has_recv && rfd.param_cnt > 0 {
             // CONCRETE under an instance's substitution: `Vec[T]` is `Vec[Pt]`
             // in the instance of a handed `Vec[T] @len` (E.10 step 4c).
-            @scope.bind(RECV_BINDING, @concrete(@ctx.fns.params[rfd.param_off].type_id),
+            @bind_source(f.id_of(), RECV_BINDING, @concrete(@ctx.fns.params[rfd.param_off].type_id),
                         @ctx.fns.params[rfd.param_off].mode)
         } else {
             // A free function: no receiver to bind.
@@ -311,7 +318,7 @@ fn Checker mut @type_fn(f Node) -> () {
             if c.kind_of() != NodeKind.Param { continue }
             ro at = slot
             slot += 1
-            if @bind_param(branch_children(c), row, at) {
+            if @bind_param(c, row, at) {
                 // Bound, or a shape this walk does not judge: either way the
                 // next parameter is the next question.
             } else {
@@ -423,6 +430,8 @@ fn Checker mut @type_body(b Node) -> () {
 /// Statements of a block, in order.
 fn Checker mut @type_block(b Node) -> () {
     ro mark = @scope.mark()
+    ro lexical = @scope.lexical
+    @scope.lexical = b.id_of()
     ro kids = branch_children(b)
     // The tail call of a value-returning fn body is an EXPRESSION, not a
     // statement (274.5 wave B4): typed through the expression walk, which
@@ -620,6 +629,7 @@ fn Checker mut @type_block(b Node) -> () {
         i += 1
     }
     @scope.release(mark)
+    @scope.lexical = lexical
 }
 
 /// A LOOP BODY's statements, with the loop counted in BOTH books the type pass

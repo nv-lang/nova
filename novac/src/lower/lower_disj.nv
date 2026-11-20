@@ -17,7 +17,7 @@
 
 module novac.lower
 
-import ../tree.{Node}
+import ../tree.{Node, raw_node}
 import ../types.{TyId, is_ty}
 import ../sem.{pattern_shape, pattern_head_text, pattern_subpatterns}
 import ../sem.{pattern_fields, patfield_sub, patfield_name, pattern_name_node, patfield_name_node}
@@ -63,7 +63,7 @@ fn Lowerer mut @lower_disj_bind(pat Node, ty TyId, base Local, pre []str) -> () 
     if names.len() == 0 { return }
     for i in 0..names.len() {
         if !contains_name(pre, names[i]) {
-            @ir.declare_zeroed(@ir.named(btys[i], names[i]))
+            @ir.declare_zeroed(@named_pattern_binding(pat, btys[i], names[i]))
         } else {
             // An enclosing disjunction declared it; this one only writes it.
         }
@@ -97,7 +97,7 @@ fn Lowerer mut @lower_disj_tests(pat Node, ty TyId, base Local, pre []str, mut o
     }
     for i in 0..names.len() {
         if !contains_name(pre, names[i]) {
-            @ir.declare_zeroed(@ir.named(btys[i], names[i]))
+            @ir.declare_zeroed(@named_pattern_binding(pat, btys[i], names[i]))
         } else {
             // An enclosing disjunction declared it; this one only writes it.
         }
@@ -229,18 +229,34 @@ fn Lowerer @disj_binders(pat Node, mut names []str, mut btys []TyId) -> () {
 
 /// The local a binder writes: the one a disjunction declared above (`pre`
 /// names it), or a fresh binding declared by its first assignment.
-fn Lowerer mut @binder_local(t TyId, nm str, pre []str) -> Local {
-    if contains_name(pre, nm) { return @ir.named_declared(t, nm) }
-    @ir.named(t, nm)
+fn Lowerer mut @binder_local(site Node, t TyId, nm str, pre []str) -> Local {
+    if contains_name(pre, nm) {
+        ro id = @source_binding(site, nm, false)
+        ro binding = @out.binding_def(id)
+        ro local = @ir.named_declared(t, nm, raw_node(binding.scope))
+        @remember_source_bindings(site, nm, local, false)
+        return local
+    }
+    @named_binding(site, t, nm)
 }
 
 /// A binding of the author's name whose declaration is ALREADY printed -- by a
 /// disjunction's `declare_zeroed` above it -- so its assignments are bare: the
 /// same C variable, written by the alternative that held.
-fn FnBuilder mut @named_declared(ty TyId, name str) -> Local {
-    ro l = @named(ty, name)
-    ro d = @locals[raw_local(l)]
-    @locals[raw_local(l)] = LocalDecl { ty: d.ty, kind: d.kind, name: d.name, decl_at: DeclAt.Zeroed }
+fn FnBuilder mut @named_declared(ty TyId, name str, scope int) -> Local {
+    mut at = -1
+    for i in 0..@locals.len() {
+        if @source_names[i] == name && @binding_scopes[i] == scope && @locals[i].decl_at == DeclAt.Zeroed {
+            at = i
+        }
+    }
+    assert(at >= 0, "lower: a disjunction assignment has no declared source binding")
+    ro declared = @locals[at]
+    ro l = @local(ty, LocalKind.Binding, declared.name)
+    ro i = raw_local(l)
+    @source_names[i] = name
+    @binding_scopes[i] = scope
+    @locals[i] = LocalDecl { ty, kind: LocalKind.Binding, name: declared.name, decl_at: DeclAt.Zeroed }
     l
 }
 
@@ -270,7 +286,7 @@ fn Lowerer mut @lower_variant_record_bind(pat Node, vrow VariantRow, base Local,
             // is tested like a positional payload (registries 1534, 1542).
             Some(sub) => @lower_sub(sub, ft, base, SubRead.ReadPayload(vrow, at), pre, opened)
             None => {
-                ro l = @binder_local(@out.type_of(patfield_name_node(f).id_of()), patfield_name(f), pre)
+                ro l = @binder_local(f, @out.type_of(patfield_name_node(f).id_of()), patfield_name(f), pre)
                 @ir.take_field(l, base, vrow, at)
             }
         }

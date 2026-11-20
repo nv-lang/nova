@@ -51,15 +51,10 @@ type Checker {
     chan CheckOut /// THE channel this run publishes: what the checker decided (sem.CheckOut)
     inactive_fn_nodes []NodeId /// inactive function/attribute nodes: syntax is read, semantic and subset checks are skipped
     scope Scope /// locals of the function body being typed; reset per function
-    /// One-entry table reused by the self-initializer check (274.3/F28). It is
-    /// a FIELD and not a local because the lookup door must not build anything
-    /// (P18/P14): a table allocated per binding turns an O(1) question into an
-    /// allocation on the hot path of every `ro`/`mut` in the file.
-    self_probe NameTable
     /// Top-level names already seen in THIS file (#811). sem cannot report --
     /// it holds no diagnostics -- and it silently keeps the FIRST declaration
     /// of a repeated name, so the second one has to be refused here or not at
-    /// all. One table per run, the same shape `self_probe` is.
+    /// all. One table per run.
     seen_decls NameTable
     /// The instance's substitution: `substs[i]` is the concrete type standing
     /// in type-parameter slot `i`. EMPTY for an ordinary run over a file, and

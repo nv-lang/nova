@@ -211,6 +211,46 @@ test "a named local keeps its source name; a temporary is named by its own index
     assert(f.locals[raw_local(n)].ty == TyId(5))
 }
 
+test "same-scope names are unique without changing nested names or temporary indices" {
+    mut b = FnBuilder.new(TyId(3))
+    b.reserve_source_name("count__novac_rebind2")
+    ro first = b.named(TyId(5), "count", scope: 1)
+    ro second = b.named(TyId(5), "count", scope: 1)
+    ro nested = b.named(TyId(5), "count", scope: 2)
+    ro temp = b.temp(TyId(5))
+    assert(b.decl_of(first).name == "count")
+    assert(b.decl_of(second).name == "count__novac_rebind2_1")
+    assert(b.decl_of(nested).name == "count")
+    assert(raw_local(temp) == 4)
+    assert(b.decl_of(temp).name == "_novac_l4")
+}
+
+test "parameter identities and binding identities survive in the finished body" {
+    mut b = FnBuilder.new(TyId(3))
+    b.reserve_source_parameter(40, 1, "input", "input")
+    ro rebound = b.named(TyId(5), "input", scope: 1)
+    ro temp = b.temp(TyId(5))
+    b.remember_source_binding(41, rebound)
+    b.end_body()
+    ro f = b.finish()
+    assert(f.binding_c_name(40) == "input")
+    assert(f.binding_c_name(41) == "input__novac_rebind1")
+    assert(raw_local(temp) == 2)
+    assert(f.locals[raw_local(temp)].name == "_novac_l2")
+}
+
+test "disjunction assignments retain the declared name and local allocation order" {
+    mut b = FnBuilder.new(TyId(3))
+    ro declared = b.named(TyId(5), "value", scope: 1)
+    b.declare_zeroed(declared)
+    ro alternative = b.named_declared(TyId(5), "value", 1)
+    ro rebound = b.named(TyId(5), "value", scope: 1)
+    assert(raw_local(alternative) == 2)
+    assert(b.decl_of(alternative).name == "value")
+    assert(b.decl_of(alternative).decl_at == DeclAt.Zeroed)
+    assert(b.decl_of(rebound).name == "value__novac_rebind3")
+}
+
 test "each local carries its role: the return place, a binding, a temporary" {
     mut b = FnBuilder.new(TyId(3))
     ro n = b.named(TyId(5), "count")

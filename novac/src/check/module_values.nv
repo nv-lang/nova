@@ -105,7 +105,12 @@ fn Checker mut @type_module_value_at(row int) -> () {
     // old silence.
     @value_expect = @written_const_type(cd.decl)
     if cd.init.len() > 0 {
+        ro saved_scope = @scope
+        @scope = Scope.new()
+        @scope.owner = cd.init[0].id_of()
+        @scope.lexical = cd.init[0].id_of()
         @type_module_value(cd.init[0])
+        @scope = saved_scope
     } else {
         // No initializer: the parser's own refusal named it.
     }

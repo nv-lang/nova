@@ -515,7 +515,10 @@ refusals=145
 #   boundaries -- supervised-value no-tail, split-body early return, split-body break/continue
 #   (all naming the plan-274.11 E4 horizon) and the closure-literal arity (D22) -- replace silent
 #   miscompiles; each has a check-path negative in novac/src/pipeline/supervised_value_test.nv.
-refusals=151
+# 2026-11-20, D347 V9a+V9b (reg 2002): 151 -> 150. SELF_INIT_MSG is removed;
+# RHS reads the previous binding and native runtime/self-build fixtures pass.
+# undated=52 and undated_by_door=68 stay: the removed refusal was dated (274.7 B9).
+refusals=150
 # ТРЕТЬЕ ЧИСЛО — БЕССРОЧНЫЕ ПО ДВЕРИ (волна 274.7 В11-б, засев 2026-09-14, окно 274).
 #
 # Два числа выше мерят НАПИСАНИЕ текста отказа, а у предмета есть машинный признак:

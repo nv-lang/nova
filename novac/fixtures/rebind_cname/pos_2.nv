@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_2
+
+fn main() -> () {
+    ro value = 10
+    if true {
+        ro value = "inner"
+        assert(value == "inner")
+        println(value)
+        ro value = "rebound"
+        assert(value == "rebound")
+        println(value)
+    }
+    assert(value == 10)
+    println(value)
+
+    for i in 0..2 {
+        ro value = i
+        ro value = value + 1
+        assert(value == i + 1)
+        println(value)
+    }
+    assert(value == 10)
+    println(value)
+}

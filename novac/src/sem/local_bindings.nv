@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module novac.sem
+
+import ../tree.{NodeId, raw_node, is_node}
+
+export type BindingDef value {
+    owner NodeId
+    site NodeId
+    scope NodeId
+    name str
+}
+
+export type BindingAlias value {
+    owner NodeId
+    row int
+    identity int
+}
+
+export fn CheckOut mut @record_binding(owner NodeId, site NodeId, scope NodeId, row int, name str) -> int
+    requires is_node(owner) && raw_node(owner) < @types.len(), "sem: channel binding owner outside this file's id space"
+    requires is_node(site) && raw_node(site) < @types.len(), "sem: channel binding site outside this file's id space"
+    requires is_node(scope) && raw_node(scope) < @types.len(), "sem: channel binding scope outside this file's id space"
+    requires row >= 0, "sem: channel binding write with no scope row"
+{
+    ro at = @binding_of(owner, row)
+    if at >= 0 {
+        ro prev = @binding_defs[at]
+        assert(prev.site == site && prev.scope == scope && prev.name == name,
+            "sem: a binding was recorded twice with different metadata")
+        return at
+    }
+    mut identity = -1
+    for i in 0..@binding_defs.len() {
+        ro binding = @binding_defs[i]
+        if binding.owner == owner && binding.site == site && binding.scope == scope && binding.name == name {
+            identity = i
+            break
+        }
+    }
+    if identity < 0 {
+        identity = @binding_defs.len()
+        @binding_defs.push(BindingDef { owner, site, scope, name })
+    }
+    @binding_aliases.push(BindingAlias { owner, row, identity })
+    identity
+}
+
+#realtime nogc
+export fn CheckOut @binding_of(owner NodeId, row int) -> int {
+    for binding in @binding_aliases {
+        if binding.owner == owner && binding.row == row { return binding.identity }
+    }
+    -1
+}
+
+export fn CheckOut mut @record_binding_read(read NodeId, owner NodeId, row int) -> ()
+    requires is_node(read) && raw_node(read) < @binding_at.len(), "sem: channel binding read outside this file's id space"
+{
+    ro at = @binding_of(owner, row)
+    assert(at >= 0, "sem: binding read has no exported definition -- a hole in the channel")
+    ro prev = @binding_at[raw_node(read)]
+    assert(prev < 0 || prev == at, "sem: a binding read was resolved twice to different definitions")
+    @binding_at[raw_node(read)] = at
+}
+
+#realtime nogc
+export fn CheckOut @binding_read(id NodeId) -> int {
+    if !is_node(id) || raw_node(id) >= @binding_at.len() { return -1 }
+    @binding_at[raw_node(id)]
+}
+
+#realtime nogc
+export fn CheckOut @binding_def(id int) -> BindingDef
+    requires id >= 0 && id < @binding_defs.len(), "sem: channel binding definition outside its pool"
+{
+    @binding_defs[id]
+}

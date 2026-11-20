@@ -224,7 +224,7 @@ fn Lowerer mut @lower_pattern_tests(pat Node, ty TyId, base Local, pre []str, mu
         Bind => {
             ro nm = pattern_head_text(pat)
             if is_vrow(variant_in_sum(@ctx, ty, nm) ?? no_vrow()) { return }
-            ro l = @binder_local(@out.type_of(pattern_name_node(pat).id_of()), nm, pre)
+            ro l = @binder_local(pat, @out.type_of(pattern_name_node(pat).id_of()), nm, pre)
             @ir.copy(l, base)
         }
         Variant => {
@@ -281,7 +281,7 @@ fn Lowerer mut @lower_pattern_tests(pat Node, ty TyId, base Local, pre []str, mu
                 match patfield_sub(f) {
                     Some(sub) => @lower_sub(sub, ft, base, SubRead.ReadProj(Projection.Field(fname)), pre, opened)
                     None => {
-                        ro l = @binder_local(@out.type_of(patfield_name_node(f).id_of()), fname, pre)
+                        ro l = @binder_local(f, @out.type_of(patfield_name_node(f).id_of()), fname, pre)
                         @ir.read(l, base, Projection.Field(fname))
                     }
                 }
@@ -373,7 +373,7 @@ fn Lowerer mut @lower_sub(sub Node, ty TyId, base Local, rd SubRead, pre []str, 
     match @sub_bind_shape(sub) {
         SubNone => {}
         SubName => {
-            ro l = @binder_local(@out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
+            ro l = @binder_local(sub, @out.type_of(pattern_name_node(sub).id_of()), pattern_head_text(sub), pre)
             @read_sub(l, base, rd)
         }
         SubNested => {

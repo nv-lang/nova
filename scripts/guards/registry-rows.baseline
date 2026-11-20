@@ -1929,9 +1929,16 @@
 #   operand, oracle ordering, oracle E7301 -- OPEN).
 # 2026-11-14, the K3 hunt lands with the wave merge: rows 1980-1982
 #   (split-exit coalesce refusals FIXED same-merge; deadline-as-delta and timeout-expr ice OPEN).
-rows=1900
+# 2026-11-20, V9a+V9b: reg 2002 and 2004 added from integrator assignments.
+# 2026-11-20, V9a+V9b: three inherited №TBD rows numbered by the integrator:
+#   2007 (oracle accepts two-op handler lambda, D31 forbids), 2008 (smoke-cache
+#   stale emission false-red, priority K3 per neighbour 1998), 2009 (interrupt
+#   not lexed/typed, horizon E2). rows 1902->1905, max 2004->2009.
+rows=1905
 
-max=1998
+# 2026-11-20, integrator-assigned reg 2002/2004: maximum is 2004.
+# 2026-11-20, integrator-assigned reg 2007/2008/2009: maximum is 2009.
+max=2009
 # 2026-10-07, task #23, merge of origin/main dda48b543 (tasks #18 and #24 in): rows 1710 (main) + 20
 #   (#23: 1772-1776, 1778-1781, 1783-1791, 1793, 1794) = 1730, max 1794; 1764-1767, 1771, 1777 (#18)
 #   and 1782 (#24) have their rows now and leave gaps=; 1792 is another window's and stays.
@@ -2495,7 +2502,14 @@ stale_gaps=0
 # arrive from main. The three new findings (map-literal root, live backtick
 # slots, tag empty-args typing) wait for the integrator's numbers as №TBD
 # rows and are invisible to the numbered-row count.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839,1841-1849,1851-1855,1873,1890-1891,1991-1997
+# 2026-11-20, integrator reserve on other lines: 1999/2000 rehearsal,
+# 2001 item19, 2003 Oracle closure-spawn; registry union occurs at integration.
+# 2026-11-20, integrator letter on V9a+V9b numbering: gaps= must also declare
+# 2005 (Oracle wave C capture-spawn, row lives on integrate/spawn-closure-capture-2005,
+# not on the Carina branch) and 2006 (integrator reserve for channel fn-payload
+# mono-emission, filed at the 0.1.7 merge). 2007/2008/2009 carry rows here and
+# are NOT gaps; 2004 carries its row and is not a gap.
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839,1841-1849,1851-1855,1873,1890-1891,1991-1997,1999-2001,2003,2005,2006
 # 2026-10-09, task #50: row 1870 added (number from the integrator); 1869 is task #43's row, not in this branch -> gaps=; rows 1775->1776, max 1868->1870.
 # 2026-10-08, task #50: row 1868 added (number from the integrator); 1867 is another task's number, not in this branch -> gaps=. rows 1774->1775, max 1866->1868.
 # 2026-10-08, task #46 merging main d69bb9250 (task #47 in: 1831 closed, row 1864): main 1770 + rows 1857, 1860, 1867 = 1773, max 1864 -> 1867; 1857 and 1860 leave gaps= (their rows land here), 1864 has its row, 1858-1859, 1862-1863 and 1865-1866 stay.

@@ -24,7 +24,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_n
 import ../diag.{ice_at}
 import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
-import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
+import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
 import ../sem.{c_ident}
 import ../sem.{int_literal_c_text, literal_digits, char_literal_code, interp_slices}
@@ -32,8 +32,8 @@ import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record, slice_shape_of, is_value_sum, is_payload_free_sum, row_recv_by_pointer}
 import ../sem.{row_returns_recv_pointer}
-import ../builtins.{EQUAL_METHOD, bool_c_literal, RECV_C_NAME, VEC_INDEX_METHOD, PANIC_FN}
-import ../builtins.{is_bool_literal, is_true_literal, is_print_fn}
+import ../builtins.{EQUAL_METHOD, RECV_C_NAME, VEC_INDEX_METHOD, PANIC_FN}
+import ../builtins.{is_print_fn}
 import ../types.{TyId, is_ty}
 import ../sem.{prim_row_of, is_int_prim}
 import ../sem.{is_const_int_expr}
@@ -369,71 +369,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         }
         @body.append(rtmp)
     } else if k == NodeKind.Name {
-        // A NAME WITHOUT AN IDENTITY is a handed function's `true` / `false`
-        // default, rebuilt without one by harvest (registry 1576): the channel
-        // knows nothing of it, and asking it by id would index with -1.
-        if !is_node(e.id_of()) {
-            ro bname = expr_leaf_name(e)
-            if is_bool_literal(bname) {
-                @body.append(bool_c_literal(is_true_literal(bname)))
-                return
-            }
-            ice_at(
-                "novac/src/emit_c/emit_expr.nv:381",
-                "emit_c: a name without an identity that is no bool literal (a handed default)")
-        } else {
-            // A name of this file's tree: the channel answers below.
-        }
-        // A CAPTURE (E.9 step 3): a binding of the scope a handler literal
-        // was written in, read from one of its op bodies -- through the op
-        // function's context, as the checker recorded it.
-        match @out.capture_at(e.id_of()) {
-            Some(c) => {
-                @emit_capture_read(c)
-                return
-            }
-            None => {
-                // An ordinary name: a constant, a variant value or a local, below.
-            }
-        }
-        // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
-        // C symbol of its own, and WHICH constant this is came from the
-        // channel -- the emitter resolves no names (274.4 rule E).
-        match @out.const_of(e.id_of()) {
-            Some(row) => @emit_const_read(row)
-            None => {
-                if @out.has_callee(e.id_of()) {
-                    // A payload-less variant as a value (the variant-value
-                    // wave): the checker resolved the bare name to its
-                    // variant row; the maker is the oracle's own spelling.
-                    match @out.callee_of(e.id_of()).target {
-                        CalleeVariant(v) => {
-                            // An Option instance (`None`, wave W4) is the
-                            // shell's compound literal; a file sum's variant
-                            // is its maker.
-                            ro nt = @out.type_if_known(e.id_of())
-                            if @is_option_inst(nt) {
-                                @emit_option_none(nt)
-                            } else {
-                                @body.append("${c_maker(@ctx, v)}()")
-                            }
-                        }
-                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
-                            ice_at(
-                                "novac/src/emit_c/emit_expr.nv:422",
-                                "emit: a bare name resolved to a non-variant callee")
-                    }
-                } else {
-                    // Not a constant: an ordinary name, and `nova_bool` IS C
-                    // `bool`, so the literals are the C keywords -- the same
-                    // shape the oracle emits. A bool literal is a C keyword by
-                    // its spelling, not a name: the door (`c_ident`, which
-                    // escapes C23 `true`/`false`) must not see it.
-                    ro nm = expr_leaf_name(e)
-                    @body.append(if is_bool_literal(nm) { nm } else { c_ident(nm) })
-                }
-            }
-        }
+        @emit_name(e)
     } else if k == NodeKind.InterpStr {
         ro itmp2 = @lit_tmp[raw_node(e.id_of())]
         if itmp2 == "" {

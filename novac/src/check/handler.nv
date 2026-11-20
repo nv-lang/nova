@@ -165,6 +165,13 @@ fn Checker mut @report_if_ret_ref_undeclared(okids []Node) -> bool {
 /// the tail-value rule behave EXACTLY as in a fn body -- one return
 /// discipline, not a handler-flavoured copy.
 fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
+    ro lexical = @scope.lexical
+    @scope.lexical = binding_scope_of(op)
+    @type_handler_op_in_scope(op, eff_name, schema)
+    @scope.lexical = lexical
+}
+
+fn Checker mut @type_handler_op_in_scope(op Node, eff_name str, schema EffectDef) -> () {
     ro okids = branch_children(op)
     // SILENT-OK: an op with no children at all is the parser's recovery
     // marker in a shape the walk already reported -- a nameless op has no
@@ -283,7 +290,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
             }
             return
         }
-        @scope.bind(pname, @ctx.effects.op_params[sig.param_off + pcnt], param_mode_at(pk))
+        @bind_source(c.id_of(), pname, @ctx.effects.op_params[sig.param_off + pcnt], param_mode_at(pk))
         pcnt += 1
     }
     if pcnt < sig.param_cnt {
@@ -403,6 +410,13 @@ fn effect_op_list(fx EffectTable, schema EffectDef) -> str {
 /// A non-generic effect brings the declaration's own term -- no arguments,
 /// and every substitution is the identity.
 fn Checker mut @type_with_handler_lambda(lit Node, eff_name str, applied TyId) -> () {
+    ro lexical = @scope.lexical
+    @scope.lexical = binding_scope_of(lit)
+    @type_with_handler_lambda_in_scope(lit, eff_name, applied)
+    @scope.lexical = lexical
+}
+
+fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applied TyId) -> () {
     ro schema = @ctx.effects.def_of(eff_name) ?? ice_at(
         "novac/src/check/handler.nv:392",
         "check: an effect declaration with no op schema reached the handler-lambda typist")
@@ -436,7 +450,7 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str, applied TyId) -
             } else {
                 ro pname = leaf_text(c)
                 if pname != "_" {
-                    @scope.bind(pname, subst_type(@ctx, @ctx.effects.op_params[sig.param_off + pi], args), ParamMode.ModeRo)
+                    @bind_source(lit.id_of(), pname, subst_type(@ctx, @ctx.effects.op_params[sig.param_off + pi], args), ParamMode.ModeRo)
                 } else {
                     // The wildcard param: a position with no binding.
                 }

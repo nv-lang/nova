@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module self_init.pos_2
+
+fn main() -> () {
+    ro x = 7
+    if x > 0 {
+        ro x = x + 1
+        assert(x == 8)
+        println(x)
+    }
+    assert(x == 7)
+    println(x)
+}

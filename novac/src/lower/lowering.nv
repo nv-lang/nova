@@ -13,7 +13,6 @@ import ../tree.{Node, NodeKind, assign_op_of}
 import ../types.{TyId, is_ty}
 import ../diag.{ice_at}
 import ../sem.{branch_children}
-import ../sem.{narrowing_of}
 import ../sem.{is_expr_kind, is_println_call, is_value_tail_kind, leaf_kind, leaf_text}
 import ../sem.{literal_prim_of, print_call_ends_line, contains_call}
 import ../sem.{iflet_pattern_at, iflet_body_at, iflet_else_at, iflet_init_at}
@@ -451,8 +450,15 @@ fn Lowerer mut @lower_bind(st Node) -> () {
     // initializer lands in it through `place`. Until M1 six arms stood here --
     // match, if-expression, array literal, positional record, constructor,
     // general expression -- each spelling the declaration line itself.
-    ro l = @ir.named(vtype, vname)
-    @lower_place(init, l)
+    ro l = @named_binding(st, vtype, vname)
+    // A C declarator shadows its outer namesake even inside its initializer.
+    if @initializer_uses_c_name(init, @ir.decl_of(l).name) {
+        ro previous = @ir.temp(vtype)
+        @lower_place(init, previous)
+        @ir.copy(l, previous)
+    } else {
+        @lower_place(init, l)
+    }
     // An exit below may clean this value (D432): the statement names its local -- and,
     // cleaned on some paths only, its drop flag (s5): zero here, set by each move.
     if @out.cleanups.len() > 0 {
@@ -526,14 +532,7 @@ fn Lowerer mut @lower_if(st Node, outer Option[IfCtx]) -> () {
     // A NARROWING `if x is T` (D54): the branch opens with `x` unboxed into a
     // binding of the same name -- through a temporary, since C reads a
     // declarator's own name inside its initializer.
-    match narrowing_of(kids[1], @out, @ctx) {
-        Some(nw) => {
-            ro tmp = @ir.temp(nw.target)
-            @ir.unbox_any(tmp, nw.subject)
-            @ir.copy(@ir.named(nw.target, nw.name), tmp)
-        }
-        None => {} // no narrowing: the branch reads the names as they are
-    }
+    @lower_condition_binding(kids[1])
     @lower_block_stmts_fn(kids[2], false)
     if has_else {
         // The closing brace and the `else` share one line -- the one shape of else

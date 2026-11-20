@@ -101,6 +101,7 @@ fn Emitter mut @emit_spawn_body(n int) -> () {
     ro unit = @ctx.prims.unit_id
     @body.append("static nova_unit novac_spawnbody_${@tag}${n}(novac_sctx_${@tag}${n}* _novac_cap) {\n    (void)_novac_cap;\n")
     @lo.ir = FnBuilder.new(unit)
+    @lo.seed_source_bindings(@spawns[n])
     @cur_spawn = n
     @lo.lower_block_stmts_fn(body, false)
     @lo.ir.end_body()

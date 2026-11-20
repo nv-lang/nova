@@ -38,6 +38,13 @@ import ../types.{TyId, is_ty}
 /// so the enclosing fn's return expectation survives -- the handler-op
 /// precedent, door for door.
 fn Checker mut @type_closure_lit(e Node, sig TyId) -> () {
+    ro lexical = @scope.lexical
+    @scope.lexical = binding_scope_of(e)
+    @type_closure_lit_in_scope(e, sig)
+    @scope.lexical = lexical
+}
+
+fn Checker mut @type_closure_lit_in_scope(e Node, sig TyId) -> () {
     ro kids = branch_children(e)
     // SILENT-OK: a literal with no body is the parser's recovery marker in a
     // shape the walk already reported -- nothing to type against the sig.
@@ -70,7 +77,7 @@ fn Checker mut @type_closure_lit(e Node, sig TyId) -> () {
         if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
             ro pname = leaf_text(c)
             if pname != "_" {
-                @scope.bind(pname, @ctx.tys.arg(sig, pi), ParamMode.ModeRo)
+                @bind_source(e.id_of(), pname, @ctx.tys.arg(sig, pi), ParamMode.ModeRo)
             } else {
                 // The wildcard param: a position with no binding.
             }

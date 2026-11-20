@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_8
+
+fn main() -> () {
+    ro base = 40
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            while err is str {
+                assert(err.byte_len() > 0)
+                println("caught")
+                break
+            }
+            Decision.Stop
+        }
+    } {
+        supervised { spawn { println(base / (base - 40)) } }
+    }
+    println("after")
+}

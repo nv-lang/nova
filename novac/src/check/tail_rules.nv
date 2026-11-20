@@ -314,6 +314,16 @@ fn Checker mut @type_branch_value(b Node) -> TyId {
 /// Only the tail receives the position's expectation. A match arm may end
 /// in statements; a value-if branch owes a value and reports its absence.
 fn Checker mut @type_block_value(b Node, required bool) -> TyId {
+    ro mark = @scope.mark()
+    ro lexical = @scope.lexical
+    @scope.lexical = b.id_of()
+    ro result = @type_block_value_in_scope(b, required)
+    @scope.release(mark)
+    @scope.lexical = lexical
+    result
+}
+
+fn Checker mut @type_block_value_in_scope(b Node, required bool) -> TyId {
     ro kids = branch_children(b)
     ro last = last_branch_of(kids)
     mut i = 0

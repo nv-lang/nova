@@ -3,7 +3,7 @@ module self_init.pos_1
 // A BINDING NAMED LIKE A FIELD, A METHOD OR A NAMED ARGUMENT IN ITS OWN
 // INITIALIZER -- not a self-reference. `ro name = fns.rows[i].name` reads the
 // FIELD `name`; the self-initialization refusal (274.3/F28, `ro x = x + 1`
-// reads a binding not yet made) counted every identifier token of the
+// reads the previous binding by D347 R3) counted every identifier token of the
 // initializer, and refused two loops of novac's own resolve.nv (plus four
 // "unknown name" cascades after them). A reference to a binding is a `Name`
 // node; the field after `.`, the method's name and the argument's label are
