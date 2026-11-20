@@ -1,3 +1,10 @@
+# 2026-11-20, reg 2004 (wave B, owner word): emit_c 68890 -> 68908 (+18).
+#   Nested-block emission now restores the outer type view after the C brace
+#   in if/else (`emit_block_into`), while/for/loop bodies and match-arm
+#   blocks — the same snapshot `emit_block_expr` already performed. Emit-layer
+#   by necessity: the damage is a flat codegen type map, not a checker fact.
+#   RED/GREEN on if/while/for/match shadows, bare-block control unchanged.
+#   `infer` did not grow.
 # 2026-09-18 (интегратор, окно nova-ff): emit_c 68091 -> 68117 (+26).
 #   СТОРОНА РОСТА — ОТ КАНАЛА, и я это называю прямо, а не прячу за словом
 #   «фикс». Строки добавлены фиксом №1155: алиас newtype над АНОНИМНЫМ
@@ -1324,7 +1331,7 @@
 #   бинаре байт-в-байт — не регрессия).
 # 2026-11-19: measured on the 0.1.7 line (028891fc5 base): emit_c=68890;
 # the line carries the 0.1.6 shell, the old 68857 baseline was stale here.
-lines=68890
+lines=68908
 infer=247
 infer=247
 # 2026-08-06 (окно p172-lit-ctor-eq, репро-регресс `neg_str_from_retracted`):

@@ -32232,6 +32232,10 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// CPU-bound fiber on a large/unbounded loop monopolises its worker,
     /// exactly what the per-iteration safepoint prevents).
     fn emit_loop_body_inline_ex(&mut self, body: &Block, skip_preempt: bool) -> Result<(), String> {
+        // Loop bodies are C blocks too: restore the outer type view after the
+        // body so a different-type shadow does not leak past the loop (reg 2004).
+        let saved_var_types = self.var_types.clone();
+        let saved_ref_params = self.ref_params.clone();
         self.loop_scope_floor.push(self.defer_scopes.len());
         let block_id = self.enter_defer_scope(body, true);
         // Plan 44.7: preemption safepoint at the loop backedge. Emitted as
@@ -32253,6 +32257,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         self.leave_defer_scope(block_id);
         self.loop_scope_floor.pop();
+        self.var_types = saved_var_types;
+        self.ref_params = saved_ref_params;
         Ok(())
     }
 
@@ -49952,6 +49958,11 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
 
     /// Emit a block's statements and assign its trailing value (or NOVA_UNIT) into `tmp`.
     fn emit_block_into(&mut self, tmp: &str, ty: &str, block: &Block) -> Result<(), String> {
+        // Same block-scope restore as `emit_block_expr`: a `let` whose name
+        // shadows an outer binding of a DIFFERENT type must not overwrite the
+        // outer binding's type once this `{ }` closes (reg 2004).
+        let saved_var_types = self.var_types.clone();
+        let saved_ref_params = self.ref_params.clone();
         let block_id = self.enter_defer_scope(block, false);
         // Plan 125: detect divergence BEFORE emitting stmts (helper inspects
         // structure, not side effects).
@@ -49999,6 +50010,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         // Cleanup AFTER assigning result (defer should not affect tmp).
         self.leave_defer_scope(block_id);
+        self.var_types = saved_var_types;
+        self.ref_params = saved_ref_params;
         Ok(())
     }
 
@@ -52513,6 +52526,9 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             MatchArmBody::Block(b) => {
                 // Plan 20 Ф.4/Ф.8: match-arm body — defer scope.
                 // Trailing value присваивается ПОСЛЕ defer cleanup.
+                // Same block-scope restore as emit_block_into (reg 2004).
+                let saved_var_types = self.var_types.clone();
+                let saved_ref_params = self.ref_params.clone();
                 let block_id = self.enter_defer_scope(b, false);
                 for stmt in &b.stmts {
                     self.emit_stmt(stmt)?;
@@ -52532,6 +52548,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     }
                 }
                 self.leave_defer_scope(block_id);
+                self.var_types = saved_var_types;
+                self.ref_params = saved_ref_params;
             }
         }
         Ok(())

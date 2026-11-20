@@ -1,0 +1,14 @@
+// EXPECT_STDOUT inner
+// EXPECT_STDOUT 10
+//
+// Registry 221.1 #2004: same class through a for body.
+module standalone.nested_shadow_for_pos
+
+fn main() Io -> () {
+    ro outer = 10
+    for i in 0..1 {
+        ro outer = "inner"
+        println(outer)
+    }
+    println("${outer}")
+}
