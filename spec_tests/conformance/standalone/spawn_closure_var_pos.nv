@@ -1,0 +1,12 @@
+// EXPECT_STDOUT var
+//
+// Registry 221.1 #2003: a closure-typed VALUE bound to a local and passed to
+// `spawn` must be invoked, same class as the closure literal.
+module standalone.spawn_closure_var_pos
+
+fn main() Io -> () {
+    supervised {
+        ro f = || println("var")
+        spawn f
+    }
+}

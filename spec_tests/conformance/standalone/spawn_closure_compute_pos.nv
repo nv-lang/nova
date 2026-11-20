@@ -1,0 +1,13 @@
+// EXPECT_STDOUT 42
+//
+// Registry 221.1 #2003: the closure body's computation must run in the child;
+// an int-returning zero-arg closure is the same invocation class.
+module standalone.spawn_closure_compute_pos
+
+fn compute() -> int => 42
+
+fn main() Io -> () {
+    supervised {
+        spawn(|| println("${compute()}"))
+    }
+}
