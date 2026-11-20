@@ -266,7 +266,15 @@ fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []T
             return
         }
         bindings[fslot] = r
-        @record(c, @ctx.tys.subst(p, bindings))
+        ro sig = @ctx.tys.subst(p, bindings)
+        if !is_ty(sig) {
+            // Another slot of the parameter is still unbound: the context cannot
+            // give this literal a complete signature -- named, not a poisoned term
+            // recorded into the channel (reg 2010, the @subst absence rule).
+            @report_first_leaf_of(kids, CLOSURE_ARG_NEEDS_FN_MSG)
+            return
+        }
+        @record(c, sig)
         return
     }
     // A composite result (`Result[T, F]`, `flat_map_err`): concrete only when the
