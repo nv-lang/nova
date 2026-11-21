@@ -401,6 +401,22 @@ export fn generic_names(kids []Node) -> []str {
     out
 }
 
+/// The first identifier of a subtree, in written order -- the HEAD of a type
+/// reference (`Fail[E]` is `Fail`); "" when it has none.
+///
+/// It lives HERE and not beside one reader: the consume analysis and the
+/// with-statement's left-hand binding both name the head of an effect item,
+/// and a second copy of this walk is how the two readers would drift apart.
+export fn first_ident_of(n Node) -> str {
+    if n.is_ident() { return leaf_text(n) }
+    mut found = ""
+    for c in branch_children(n) {
+        if found != "" { break }
+        found = first_ident_of(c)
+    }
+    found
+}
+
 /// The NAMES a generics list binds -- one per entry, and the entry's BOUND is
 /// not one of them.
 ///

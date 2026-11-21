@@ -501,6 +501,10 @@ export fn Interner @is_concrete(t TyId) -> bool {
 /// whose index has no argument is an ice — the caller promised a full
 /// vector, and a partial substitution is exactly the C++-template model of
 /// generics that this project rejects (architecture, substitution).
+/// Total by INDEX is not total by ELEMENT: a slot bound to ABSENCE (`no_ty`)
+/// is contagious — the whole term is `no_ty`, never a term with a hole inside
+/// (a hole would index `@rows[-1]` in `is_concrete` and ICE). The same rule
+/// `@subst_known` keeps; the two substitution doors are one rule (reg 2010).
 ///
 /// Who may call: `check` and `mono`. Who may not: the emitter — by the time
 /// it runs, every type it sees is concrete or the layout assert has fired.
@@ -542,6 +546,11 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
             for i in 0..row.arg_cnt {
                 ro a = @args[row.arg_off + i]
                 ro s = @subst(a, args)
+                // Absence is contagious, the SAME rule @subst_known's arm keeps:
+                // a slot bound to no_ty makes the WHOLE term no_ty, never a term
+                // with a hole inside -- is_concrete would index @rows[-1] and ICE
+                // (the flat_map carriers, reg 2010). One rule, both subst doors.
+                if !is_ty(s) { return no_ty() }
                 // A flag that only ever turns on is an expression (P31): the branch
         // that would say "still equal, nothing changes" carries no work.
         changed = changed || s != a

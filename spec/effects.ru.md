@@ -121,6 +121,10 @@ ro console = effect Logger {
 }
 ```
 
+Для эффекта с одной операцией сокращённый handler может быть лямбдой:
+её тело — выражение или блок ([D31](decisions/04-effects.md#d31)).
+Это не означает реализации всех форм D31 в self-hosted компиляторе.
+
 `effect Logger { ... }` — handler-литерал: то же ключевое слово `effect`,
 что и в декларации типа ([D61](decisions/04-effects.md#d61)/[D142](decisions/02-types.md#d142)
 — symmetry между декларацией и литералом для `effect`/`protocol`).

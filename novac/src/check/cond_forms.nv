@@ -32,6 +32,13 @@ import ../types.{TyId, no_ty, is_ty}
 /// The initializer's type is RECORDED for the emitter's strict door -- the
 /// same lesson every wave since B15 step 5 pays once.
 fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
+    ro lexical = @scope.lexical
+    @scope.lexical = binding_scope_of(st)
+    @type_if_let_in_scope(st, as_value)
+    @scope.lexical = lexical
+}
+
+fn Checker mut @type_if_let_in_scope(st Node, as_value bool) -> () {
     ro kids = branch_children(st)
     if kids.len() < iflet_body_at(kids) + 1 {
         assert(@out.len() > 0, "check: a malformed if-let reached typing with no refusal")

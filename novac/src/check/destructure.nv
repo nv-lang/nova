@@ -99,7 +99,7 @@ fn Checker mut @bind_names_untyped(pat Node) -> () {
             if is_ty(@chan.type_if_known(nn.id_of())) {
                 // Already recorded by the shared judgment.
             } else { @record(nn, no_ty()) }
-            @scope.bind(pattern_head_text(pat), no_ty(), ParamMode.ModeRo)
+            @bind_source(pat.id_of(), pattern_head_text(pat), no_ty(), ParamMode.ModeRo)
         }
         Variant | Tuple | Array | Disj => {
             for sub in pattern_subpatterns(pat) {
@@ -115,7 +115,7 @@ fn Checker mut @bind_names_untyped(pat Node) -> () {
                         if is_ty(@chan.type_if_known(nn.id_of())) {
                             // Already recorded by the shared judgment.
                         } else { @record(nn, no_ty()) }
-                        @scope.bind(patfield_name(f), no_ty(), ParamMode.ModeRo)
+                        @bind_source(f.id_of(), patfield_name(f), no_ty(), ParamMode.ModeRo)
                     }
                 }
             }

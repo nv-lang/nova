@@ -410,7 +410,10 @@ fn mark_ref(cr CalleeRef, ctx Ctx, out CheckOut, mut seen []bool, mut inst []Ins
         // is no instance for mono to make.
         // An EFFECT OPERATION (E.9 step 2) names the shell's dispatcher, no row
         // of this file: nothing to mark.
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => {}
+        // A LOCAL fn callee (door A) names no row either: the value's body is
+        // a closure the ClosureLit door emits where the literal stands, not
+        // an instance the fn set grows.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => {}
     }
     // AN INSERTED CONVERSION IS A CALL TOO (D429 R7, wave 5). A `#coerce`
     // pair's method is reached by the call that needed it and by nothing

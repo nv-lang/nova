@@ -87,6 +87,7 @@ def main():
                      # схем операций эффектов, прецедент protocols.nv применённый
                      # к эффектной половине системы эффектов. Строки те же строки.
                      s / "sem" / "effects.nv",
+                     s / "sem" / "local_bindings.nv",
                      s / "types" / "types.nv"]
     sem = pathlib.Path(a[2]) if a[2] else root / "novac" / "src" / "sem" / "sem.nv"
     plan = pathlib.Path(a[3]) if a[3] else root / "docs" / "plans" / "274-novac-self-hosted-compiler.md"

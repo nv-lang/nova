@@ -30,6 +30,18 @@ export type Local int
 /// The index behind a `Local` -- for the printer and for tests.
 export fn raw_local(l Local) -> int => l as int
 
+export type BindingLocal value {
+    identity int /// source binding identity
+    local Local /// the already allocated local
+}
+
+export type BindingParameter value {
+    identity int /// source parameter identity
+    scope int /// raw source-scope NodeId, as in hoisted_at
+    source_name str /// the source spelling before C sanitization
+    c_name str /// the formal's reserved C spelling
+}
+
 /// A basic block of the lowered body, by its position in `Fn.blocks`.
 export type BlockId int
 
@@ -481,6 +493,8 @@ export type Block {
 export type Fn {
     locals []LocalDecl /// `locals[0]` is the return place
     blocks []Block /// `blocks[0]` is the entry block
+    source_bindings []BindingLocal /// source identities retain their allocated locals
+    source_parameters []BindingParameter /// formal names without local allocations
 }
 
 /// Builds one `Fn` in program order. A block is RESERVED (gets its id) before
@@ -491,6 +505,11 @@ export type Fn {
 /// block was sealed next, and no block ever was).
 export type FnBuilder {
     locals []LocalDecl /// locals so far; index 0 is the return place
+    source_names []str /// source spelling parallel to locals; empty for non-bindings
+    binding_scopes []int /// raw source-scope NodeIds parallel to locals; -1 for non-bindings
+    source_bindings []BindingLocal /// source identities mapped to allocated locals
+    source_parameters []BindingParameter /// formal names reserved without allocating locals
+    reserved_names []str /// C spellings of future user identifiers
     blocks []Block /// reserved blocks, `Unreached` until sealed
     cur []Stmt /// statements placed since the last seal
     cur_id BlockId /// the reserved block the statements in `cur` belong to
@@ -547,6 +566,10 @@ export fn FnBuilder.new(ret_ty TyId) -> FnBuilder => FnBuilder.seeded(ret_ty, 0)
 export fn FnBuilder.seeded(ret_ty TyId, seed int) -> FnBuilder {
     mut locals = []LocalDecl.new()
     locals.push(LocalDecl { ty: ret_ty, kind: LocalKind.Return, name: "", decl_at: DeclAt.FirstAssign })
+    mut source_names = []str.new()
+    source_names.push("")
+    mut binding_scopes = []int.new()
+    binding_scopes.push(-1)
     mut blocks = []Block.new()
     blocks.push(Block { stmts: []Stmt.new(), term: Terminator.Unreached })
     mut cur = []Stmt.new()
@@ -557,7 +580,9 @@ export fn FnBuilder.seeded(ret_ty TyId, seed int) -> FnBuilder {
     // previous function even by accident (F65).
     mut hoisted_at = []int.new()
     mut hoisted_to = []Local.new()
-    FnBuilder { locals, blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
+    FnBuilder { locals, source_names, binding_scopes,
+                source_bindings: []BindingLocal.new(), source_parameters: []BindingParameter.new(),
+                reserved_names: []str.new(), blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
                 hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: seed,
                 bound_at: []int.new(), bound_to: []Local.new(),
                 bound_gone: []Local.new() }
@@ -596,13 +621,27 @@ export fn FnBuilder mut @temp(ty TyId) -> Local {
 }
 
 /// A local for the source binding `name` of type `ty`; each discard `_` gets its own C name (registry 1816).
-export fn FnBuilder mut @named(ty TyId, name str) -> Local {
+export fn FnBuilder mut @named(ty TyId, name str, scope int = -1) -> Local {
     if name == "" {
         ice_at(
             "novac/src/lower/ir.nv:601",
             "lower: a named local needs a non-empty name -- temporaries go through temp()")
     }
-    @local(ty, LocalKind.Binding, if name == "_" { "_novac_discard${@locals.len()}" } else { c_ident(name) })
+    mut c_name = if name == "_" { "_novac_discard${@locals.len()}" } else { c_ident(name) }
+    // Only same-scope repeats need a new spelling; nested scopes retain ordinary C shadowing.
+    if name != "_" && @source_repeats(name, scope) {
+        ro base = "${c_name}__novac_rebind${@locals.len()}"
+        c_name = base
+        mut counter = 0
+        while @binding_name_taken(c_name) {
+            counter += 1
+            c_name = "${base}_${counter}"
+        }
+    }
+    ro l = @local(ty, LocalKind.Binding, c_name)
+    @source_names[raw_local(l)] = name
+    @binding_scopes[raw_local(l)] = scope
+    l
 }
 
 /// Appends a local and returns its index -- the one place locals are created. A local is
@@ -611,6 +650,8 @@ export fn FnBuilder mut @named(ty TyId, name str) -> Local {
 fn FnBuilder mut @local(ty TyId, kind LocalKind, name str) -> Local {
     ro id = Local(@locals.len())
     @locals.push(LocalDecl { ty, kind, name, decl_at: DeclAt.FirstAssign })
+    @source_names.push("")
+    @binding_scopes.push(-1)
     id
 }
 
@@ -636,6 +677,92 @@ export fn FnBuilder @decl_of(l Local) -> LocalDecl {
         ice_at("novac/src/lower/ir.nv:636", "lower: asking the declaration of a local the body never created")
     }
     @locals[i]
+}
+
+// Re-recording an identity must replace its local rather than leave a stale first match.
+export fn FnBuilder mut @remember_source_binding(identity int, l Local) -> () {
+    ro binding = BindingLocal { identity, local: l }
+    for i in 0..@source_bindings.len() {
+        if @source_bindings[i].identity == identity {
+            @source_bindings[i] = binding
+            return
+        }
+    }
+    @source_bindings.push(binding)
+}
+
+// Parameters reserve names without changing locals.len-based temporary numbering.
+export fn FnBuilder mut @reserve_source_parameter(identity int, scope int, source_name str, c_name str) -> () {
+    ro parameter = BindingParameter { identity, scope, source_name, c_name }
+    for i in 0..@source_parameters.len() {
+        if @source_parameters[i].identity == identity {
+            @source_parameters[i] = parameter
+            return
+        }
+    }
+    @source_parameters.push(parameter)
+}
+
+// Reserving future user spellings prevents generated rebind names from claiming them first.
+export fn FnBuilder mut @reserve_source_name(name str) -> () {
+    ro reserved = c_ident(name)
+    for n in @reserved_names {
+        if n == reserved { return }
+    }
+    @reserved_names.push(reserved)
+}
+
+// Source scope, not sanitized C spelling, distinguishes a rebind from nested shadowing.
+fn FnBuilder @source_repeats(name str, scope int) -> bool {
+    for i in 0..@source_names.len() {
+        if @source_names[i] == name && @binding_scopes[i] == scope { return true }
+    }
+    for p in @source_parameters {
+        if p.source_name == name && p.scope == scope { return true }
+    }
+    false
+}
+
+// A generated name must avoid both allocated C names and identifiers reserved for later.
+fn FnBuilder @binding_name_taken(name str) -> bool {
+    for d in @locals {
+        if d.name == name { return true }
+    }
+    for p in @source_parameters {
+        if p.c_name == name { return true }
+    }
+    for n in @reserved_names {
+        if n == name { return true }
+    }
+    false
+}
+
+// Missing identities are compiler bugs; source-name fallback would silently undo rebinding.
+export fn FnBuilder @binding_c_name(identity int) -> str {
+    for b in @source_bindings {
+        if b.identity == identity { return @decl_of(b.local).name }
+    }
+    for p in @source_parameters {
+        if p.identity == identity { return p.c_name }
+    }
+    ice_at("novac/src/lower/ir.nv:748", "lower: asking the C name of an unrecorded source binding")
+}
+
+// Finished bodies retain the identity lookup even after the builder starts another body.
+export fn Fn @binding_c_name(identity int) -> str {
+    for b in @source_bindings {
+        if b.identity == identity {
+            ro i = raw_local(b.local)
+            if i < 0 || i >= @locals.len() {
+                ice_at("novac/src/lower/ir.nv:757", "lower: a source binding names a local outside the finished body")
+            }
+            return @locals[i].name
+        }
+    }
+    for p in @source_parameters {
+        if p.identity == identity { return p.c_name }
+    }
+    ice_at("novac/src/lower/ir.nv:765", "lower: asking the C name of an unrecorded source binding")
 }
 
 /// The statement recorded last -- the streaming bridge of waves M1/M2a: the
@@ -862,5 +989,5 @@ export fn FnBuilder @finish() -> Fn {
             Continue => { } // sealed
         }
     }
-    Fn { @locals, @blocks }
+    Fn { @locals, @blocks, @source_bindings, @source_parameters }
 }

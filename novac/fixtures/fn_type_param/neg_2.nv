@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT is bound to a non-function type
+// EXPECT_COMPILE_ERROR
+module fn_type_param.neg_2
+
+// A bound local that is NOT a function: calling an int is a PERMANENT language
+// error (D43 -- only a function value is callable), not subset debt. The door
+// names the binding and answers for the call; the registry step never speaks
+// a second cause over it (the base said "not a callable novac knows" here).
+fn main() -> () {
+    ro x = 5
+    // nova:expect E_NOVAC_LANG
+    println(x(1))
+}

@@ -1,0 +1,78 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// The _test suffix keeps this native entry out of normal source harvesting.
+// EXPECT_STDOUT named api ok
+module novac.v9b_native
+
+import ../lower.{FnBuilder, raw_local}
+import ../types.{TyId}
+import ../lex.{lex}
+import ../parse.{parse}
+import ../source.{SourceText}
+import ../sem.{collect_types, CheckOut}
+import ../tree.{NodeId}
+import ../check.{check}
+
+fn check_binding_aliases() -> () {
+    mut channel = CheckOut.new(20)
+    ro first = channel.record_binding(NodeId(10), NodeId(11), NodeId(12), 6, "found")
+    ro second = channel.record_binding(NodeId(10), NodeId(11), NodeId(12), 8, "found")
+    assert(first == second)
+    assert(channel.binding_defs.len() == 1)
+    channel.record_binding_read(NodeId(13), NodeId(10), 6)
+    channel.record_binding_read(NodeId(13), NodeId(10), 8)
+    assert(channel.binding_read(NodeId(13)) == first)
+    channel.record_capture(NodeId(14), NodeId(13), "found", 6, TyId(0), false)
+    channel.record_binding_read(NodeId(15), NodeId(10), 8)
+    channel.record_capture(NodeId(14), NodeId(15), "found", 8, TyId(0), false)
+    assert(channel.captures.len() == 1)
+    assert(channel.capture_binding(channel.captures[0]) == first)
+}
+
+fn check_binding_exports() -> () {
+    ro text = "fn main() -> () {\n mut j = 1\n println(j)\n mut j = 2\n println(j)\n}"
+    ro tree = parse(lex(text))
+    ro context = collect_types(tree)
+    ro (diags, channel) = check(tree, SourceText { text }, context)
+    assert(diags.len() == 0)
+    assert(channel.binding_defs.len() == 2)
+    assert(channel.binding_defs[0].name == "j")
+    assert(channel.binding_defs[1].name == "j")
+    assert(channel.binding_defs[0].site != channel.binding_defs[1].site)
+    assert(channel.binding_defs[0].scope == channel.binding_defs[1].scope)
+    mut old_seen = false
+    mut new_seen = false
+    for id in channel.binding_at {
+        if id == 0 { old_seen = true }
+        if id == 1 { new_seen = true }
+    }
+    assert(old_seen && new_seen)
+}
+
+fn main() -> () {
+    check_binding_aliases()
+    check_binding_exports()
+    mut builder = FnBuilder.new(TyId(0))
+    builder.reserve_source_name("x__novac_rebind2")
+    ro first = builder.named(TyId(0), "x")
+    ro second = builder.named(TyId(0), "x")
+    assert(builder.decl_of(first).name == "x")
+    assert(builder.decl_of(second).name != "x")
+    assert(builder.decl_of(second).name != "x__novac_rebind2")
+    builder.remember_source_binding(1, first)
+    builder.remember_source_binding(2, second)
+    assert(builder.binding_c_name(1) == "x")
+    assert(builder.binding_c_name(2) == builder.decl_of(second).name)
+
+    ro nested = builder.named(TyId(0), "x", scope: 10)
+    assert(builder.decl_of(nested).name == "x")
+    builder.reserve_source_parameter(3, 20, "arg", "arg")
+    ro shadowed = builder.named(TyId(0), "arg", scope: 20)
+    assert(builder.decl_of(shadowed).name != "arg")
+    ro temp = builder.temp(TyId(0))
+    assert(builder.decl_of(temp).name == "_novac_l${raw_local(temp)}")
+    builder.end_body()
+    ro frozen = builder.finish()
+    assert(frozen.binding_c_name(1) == "x")
+    assert(frozen.binding_c_name(2) == builder.decl_of(second).name)
+    println("named api ok")
+}

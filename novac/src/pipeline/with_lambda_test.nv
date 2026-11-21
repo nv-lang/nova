@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- D31 is the language's own rule (04-effects.md:1515): an
+// effect with EXACTLY one operation is written as a handler-lambda,
+// `with E = |args| body`. NOT taken from the oracle: its two-operation lambda
+// is WIDER than the spec (measured 2026-11-18), so the refusal follows D31
+// and the oracle's acceptance is a filed defect, not a copied behaviour.
+// Role: acceptance tests of the E.13 wave (274.11), the narrowed D31: the
+// three doors of `with Fail[MyErr] = |e| body` -- the walk's closure
+// position, the typist against the ONE operation's schema (with the
+// application on the left fixing the effect's type parameters), and the
+// emission as the effect's table (`NovaVtable_Fail`), not a closure.
+// Used by: check-novac-module-tests (the one batch runner); nothing imports it.
+// Guarded by: the same guards as every test file; novac/fixtures/with_lambda.
+// novac/src/pipeline/with_lambda_test.nv -- the D31 handler-lambda, as novac writes it.
+
+module novac.pipeline
+import ../sem.{effect_vtable_c}
+
+/// The handed declaration the tests share: std's own `Fail[E]`, written in
+/// the frame its operations live in -- the parameter `E` is what the
+/// application on the left of a `with` fixes.
+fn fail_decl() -> []str {
+    mut std = std_decls()
+    std.push("module std.e13\nexport type Fail[E] effect { fn fail(e E) -> never }\n")
+    std
+}
+
+test "handler-lambda: the body is typed against the ONE operation, E fixed by the application (E.13, D31)" {
+    // TYPING DOOR. The operation declares `fail(e E)`; `E` is the effect's
+    // own parameter, and only the application `Fail[MyErr]` fixes it. The
+    // body reads a FIELD of `e` -- a read that exists only when the
+    // parameter was replaced by MyErr (an unresolved parameter refuses it).
+    ro (d, _) = compile_to_c_with(
+        "type MyErr value { msg str }\nfn g() -> int {\n with Fail[MyErr] = |e| { println(e.msg) } {\n  println(\"body\")\n }\n 3\n}\nfn main() {\n println(g())\n}",
+        parse_decls(fail_decl()), interop_surface())
+    assert(d.len() == 0, messages(d))
+}
+
+test "handler-lambda: the value is the effect's TABLE with one synthesized op (E.13, D31)" {
+    // EMISSION DOOR. A handler-lambda is a vtable (`NovaVtable_Fail`), not a
+    // closure (`NovaClosBase`); its single operation function takes the
+    // operation's parameters with the SUBSTITUTED types -- `NovaValue_MyErr`,
+    // never a parameter.
+    ro (d, c) = compile_to_c_with(
+        "type MyErr value { msg str }\nfn g() -> int {\n with Fail[MyErr] = |e| { println(e.msg) } {\n  println(\"body\")\n }\n 3\n}\nfn main() {\n println(g())\n}",
+        parse_decls(fail_decl()), interop_surface())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("${effect_vtable_c("Fail")}*"), c)
+    assert(c.contains("->fail = novac_hop_"), c)
+    assert(c.contains("NovaValue_MyErr e)"), c)
+}
+
+test "handler-lambda: two operations take the handler literal, refused by name (E.13, D31)" {
+    // D31's own norm: the lambda form is for an effect with EXACTLY one
+    // operation. The oracle accepts a two-op lambda (measured 2026-11-18,
+    // wider than the spec); novac follows the spec and names the rule.
+    mut std = std_decls()
+    std.push("module std.e13\nexport type Store effect { fn get(k str) -> int\nfn put(k str, v int) -> () }\n")
+    ro d = compile_with("fn g() -> int {\n with Store = |k| 0 {\n  1\n }\n 2\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("exactly ONE operation"), d[0].message)
+}
+
+test "handler-lambda: a generic effect names its arguments on the left (E.13, D31)" {
+    // The schema is written in the effect's parameters; novac does not infer
+    // them from the body (the oracle does), and the bare name is the subset's
+    // debt, said by name -- never an unresolved parameter carried to emission.
+    ro d = compile_with("type MyErr value { msg str }\nfn g() -> int {\n with Fail = |_e| { println(\"caught\") } {\n  1\n }\n 2\n}\nfn main() {\n println(g())\n}", parse_decls(fail_decl()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("names the effect's type arguments on the left"), d[0].message)
+}
+
+test "handler-lambda: the parameters ARE the operation's parameters -- another count is refused (E.13, D31)" {
+    ro d = compile_with("type MyErr value { msg str }\nfn g() -> int {\n with Fail[MyErr] = |a, b| { println(\"caught\") } {\n  1\n }\n 2\n}\nfn main() {\n println(g())\n}", parse_decls(fail_decl()), interop_surface())
+    assert(d.len() == 1, messages(d))
+    assert(d[0].message.contains("writes a different count"), d[0].message)
+}
+
+test "with: a handler LITERAL is not a handler-lambda -- its own ops emit (E.13 regression)" {
+    // THE DISCRIMINATOR READS THE NODE KIND FIRST. Both forms record the
+    // `Effect[E]` application, and the type alone made every literal take
+    // the lambda arm -- measured 2026-11-19: the with_lit emission iced on
+    // a parameter list read off the literal's own children.
+    mut std = std_decls()
+    std.push("module std.e13\nexport type Fs effect { fn size() -> int }\n")
+    ro (d, c) = compile_to_c_with("fn g() -> int {\n with Fs = effect Fs {\n  size() -> int => 4\n } {\n  println(\"body\")\n }\n 3\n}\nfn main() {\n println(g())\n}", parse_decls(std), interop_surface())
+    assert(d.len() == 0, messages(d))
+    assert(c.contains("${effect_vtable_c("Fs")}*"), c)
+    assert(c.contains("->size = novac_hop_"), c)
+}

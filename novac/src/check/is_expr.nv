@@ -110,9 +110,12 @@ fn Checker mut @type_then_branch(cond Node, block Node) -> () {
     match narrowing_of(cond, @chan, @ctx) {
         Some(nw) => {
             ro nmark = @scope.mark()
-            @scope.bind(nw.name, nw.target, ParamMode.ModeRo)
+            ro lexical = @scope.lexical
+            @scope.lexical = block.id_of()
+            @bind_source(cond.id_of(), nw.name, nw.target, ParamMode.ModeRo)
             @type_block(block)
             @scope.release(nmark)
+            @scope.lexical = lexical
         }
         None => @type_block(block)
     }

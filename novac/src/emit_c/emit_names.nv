@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module novac.emit_c
+
+import ../tree.{Node, is_node}
+import ../sem.{expr_leaf_name, c_maker}
+import ../builtins.{is_bool_literal, is_true_literal, bool_c_literal}
+import ../diag.{ice_at}
+
+fn Emitter mut @emit_name(e Node) -> () {
+    if !is_node(e.id_of()) {
+        ro name = expr_leaf_name(e)
+        if is_bool_literal(name) {
+            @body.append(bool_c_literal(is_true_literal(name)))
+            return
+        }
+        ice_at("novac/src/emit_c/emit_names.nv", "emit_c: a name without an identity that is no bool literal (a handed default)")
+    }
+    match @out.capture_at(e.id_of()) {
+        Some(c) => {
+            @emit_capture_read(c)
+            return
+        }
+        None => {}
+    }
+    ro binding = @out.binding_read(e.id_of())
+    if binding >= 0 {
+        @body.append(@lo.ir.binding_c_name(binding))
+        return
+    }
+    match @out.const_of(e.id_of()) {
+        Some(row) => @emit_const_read(row)
+        None => {
+            if @out.has_callee(e.id_of()) {
+                match @out.callee_of(e.id_of()).target {
+                    CalleeVariant(v) => {
+                        ro ty = @out.type_if_known(e.id_of())
+                        if @is_option_inst(ty) { @emit_option_none(ty) } else { @body.append("${c_maker(@ctx, v)}()") }
+                    }
+                    // A local fn callee (door A) is recorded on the CALL
+                    // node, never a bare name -- this match cannot see one.
+                    CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) =>
+                        ice_at("novac/src/emit_c/emit_names.nv", "emit: a bare name resolved to a non-variant callee")
+                }
+            } else {
+                ro name = expr_leaf_name(e)
+                if !is_bool_literal(name) {
+                    ice_at("novac/src/emit_c/emit_names.nv", "emit: an ordinary name has no exported binding identity")
+                }
+                @body.append(name)
+            }
+        }
+    }
+}

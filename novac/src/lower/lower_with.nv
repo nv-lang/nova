@@ -16,7 +16,7 @@
 module novac.lower
 import ../tree.{Node, NodeKind}
 import ../diag.{ice_at}
-import ../sem.{branch_children, leaf_text}
+import ../sem.{branch_children, leaf_text, first_ident_of}
 
 /// A `with` statement (E.9 step 2). The parser's geometry, read the way the
 /// checker reads it (`check/with_typing.nv`): `with`, then per binding the
@@ -28,20 +28,33 @@ fn Lowerer mut @lower_with(st Node) -> () {
     mut bi = 1
     while bi + 2 < kids.len() {
         ro nm = kids[bi]
-        if nm.kind_of() != NodeKind.LeafNode {
+        // The binding's effect rides in an `EffectItem` (E.13 wave, D31):
+        // `Fs` and `Fail[MyErr]` are the same piece, read by the one type
+        // door. The slot is keyed by the BASE name -- the application is the
+        // schema's frame, not part of the effect's identity here.
+        if nm.kind_of() != NodeKind.EffectItem {
             ice_at(
                 "novac/src/lower/lower_with.nv:32",
-                "lower: a with binding without its effect name reached the lowering")
+                "lower: a with binding without its effect item reached the lowering")
         }
-        ro hexpr = kids[bi + 2]
+        mut hj = bi + 1
+        while hj < kids.len() {
+            ro hk = kids[hj]
+            if hk.kind_of() == NodeKind.LeafNode && leaf_text(hk) == "=" {
+                break
+            } else {
+                hj += 1
+            }
+        }
+        ro hexpr = kids[hj + 1]
         // The handler, evaluated ONCE into a local of its own type -- the
         // stack local is the GC root the thread slot is not (the runtime does
         // not scan thread-local storage).
         ro hty = @out.type_of(hexpr.id_of())
         ro h = @ir.temp(hty)
         @lower_place(hexpr, h)
-        swaps.push(HandlerSwap { eff: leaf_text(nm), prev: @ir.temp(hty), handler: h })
-        bi += 3
+        swaps.push(HandlerSwap { eff: first_ident_of(nm), prev: @ir.temp(hty), handler: h })
+        bi = hj + 2
         // The checker's reading (`check/with_typing.nv`): a leaf here is the
         // `,` before the next binding; the body is a branch.
         if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {

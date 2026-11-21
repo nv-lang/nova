@@ -26,7 +26,7 @@ import ../tree.{Node, NodeKind, is_node}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, file_decls, ty_source_name, binder_text}
 import ../sem.{decl_of_ty, field_range_of, raw_frow, no_frow, pattern_mode_word}
-import ../sem.{decl_index_of_ty}
+import ../sem.{decl_index_of_ty, first_ident_of}
 import ../sem.{FnRow, ParamMode, decl_fn_row, raw_row, no_row}
 import ../types.{TyId, no_ty, is_ty}
 import ../builtins.{TypeKind, CLEANUP_METHOD, SCOPE_OUTCOME_TYPE}
@@ -375,18 +375,6 @@ fn effect_names_of(d Node) -> []str {
         if c.kind_of() == NodeKind.EffectItem { out.push(first_ident_of(c)) } else { continue }
     }
     out
-}
-
-/// The first identifier of a subtree, in written order -- the head of a type
-/// reference; "" when it has none.
-fn first_ident_of(n Node) -> str {
-    if n.is_ident() { return leaf_text(n) }
-    mut found = ""
-    for c in branch_children(n) {
-        if found != "" { break }
-        found = first_ident_of(c)
-    }
-    found
 }
 
 /// Is `d` one of `fns` (the same node)?

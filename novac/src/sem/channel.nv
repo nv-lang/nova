@@ -83,6 +83,13 @@ export type CalleeTarget enum
     // -- the shell's dispatcher runs whichever handler is installed, or the
     // effect's `#default_handler`. The emitter prints the dispatcher's name.
     | CalleeEffectOp(EffectOpRef)
+    // A LOCAL of function type called by name (`f(v)` where `f fn(int) -> int`
+    // is a parameter or local, D43/D22, 274.11 door A). Like CalleeCtor and
+    // CalleeSynthDisplay it carries a TYPE and no row: the program wrote no
+    // declaration, the fn TERM is the whole decision. The CALL node carries
+    // the binding read (the callee is a bare Ident leaf); the emitter
+    // calls through the value's NovaClosBase (fn/env), never by a symbol.
+    | CalleeLocal(TyId)
 
 /// WHICH operation of WHICH effect a call names (E.9 step 2). Names, not rows:
 /// the dispatcher is the shell's, spelled from the two names
@@ -130,19 +137,19 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         CalleeFn(x) => {
             match b {
                 CalleeFn(y) => x == y
-                CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+                CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
             }
         }
         CalleeVariant(x) => {
             match b {
                 CalleeVariant(y) => x == y
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
             }
         }
         CalleeCtor(x) => {
             match b {
                 CalleeCtor(y) => x == y
-                CalleeFn(_) | CalleeVariant(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+                CalleeFn(_) | CalleeVariant(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
             }
         }
         // THE FOURTH KIND THE COMMENT ABOVE FORESAW, arrived 2026-09-18. Two
@@ -152,7 +159,7 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         CalleeSynthDisplay(x) => {
             match b {
                 CalleeSynthDisplay(y) => x == y
-                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeEffectOp(_) => false
+                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
             }
         }
         // Two operation calls are the same decision when they name the same
@@ -160,7 +167,16 @@ fn same_target(a CalleeTarget, b CalleeTarget) -> bool {
         CalleeEffectOp(x) => {
             match b {
                 CalleeEffectOp(y) => x.eff == y.eff && x.op == y.op
-                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => false
+                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeLocal(_) => false
+            }
+        }
+        // Two local-fn calls are the same decision when they carry the same fn
+        // TYPE (door A): the binding read lives on the callee Name node, the
+        // type is the whole of the target decision, as for CalleeSynthDisplay.
+        CalleeLocal(x) => {
+            match b {
+                CalleeLocal(y) => x == y
+                CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
             }
         }
     }
@@ -176,6 +192,7 @@ fn target_present(t CalleeTarget) -> bool {
         CalleeCtor(id) => is_ty(id)
         CalleeSynthDisplay(id) => is_ty(id)
         CalleeEffectOp(o) => o.eff != "" && o.op != ""
+        CalleeLocal(id) => is_ty(id)
     }
 }
 
@@ -254,6 +271,10 @@ export type CheckOut {
     mv_order []int /// module values (constant-table rows) in the order their initializers run: every value after the values it reads (274.5 S6, D200 topological order). One writer: check.
     captures []CaptureRow /// the bindings each handler literal captures, one row per (literal, name) -- E.9 step 3. One writer: check.
     cap_at []int /// NodeId -> the capture row a Name read inside a literal op body is, -1 = none. One writer: check.
+    binding_defs []BindingDef
+    binding_aliases []BindingAlias
+    binding_at []int
+    capture_binding_ids []int
     coerce_at []int /// NodeId -> the raw row of the `#coerce` method the RETURN door inserts around this value (D429 R2/R9), -1 = none. One writer: check (`@judge_return`).
     vec_ops NameTable /// implicit vector operation NAME (`new`, `push`, `len`, `index`) -> the row of std's `Vec[T]` declaration it calls, recorded by the checker where it decided an instance novac makes, read by the emitter to name it (274.11 E.10 step 4c-2) (NsCallables)
     cleanups []CleanupRow /// the auto-`@cleanup` calls (D432) the flow decided: one row per (exit site, value), a site's rows contiguous, innermost value first. One writer: check (`@flow_record_cleanups`).
@@ -293,6 +314,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
     mut res = []Resolution.new()
     mut implicit = []Resolution.new()
     mut cap_at = []int.new()
+    mut binding_at = []int.new()
     mut coerce_at = []int.new()
     mut cleanup_at = []int.new()
     mut gone_at = []int.new()
@@ -302,6 +324,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
         res.push(Resolution.Unresolved)
         implicit.push(Resolution.Unresolved)
         cap_at.push(0 - 1)
+        binding_at.push(0 - 1)
         coerce_at.push(0 - 1)
         cleanup_at.push(0 - 1)
         gone_at.push(0 - 1)
@@ -311,6 +334,7 @@ export fn CheckOut.new(node_count int) -> CheckOut {
                subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
                captures: []CaptureRow.new(), cap_at, coerce_at, cleanups: []CleanupRow.new(), cleanup_at, gone_at,
+               binding_defs: []BindingDef.new(), binding_aliases: []BindingAlias.new(), binding_at, capture_binding_ids: []int.new(),
                embed_at,
                wanted: []CalleeRef.new(),
                vec_ops: NameTable.new(NamespaceId.NsCallables) }
@@ -411,10 +435,12 @@ export fn CheckOut @gone_binder(at NodeId) -> int => if is_node(at) { @gone_at[r
 /// literal's capture row for `name` -- made on its first read, shared by the
 /// rest -- and this read's node pointing at it.
 export fn CheckOut mut @record_capture(lit NodeId, read NodeId, name str, bind_row int, ty TyId, by_ref bool) -> () {
+    ro binding = @binding_at[raw_node(read)]
+    assert(binding >= 0, "sem: a capture has no exported binding identity")
     mut at = 0 - 1
     for i in 0..@captures.len() {
         ro c = @captures[i]
-        if c.lit == lit && c.bind_row == bind_row {
+        if c.lit == lit && @capture_binding_ids[i] == binding {
             at = i
         } else {
             // Another literal's capture, or another name.
@@ -423,10 +449,18 @@ export fn CheckOut mut @record_capture(lit NodeId, read NodeId, name str, bind_r
     if at < 0 {
         at = @captures.len()
         @captures.push(CaptureRow { lit, name, bind_row, type_id: ty, by_ref })
+        @capture_binding_ids.push(binding)
     } else {
         // The name was captured by an earlier read of this literal.
     }
     @cap_at[raw_node(read)] = at
+}
+
+export fn CheckOut @capture_binding(c CaptureRow) -> int {
+    for i in 0..@captures.len() {
+        if @captures[i].lit == c.lit && @captures[i].bind_row == c.bind_row { return @capture_binding_ids[i] }
+    }
+    ice_at("novac/src/sem/channel.nv", "sem: a capture is absent from its binding snapshot")
 }
 
 /// The capture a Name read is, or None when it reads an ordinary binding.
@@ -815,6 +849,9 @@ export fn CalleeRef @callable_row() -> FnRow {
         CalleeEffectOp(_) => ice_at(
             "novac/src/sem/channel.nv:815",
             "sem: the callable row of an effect operation -- the shell's dispatcher serves it; ask `effect_op_of` instead")
+        CalleeLocal(_) => ice_at(
+            "novac/src/sem/channel.nv:818",
+            "sem: the callable row of a local fn callee -- a local has no declaration row; ask `local_fn_type` instead (door A)")
     }
 }
 
@@ -836,7 +873,7 @@ export fn CalleeRef @callable_row() -> FnRow {
 export fn CalleeRef @synth_display_type() -> Option[TyId] {
     match @target {
         CalleeSynthDisplay(t) => Some(t)
-        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeEffectOp(_) => None
+        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeEffectOp(_) | CalleeLocal(_) => None
     }
 }
 
@@ -845,7 +882,18 @@ export fn CalleeRef @synth_display_type() -> Option[TyId] {
 export fn CalleeRef @effect_op_of() -> Option[EffectOpRef] {
     match @target {
         CalleeEffectOp(o) => Some(o)
-        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) => None
+        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeLocal(_) => None
+    }
+}
+
+/// The fn TYPE of a local-fn callee, or None -- the same exclusivity as
+/// `synth_display_type`: `@callable_row` ices exactly where this answers Some
+/// (door A). The binding read lives on the callee Name node; this is the
+/// signature the emitter casts the NovaClosBase call through.
+export fn CalleeRef @local_fn_type() -> Option[TyId] {
+    match @target {
+        CalleeLocal(t) => Some(t)
+        CalleeFn(_) | CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => None
     }
 }
 

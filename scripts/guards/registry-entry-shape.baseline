@@ -55,8 +55,10 @@
 #   ЗАМЕР ЗАСЕВА: неоформленных 343, строк реестра разобрано 1142.
 # 2026-11-19: rows 1991-1993 ported verbatim from E.12 (e8a38b0ce);
 # their inherited incomplete fields are bookkeeping, not new work.
+# 2026-11-20, E.11 reg 2010 (wave/e11-closure-args): one COMPLETE row added
+#   (K2 + KLASS + caveat + Status + route), incomplete unchanged. scanned 1142->1143.
 incomplete_entries=344
-scanned_rows=1142
+scanned_rows=1143
 incomplete_row=1
 incomplete_row=3
 incomplete_row=4

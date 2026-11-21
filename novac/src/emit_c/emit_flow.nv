@@ -191,6 +191,10 @@ fn Emitter mut @print_loop_head(head LoopHead) -> () {
 // then ONE walk over what it returned.
 /// Prints a finished body: one walk over the graph `finish` returned.
 fn Emitter mut @print_body(f Fn) -> () {
+    ro bindings = @lo.ir.source_bindings
+    ro parameters = @lo.ir.source_parameters
+    @lo.ir.source_bindings = f.source_bindings
+    @lo.ir.source_parameters = f.source_parameters
     // MARKING BLOCKS AS PRINTED removes TWO invariants of this section at once -- `every
     // block exactly once` and `the walk terminates` -- which is why it stands here rather
     // than being left for later. The technique is this compiler's own, from `mono/mono.nv`:
@@ -202,6 +206,8 @@ fn Emitter mut @print_body(f Fn) -> () {
         printed.push(false)
     }
     @print_chain(f, BlockId(0), no_block(), false, printed)
+    @lo.ir.source_bindings = bindings
+    @lo.ir.source_parameters = parameters
 }
 // ---- The chain of blocks from `at` up to `stop`, `stop` excluded ----
 // `stop` = `no_block()` means `to the end of the body`: that is how the root chain prints,

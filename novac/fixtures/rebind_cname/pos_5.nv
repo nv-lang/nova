@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_5
+
+fn parameter(value int) -> int {
+    ro value int = value + 1
+    value
+}
+
+fn main() -> () {
+    ro value int = 3
+    ro value int = value + 1
+    assert(value == 4)
+    println(value)
+
+    ro work int = 7
+    mut work int = work
+    work += 1
+    assert(work == 8)
+    println(work)
+    println(parameter(9))
+}

@@ -26,10 +26,13 @@ import ../lower.{no_local}
 /// argument zero is the RECEIVER and lives at `kids[0]` rather than in that
 /// range. The row is the callee's, and it is asked only when a slot was left to
 /// its default -- a variant's payload has none, so it may arrive as `no_row()`.
+/// `lead_comma`: an argument ALREADY stands before these slots -- the env of
+/// a local fn call (door A, emit_local_call.nv) -- so the first slot opens
+/// with a comma of its own.
 fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
-                                id NodeId, row FnRow) -> () {
+                                id NodeId, row FnRow, lead_comma bool) -> () {
     ro slots = @out.callee_slots_of(id)
-    mut first = true
+    mut first = !lead_comma
     for s in 0..slots.len() {
         @body.append(if first { "" } else { ", " })
         first = false
@@ -118,5 +121,8 @@ fn callee_row_or_none(cr CalleeRef) -> FnRow {
         CalleeSynthDisplay(_) => no_row()
         // An effect operation has none either: the shell's dispatcher serves it.
         CalleeEffectOp(_) => no_row()
+        // A LOCAL fn callee (door A) has no declaration row: every slot is
+        // written (the arity door judged it), no default is ever asked.
+        CalleeLocal(_) => no_row()
     }
 }

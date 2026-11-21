@@ -145,6 +145,16 @@ fn Emitter mut @hoist_array_lits(e Node) -> () {
                 @hoist_assert_message(children)
                 return
             }
+            if kind == NodeKind.ClosureLit {
+                // A CLOSURE VALUE is a multi-statement build too (E.11 wave,
+                // D22 context 1): the singleton, or the environment and the
+                // closure allocated where the literal stands, is emitted by
+                // `@closure_clos_value`; the expression reads the temporary.
+                // The walk stops HERE -- a closure body is printed by its own
+                // function, so nothing inside it is hoisted to this statement.
+                @lit_tmp[raw_node(e.id_of())] = @closure_clos_value(e)
+                return
+            }
             if kind != NodeKind.RecordCtor {
                 for c in children {
                     @hoist_array_lits(c)

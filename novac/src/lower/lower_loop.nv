@@ -12,9 +12,20 @@
 module novac.lower
 import ../tree.{Node}
 import ../lex.{TokenKind}
-import ../sem.{branch_children, for_head_elem}
+import ../sem.{branch_children, for_head_elem, narrowing_of}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload, leaf_kind}
+
+fn Lowerer mut @lower_condition_binding(cond Node) -> () {
+    match narrowing_of(cond, @out, @ctx) {
+        Some(nw) => {
+            ro tmp = @ir.temp(nw.target)
+            @ir.unbox_any(tmp, nw.subject)
+            @ir.copy(@named_binding(cond, nw.target, nw.name), tmp)
+        }
+        None => {}
+    }
+}
 
 /// One `while`: the header block carries the loop, the body jumps back.
 fn Lowerer mut @lower_while(st Node) -> () {
@@ -29,6 +40,7 @@ fn Lowerer mut @lower_while(st Node) -> () {
         @ir.begin_else(t)
         @ir.break_loop()
         @ir.end_if(t)
+        @lower_condition_binding(kids[1])
         @lower_block_stmts_fn(kids[2], false)
         @ir.end_loop(fc)
         return
@@ -36,6 +48,7 @@ fn Lowerer mut @lower_while(st Node) -> () {
     // Recorded first, printed from the record (M2b-2 step 3a).
     ro head = LoopHead.While(kids[1])
     ro c = @ir.begin_loop(head)
+    @lower_condition_binding(kids[1])
     @lower_block_stmts_fn(kids[2], false)
     @ir.end_loop(c)
 }
@@ -99,7 +112,7 @@ fn Lowerer mut @lower_for_range(kids []Node) -> () {
     // structured pattern never reaches here against `int` -- the checker's
     // own door refused it.)
     ro lv = if pattern_shape(pat) == PatShape.Bind {
-        @ir.named(@ctx.prims.int_id, pattern_head_text(pat))
+        @named_binding(pat, @ctx.prims.int_id, pattern_head_text(pat))
     } else {
         @ir.temp(@ctx.prims.int_id)
     }
@@ -141,7 +154,7 @@ fn Lowerer mut @lower_for_each(kids []Node) -> () {
     // (`@lower_pattern_bind`, the "scrutinee once" contract). `_` reads
     // nothing: the walk counts, and an unread slot read would be waste.
     ro le = if shape == PatShape.Bind {
-        @ir.named(elem_t, pattern_head_text(pat))
+        @named_binding(pat, elem_t, pattern_head_text(pat))
     } else {
         @ir.temp(elem_t)
     }
@@ -183,7 +196,7 @@ fn Lowerer mut @lower_for_iter(st Node, kids []Node) -> () {
     if shape == PatShape.Wild {
         // Nothing binds the element: the turn only advances the iterator.
     } else {
-        ro le = if shape == PatShape.Bind { @ir.named(elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
+        ro le = if shape == PatShape.Bind { @named_binding(pat, elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
         @ir.take_payload(le, lo)
         if shape != PatShape.Bind {
             @lower_pattern_bind(pat, elem_t, le)

@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// E.13 wave (D31, narrowed A): `with Fail[E] = |args| body` -- the handler
+// as a closure literal. The single operation's schema is the context; the
+// block body carries the side effect and captures a `mut` binding.
+module with_lambda.pos_1
+
+type MyErr value { msg str }
+
+fn guarded() -> int {
+    mut hit = false
+    with Fail[MyErr] = |_e| { hit = true } {
+        ro r = 1
+    }
+    if hit { 7 } else { -1 }
+}
+
+fn main() {
+    println(guarded())
+}

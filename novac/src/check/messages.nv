@@ -68,13 +68,6 @@ const NESTING_TOO_DEEP_MSG = "outside the subset: nesting is deeper than 512 lev
 /// reg 1089; the 118-corpus sweep's consume_tour).
 const DEFER_MSG = "outside the subset: `defer` is not compiled yet -- running the body at scope exit, LIFO, on every way out (D90) is the effects/consume horizon's debt (E2)"
 
-/// A parameter TYPED by a function type in a compiled declaration (task 134,
-/// class A2). The form READS since that day -- that is what keeps a handed
-/// signature like std's `map_err` in the registry -- but no VALUE of the
-/// type is compiled while closure literals are refused, so the declaration
-/// is refused by name rather than emitted into an ice on the C layout.
-const FN_PARAM_MSG = "outside the subset: a parameter of function type `fn(...) -> ...` is not compiled yet -- closure values arrive with the handler-value wave (E4; the type form is D43's)"
-
 /// The fn-typed FIELD of an own record (task 134 hunt, finding
 /// fn-field-no-door). The type reads since that day -- and an own record's
 /// every field is printed through `c_type` (emit_decls.nv), which has no
@@ -661,6 +654,12 @@ const HANDLER_LIT_POSITION_MSG = "outside the subset: a handler literal is compi
 /// the form only where a typist judges it, and names the position elsewhere.
 const CLOSURE_LIT_POSITION_MSG = "outside the subset: a closure literal (`|params| ...`) is compiled only where its signature is given by the context -- `on_timeout:` of a `supervised` value (D22, D449); a closure in any other position is not compiled yet (E5, handler values)"
 
+/// A closure literal standing as a CALL ARGUMENT whose parameter is not a
+/// function type: the slot is the one D22 names (context 1), but the callee
+/// gives it no signature -- so there is nothing to type the params against,
+/// and the refusal names the cause rather than the general position bar.
+const CLOSURE_ARG_NEEDS_FN_MSG = "a closure literal takes its signature from the call's parameter, and this parameter is not a function type (`fn(...) -> ...`) -- D22 names the fn-call parameter as the context (E5, handler values)"
+
 /// `supervised(cancel: tok)` (D441 cancellation): the supervised-value wave
 /// compiles `timeout:`/`on_timeout:` (D442/D449), not cancellation -- refused
 /// by name rather than silently dropped (the carrier relay.nv writes it).
@@ -733,3 +732,29 @@ fn no_shell_instance_msg(head str, of str, arrives str) -> str =>
 /// A method whose `value` record receiver crosses by POINTER (D488 R3/R5) needs a
 /// PLACE to take the address of; a temporary receiver (`mk().m()`) has none yet.
 const VALUE_RECV_TEMP_MSG = "outside the subset: this method takes its `value` record receiver by pointer (D488), and the receiver here is a temporary -- novac does not spill it to a place yet (E2-b3)"
+
+/// `with E = |args| body` over an effect with TWO OR MORE operations (E.13
+/// wave, D31): the language's own rule -- the handler-lambda form exists
+/// only for effects with exactly one operation; everything else writes the
+/// handler literal `effect E { ... }` (D31, 04-effects.md:1515).
+const HANDLER_LAMBDA_MULTI_OP_MSG = "a handler-lambda (`with E = |args| body`) is compiled only for an effect with exactly ONE operation -- this effect declares more, so write the handler literal `effect E { ... }` (D31, 274.11 E13)"
+
+/// The handler-lambda's parameter count against the single operation's
+/// schema (E.13 wave, D31).
+const HANDLER_LAMBDA_ARITY_MSG = "a handler-lambda takes the parameters of its effect's ONE operation -- this one writes a different count than the operation declares (D31, 274.11 E13)"
+
+/// A generic effect named WITHOUT its type arguments on the left of a
+/// handler-lambda (E.13 wave, D31): the operation schema is written in the
+/// effect's own parameters, and the application is the only place that fixes
+/// them. novac does not infer them from the body (the oracle does); the gap
+/// is named rather than carried into emission as an unresolved parameter.
+const HANDLER_LAMBDA_ARGS_MSG = "a handler-lambda on a generic effect names the effect's type arguments on the left -- write `with Fail[MyErr] = |e| ...`; novac does not infer them from the body (D31, 274.11 E13)"
+
+/// The refusal text for a callee no registry knows, built OUTSIDE the door that
+/// finds (or fails to find) it. The door asks a table, and a door that asks a
+/// table does not allocate (P18/P14): interpolation lives here, in a plain
+/// function that looks nothing up. Carried inline in `@type_free_call` until
+/// 2026-09-22 (registry 221.1 reg 1286); moved to the texts' own file
+/// 2026-11-20 (door A: calls.nv stood at the 1000-line cap).
+fn unknown_callee_msg(cname str) -> str =>
+    "outside the subset: `${cname}` is not a callable novac knows in an expression -- either it does not exist, or (like `println`) it is a statement-only form novac does not read as a value (E2-b3)"

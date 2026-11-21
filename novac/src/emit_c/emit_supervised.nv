@@ -279,6 +279,7 @@ fn Emitter mut @lower_sup_value_body(body Node, u int, ty TyId, res str) -> () {
     ro tail = kids[tail_at]
     ro saved = @lo.ir
     @lo.ir = @body_builder(ty)
+    @lo.seed_source_bindings(body)
     @lo.lower_sup_body_non_tail(body, u)
     ro join = @lo.ir.reserve()
     @lo.ir.seal(@lo.ir.current(), Terminator.Goto(join))
@@ -309,6 +310,7 @@ fn Emitter mut @lower_sup_value_body(body Node, u int, ty TyId, res str) -> () {
 fn Emitter mut @emit_sup_eager_body(body Node, u int) -> () {
     ro saved = @lo.ir
     @lo.ir = @body_builder(@ctx.prims.unit_id)
+    @lo.seed_source_bindings(body)
     @lo.lower_sup_body_eager(body, u)
     ro j = @lo.ir.reserve()
     @lo.ir.seal(@lo.ir.current(), Terminator.Goto(j))

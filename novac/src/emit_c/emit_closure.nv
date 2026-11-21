@@ -20,16 +20,33 @@
 
 module novac.emit_c
 
-import ../tree.{Node, NodeKind}
+import ../tree.{Node, NodeKind, raw_node}
+import ../diag.{ice_at}
 import ../lex.{TokenKind}
 import ../sem.{branch_children, leaf_text, leaf_kind, file_decls, decl_fn_row}
 import ../sem.{c_type, c_ident, is_unit_ty}
+import ../types.{is_ty}
+import ../builtins.{TypeKind}
 import ../lower.{FnBuilder}
 
 /// Every closure-light literal of the functions mono reached, in the order of
 /// the file -- the index is the closure's C number. A literal of an unreached
 /// function is not emitted: its body's callees were never marked.
 fn Emitter mut @collect_closures(file Node) -> () {
+    @collect_closures_raw(file)
+    mut keep = []Node.new()
+    for lit in @closures {
+        if @is_closure_handler(lit) {
+            // The handler machinery's.
+        } else {
+            keep.push(lit)
+        }
+    }
+    @closures = keep
+}
+
+/// The raw walk: every closure literal of the reached functions.
+fn Emitter mut @collect_closures_raw(file Node) -> () {
     for c in file_decls(file) {
         if c.kind_of() != NodeKind.FnDecl { continue }
         match decl_fn_row(c, @ctx) {
@@ -41,6 +58,15 @@ fn Emitter mut @collect_closures(file Node) -> () {
             }
         }
     }
+}
+
+/// A WITH-SLOT handler-lambda belongs to the HANDLER machinery (a vtable,
+/// not a NovaClosBase): its recorded type is Effect[E], not a fn type this
+/// file could read. Filtered after collection -- the walker is free of
+/// Emitter state.
+fn Emitter @is_closure_handler(lit Node) -> bool {
+    ro t = @out.type_if_known(lit.id_of())
+    is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkApp
 }
 
 /// The closure literals under `n`, pre-order.
@@ -162,6 +188,7 @@ fn Emitter mut @emit_closure_fn(n int) -> () {
     }
     ro saved = @lo.ir
     @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(lit)
     @cur_closure = n
     match body.kind_of() {
         NodeKind.Block => @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
@@ -201,4 +228,19 @@ fn Emitter mut @closure_clos_value(lit Node) -> str {
     @body.append("    ${v}->fn = (void*)novac_lambda_${@tag}${n}_body;\n")
     @body.append("    ${v}->env = (void*)${v}_env;\n")
     v
+}
+
+/// The closure VALUE at an expression position (E.11 wave, D22 context 1): the
+/// temporary the statement's hoist built (`@hoist_array_lits`), the same
+/// contract the array literal and the record constructor keep.
+fn Emitter mut @emit_closure_value(e Node) -> () {
+    ro tmp = @lit_tmp[raw_node(e.id_of())]
+    if tmp == "" {
+        ice_at(
+            "novac/src/emit_c/emit_closure.nv:216",
+            "emit: a closure literal in expression position was never hoisted (E.11 wave)")
+    } else {
+        // Hoisted: the temporary carries the closure value.
+    }
+    @body.append(tmp)
 }

@@ -19,9 +19,9 @@
 
 module novac.check
 
-import ../tree.{Node}
+import ../tree.{Node, NodeKind}
 import ../builtins.{TypeKind}
-import ../sem.{FnRow, raw_row, slot_binding_in}
+import ../sem.{FnRow, raw_row, slot_binding_in, branch_children}
 import ../types.{TyId, no_ty, is_ty}
 
 /// The type arguments the CALL'S POSITION fixes: for each type parameter of
@@ -60,7 +60,23 @@ fn Checker @param_expect(row FnRow, at int, pre []TyId) -> TyId {
 /// Type one argument with its position's expectation: a bare numeric literal
 /// takes `want` (D489, through the fit door), any other expression is typed
 /// with `want` as the expectation -- a value `if`'s literal branches take it.
+/// A CLOSURE LITERAL is judged HERE against the parameter's signature (D22
+/// context 1, the E.11 wave): the fn-typed parameter IS the context the
+/// literal was allowed for by the walk (`is_closure_arg_slot`), and no other
+/// door of the expression chain holds a signature to give it. A parameter that
+/// is not a function type gets the named refusal -- the walk admitted the slot,
+/// typing names why it does not fit.
 fn Checker mut @type_arg_expecting(c Node, want TyId) -> () {
+    if c.kind_of() == NodeKind.ClosureLit {
+        if is_ty(want) && @ctx.tys.kind_of(want) == TypeKind.TkFn {
+            @type_closure_lit(c, want)
+        } else {
+            @report_first_leaf_of(branch_children(c), CLOSURE_ARG_NEEDS_FN_MSG)
+        }
+        return
+    } else {
+        // Not a closure: the position's expectation, below.
+    }
     ro saved = @value_expect
     @value_expect = want
     ro mark = @out.len()

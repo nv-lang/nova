@@ -53,6 +53,23 @@ fn single_type_arg(ctx Ctx, t TyId) -> TyId {
     ctx.tys.arg(t, 0)
 }
 
+/// The type ARGUMENTS of an application term, in declaration order -- empty
+/// for a term that is not one (`Fail` alone, a record, a primitive).
+///
+/// Asked by the two readers of a handler-lambda's effect (check/handler.nv
+/// and emit_c/emit_handler.nv): the schema of a GENERIC effect is written in
+/// its own parameters, and the application on the left of the `with`
+/// (`Fail[MyErr]`) is what fixes them. One walk, one answer, both phases.
+export fn applied_args(ctx Ctx, t TyId) -> []TyId {
+    mut out = []TyId.new()
+    if !is_ty(t) { return out }
+    if ctx.tys.kind_of(t) != TypeKind.TkApp { return out }
+    for i in 0..ctx.tys.arg_count(t) {
+        out.push(ctx.tys.arg(t, i))
+    }
+    out
+}
+
 /// The PAYLOAD an Option instance carries, or no type: the single-argument
 /// door, gated on the head being the language's Option sum.
 export fn option_payload(ctx Ctx, t TyId) -> TyId {

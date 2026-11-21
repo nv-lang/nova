@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module novac.lower
+
+import ../tree.{Node, NodeKind, NodeId, raw_node}
+import ../types.{TyId}
+import ../sem.{branch_children, c_ident}
+import ../diag.{ice_at}
+import ../builtins.{RECV_BINDING, RECV_C_NAME}
+
+fn binding_site_inside(n Node, site NodeId) -> bool {
+    if n.id_of() == site { return true }
+    if n.kind_of() == NodeKind.LeafNode { return false }
+    for c in branch_children(n) {
+        if binding_site_inside(c, site) { return true }
+    }
+    false
+}
+
+fn Lowerer @source_binding(site Node, name str, nested bool) -> int {
+    for i in 0..@out.binding_defs.len() {
+        ro b = @out.binding_defs[i]
+        if b.name != name { continue }
+        if b.site == site.id_of() || (nested && binding_site_inside(site, b.site)) { return i }
+    }
+    ice_at("novac/src/lower/local_bindings.nv", "lower: a source binding has no exported identity")
+}
+
+fn Lowerer mut @remember_source_bindings(site Node, name str, local Local, nested bool) -> () {
+    for i in 0..@out.binding_defs.len() {
+        ro b = @out.binding_defs[i]
+        if b.name != name { continue }
+        if b.site == site.id_of() || (nested && binding_site_inside(site, b.site)) {
+            @ir.remember_source_binding(i, local)
+        }
+    }
+}
+
+fn Lowerer @initializer_uses_c_name(n Node, name str) -> bool {
+    if n.kind_of() == NodeKind.LeafNode { return false }
+    ro identity = @out.binding_read(n.id_of())
+    if identity >= 0 {
+        for binding in @ir.source_bindings {
+            if binding.identity == identity && @ir.decl_of(binding.local).name == name { return true }
+        }
+        for parameter in @ir.source_parameters {
+            if parameter.identity == identity && parameter.c_name == name { return true }
+        }
+    }
+    for child in branch_children(n) {
+        if @initializer_uses_c_name(child, name) { return true }
+    }
+    false
+}
+
+fn Lowerer mut @named_binding(site Node, ty TyId, name str) -> Local {
+    ro id = @source_binding(site, name, false)
+    ro b = @out.binding_def(id)
+    ro local = @ir.named(ty, name, scope: raw_node(b.scope))
+    @remember_source_bindings(site, name, local, false)
+    local
+}
+
+fn Lowerer mut @named_pattern_binding(site Node, ty TyId, name str) -> Local {
+    ro id = @source_binding(site, name, true)
+    ro b = @out.binding_def(id)
+    ro local = @ir.named(ty, name, scope: raw_node(b.scope))
+    @remember_source_bindings(site, name, local, true)
+    local
+}
+
+export fn Lowerer mut @seed_source_bindings(fn_node Node) -> () {
+    for b in @out.binding_defs { @ir.reserve_source_name(b.name) }
+    for i in 0..@out.binding_defs.len() {
+        ro b = @out.binding_defs[i]
+        mut parameter = false
+        if fn_node.kind_of() == NodeKind.ClosureLit && b.site == fn_node.id_of() { parameter = true }
+        if fn_node.kind_of() == NodeKind.FnDecl && b.site == fn_node.id_of() && b.name == RECV_BINDING {
+            parameter = true
+        }
+        for c in branch_children(fn_node) {
+            if c.kind_of() == NodeKind.Param && b.site == c.id_of() { parameter = true }
+        }
+        if parameter {
+            ro name = if b.name == RECV_BINDING { RECV_C_NAME } else { c_ident(b.name) }
+            @ir.reserve_source_parameter(i, raw_node(b.scope), b.name, name)
+        }
+    }
+}

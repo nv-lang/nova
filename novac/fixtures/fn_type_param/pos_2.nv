@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_2
+
+// Two fn-typed locals in ONE body, and a local fn parameter PASSED ON as an
+// argument to another fn-typed parameter: the value travels by its
+// NovaClosBase pair, and each call reads the binding it was given. A door
+// that called through a symbol, or bound the second parameter to the first
+// name, would print a different number (7, 16, 9).
+fn inner(f fn(int) -> int, x int) -> int => f(x)
+
+fn compose(f fn(int) -> int, g fn(int) -> int, x int) -> int => f(g(x))
+
+fn forward(f fn(int) -> int, x int) -> int => inner(f, x)
+
+fn main() -> () {
+    println(compose(|x| x + 1, |x| x * 3, 2))
+    println(inner(|x| x * x, 4))
+    println(forward(|x| x - 1, 10))
+}

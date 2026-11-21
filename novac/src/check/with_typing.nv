@@ -18,9 +18,9 @@ import ../tree.{Node, NodeKind}
 import ../builtins.{TypeKind, TIMEOUT_ERROR_TYPE}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text}
-import ../sem.{leaf_kind}
 import ../sem.{is_unit_ty, is_value_tail_kind}
 import ../sem.{ty_source_name, decl_of_ty}
+import ../sem.{first_ident_of, ty_of_type_ref}
 import ../types.{TyId, is_ty, no_ty}
 
 /// Type a `with` statement (E4 wave, 274.11): the effect bindings resolve, the
@@ -42,14 +42,35 @@ fn Checker mut @type_with_stmt(st Node) -> () {
     mut bi = 1
     while bi + 2 < kids.len() {
         ro nm = kids[bi]
-        if nm.kind_of() != NodeKind.LeafNode || leaf_kind(nm) != TokenKind.Ident {
+        // THE EFFECT'S NAME RIDES IN AN `EffectItem` (E.13 wave, D31), the
+        // shape a signature's effect_list uses: `Fs` and `Fail[MyErr]` are
+        // the same piece, and the application is KEPT -- a generic effect's
+        // operation types are written in its parameters, and this is the
+        // only place that fixes them.
+        if nm.kind_of() != NodeKind.EffectItem {
             // A planted Err (missing name): the walk already spoke.
             break
         }
-        ro name = leaf_text(nm)
+        ro name = first_ident_of(nm)
+        if name == "" {
+            // An effect item with no name: the walk's Err child spoke.
+            break
+        }
+        ro nk = branch_children(nm)
+        // The name leaf: the head of the flat type-reference run. The item
+        // itself is the fallback, so a nameless shape refuses at nothing
+        // (the walk's Err child already spoke).
+        ro name_leaf = if nk.len() > 0 { nk[0] } else { nm }
+        // THE APPLICATION, resolved through the ONE reference door (the same
+        // one every signature position reads). `Fail` alone answers the
+        // declaration's own term; `Fail[MyErr]` answers the application --
+        // and an application novac cannot read answers no type, which the
+        // handler-lambda door below names.
+        mut eff_applied = no_ty()
+        mut eff_tparams = 0
         match @ctx.defs.type_decl(name) {
             None => {
-                match nm {
+                match name_leaf {
                     Leaf(t) => @refuse(t, "unknown name: nothing with this name is bound at this point (E4, wave 274.11)")
                     Branch { .. } => {}
                 }
@@ -69,7 +90,7 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                     } else {
                         "a record"
                     }
-                    match nm {
+                    match name_leaf {
                         Leaf(t) => @refuse(t, "a `with` binding names an effect, and `${name}` is ${what}, not one (E4, wave 274.11)")
                         Branch { .. } => {}
                     }
@@ -77,6 +98,11 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                     // A TkEffect kind: the name is a valid handler
                     // target, and the handler expression is typed below
                     // regardless of which arm of this match ran.
+                    ro row = @ctx.types[raw_decl(d)]
+                    eff_tparams = row.tparam_cnt
+                    eff_applied = ty_of_type_ref(branch_children(nm), 0, no_ty(),
+                                                 []str.new(), []TyId.new(),
+                                                 @ctx.types, @ctx.defs, @ctx.tys)
                 }
             }
         }
@@ -98,10 +124,45 @@ fn Checker mut @type_with_stmt(st Node) -> () {
         // the factories, NovaVtable_Fs/_Os and their registration. So a
         // factory the shell does not carry is refused here by W6's own
         // text, as in every other position (pipeline/with_test.nv).
+        // THE APPLICATION ON THE LEFT (E.13 wave, D31) sits between the
+        // name and `=`: `with Fail[E] = handler`. The handler is the child
+        // right AFTER the `=` leaf, wherever the application ended.
+        mut hj = bi + 1
+        while hj < kids.len() {
+            ro hk = kids[hj]
+            if hk.kind_of() == NodeKind.LeafNode && leaf_text(hk) == "=" {
+                break
+            } else {
+                hj += 1
+            }
+        }
+        if hj >= kids.len() || hj + 1 >= kids.len() {
+            // A malformed binding piece: the walk already spoke.
+            break
+        }
+        ro hexpr_at = hj + 1
         ro hmark = @out.len()
-        @type_expr(kids[bi + 2])
+        if kids[hexpr_at].kind_of() == NodeKind.ClosureLit {
+            // THE HANDLER-LAMBDA (E.13 wave, D31): the effect named on the
+            // left is the context; the literal is typed against its single
+            // operation's schema (@type_with_handler_lambda, handler.nv).
+            //
+            // A GENERIC EFFECT NEEDS ITS ARGUMENTS WRITTEN: the schema's
+            // operation types are the effect's own PARAMETERS, and the
+            // application on the left is the one place that fixes them.
+            // The oracle infers `E` from the body; novac does not, so a
+            // bare name here is the subset's debt, said by name -- never
+            // an unresolved parameter carried into emission.
+            if eff_tparams > 0 && (!is_ty(eff_applied) || @ctx.tys.kind_of(eff_applied) != TypeKind.TkApp) {
+                @report_first_leaf_of(nk, HANDLER_LAMBDA_ARGS_MSG)
+            } else {
+                @type_with_handler_lambda(kids[hexpr_at], name, eff_applied)
+            }
+        } else {
+            @type_expr(kids[hexpr_at])
+        }
         if @out.len() == hmark {
-            ro hty = @tail_type_of(kids[bi + 2])
+            ro hty = @tail_type_of(kids[hexpr_at])
             if is_ty(hty) {
                 ro hk = @ctx.tys.kind_of(hty)
                 // A VALUE-TYPE kind is refused. The condition names the kinds
@@ -110,7 +171,7 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                 // accepted in silence by a list that forgot it.
                 if hk != TypeKind.TkApp && hk != TypeKind.TkParam && hk != TypeKind.TkInfer &&
                     hk != TypeKind.TkEffect {
-                    @report_first_leaf_of(branch_children(kids[bi + 2]), "a `with` binding takes a handler for its effect, and `${ty_source_name(@ctx, hty)}` is a value type -- pass a handler (E4, wave 274.11)")
+                    @report_first_leaf_of(branch_children(kids[hexpr_at]), "a `with` binding takes a handler for its effect, and `${ty_source_name(@ctx, hty)}` is a value type -- pass a handler (E4, wave 274.11)")
                 } else {
                     // Not a value-type kind: a protocol/generic/unknown
                     // instance is accepted this wave, per the deferred
@@ -118,8 +179,8 @@ fn Checker mut @type_with_stmt(st Node) -> () {
                     // RECORDED when typing did not (a call records its callee,
                     // not always its value): the lowering holds the handler in
                     // a local of this type (E.9 step 2, lower/lower_with.nv).
-                    if !is_ty(@chan.type_if_known(kids[bi + 2].id_of())) {
-                        @record(kids[bi + 2], hty)
+                    if !is_ty(@chan.type_if_known(kids[hexpr_at].id_of())) {
+                        @record(kids[hexpr_at], hty)
                     } else {
                         // Typing recorded it already.
                     }
@@ -134,7 +195,7 @@ fn Checker mut @type_with_stmt(st Node) -> () {
             // while typing; asking whether its type is a value type
             // would be the second death over the same cause.
         }
-        bi += 3
+        bi = hexpr_at + 1
         if bi < kids.len() && kids[bi].kind_of() == NodeKind.LeafNode {
             bi += 1
         } else {

@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT a named argument to a local function value
+// EXPECT_COMPILE_ERROR
+module fn_type_param.neg_4
+
+// A fn TYPE carries no parameter names, so a named argument has nothing to
+// bind to. Dated subset refusal (E4): the wave that compiles named arguments
+// on fn values removes it; until then the door names the form, once.
+// nova:expect E_NOVAC_SUBSET
+fn apply(f fn(int) -> int, x int) -> int => f(x: x)
+
+fn main() -> () {
+    println(apply(|x| x, 1))
+}

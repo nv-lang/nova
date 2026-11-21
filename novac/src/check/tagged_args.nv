@@ -9,7 +9,8 @@ module novac.check
 import ../tree.{Node}
 import ../types.{TyId, is_ty}
 import ../builtins.{TypeKind, SLICE_HEAD, EMPTY_CTOR}
-import ../sem.{decl_of_ty, ty_source_name, branch_children, leaf_text}
+import ../sem.{decl_of_ty, ty_source_name, branch_children, leaf_text, is_arg_node, leaf_kind}
+import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind}
 
 /// Only the tag parser creates a leafless ArrayLit; explicit [] has brackets.
@@ -39,3 +40,24 @@ fn named_arg_is(c Node, want str) -> bool {
     if ak[0].kind_of() != NodeKind.LeafNode { return false }
     leaf_text(ak[0]) == want
 }
+
+/// The ARGUMENT SLOT of a call: the position D22 names as context 1 for a
+/// closure literal (`list.filter(|x| x > 0)` -- the signature comes from the
+/// callee's parameter). Syntax only -- the callee's parameter type is judged by
+/// the call's own typing door (`@type_arg_expecting`), never here; the walk
+/// holds no scope to ask it with.
+fn is_closure_arg_slot(kind NodeKind, c Node) -> bool =>
+    (kind == NodeKind.Call || kind == NodeKind.MethodCall) && is_arg_node(c)
+
+/// The CLOSURE POSITION flag the walk hands a child (D22's contexts), computed
+/// where the position is: the `on_timeout:` named slot of a supervised value
+/// (ONLY that name -- any NamedArg opened the gate, so `timeout: |_e| 0` passed
+/// the walk and died in emit as an ICE, remark 5), that NamedArg's value child
+/// (slot 2, `inherited`), the `with` binding's handler slot (the child after an
+/// `=` leaf, registry 1312), and the fn-typed call argument slot. Syntax only --
+/// the callee's parameter TYPE is judged by the call's typing door, never here.
+fn closure_pos_of(kind NodeKind, c Node, at int, children []Node, inherited bool) -> bool =>
+    (kind == NodeKind.SupervisedStmt && named_arg_is(c, "on_timeout")) ||
+    (kind == NodeKind.NamedArg && inherited && at == 2) ||
+    (kind == NodeKind.WithStmt && at > 0 && children[at - 1].kind_of() == NodeKind.LeafNode && leaf_kind(children[at - 1]) == TokenKind.Assign) ||
+    is_closure_arg_slot(kind, c)

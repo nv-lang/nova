@@ -642,6 +642,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     // place, the bindings and the temporaries; every value position records
     // its placement here through the one door and prints it (emit_place.nv).
     @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(f)
     // `-> @` (D409): the receiver is returned automatically -- the tail is a
     // statement, and a return with no value returns the receiver.
     @ret_self = returns_receiver(kids)

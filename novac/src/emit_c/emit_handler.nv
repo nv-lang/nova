@@ -21,11 +21,14 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind}
+import ../lex.{TokenKind}
 import ../diag.{ice_at}
-import ../sem.{branch_children, leaf_text, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty}
-import ../sem.{effect_vtable_c, CaptureRow, EffectDef}
+import ../sem.{branch_children, leaf_text, leaf_kind, param_name_at, decl_fn_row, file_decls, c_type, is_unit_ty, ty_source_name}
+import ../sem.{effect_vtable_c, CaptureRow, EffectDef, EffectOpSig}
+import ../sem.{applied_args, subst_type, is_never_ty}
+import ../builtins.{TypeKind}
 import ../sem.{c_ident}
-import ../types.{TyId}
+import ../types.{TyId, is_ty}
 import ../lower.{FnBuilder}
 
 /// Every handler literal of the functions mono reached, in the order of the
@@ -40,8 +43,24 @@ fn Emitter mut @collect_handler_lits(file Node) -> () {
                 if !@has_selected_fn(row) { continue }
                 if !@reach.has(row) { continue }
                 collect_lits(c, @hlits)
+                @collect_hlamb_lambdas(c)
             }
         }
+    }
+}
+
+/// THE HANDLER-LAMBDAS (E.13 wave, D31): the with-slot literals join the
+/// same numbering list, after the handler literals -- they take the same
+/// machinery, one synthesis op each.
+fn Emitter mut @collect_hlamb_lambdas(n Node) -> () {
+    if n.kind_of() == NodeKind.LeafNode { return }
+    if n.kind_of() == NodeKind.ClosureLit && @is_handler_lambda(n) {
+        @hlits.push(n)
+    } else {
+        // Not one; one may stand below it.
+    }
+    for c in branch_children(n) {
+        @collect_hlamb_lambdas(c)
     }
 }
 
@@ -58,6 +77,38 @@ fn collect_lits(n Node, mut out []Node) -> () {
     }
 }
 
+/// Is this the WITH-SLOT handler (E.13 wave, D31)? TWO facts, and the KIND is
+/// the first: a CLOSURE literal (`|args| body`) whose typist recorded the
+/// handler-type application `Effect[E]`. The type alone does not answer --
+/// a handler LITERAL records the same `Effect[E]` -- and reading it alone
+/// made every literal take this arm (measured 2026-11-19: the with_lit
+/// emission iced on a parameter list read off a literal's own children).
+fn Emitter @is_handler_lambda(lit Node) -> bool {
+    if lit.kind_of() != NodeKind.ClosureLit { return false }
+    ro t = @out.type_if_known(lit.id_of())
+    is_ty(t) && @ctx.tys.kind_of(t) == TypeKind.TkApp
+}
+
+/// The lambda's parameter NAMES, in order -- the IDENT leaves between the
+/// pipes (`_` is a name here, the emit side spells it uniquely). The pipes
+/// themselves are leaves too, and reading every leaf made the closing `|`
+/// a parameter of the synthesized op (measured 2026-11-19, the first
+/// emission of a handler-lambda).
+fn hlamb_param_names(lit Node) -> []str {
+    mut out = []str.new()
+    ro kids = branch_children(lit)
+    if kids.len() < 2 { return out }
+    for i in 1..kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() == NodeKind.LeafNode && leaf_kind(c) == TokenKind.Ident {
+            out.push(leaf_text(c))
+        } else {
+            // A Comma separator or a pipe leaf: neither names a parameter.
+        }
+    }
+    out
+}
+
 /// A literal's C number -- its index among the collected ones.
 fn Emitter @lit_number(lit Node) -> int {
     for i in 0..@hlits.len() {
@@ -68,8 +119,20 @@ fn Emitter @lit_number(lit Node) -> int {
         "emit: a handler literal outside the reached functions reached the emitter")
 }
 
-/// The effect a literal handles (its second child, after `effect`).
-fn lit_effect(lit Node) -> str => leaf_text(branch_children(lit)[1])
+/// The effect a literal handles: the second child after `effect`, or -- for
+/// the with-slot handler-lambda -- the effect inside its recorded
+/// `Effect[E]` type (the base name before any application).
+fn Emitter @lit_effect(lit Node) -> str {
+    if lit.kind_of() == NodeKind.ClosureLit {
+        ro eff = @ctx.tys.arg(@out.type_of(lit.id_of()), 0)
+        ro full = ty_source_name(@ctx, eff)
+        for part in full.split("[") {
+            return part
+        }
+        return full
+    }
+    leaf_text(branch_children(lit)[1])
+}
 
 /// The operation a literal's HandlerOp defines (its first child).
 fn op_name_of(op Node) -> str => leaf_text(branch_children(op)[0])
@@ -106,7 +169,7 @@ fn Emitter @op_sig_at(schema EffectDef, op Node) -> int {
 
 /// The schema of the effect a literal handles.
 fn Emitter @lit_schema(lit Node) -> EffectDef =>
-    @ctx.effects.def_of(lit_effect(lit)) ?? ice_at(
+    @ctx.effects.def_of(@lit_effect(lit)) ?? ice_at(
         "novac/src/emit_c/emit_handler.nv:109",
         "emit: a handler literal of an effect with no schema")
 
@@ -160,8 +223,13 @@ fn Emitter mut @emit_handler_protos() -> () {
             // No captures: no context type -- D474 case 2, `ctx` is NULL.
         }
         ro schema = @lit_schema(lit)
-        for op in lit_ops(lit) {
-            @body.append("${@op_signature(n, op, @op_sig_at(schema, op))};\n")
+        if @is_handler_lambda(lit) {
+            // ONE synthesis op: the schema's only one, body = the literal's.
+            @body.append("${@hlam_signature(n, lit, @ctx.effects.ops[schema.op_off])};\n")
+        } else {
+            for op in lit_ops(lit) {
+                @body.append("${@op_signature(n, op, @op_sig_at(schema, op))};\n")
+            }
         }
     }
 }
@@ -174,8 +242,12 @@ fn Emitter mut @emit_handler_ops() -> () {
         ro lit = @hlits[n]
         ro has_caps = @out.captures_of(lit.id_of()).len() > 0
         ro schema = @lit_schema(lit)
-        for op in lit_ops(lit) {
-            @emit_op_fn(n, op, @op_sig_at(schema, op), has_caps)
+        if @is_handler_lambda(lit) {
+            @emit_hlam_op_fn(n, lit, @ctx.effects.ops[schema.op_off], has_caps)
+        } else {
+            for op in lit_ops(lit) {
+                @emit_op_fn(n, op, @op_sig_at(schema, op), has_caps)
+            }
         }
     }
 }
@@ -192,6 +264,7 @@ fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
     ro ok = branch_children(op)
     ro body = ok[ok.len() - 1]
     @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(op)
     @cur_lit = n
     @lower_op_body(body, ret)
     @lo.ir.end_body()
@@ -206,7 +279,14 @@ fn Emitter mut @emit_op_fn(n int, op Node, sig_at int, has_caps bool) -> () {
 /// sequence, the checker's `@type_handler_op` precedent (P21).
 fn Emitter mut @lower_op_body(body Node, ret TyId) -> () {
     if body.kind_of() == NodeKind.Block {
-        @lo.lower_block_stmts_fn(body, !is_unit_ty(@ctx, ret))
+        // A `-> never` operation asks no value of its block either: the
+        // checker types such a body with `@tail_value_body` cleared (the
+        // `unitish` rule, check/handler.nv), and asking the lowering for a
+        // value here made it place the body's last STATEMENT as one --
+        // `println("x")` then went through the generic call door with no
+        // callee recorded (measured 2026-11-19, the D31 emission ICE).
+        ro wants_value = !is_unit_ty(@ctx, ret) && !is_never_ty(@ctx.tys, ret)
+        @lo.lower_block_stmts_fn(body, wants_value)
         // SILENT-OK: the block is lowered; the expression form below is
         // the other shape, not a fallback.
         return
@@ -214,12 +294,65 @@ fn Emitter mut @lower_op_body(body Node, ret TyId) -> () {
     @lo.lower_place(body, @lo.ir.ret_place())
 }
 
+/// The type arguments the handled effect is applied to (`with Fail[MyErr]`),
+/// read back from the ONE type the typist recorded for the literal -- the
+/// `Effect[<applied effect>]` application. Empty for a non-generic effect;
+/// the substitution is then the identity.
+fn Emitter @hlam_args(lit Node) -> []TyId {
+    ro t = @out.type_of(lit.id_of())
+    if !is_ty(t) { return []TyId.new() }
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return []TyId.new() }
+    applied_args(@ctx, @ctx.tys.arg(t, 0))
+}
+
+/// The C signature of the lambda's single synthesis op: the schema's
+/// parameter TYPES, the lambda's own parameter NAMES (the body reads them).
+/// A GENERIC effect's schema is written in its parameters, so every type is
+/// substituted with the application on the left of the `with` -- the same
+/// arguments the typist used to judge the body, read from the same record.
+fn Emitter @hlam_signature(n int, lit Node, sig EffectOpSig) -> str {
+    ro names = hlamb_param_names(lit)
+    ro args = @hlam_args(lit)
+    consume s = StringBuilder.new()
+    s.append("static ${c_type(@ctx, subst_type(@ctx, sig.ret_id, args))} novac_hop_${@tag}${n}_${sig.name}(void* _novac_ctx")
+    mut j = 0
+    for pname in names {
+        ro pty = subst_type(@ctx, @ctx.effects.op_params[sig.param_off + j], args)
+        s.append(", ${c_type(@ctx, pty)} ${c_ident(pname)}")
+        j += 1
+    }
+    s.append(")")
+    s
+}
+
+/// The lambda's body as the op function: the same context cast, the same
+/// body door and return place as the handler-literal op (`@emit_op_fn`).
+fn Emitter mut @emit_hlam_op_fn(n int, lit Node, sig EffectOpSig, has_caps bool) -> () {
+    @body.append("${@hlam_signature(n, lit, sig)} {\n")
+    if has_caps {
+        @body.append("    novac_hctx_${@tag}${n}* _novac_cap = (novac_hctx_${@tag}${n}*)_novac_ctx;\n")
+    } else {
+        @body.append("    (void)_novac_ctx;\n")
+    }
+    ro kids = branch_children(lit)
+    ro body = kids[kids.len() - 1]
+    ro ret = subst_type(@ctx, sig.ret_id, @hlam_args(lit))
+    @lo.ir = FnBuilder.new(ret)
+    @lo.seed_source_bindings(lit)
+    @cur_lit = n
+    @lower_op_body(body, ret)
+    @lo.ir.end_body()
+    @print_body(@lo.ir.finish())
+    @cur_lit = 0 - 1
+    @body.append("}\n")
+}
+
 /// The VALUE of a handler literal, built where it stands (D474): the table
 /// of the shell's `NovaVtable_E`, its context, the operation functions in
 /// the schema's order. Answers the C name of the table pointer.
 fn Emitter mut @emit_handler_lit(lit Node) -> str {
     ro n = @lit_number(lit)
-    ro vt = effect_vtable_c(lit_effect(lit))
+    ro vt = effect_vtable_c(@lit_effect(lit))
     ro caps = @out.captures_of(lit.id_of())
     ro v = "_novac_hv${@fresh_uniq()}"
     if caps.len() == 0 {
@@ -240,9 +373,14 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
     }
     // An operation the literal does not define stays NULL: the table is
     // zeroed by the allocator, and the effect's dispatcher never reaches it.
-    for op in lit_ops(lit) {
-        ro opn = op_name_of(op)
-        @body.append("    ${v}->${opn} = novac_hop_${@tag}${n}_${opn};\n")
+    if @is_handler_lambda(lit) {
+        ro sig = @ctx.effects.ops[@lit_schema(lit).op_off]
+        @body.append("    ${v}->${sig.name} = novac_hop_${@tag}${n}_${sig.name};\n")
+    } else {
+        for op in lit_ops(lit) {
+            ro opn = op_name_of(op)
+            @body.append("    ${v}->${opn} = novac_hop_${@tag}${n}_${opn};\n")
+        }
     }
     v
 }
@@ -254,11 +392,13 @@ fn Emitter mut @emit_handler_lit(lit Node) -> str {
 /// context: the name is no local there, and the context slot already holds
 /// the pointer (for `mut`) or the copy.
 fn Emitter @capture_source(c CaptureRow) -> str {
+    ro binding = @out.capture_binding(c)
     for oc in @owner_captures() {
-        if oc.bind_row == c.bind_row { return "_novac_cap->${c_ident(c.name)}" }
+        if @out.capture_binding(oc) == binding { return "_novac_cap->${c_ident(oc.name)}" }
     }
-    if c.by_ref { return "&${c_ident(c.name)}" }
-    c_ident(c.name)
+    ro name = @lo.ir.binding_c_name(binding)
+    if c.by_ref { return "&${name}" }
+    name
 }
 
 /// The captures of the closure whose function is being emitted -- a literal's

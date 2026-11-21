@@ -170,3 +170,30 @@
 #   Closed counter stays 1382: the guard already counted the prior FIXED status;
 #   pin the number instead. Newly closed since baseline: 670 -> 669.
 2001
+#
+# 2026-11-20: ДОБАВЛЕНА 2002 -- closure интегратора ЗАМЕРОМ после независимой
+#   приёмки FULL ACCEPTED at пин a0df663b7 (docs-only tip 9ac67540f, code-diff
+#   пуст; база parent==25390acb0 frozen D31 подтверждена). Точный текст вердикта
+#   стоит в строке 2002, оговорка «фикс носителя приёмкой не считается»
+#   сохранена закрытой. Коммит docs-only, код-пин не двигается. База отстаёт от
+#   реестра (страж мерил 660 новых закрытий с прошлого обновления базы); этот
+#   коммит по приказу интегратора фиксирует ТОЛЬКО closure 2002, остальные
+#   номера не трогаются.
+2002
+#
+# 2026-11-20: ДОБАВЛЕНА 2010 -- closure интегратора ЗАМЕРОМ после независимой
+#   delta-приёмки FULL ACCEPTED at code-пин 173cec259 (parent 2c239b4b3 REJECTED
+#   по ICE-регрессии, фикс класса тем же циклом; closure docs-only, code-diff
+#   пуст). Точный текст вердикта стоит в строке 2010, оговорка «фикс носителя
+#   приёмкой не считается» сохранена закрытой. Счётчик закрытых НЕ меняется
+#   (1370 == 1370): страж считает закрытой всякую строку без «Статус: ОТКРЫТ»,
+#   а 2010 уже несла статус «ИСПРАВЛЕНО В ВЕТКЕ»; база фиксирует НОМЕР, чтобы
+#   потеря закрытия была видна поимённо. Коммит по приказу интегратора
+#   фиксирует ТОЛЬКО closure 2010, остальные номера не трогаются.
+2010
+# 2026-11-21, integrator: local closure of reg 2013/2014 after the owner accepted
+#   the small-scope Door A review at code aeeb8d55e, docs tip 0201940de.
+#   Measured closed count stays 1372: prior FIXED statuses were already counted.
+#   Pin the two numbers; newly closed since baseline 661 -> 659. Routes stay 116.
+#   No push, main or tag change is authorized by this closure.
+2013 2014

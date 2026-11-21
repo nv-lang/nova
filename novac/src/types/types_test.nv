@@ -83,6 +83,31 @@ test "subst: nested — Vec[Param0] with [int] is Vec[int], and it is the intern
     assert(vi_subst == vi_direct)
 }
 
+test "subst: a slot bound to absence makes the WHOLE term absence, never a hole inside (reg 2010)" {
+    mut it = Interner.new()
+    ro int_t = it.prim(0)
+    ro str_t = it.prim(1)
+    ro p0 = it.param(0)
+    ro p1 = it.param(1)
+    ro app_decl = DeclId(9)
+    ro app_p = it.app(app_decl, []TyId.of(p0, p1)) // App[A, B]
+    // B bound to absence: the result is no_ty, NOT an interned App[int, -1].
+    // Without the contagious-absence rule this returns a poisoned row whose
+    // is_concrete indexes @rows[-1] and ICEs (the flat_map carriers).
+    ro before = it.rows.len()
+    ro r = it.subst(app_p, []TyId.of(int_t, no_ty()))
+    assert(!is_ty(r))
+    // and the interner grew no poisoned row
+    assert(it.rows.len() == before)
+    // a bare Param bound to absence is absence at the top too (the TkParam arm)
+    assert(!is_ty(it.subst(p0, []TyId.of(no_ty()))))
+    // the full concrete vector still substitutes and interns (the old rule stands)
+    ro c = it.subst(app_p, []TyId.of(int_t, str_t))
+    assert(it.is_concrete(c))
+    assert(it.arg(c, 0) == int_t)
+    assert(it.arg(c, 1) == str_t)
+}
+
 test "concreteness: layout's question — Param and Infer are not concrete, and it is deep" {
     mut it = Interner.new()
     ro int_t = it.prim(0)

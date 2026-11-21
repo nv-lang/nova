@@ -24,7 +24,7 @@ import ../tree.{Node, NodeKind, BinOp, UnOp, bin_op_of, un_op_of, raw_node, is_n
 import ../diag.{ice_at}
 import ../sem.{raw_crow, carrier_of, c_callable, c_method_symbol, c_overload_symbol, Ctx}
 import ../sem.{CheckOut, vec_op_c, c_static_symbol}
-import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, expr_leaf_name, call_callee_text, c_type, c_struct}
+import ../sem.{branch_children, leaf_text, leaf_kind, is_expr_kind, call_callee_text, c_type, c_struct}
 import ../sem.{shape_of}
 import ../sem.{c_ident}
 import ../sem.{int_literal_c_text, literal_digits, char_literal_code, interp_slices}
@@ -32,8 +32,8 @@ import ../tree.{raw_node}
 import ../sem.{c_tag, c_maker, VariantRow, raw_vrow, no_vrow, call_arg_at, raw_row, slot_default_of, no_row}
 import ../sem.{is_value_record, slice_shape_of, is_value_sum, is_payload_free_sum, row_recv_by_pointer}
 import ../sem.{row_returns_recv_pointer}
-import ../builtins.{EQUAL_METHOD, bool_c_literal, RECV_C_NAME, VEC_INDEX_METHOD, PANIC_FN}
-import ../builtins.{is_bool_literal, is_true_literal, is_print_fn}
+import ../builtins.{EQUAL_METHOD, RECV_C_NAME, VEC_INDEX_METHOD, PANIC_FN}
+import ../builtins.{is_print_fn}
 import ../types.{TyId, is_ty}
 import ../sem.{prim_row_of, is_int_prim}
 import ../sem.{is_const_int_expr}
@@ -368,72 +368,10 @@ fn Emitter mut @emit_expr(e Node) -> () {
             // Hoisted: the temporary carries the built record.
         }
         @body.append(rtmp)
+    } else if k == NodeKind.ClosureLit {
+        @emit_closure_value(e)
     } else if k == NodeKind.Name {
-        // A NAME WITHOUT AN IDENTITY is a handed function's `true` / `false`
-        // default, rebuilt without one by harvest (registry 1576): the channel
-        // knows nothing of it, and asking it by id would index with -1.
-        if !is_node(e.id_of()) {
-            ro bname = expr_leaf_name(e)
-            if is_bool_literal(bname) {
-                @body.append(bool_c_literal(is_true_literal(bname)))
-                return
-            }
-            ice_at(
-                "novac/src/emit_c/emit_expr.nv:381",
-                "emit_c: a name without an identity that is no bool literal (a handed default)")
-        } else {
-            // A name of this file's tree: the channel answers below.
-        }
-        // A CAPTURE (E.9 step 3): a binding of the scope a handler literal
-        // was written in, read from one of its op bodies -- through the op
-        // function's context, as the checker recorded it.
-        match @out.capture_at(e.id_of()) {
-            Some(c) => {
-                @emit_capture_read(c)
-                return
-            }
-            None => {
-                // An ordinary name: a constant, a variant value or a local, below.
-            }
-        }
-        // A CONSTANT IS SUBSTITUTED, not referenced (274.5 wave B2): it has no
-        // C symbol of its own, and WHICH constant this is came from the
-        // channel -- the emitter resolves no names (274.4 rule E).
-        match @out.const_of(e.id_of()) {
-            Some(row) => @emit_const_read(row)
-            None => {
-                if @out.has_callee(e.id_of()) {
-                    // A payload-less variant as a value (the variant-value
-                    // wave): the checker resolved the bare name to its
-                    // variant row; the maker is the oracle's own spelling.
-                    match @out.callee_of(e.id_of()).target {
-                        CalleeVariant(v) => {
-                            // An Option instance (`None`, wave W4) is the
-                            // shell's compound literal; a file sum's variant
-                            // is its maker.
-                            ro nt = @out.type_if_known(e.id_of())
-                            if @is_option_inst(nt) {
-                                @emit_option_none(nt)
-                            } else {
-                                @body.append("${c_maker(@ctx, v)}()")
-                            }
-                        }
-                        CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
-                            ice_at(
-                                "novac/src/emit_c/emit_expr.nv:422",
-                                "emit: a bare name resolved to a non-variant callee")
-                    }
-                } else {
-                    // Not a constant: an ordinary name, and `nova_bool` IS C
-                    // `bool`, so the literals are the C keywords -- the same
-                    // shape the oracle emits. A bool literal is a C keyword by
-                    // its spelling, not a name: the door (`c_ident`, which
-                    // escapes C23 `true`/`false`) must not see it.
-                    ro nm = expr_leaf_name(e)
-                    @body.append(if is_bool_literal(nm) { nm } else { c_ident(nm) })
-                }
-            }
-        }
+        @emit_name(e)
     } else if k == NodeKind.InterpStr {
         ro itmp2 = @lit_tmp[raw_node(e.id_of())]
         if itmp2 == "" {
@@ -490,7 +428,9 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     }
                     return
                 }
-                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) =>
+                // A local fn callee (door A) is recorded on free CALLS
+                // only -- a field access never carries one.
+                CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) =>
                     ice_at("novac/src/emit_c/emit_expr.nv:494", "emit: a field access resolved to a non-variant callee")
             }
         } else {
@@ -560,7 +500,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                     // A file sum's variant: its maker, below.
                 }
                 @body.append("${@variant_maker(v, nt)}(")
-                @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr))
+                @emit_bound_args(kids, 3, false, e.id_of(), callee_row_or_none(cr), false)
                 @body.append(")")
                 return
             }
@@ -570,12 +510,15 @@ fn Emitter mut @emit_expr(e Node) -> () {
             CalleeSynthDisplay(_) => ice_at(
                 "novac/src/emit_c/emit_expr.nv:570",
                 "emit: a method call resolved to a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, and a written call has a row")
+            CalleeLocal(_) => ice_at(
+                "novac/src/emit_c/emit_expr.nv:575",
+                "emit: a method call resolved to a local fn callee -- door A records locals on free calls only; a method resolves by its receiver type's rows")
             CalleeEffectOp(op) => {
                 // `Os.arg_count()` (E.9 step 2): the shell's dispatcher, which
                 // runs the installed handler or the effect's default one --
                 // the handler is never looked up at the call site.
                 @body.append("${effect_op_dispatcher_c(op.eff, op.op)}(")
-                @emit_bound_args(kids, 3, false, e.id_of(), no_row())
+                @emit_bound_args(kids, 3, false, e.id_of(), no_row(), false)
                 @body.append(")")
                 return
             }
@@ -615,7 +558,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // recorded binding -- not a special case bolted onto the front. The
         // written arguments start at child 3 (receiver, dot, name).
         // A static method takes no receiver: its slots are its written arguments.
-        @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row())
+        @emit_bound_args(kids, 3, !static, e.id_of(), cr.callable_row(), false)
         @body.append(if deref { "))" } else { ")" })
     } else if k == NodeKind.Call && @out.embed_row_at(e.id_of()) >= 0 {
         // `embed("path")` (D412): the checker noted the door's row; the blob is printed.
@@ -688,7 +631,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 }
                 if ctor {
                     @body.append("((${c_struct(@ctx, rt)}){")
-                    @emit_bound_args(kids, 1, false, e.id_of(), row)
+                    @emit_bound_args(kids, 1, false, e.id_of(), row, false)
                     @body.append("})")
                     return
                 } else {
@@ -706,6 +649,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
                 } else {
                     @body.append("${c_callable(@ctx, row, @out.callee_subst_of(e.id_of()))}(")
                 }
+            }
+            // A LOCAL fn callee (door A): the call goes through the value's
+            // NovaClosBase pair, never a symbol -- its own door prints the
+            // whole expression (emit_local_call.nv).
+            CalleeLocal(t) => {
+                @emit_local_call(e, kids, t)
+                return
             }
             // A TYPE in call position CONSTRUCTS a newtype, and a newtype IS
             // its representation at runtime -- zero cost, D-newtype. So the
@@ -739,7 +689,7 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // named argument may stand anywhere among the named ones, and an omitted
         // one is filled from the declaration. Which argument means which
         // parameter is the CHECKER's decision, and this reads it.
-        @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr))
+        @emit_bound_args(kids, 1, false, e.id_of(), callee_row_or_none(cr), false)
         @body.append(")")
     } else if k == NodeKind.Index {
         // Two checked forms, one door (D470 section 5: an index is the call

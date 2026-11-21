@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module novac.check
+
+import ../tree.{Node, NodeKind, NodeId}
+import ../types.{TyId}
+import ../sem.{ParamMode, branch_children}
+
+fn binding_scope_of(n Node) -> NodeId {
+    for c in branch_children(n) {
+        if c.kind_of() == NodeKind.Block || c.kind_of() == NodeKind.FnExprBody {
+            return c.id_of()
+        }
+    }
+    n.id_of()
+}
+
+fn Checker mut @bind_source(site NodeId, name str, ty TyId, mode ParamMode) -> () {
+    ro row = @scope.row_count()
+    @scope.bind(name, ty, mode)
+    ro _ = @chan.record_binding(@scope.owner, site, @scope.lexical, row, name)
+}

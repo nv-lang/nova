@@ -499,6 +499,7 @@ fn Checker mut @type_method_call(e Node) -> () {
     // the receiver, so the k-th written argument stands at parameter k + 1.
     ro arg_row = @method_arg_row(kids, rmark)
     ro pre = @expected_ids(arg_row, saved_expect)
+    ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
     mut argi = 1
     mut i = 0
     for c in kids {
@@ -507,8 +508,21 @@ fn Checker mut @type_method_call(e Node) -> () {
             // by its parameter (registry 1565). A NAMED argument's value is
             // typed like a positional one (registry 1630), and binds by name:
             // no positional expectation (part 7 of p274-carina-k1).
-            ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
-            @type_arg_expecting(arg_expr_of(c), want)
+            ro ae = arg_expr_of(c)
+            if ae.kind_of() == NodeKind.ClosureLit && c.kind_of() != NodeKind.NamedArg {
+                // THE CLOSURE-ARGUMENT DOOR (E.11, D22 context 1): the literal
+                // takes its signature from the callee's fn-typed parameter, the
+                // receiver fixing its slots and the body's return the fresh one.
+                if @out.len() == before {
+                    @type_closure_arg(ae, arg_row, argi, recv_t, pre)
+                } else {
+                    // A prior refusal (the receiver, an earlier argument): the
+                    // walk spoke; a second word would be the second death.
+                }
+            } else {
+                ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
+                @type_arg_expecting(ae, want)
+            }
             argi += 1
         } else if i > 2 && is_arg_node(c) {
             // A deferred `None` still holds its parameter's place.

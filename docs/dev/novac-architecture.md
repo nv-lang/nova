@@ -163,6 +163,8 @@
 | `main` | `sem` | несёт ТИП `InteropTable` (сам объект строит `pipeline.interop_surface`): поверхность интеропа читается из встроенной оболочки ОДИН раз на процесс и передаётся каждому `compile` рядом с объявлениями std — вход компиляции, а не знание компилятора (подплан Л) |
 | `pipeline` | `source`, `lex`, `parse`, `check`, `lower`, `mono`, `emit_c`, `diag` | оркеструет (ЕДИНСТВЕННЫЙ, кто зовёт фазы); наружу — `(Diagnostic[], Artifact[])` |
 | `main` | `pipeline`, `diag` | зовёт compile; печатает из структуры |
+| `lower` | `builtins` | имена receiver ABI (`RECV_BINDING`, `RECV_C_NAME`) для снимка identity → формальный C-параметр; не резолв исходного имени |
+| `v9b_native` | `lower`, `types`, `lex`, `parse`, `source`, `sem`, `tree`, `check` | только `_test.nv`: исполняемый native entry проверяет API FnBuilder и CheckOut на разобранной/проверенной программе; production harvest исключает `_test.nv`, обратных рёбер нет |
 
 Запреты, которые страж держит отдельно: `emit_c` (и будущий `backend_native`) не
 импортируют ничего выше `lower`; никто, кроме `check`, не пишет `sem`; никто, кроме

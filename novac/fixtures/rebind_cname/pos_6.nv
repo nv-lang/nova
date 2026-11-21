@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_6
+
+fn choose(c bool) -> int {
+    ro x = 7
+    ro result = if c {
+        ro x = 20
+        ro x = 21
+        x
+    } else { x }
+    assert(x == 7)
+    result
+}
+
+fn main() -> () {
+    assert(choose(true) == 21)
+    assert(choose(false) == 7)
+    println(choose(true))
+    println(choose(false))
+}

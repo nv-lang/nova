@@ -129,6 +129,10 @@ ro console = effect Logger {
 }
 ```
 
+For an effect with one operation, a shorthand handler may be a lambda:
+its body is an expression or a block ([D31](decisions/04-effects.md#d31)).
+This does not imply that the self-hosted compiler implements every D31 form.
+
 `effect Logger { ... }` — a handler literal: the same `effect` keyword
 as in the type declaration ([D61](decisions/04-effects.md#d61)/[D142](decisions/02-types.md#d142)
 — symmetry between declaration and literal for `effect`/`protocol`).

@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_1
+
+// Door A (plan 274.11, D43/D22): a CONCRETE fn-typed parameter binds, and the
+// body calls through the VALUE -- `f(x)` is an indirect call through the
+// NovaClosBase fn/env pair, never a symbol of the registry. This is the
+// declaration refusal's front pin CONVERTED: the base refused this very shape
+// ("a parameter of function type", neg_1 before door A); the closure literal
+// at the call takes its signature from door B (D22, reg 2010).
+// Run proof: stdout 10, byte-exact with the oracle (smoke 2026-11-20).
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+fn main() -> () {
+    println(apply(|x| x * 2, 5))
+}

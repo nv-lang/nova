@@ -837,7 +837,8 @@ fn Checker mut @flow_call(e Node, mut fl ConsumeFlow, chain bool) -> () {
             @flow_args_moved(kids, from, is_method, true, fl)
             return
         }
-        CalleeSynthDisplay(_) | CalleeEffectOp(_) => {
+        // Door A: a fn TYPE has no parameter modes -- args used, not moved (consume slot: door caveat).
+        CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => {
             @flow_args_moved(kids, from, is_method, false, fl)
             if typed_never {
                 @flow_diverge(e, fl)
@@ -881,7 +882,8 @@ fn Checker @answers_receiver(e Node) -> bool {
     if e.kind_of() != NodeKind.MethodCall || !is_node(e.id_of()) || !@chan.has_callee(e.id_of()) { return false }
     match @chan.callee_of(e.id_of()).target {
         CalleeFn(r) => @ctx.fns.rows[raw_row(r)].ret_self
-        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => false
+        // Door A: locals ride free calls only; a fn type has no `-> @` fact.
+        CalleeVariant(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) => false
     }
 }
 

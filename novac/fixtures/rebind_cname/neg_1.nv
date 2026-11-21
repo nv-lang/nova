@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// NOVAC_EXPECT unknown name: nothing with this name is bound
+// EXPECT_COMPILE_ERROR
+module rebind_cname.neg_1
+
+fn main() -> () {
+    // nova:expect E_NOVAC_SUBSET
+    ro missing = missing + 1
+    println(missing)
+}

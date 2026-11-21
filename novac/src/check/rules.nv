@@ -79,9 +79,9 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                         // mistake and must not be called a type form.
                         // `fn` LEFT the form list on 2026-10-31 (task 134,
                         // class A2): the fn TYPE reads (D43, the TkFn term),
-                        // so the parameter interns and is refused BY NAME at
-                        // binding time (FN_PARAM_MSG, check/params.nv) instead
-                        // of the shape being turned away wholesale here.
+                        // so the parameter interns instead of the shape being
+                        // turned away wholesale here; door A (2026-11-20,
+                        // plan 274.11) binds it at params.nv.
                         EmptyBrackets | KwFn |
                         KwConsume | KwModule | KwIf | KwReturn | KwFor | KwIn | KwWhile | KwType | KwMatch |
                         KwAs | KwImport | KwUse | KwExport | KwTest | KwConst | KwElse | KwExtern |
@@ -127,9 +127,9 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                 if t.kind == TokenKind.Ident || t.kind == TokenKind.EmptyBrackets { return }
                 // `fn` counts too since 2026-10-31 (task 134, class A2): the fn
                 // type READS (D43) as a flat leaf run the TkFn term is interned
-                // from, so the type is declared -- and the parameter is refused
-                // BY NAME at binding time (FN_PARAM_MSG, check/params.nv), not
-                // by the wholesale shape doors below.
+                // from, so the type is declared -- and door A (2026-11-20,
+                // plan 274.11) BINDS the parameter at params.nv, not by the
+                // wholesale shape doors below.
                 if t.kind == TokenKind.KwFn { return }
                 // The parser reads the whole type reference now (owner
                 // 2026-08-17: "a type can be more complex, generics for
@@ -146,8 +146,8 @@ fn Checker mut @report_if_missing_type(kids []Node, msg str) -> () {
                     t.kind == TokenKind.KwMut ||
                     t.kind == TokenKind.LParen
                 // `KwFn` LEFT this list on 2026-10-31 (task 134, class A2):
-                // the fn type reads (D43), the parameter interns, and the
-                // named refusal fires at binding (FN_PARAM_MSG, params.nv).
+                // the fn type reads (D43), the parameter interns, and door A
+                // (2026-11-20, plan 274.11) binds it at params.nv.
                 if is_form {
                     @report_first_leaf_of(kids, TYPE_FORM_MSG)
                     return

@@ -489,6 +489,9 @@ fn Checker mut @type_expr(e Node) -> () {
                     // lattice reads a Name from the scope. A binding made
                     // OUTSIDE the handler literal being typed is a capture,
                     // and the emitter must know it (E.9 step 3).
+                    if @scope.is_bound(t.text) {
+                        @chan.record_binding_read(e.id_of(), @scope.owner, @scope.row_of(t.text))
+                    }
                     @note_if_capture(e, t.text)
                 } else if @settle_module_value(t.text) {
                     // A module value read while its own initializer is being
@@ -890,6 +893,14 @@ fn Checker mut @type_expr(e Node) -> () {
         // values; where the language will want one, its door will call
         // this typist, the match precedent).
         @type_handler_lit(e)
+    } else if k == NodeKind.ClosureLit {
+        // A CLOSURE LITERAL reaches this dispatcher only when NO door with a
+        // signature claimed it (E.11 wave): the call's argument slot is typed
+        // by `@type_arg_expecting` before this chain runs, and `on_timeout:`
+        // by `@type_supervised_value`. Refuse by name here -- the `Try`
+        // precedent: a form admitted by `is_expr_kind` must have its own
+        // refusal door, or the walk that gates on that list never reaches it.
+        @report_first_leaf_of(branch_children(e), CLOSURE_LIT_POSITION_MSG)
     } else {
         // The kinds `is_expr_kind` admits and this chain does not name are
         // Lit and MatchExpr, and neither has work HERE: a literal's type is

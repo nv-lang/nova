@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_3
+
+// Door A, reg 2013: a fn-typed parameter is CAPTURED into a closure literal
+// and called through the capture -- the callee prints through the ordinary
+// name reader (`_novac_cap->f`), not a raw binding name. RED before the fix:
+// emit iced at lower/ir.nv:748 ("unrecorded source binding").
+// Run proof: stdout 10, byte-exact with the oracle (smoke 2026-11-21).
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+
+fn nested(f fn(int) -> int) -> int => apply(|x| f(x), 5)
+
+fn main() -> () {
+    println(nested(|x| x * 2))
+}

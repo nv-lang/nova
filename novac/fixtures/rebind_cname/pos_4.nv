@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module rebind_cname.pos_4
+
+fn main() -> () {
+    ro value = 5
+    assert(value == 5)
+    ro value = "changed"
+    assert(value == "changed")
+    println(value)
+
+    ro outer = 10
+    if true {
+        ro outer = "inner"
+        assert(outer == "inner")
+        ro outer = "rebound"
+        assert(outer == "rebound")
+        println(outer)
+    }
+    assert(outer == 10)
+    println(outer)
+
+    for i in 0..2 {
+        ro element = i
+        assert(element == i)
+        ro element = 99
+        assert(element == 99)
+        println(element)
+    }
+
+    ro captured = 1
+    ro first = effect Random { u64() -> u64 => captured as u64 }
+    ro captured = 2
+    ro second = effect Random { u64() -> u64 => captured as u64 }
+    with Random = first { println(Random.u64()) }
+    with Random = second { println(Random.u64()) }
+
+    mut shared = 3
+    with Random = effect Random {
+        u64() -> u64 {
+            println(shared)
+            mut shared = 4
+            assert(shared == 4)
+            mut shared = 5
+            shared += 4
+            assert(shared == 9)
+            shared as u64
+        }
+    } {
+        println(Random.u64())
+    }
+    assert(shared == 3)
+    println(shared)
+}

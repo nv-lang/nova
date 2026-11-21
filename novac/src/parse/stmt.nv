@@ -402,11 +402,26 @@ fn Cursor mut @stmt() -> Node {
     // a `with` name, an assignment, a record constructor -- and check
     // answered with refusals that named none of them.
     ro with_stmt = @peek_ident(WITH_WORD) &&
-        @peek(skip: 1) == TokenKind.Ident && @peek(skip: 2) == TokenKind.Assign
+        @peek(skip: 1) == TokenKind.Ident &&
+        (@peek(skip: 2) == TokenKind.Assign || @peek(skip: 2) == TokenKind.LBracket)
     if with_stmt {
         mut kids = []Node.of(@take()) // `with`
         while true {
-            @push_expected(kids, TokenKind.Ident) // the effect's name
+            // THE EFFECT'S NAME IS A TYPE REFERENCE, kept whole: `Fs` and
+            // `Fail[MyErr]` are the same piece, read by the ONE type door and
+            // wrapped in an `EffectItem` exactly as a signature's effect_list
+            // is (parse.nv). The application was CONSUMED AND DROPPED until
+            // 2026-11-19, on the premise that every consumer needs the base
+            // name only. False for the handler-lambda (D31): the operation
+            // schema of a generic effect is written in the effect's own
+            // parameters, and the application on the LEFT is the only place
+            // that fixes them -- dropped, the emitter met an unresolved
+            // parameter and iced (mangle: "type id outside the registry").
+            if @peek() == TokenKind.Ident {
+                kids.push(@node(NodeKind.EffectItem, @type_ref()))
+            } else {
+                @push_expected(kids, TokenKind.Ident)
+            }
             kids.push(@take()) // `=`
             // THE HANDLER VALUE GOES THROUGH @head_expr, not @expr --
             // measured 2026-09-22: `with Fs = h, Os = o { body }` let the
@@ -414,7 +429,50 @@ fn Cursor mut @stmt() -> Node {
             // constructor (`o { 1 }`), and the with-statement ended up
             // bodyless. Same discipline as the if/while head: a brace after
             // a value at this position is the BODY, never a ctor.
-            kids.push(@head_expr())
+            // A CLOSURE-LITERAL HANDLER IS ITS OWN FORM (E.13 wave, D31):
+            // a leading `|`/`||` is the closure-light marker, so the brace
+            // after it belongs to the LAMBDA body, not to the with body --
+            // the `@head_expr` stop-before-brace rule would split it.
+            if @peek() == TokenKind.Pipe && @peek(skip: 1) == TokenKind.Pipe {
+                // The bare `|| {}` form reads as the closure-light zero-param
+                // literal; the lexer folds `||` into ONE PipePipe token.
+            } else {
+                // A handler that is not a closure: the head-expr discipline.
+            }
+            if @peek() == TokenKind.PipePipe || @peek() == TokenKind.Pipe {
+                // A CLOSURE-LITERAL HANDLER (E.13 wave, D31), read HERE and
+                // not by `@closure_lit`: that reader lifts the constructor
+                // restriction for its body, and in this header the brace
+                // after the value is the WITH's body -- `@head_expr`'s rule.
+                mut ck = []Node.new()
+                if @peek() == TokenKind.PipePipe {
+                    ck.push(@take())
+                } else {
+                    ck.push(@take()) // `|`
+                    while !@at_eof() && @peek() != TokenKind.Pipe {
+                        ro before = @i
+                        if @peek() == TokenKind.Ident {
+                            ck.push(@take())
+                        } else {
+                            ck.push(@node(NodeKind.Err, []Node.of(@take())))
+                        }
+                        @push_if(ck, TokenKind.Comma)
+                        if @i == before { break }
+                    }
+                    @push_expected(ck, TokenKind.Pipe)
+                }
+                if @peek() == TokenKind.LBrace {
+                    ck.push(@block())
+                } else {
+                    ro saved = @no_ctor
+                    @no_ctor = true
+                    ck.push(@expr())
+                    @no_ctor = saved
+                }
+                kids.push(@node(NodeKind.ClosureLit, ck))
+            } else {
+                kids.push(@head_expr())
+            }
             if @peek() == TokenKind.Comma {
                 kids.push(@take())
             } else {

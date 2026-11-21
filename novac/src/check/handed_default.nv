@@ -62,6 +62,9 @@ fn Checker mut @refuse_foreign_defaults(n Node) -> () {
 fn Checker mut @judge_omitted_defaults(call Node) -> () {
     ro cr = @chan.callee_of(call.id_of())
     match cr.target {
+        // A LOCAL fn callee (door A) has no declaration, hence no defaults:
+        // every slot is written, the arity door judged it. Nothing to judge.
+        CalleeLocal(_) => return
         CalleeFn(row) => {
             // THIS FILE's rows carry this file's nodes (`compiles_body`); a
             // record's constructor row does too, though it stands past them --
