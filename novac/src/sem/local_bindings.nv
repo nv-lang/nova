@@ -18,7 +18,7 @@ export type BindingDef value {
 
 /// Definitions at one site, chained only when owners or scopes differ.
 type BindingSite {
-    by_name HashMap[int, int] /// source-name identity -> first definition in the site chain
+    by_name NameTable /// canonical source text -> first site-chain definition (NsLocals)
 }
 
 /// A function's checker scope row mapped to a stable source binding identity.
@@ -44,7 +44,7 @@ export fn CheckOut mut @record_binding(owner NodeId, site NodeId, scope NodeId, 
         return at
     }
     ro bucket = @binding_site_bucket(site)
-    ro first = @binding_sites[bucket].by_name.get(source_name_id) ?? -1
+    ro first = @binding_sites[bucket].by_name.find(name)
     mut identity = first
     while identity >= 0 {
         ro binding = @binding_defs[identity]
@@ -55,7 +55,8 @@ export fn CheckOut mut @record_binding(owner NodeId, site NodeId, scope NodeId, 
         identity = @binding_defs.len()
         @binding_defs.push(BindingDef { owner, site, scope, name, source_name_id })
         @binding_next.push(first)
-        @binding_sites[bucket].by_name.insert(source_name_id, identity)
+        mut binding_site = @binding_sites[bucket]
+        binding_site.by_name.put(name, identity)
     } else {
         // A prior scope row already exported this source binding; reuse its identity.
     }
@@ -70,16 +71,17 @@ fn CheckOut mut @intern_binding_name(name str) -> int {
     ro id = @binding_name_cnt
     @binding_name_cnt += 1
     @binding_names.put(name, id)
+    @binding_name_texts.push(name)
     id
 }
 
 /// Allocate or reuse the integer-indexed bucket for this source site.
 fn CheckOut mut @binding_site_bucket(site NodeId) -> int {
-    ro prev = @binding_site_index.get(raw_node(site)) ?? -1
+    ro prev = @binding_site_index[raw_node(site)]
     if prev >= 0 { return prev }
     ro at = @binding_sites.len()
-    @binding_sites.push(BindingSite { by_name: HashMap[int, int].new() })
-    @binding_site_index.insert(raw_node(site), at)
+    @binding_sites.push(BindingSite { by_name: NameTable.new(NamespaceId.NsLocals) })
+    @binding_site_index[raw_node(site)] = at
     at
 }
 
@@ -90,9 +92,11 @@ export fn CheckOut @source_name_id(name str) -> int => @binding_names.find(name)
 /// Recorded definitions for this exact site and canonical spelling only.
 #realtime nogc
 export fn CheckOut @binding_site_first(site NodeId, source_name_id int) -> int {
-    ro bucket = @binding_site_index.get(raw_node(site)) ?? -1
+    if !is_node(site) || raw_node(site) >= @binding_site_index.len() { return -1 }
+    if source_name_id < 0 || source_name_id >= @binding_name_texts.len() { return -1 }
+    ro bucket = @binding_site_index[raw_node(site)]
     if bucket < 0 { return -1 }
-    @binding_sites[bucket].by_name.get(source_name_id) ?? -1
+    @binding_sites[bucket].by_name.find(@binding_name_texts[source_name_id])
 }
 
 /// Continue the integer-keyed site chain without a registry-wide name scan.

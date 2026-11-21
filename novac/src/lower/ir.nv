@@ -520,14 +520,14 @@ export type FnBuilder {
     source_bindings []BindingLocal /// source identities mapped to allocated locals
     source_parameters []BindingParameter /// formal names reserved without allocating locals
     reserved_names []str /// C spellings of future user identifiers
-    source_scope_index HashMap[int, int] /// raw scope -> source bucket index
+    source_scope_index IntRows /// raw scope -> source bucket index
     source_scopes []SourceScope /// source tables addressed by integer scope buckets
     local_source_names []int /// bucket-local source-name identity parallel to locals; -1 for non-bindings
     c_names NameTable /// C spelling -> canonical C-name index (NsInterop)
     c_name_counts []int /// live allocations and reservations per canonical C name
     local_c_names []int /// canonical C-name index parallel to locals
-    binding_c_names HashMap[int, int] /// source binding identity -> canonical C-name index
-    parameter_index HashMap[int, int] /// source parameter identity -> parameter row
+    binding_c_names IntRows /// source binding identity -> canonical C-name index
+    parameter_index IntRows /// source parameter identity -> parameter row
     reserved_c_names NameTable /// future C spelling -> membership marker (NsInterop)
     blocks []Block /// reserved blocks, `Unreached` until sealed
     cur []Stmt /// statements placed since the last seal
@@ -602,11 +602,11 @@ export fn FnBuilder.seeded(ret_ty TyId, seed int) -> FnBuilder {
     FnBuilder { locals, source_names, binding_scopes,
                 source_bindings: []BindingLocal.new(), source_parameters: []BindingParameter.new(),
                 reserved_names: []str.new(),
-                source_scope_index: HashMap[int, int].new(), source_scopes: []SourceScope.new(),
+                source_scope_index: IntRows.new(), source_scopes: []SourceScope.new(),
                 local_source_names: []int.of(-1),
                 c_names: NameTable.new(NamespaceId.NsInterop), c_name_counts: []int.new(),
-                local_c_names: []int.of(-1), binding_c_names: HashMap[int, int].new(),
-                parameter_index: HashMap[int, int].new(), reserved_c_names: NameTable.new(NamespaceId.NsInterop),
+                local_c_names: []int.of(-1), binding_c_names: IntRows.new(),
+                parameter_index: IntRows.new(), reserved_c_names: NameTable.new(NamespaceId.NsInterop),
                 blocks, cur, cur_id: BlockId(0), open_arms, arm_start, switches: 0,
                 hoisted_at, hoisted_to, scopes: []WithScope.new(), loops: 0, frames: seed,
                 bound_at: []int.new(), bound_to: []Local.new(),
@@ -713,7 +713,7 @@ export fn FnBuilder @decl_of(l Local) -> LocalDecl {
 /// Re-recording an identity must replace its local rather than leave a stale first match.
 export fn FnBuilder mut @remember_source_binding(identity int, l Local) -> () {
     ro binding = BindingLocal { identity, local: l }
-    @binding_c_names.insert(identity, @local_c_names[raw_local(l)])
+    @binding_c_names.put(identity, @local_c_names[raw_local(l)])
     for i in 0..@source_bindings.len() {
         if @source_bindings[i].identity == identity {
             @source_bindings[i] = binding
@@ -726,7 +726,7 @@ export fn FnBuilder mut @remember_source_binding(identity int, l Local) -> () {
 /// Parameters reserve names without changing locals.len-based temporary numbering.
 export fn FnBuilder mut @reserve_source_parameter(identity int, scope int, source_name str, c_name str) -> () {
     ro parameter = BindingParameter { identity, scope, source_name, c_name }
-    ro at = @parameter_index.get(identity) ?? -1
+    ro at = @parameter_index.find(identity)
     if at >= 0 {
         ro prev = @source_parameters[at]
         @note_source_name(prev.source_name, prev.scope, -1)
@@ -735,11 +735,11 @@ export fn FnBuilder mut @reserve_source_parameter(identity int, scope int, sourc
         @c_name_counts[old_c] -= 1
         @source_parameters[at] = parameter
     } else {
-        @parameter_index.insert(identity, @source_parameters.len())
+        @parameter_index.put(identity, @source_parameters.len())
         @source_parameters.push(parameter)
     }
     @note_source_name(source_name, scope, 1)
-    @binding_c_names.insert(identity, @note_c_name(c_name))
+    @binding_c_names.put(identity, @note_c_name(c_name))
 }
 
 /// Missing identities are compiler bugs; source-name fallback would silently undo rebinding.

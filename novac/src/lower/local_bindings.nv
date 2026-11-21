@@ -12,6 +12,54 @@ import ../diag.{ice_at}
 import ../builtins.{RECV_BINDING, RECV_C_NAME}
 import ../names.{NameTable, NamespaceId}
 
+/// Integer identity lookup without generic Slot instantiation; keys retain their full range.
+type IntRows {
+    keys []int /// sorted keys in the owning index's integer identity space
+    rows []int /// values parallel to keys, in the owning index's row or C-name space
+}
+
+/// Empty integer-keyed identity index.
+fn IntRows.new() -> IntRows => { keys: []int.new(), rows: []int.new() }
+
+/// First key position not less than the requested identity; allocates nothing.
+#realtime nogc
+fn IntRows @lower_bound(key int) -> int {
+    mut lo = 0
+    mut hi = @keys.len()
+    while lo < hi {
+        ro mid = lo + (hi - lo) / 2
+        if @keys[mid] < key { lo = mid + 1 } else { hi = mid }
+    }
+    lo
+}
+
+/// The indexed value, or -1 for an absent identity.
+#realtime nogc
+fn IntRows @find(key int) -> int {
+    ro at = @lower_bound(key)
+    if at < @keys.len() && @keys[at] == key { return @rows[at] }
+    -1
+}
+
+/// Insert a new identity or replace its value without changing key ordering.
+fn IntRows mut @put(key int, row int) -> () {
+    ro at = @lower_bound(key)
+    if at < @keys.len() && @keys[at] == key {
+        @rows[at] = row
+        return
+    }
+    @keys.push(key)
+    @rows.push(row)
+    mut i = @keys.len() - 1
+    while i > at {
+        @keys[i] = @keys[i - 1]
+        @rows[i] = @rows[i - 1]
+        i -= 1
+    }
+    @keys[at] = key
+    @rows[at] = row
+}
+
 /// Reserving future user spellings prevents generated rebind names from claiming them first.
 export fn FnBuilder mut @reserve_source_name(name str) -> () {
     ro reserved = c_ident(name)
@@ -24,7 +72,7 @@ export fn FnBuilder mut @reserve_source_name(name str) -> () {
 /// Source scope, not sanitized C spelling, distinguishes a rebind from nested shadowing.
 #realtime nogc
 fn FnBuilder @source_repeats(name str, scope int) -> bool {
-    ro bucket = @source_scope_index.get(scope) ?? -1
+    ro bucket = @source_scope_index.find(scope)
     if bucket < 0 { return false }
     ro at = @source_scopes[bucket].members.find(name)
     if at < 0 { return false }
@@ -41,30 +89,31 @@ fn FnBuilder @binding_name_taken(name str) -> bool {
 
 /// Writers alone create source buckets; readers only use integer indices.
 fn FnBuilder mut @source_scope(scope int) -> int {
-    ro at = @source_scope_index.get(scope) ?? -1
+    ro at = @source_scope_index.find(scope)
     if at >= 0 { return at }
     ro bucket = @source_scopes.len()
     @source_scopes.push(SourceScope { members: NameTable.new(NamespaceId.NsLocals),
                                      counts: []int.new(), declared: []int.new() })
-    @source_scope_index.insert(scope, bucket)
+    @source_scope_index.put(scope, bucket)
     bucket
 }
 
 /// Adjust membership of a canonical spelling in the integer-selected source scope.
 fn FnBuilder mut @note_source_name(name str, scope int, delta int) -> int {
     ro bucket = @source_scope(scope)
-    mut at = @source_scopes[bucket].members.find(name)
+    mut local_scope = @source_scopes[bucket]
+    mut at = local_scope.members.find(name)
     if at < 0 {
-        at = @source_scopes[bucket].counts.len()
-        @source_scopes[bucket].members.put(name, at)
-        @source_scopes[bucket].counts.push(0)
-        @source_scopes[bucket].declared.push(-1)
+        at = local_scope.counts.len()
+        local_scope.members.put(name, at)
+        local_scope.counts.push(0)
+        local_scope.declared.push(-1)
     } else {
         // Reuse this scope's existing source-name identity and counters.
     }
-    ro count = @source_scopes[bucket].counts[at]
+    ro count = local_scope.counts[at]
     assert(count + delta >= 0, "lower: source membership count underflow")
-    @source_scopes[bucket].counts[at] = count + delta
+    local_scope.counts[at] = count + delta
     at
 }
 
@@ -86,7 +135,7 @@ fn FnBuilder mut @note_c_name(name str) -> int {
 fn FnBuilder mut @note_declared(l Local) -> () {
     ro i = raw_local(l)
     ro scope = @binding_scopes[i]
-    ro bucket = @source_scope_index.get(scope) ?? -1
+    ro bucket = @source_scope_index.find(scope)
     if bucket < 0 { return }
     ro name_id = @local_source_names[i]
     if name_id < 0 { return }
@@ -101,7 +150,7 @@ fn FnBuilder mut @note_declared(l Local) -> () {
 /// Read the highest zeroed local index for this source spelling and scope.
 #realtime nogc
 fn FnBuilder @declared_local(name str, scope int) -> int {
-    ro bucket = @source_scope_index.get(scope) ?? -1
+    ro bucket = @source_scope_index.find(scope)
     if bucket < 0 { return -1 }
     ro name_id = @source_scopes[bucket].members.find(name)
     if name_id < 0 { return -1 }
@@ -113,7 +162,7 @@ fn FnBuilder @declared_local(name str, scope int) -> int {
 fn FnBuilder @binding_uses_c_name(identity int, name str) -> bool {
     ro at = @c_names.find(name)
     if at < 0 { return false }
-    (@binding_c_names.get(identity) ?? -1) == at
+    @binding_c_names.find(identity) == at
 }
 
 /// Select the earliest recorded definition, bounded to this site or pattern tree.
@@ -148,7 +197,7 @@ fn Lowerer @source_binding(site Node, name str, nested bool) -> int {
     ro source_name_id = @out.source_name_id(name)
     ro at = @source_binding_at(site, source_name_id, nested)
     if at >= 0 { return at }
-    ice_at("novac/src/lower/local_bindings.nv:151", "lower: a source binding has no exported identity")
+    ice_at("novac/src/lower/local_bindings.nv:200", "lower: a source binding has no exported identity")
 }
 
 /// Associate the site chain and nested pattern sites with the allocated local.

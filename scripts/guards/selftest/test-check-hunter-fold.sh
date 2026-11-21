@@ -25,9 +25,8 @@ mk_root() {
     mkdir -p "$T/docs/plans" "$T/docs/dev/hunts/novac/probes/2026-03-03-parse-k3" \
              "$T/docs/dev/hunts/oracle" "$T/docs/dev/hunts/guards"
     git -C "$T" init -q
-    git -C "$T" config user.email selftest@example.com
-    git -C "$T" config user.name selftest
-    git -C "$T" config commit.gpgsign false
+    export GIT_AUTHOR_NAME=selftest GIT_COMMITTER_NAME=selftest
+    export GIT_AUTHOR_EMAIL=selftest@example.com GIT_COMMITTER_EMAIL=selftest@example.com
     printf 'свёрнутый отчёт\n' > "$T/docs/dev/hunts/novac/2026-01-01-lex_Module.2-k2.md"
     git -C "$T" add docs/dev/hunts/novac/2026-01-01-lex_Module.2-k2.md
     git -C "$T" commit -qm "hunt report that will be folded"
