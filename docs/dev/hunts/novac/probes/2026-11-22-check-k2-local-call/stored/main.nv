@@ -1,0 +1,9 @@
+module hunt_stored
+fn exercise(f fn(int) -> int, g fn(int) -> int) -> int {
+    ro saved fn(int) -> int = |x| f(x)
+    ro f = g
+    saved(2) + f(3)
+}
+fn main() -> () {
+    println(exercise(|x| x + 10, |x| x * 100))
+}

@@ -1,0 +1,5 @@
+module hunt_intrinsic
+fn exercise(println fn(int) -> int, assert fn(int) -> int) -> int => println(3) + assert(4)
+fn main() -> () {
+    println(exercise(|x| x + 10, |x| x * 2))
+}

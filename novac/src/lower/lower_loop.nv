@@ -16,6 +16,7 @@ import ../sem.{branch_children, for_head_elem, narrowing_of}
 import ../sem.{whilelet_pattern_at, whilelet_init_at, whilelet_body_at}
 import ../sem.{pattern_shape, pattern_head_text, PatShape, option_payload, leaf_kind}
 
+/// Lower the condition's recorded narrowing binding, if the condition introduces one.
 fn Lowerer mut @lower_condition_binding(cond Node) -> () {
     match narrowing_of(cond, @out, @ctx) {
         Some(nw) => {
@@ -196,7 +197,11 @@ fn Lowerer mut @lower_for_iter(st Node, kids []Node) -> () {
     if shape == PatShape.Wild {
         // Nothing binds the element: the turn only advances the iterator.
     } else {
-        ro le = if shape == PatShape.Bind { @named_binding(pat, elem_t, pattern_head_text(pat)) } else { @ir.temp(elem_t) }
+        ro le = if shape == PatShape.Bind {
+            @named_binding(pat, elem_t, pattern_head_text(pat))
+        } else {
+            @ir.temp(elem_t)
+        }
         @ir.take_payload(le, lo)
         if shape != PatShape.Bind {
             @lower_pattern_bind(pat, elem_t, le)

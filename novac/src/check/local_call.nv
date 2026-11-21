@@ -17,10 +17,10 @@
 // decision is recorded as `CalleeLocal(TyId)`: the TYPE is the whole fact
 // (the same row-less shape CalleeCtor and CalleeSynthDisplay carry), and the
 // emitter calls through the value's NovaClosBase fn/env pair, never by a
-// symbol. A local can hold a fn type only as a parameter today: a fn NAME
-// in value position is refused upstream ("unknown name", measured on the
-// base 2026-11-20, da-alias probe), so no alias of a declared function can
-// reach this door wearing a value it does not have.
+// symbol. Parameters and aliases of existing fn values reach this door.
+// A declared fn NAME in value position remains refused upstream ("unknown
+// name", measured on the base 2026-11-20, da-alias probe), so an alias of a
+// declared symbol cannot arrive here without a compiled value.
 
 module novac.check
 

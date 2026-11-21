@@ -38,9 +38,9 @@ import ../tree.{NodeId, no_node}
 /// binding — one record, they only travel together. Shadowing = last bind
 /// wins (the door's put overwrites).
 type Scope {
-    owner NodeId
-    lexical NodeId
-    binding_site NodeId
+    owner NodeId /// the function whose scope rows identify these bindings
+    lexical NodeId /// the current lexical binding scope
+    binding_site NodeId /// the source site used by pattern-binding recording
     names NameTable /// name -> row in `binds` (NsLocals namespace).
     binds []Binding /// What each binding row holds: its type AND how it was bound.
     /// The undo trail: for every binding made, the row its name pointed at

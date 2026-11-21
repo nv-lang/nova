@@ -690,7 +690,7 @@ fn Emitter mut @emit_callable(f Node, name str, row FnRow, subst []TyId, ptypes 
     @lo.ir.end_body()
     ro lowered = @lo.ir.finish()
     if lowered.blocks.len() == 0 {
-        ice_at("novac/src/emit_c/emit_c.nv:692", "emit: a finished body without its entry block")
+        ice_at("novac/src/emit_c/emit_c.nv:693", "emit: a finished body without its entry block")
     }
     // THE BODY IS PRINTED HERE, IN ONE WALK (M2b-2 step 3b): the graph is sealed, so
     // printing no longer depends on the order in which it was built. Everything above

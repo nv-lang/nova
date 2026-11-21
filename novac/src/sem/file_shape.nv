@@ -39,7 +39,7 @@ import ../lex.{TokenKind}
 /// The dot becomes `_` and nothing else is transformed: a module path is made of
 /// identifiers, which are already C-safe, and inventing an escape for a
 /// character the language cannot put there would be a rule with no case.
-export fn module_path_c(file Node) -> str => module_joined(file, "_")
+fn module_path_c(file Node) -> str => module_joined(file, "_")
 
 /// The module path with `sep` between segments -- the one joiner behind the C
 /// spelling (`_`) and the source spelling (`.`).

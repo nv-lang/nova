@@ -173,6 +173,7 @@ fn Checker mut @type_arm_stmt(arm Node, scr_t TyId) -> () {
     @scope.lexical = lexical
 }
 
+/// Bind and type a statement arm in the lexical scope installed by its caller.
 fn Checker mut @type_arm_stmt_in_scope(arm Node, scr_t TyId) -> () {
     ro mark = @scope.mark()
     ro ak = branch_children(arm)
@@ -188,7 +189,7 @@ fn Checker mut @type_arm_stmt_in_scope(arm Node, scr_t TyId) -> () {
         @type_expr(gk[1])
     }
     ro body = ak[arm_body_at(ak) ?? ice_at(
-        "novac/src/check/match_arms.nv:183",
+        "novac/src/check/match_arms.nv:191",
         "check: a statement-position match arm with no body reached the checker")]
     @type_body(body)
     @scope.release(mark)
@@ -765,6 +766,7 @@ fn Checker mut @type_arm(arm Node, scr_t TyId) -> Option[TyId] {
     result
 }
 
+/// Bind and type a value arm in its installed lexical scope, returning its optional type.
 fn Checker mut @type_arm_in_scope(arm Node, scr_t TyId) -> Option[TyId] {
     // An arm's binders live in the arm and nowhere else.
     ro mark = @scope.mark()
@@ -792,7 +794,7 @@ fn Checker mut @type_arm_in_scope(arm Node, scr_t TyId) -> Option[TyId] {
     }
     @value_expect = body_expect
     ro body = ak[arm_body_at(ak) ?? ice_at(
-        "novac/src/check/match_arms.nv:779",
+        "novac/src/check/match_arms.nv:796",
         "check: a match arm with no body reached the checker")]
     // A BLOCK BODY IN VALUE POSITION (274.5 wave B9): `0 => { return 1 }` is
     // statements that leave through `return`, so the arm yields NO value to

@@ -188,7 +188,7 @@ export fn attr_has_args(kids []Node, word str) -> bool {
 /// `#display(Display)` and `#display(Display, Debug)` are both asked about one
 /// protocol at a time, so ALL rather than ANY: an attribute that also names
 /// something else is not an opt-in to this one alone.
-export fn attr_args_all(kids []Node, word str) -> bool => attr_args_among(kids, []str.of(word))
+fn attr_args_all(kids []Node, word str) -> bool => attr_args_among(kids, []str.of(word))
 
 /// Does every name in this attribute's argument list belong to `words` -- and is
 /// there at least one? `#impl(Display + Equal)` is an opt-in to protocols the
@@ -403,7 +403,7 @@ fn is_attr_marked(marked []NodeId, id NodeId) -> bool {
 /// R2 (the zero-cost lanes) and R3 (one declaration per pair) are NOT judged
 /// here: the row does not carry parameter modes, so `consume` and `ro` are
 /// invisible to it -- named in plan 274 section 9.1d, not left to be discovered.
-export fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
+fn harvest_coerce_pair(fns FnTable, mut coerces []CoercePair, via_row FnRow) -> () {
     ro fd = fns.rows[raw_row(via_row)]
     if !fd.has_recv || fd.param_cnt != 1 || !is_ty(fd.ret_id) {
         return

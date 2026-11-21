@@ -45,6 +45,7 @@ fn Checker mut @type_closure_lit(e Node, sig TyId) -> () {
     @scope.lexical = lexical
 }
 
+/// Type the contextual literal with its lexical binding scope already installed.
 fn Checker mut @type_closure_lit_in_scope(e Node, sig TyId) -> () {
     ro kids = branch_children(e)
     // SILENT-OK: a literal with no body is the parser's recovery marker in a
@@ -75,7 +76,7 @@ fn Checker mut @type_closure_lit_in_scope(e Node, sig TyId) -> () {
 
 /// THE ONE CLOSURE-TYPING PATH (D22): params bind read-only from `cps`, the
 /// capture mark records every outer binding the body reads, and the body is
-/// judged by the fn body's own doors with the return state saved and restored.
+/// judged by `@type_block` / `@type_tail_value`, with return state saved and restored.
 /// `infer` is the FREE-RETURN mode the argument door uses (E.11): the result is
 /// not given, the body types against no expectation (`@judge_return` says nothing
 /// when `@ret_expect` is absent) and the tail's type R is read back for the caller
@@ -85,7 +86,10 @@ fn Checker mut @type_closure_lit_in_scope(e Node, sig TyId) -> () {
 /// the tail's type (the known mode's caller records the given sig instead).
 fn Checker mut @type_closure_core(e Node, cps []TyId, ret_expect TyId, infer bool) -> TyId {
     ro kids = branch_children(e)
-    if kids.len() < 2 { return no_ty() }
+    if kids.len() < 2 {
+        assert(@out.len() > 0, "check: a bodyless closure reached typing without a prior diagnostic")
+        return no_ty()
+    }
     ro body = kids[kids.len() - 1]
     ro before = @out.len()
     ro arity = cps.len()
@@ -233,6 +237,8 @@ fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []T
         mut b = if slot < pre.len() { pre[slot] } else { no_ty() }
         if !is_ty(b) && fd.has_recv {
             b = slot_binding_in(@ctx.tys, recv_p, recv_t, slot)
+        } else {
+            // Keep the position's binding, or an unbound slot when there is no receiver.
         }
         bindings.push(b)
     }
@@ -258,6 +264,7 @@ fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []T
         if fslot < bindings.len() && is_ty(bindings[fslot]) {
             cps.push(bindings[fslot])
             @type_closure_lit(c, @ctx.tys.fn_type(cps))
+            // SILENT-OK: `@type_closure_lit` records the known signature or reports the body's refusal.
             return
         }
         ro r = @type_closure_core(c, cps, no_ty(), true)
@@ -284,6 +291,7 @@ fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []T
     if is_ty(ret_b) && @ctx.tys.is_concrete(ret_b) {
         cps.push(ret_b)
         @type_closure_lit(c, @ctx.tys.fn_type(cps))
+        // SILENT-OK: `@type_closure_lit` records the known signature or reports the body's refusal.
         return
     }
     @report_first_leaf_of(kids, CLOSURE_ARG_NEEDS_FN_MSG)

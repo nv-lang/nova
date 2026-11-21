@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- prints this compiler's recorded name and binding decisions only.
+// Role: C emission of names from the checked channel and lowered body.
+// Used by: emit_expr.nv's Name arm when printing expression values.
+// Guarded by: compiler assertions in lower/ir.nv and sem/channel.nv (missing identities refuse).
 module novac.emit_c
 
 import ../tree.{Node, is_node}
@@ -6,6 +10,7 @@ import ../sem.{expr_leaf_name, c_maker}
 import ../builtins.{is_bool_literal, is_true_literal, bool_c_literal}
 import ../diag.{ice_at}
 
+/// Emit a capture, source binding, constant, variant or bool from recorded decisions.
 fn Emitter mut @emit_name(e Node) -> () {
     if !is_node(e.id_of()) {
         ro name = expr_leaf_name(e)
@@ -13,7 +18,7 @@ fn Emitter mut @emit_name(e Node) -> () {
             @body.append(bool_c_literal(is_true_literal(name)))
             return
         }
-        ice_at("novac/src/emit_c/emit_names.nv", "emit_c: a name without an identity that is no bool literal (a handed default)")
+        ice_at("novac/src/emit_c/emit_names.nv:21", "emit_c: a name without an identity that is no bool literal (a handed default)")
     }
     match @out.capture_at(e.id_of()) {
         Some(c) => {
@@ -39,12 +44,16 @@ fn Emitter mut @emit_name(e Node) -> () {
                     // A local fn callee (door A) is recorded on the CALL
                     // node, never a bare name -- this match cannot see one.
                     CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) | CalleeLocal(_) =>
-                        ice_at("novac/src/emit_c/emit_names.nv", "emit: a bare name resolved to a non-variant callee")
+                        ice_at(
+                            "novac/src/emit_c/emit_names.nv:47",
+                            "emit: a bare name resolved to a non-variant callee")
                 }
             } else {
                 ro name = expr_leaf_name(e)
                 if !is_bool_literal(name) {
-                    ice_at("novac/src/emit_c/emit_names.nv", "emit: an ordinary name has no exported binding identity")
+                    ice_at(
+                        "novac/src/emit_c/emit_names.nv:54",
+                        "emit: an ordinary name has no exported binding identity")
                 }
                 @body.append(name)
             }

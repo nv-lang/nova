@@ -2566,5 +2566,10 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,16
 
 # 2026-11-21, integrator Door A/main union: actual registry recount;
 #   main closures preserved, branch rows 2002/2007-2010/2012-2014 fill gaps.
-rows=1923
-max=2014
+# 2026-11-22, integrator: reg 2015 records parser closer recovery, reg 2016
+#   records mismatched hunt stem grammars; measured rows 1923 -> 1925,
+#   max 2014 -> 2016, no new gap and no duplicate.
+# 2026-11-22, reg 2017: indexed source/C identity lookup repair;
+#   measured rows 1925 -> 1926, max 2016 -> 2017, gaps unchanged.
+rows=1926
+max=2017

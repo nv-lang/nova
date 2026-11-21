@@ -256,6 +256,8 @@ fn Checker mut @type_fn(f Node) -> () {
     for c in kids {
         if c.kind_of() == NodeKind.Block || c.kind_of() == NodeKind.FnExprBody {
             @scope.lexical = c.id_of()
+        } else {
+            // A signature child does not change the function body's lexical scope.
         }
     }
     // An instance's row is HANDED (`inst_row`): its body may come from another

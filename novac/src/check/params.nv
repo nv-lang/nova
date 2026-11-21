@@ -55,7 +55,7 @@ fn Checker mut @bind_typed_param(pm Node, pk []Node, tat int, row FnRow, slot in
     // `param_type_at` locates the type AFTER the name, so a located type means
     // the name was located too; its absence here is a broken invariant.
     ro nat = param_name_at(pk) ?? ice_at(
-        "novac/src/check/params.nv:56",
+        "novac/src/check/params.nv:57",
         "check: a parameter with a type slot and no name slot")
     ro nnode = pk[nat]
     ro tnode = pk[tat]

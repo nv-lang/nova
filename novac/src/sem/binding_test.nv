@@ -15,7 +15,7 @@
 // `sem` must not import the parser, and a test is not a licence to add an edge.
 
 module novac.sem
-import ../tree.{Node, NodeKind, branch}
+import ../tree.{Node, NodeKind, NodeId, branch}
 import ../types.{TyId, is_ty}
 import ../names.{DeclId}
 
@@ -51,6 +51,55 @@ fn fault_is(f BindFault, tag str, at int) -> bool {
         FaultDuplicate(s) => tag == "duplicate" && s == at
         FaultMissing(s) => tag == "missing" && s == at
     }
+}
+
+test "binding site indices share aliases while preserving scope owner and name identity" {
+    mut out = CheckOut.new(30)
+    ro owner = NodeId(0)
+    ro site = NodeId(1)
+    ro scope = NodeId(2)
+    ro first = out.record_binding(owner, site, scope, 0, "value")
+    assert(out.record_binding(owner, site, scope, 0, "value") == first)
+    assert(out.record_binding(owner, site, scope, 1, "value") == first)
+    ro other_scope = out.record_binding(owner, site, NodeId(3), 2, "value")
+    ro other_owner = out.record_binding(NodeId(4), site, scope, 0, "value")
+    ro other_name = out.record_binding(owner, site, scope, 3, "other")
+    assert(first != other_scope && first != other_owner && first != other_name)
+    ro name_id = out.source_name_id("value")
+    assert(out.binding_def(first).source_name_id == name_id)
+    assert(out.binding_def(other_scope).source_name_id == name_id)
+    assert(out.binding_def(other_owner).source_name_id == name_id)
+    assert(out.binding_def(other_name).source_name_id != name_id)
+    assert(out.binding_site_first(site, name_id) == other_owner)
+    assert(out.binding_site_next(other_owner) == other_scope)
+    assert(out.binding_site_next(other_scope) == first)
+    assert(out.binding_site_next(first) == -1)
+    assert(out.binding_of(owner, 1) == first)
+    assert(out.binding_of(NodeId(4), 0) == other_owner)
+    assert(out.binding_site_first(NodeId(5), name_id) == -1)
+    assert(out.source_name_id("missing") == -1)
+}
+
+test "captures keep the old binding identity across a later same-name binding" {
+    ro ctx = collect_types(branch(NodeId(0), NodeKind.File, []Node.new()))
+    mut out = CheckOut.new(30)
+    ro owner = NodeId(0)
+    ro scope = NodeId(1)
+    ro old = out.record_binding(owner, NodeId(2), scope, 0, "value")
+    out.record_binding_read(NodeId(5), owner, 0)
+    out.record_capture(NodeId(4), NodeId(5), "value", 0, ctx.prims.int_id, false)
+    ro new = out.record_binding(owner, NodeId(3), scope, 1, "value")
+    out.record_binding_read(NodeId(6), owner, 0)
+    out.record_capture(NodeId(4), NodeId(6), "value", 0, ctx.prims.int_id, false)
+    out.record_binding_read(NodeId(7), owner, 1)
+    out.record_capture(NodeId(4), NodeId(7), "value", 1, ctx.prims.int_id, false)
+    assert(out.binding_read(NodeId(5)) == old)
+    assert(out.binding_read(NodeId(6)) == old)
+    assert(out.binding_read(NodeId(7)) == new)
+    assert(out.captures.len() == 2)
+    assert(out.capture_binding(out.captures[0]) == old)
+    assert(out.capture_binding(out.captures[1]) == new)
+    assert(out.binding_def(old).source_name_id == out.binding_def(new).source_name_id)
 }
 
 test "the required parameter alone binds, and the default fills its slot" {

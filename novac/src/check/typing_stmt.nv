@@ -50,11 +50,14 @@ fn Checker mut @type_stmt(st Node) -> () {
     ro kind = st.kind_of()
     if kind == NodeKind.ForStmt || kind == NodeKind.IfLet || kind == NodeKind.WhileLet {
         @scope.lexical = binding_scope_of(st)
+    } else {
+        // Other statements keep the enclosing lexical binding scope.
     }
     @type_stmt_in_scope(st)
     @scope.lexical = lexical
 }
 
+/// Dispatch one statement after its caller has installed the appropriate lexical scope.
 fn Checker mut @type_stmt_in_scope(st Node) -> () {
     ro k = st.kind_of()
     if k == NodeKind.Block {

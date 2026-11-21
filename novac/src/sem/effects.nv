@@ -144,7 +144,8 @@ fn fill_harvested_effect_ops(mut fx EffectTable, decl Node, tname str,
             fx.op_params.push(pt)
             pcnt += 1
         }
-        fx.ops.push(EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, tps, prow, types, defs, tys),
+        fx.ops.push(EffectOpSig { name: leaf_text(mk[1]),
+                                  ret_id: effect_op_ret_type_of(mk, tps, prow, types, defs, tys),
                                   param_off: poff, param_cnt: pcnt })
     }
     fx.add(tname, start, fx.ops.len() - start)
@@ -159,7 +160,7 @@ fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
                               types []TypeDef, defs DefTable, mut tys Interner) -> () {
     mut oi = match fx.def_of(tname) {
         Some(ed) => ed.op_off
-        None => ice_at("novac/src/sem/effects.nv:152", "sem: pass 2 sees an effect pass 1 did not register")
+        None => ice_at("novac/src/sem/effects.nv:163", "sem: pass 2 sees an effect pass 1 did not register")
     }
     // The declaration's own type parameters -- the frame below is the same one
     // the harvested side reads (see `fill_harvested_effect_ops`).
@@ -183,7 +184,8 @@ fn fill_own_effect_ops(mut fx EffectTable, decl Node, tname str,
             fx.op_params.push(pt)
             pcnt += 1
         }
-        fx.ops[oi] = EffectOpSig { name: leaf_text(mk[1]), ret_id: effect_op_ret_type_of(mk, tps, prow, types, defs, tys),
+        fx.ops[oi] = EffectOpSig { name: leaf_text(mk[1]),
+                                   ret_id: effect_op_ret_type_of(mk, tps, prow, types, defs, tys),
                                    param_off: poff, param_cnt: pcnt }
         oi += 1
     }

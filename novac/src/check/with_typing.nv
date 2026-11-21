@@ -23,6 +23,20 @@ import ../sem.{ty_source_name, decl_of_ty}
 import ../sem.{first_ident_of, ty_of_type_ref}
 import ../types.{TyId, is_ty, no_ty}
 
+/// Answer the contextual handler-lambda form; ordinary expressions belong to `@type_expr`.
+fn Checker mut @type_contextual_handler(lit Node, nk []Node, name str,
+                                      tparam_cnt int, applied TyId) -> bool {
+    // SILENT-OK: not a contextual literal; the ordinary expression door owns this node.
+    if lit.kind_of() != NodeKind.ClosureLit { return false }
+    if tparam_cnt > 0 && (!is_ty(applied) || @ctx.tys.kind_of(applied) != TypeKind.TkApp) {
+        @report_first_leaf_of(nk, HANDLER_LAMBDA_ARGS_MSG)
+    } else {
+        @type_with_handler_lambda(lit, name, applied)
+    }
+    // SILENT-OK: the contextual typist recorded the lambda or reported its refusal.
+    return true
+}
+
 /// Type a `with` statement (E4 wave, 274.11): the effect bindings resolve, the
 /// handler value is judged against the effect, and the body is a block.
 fn Checker mut @type_with_stmt(st Node) -> () {
@@ -127,39 +141,21 @@ fn Checker mut @type_with_stmt(st Node) -> () {
         // THE APPLICATION ON THE LEFT (E.13 wave, D31) sits between the
         // name and `=`: `with Fail[E] = handler`. The handler is the child
         // right AFTER the `=` leaf, wherever the application ended.
-        mut hj = bi + 1
-        while hj < kids.len() {
-            ro hk = kids[hj]
-            if hk.kind_of() == NodeKind.LeafNode && leaf_text(hk) == "=" {
-                break
-            } else {
-                hj += 1
-            }
-        }
+        ro hj = bi + 1
         if hj >= kids.len() || hj + 1 >= kids.len() {
             // A malformed binding piece: the walk already spoke.
             break
         }
+        if kids[hj].kind_of() != NodeKind.LeafNode || leaf_text(kids[hj]) != "=" {
+            @reject_first_leaf_of(nk, "a with binding needs `=` before its handler value")
+            break
+        }
         ro hexpr_at = hj + 1
         ro hmark = @out.len()
-        if kids[hexpr_at].kind_of() == NodeKind.ClosureLit {
-            // THE HANDLER-LAMBDA (E.13 wave, D31): the effect named on the
-            // left is the context; the literal is typed against its single
-            // operation's schema (@type_with_handler_lambda, handler.nv).
-            //
-            // A GENERIC EFFECT NEEDS ITS ARGUMENTS WRITTEN: the schema's
-            // operation types are the effect's own PARAMETERS, and the
-            // application on the left is the one place that fixes them.
-            // The oracle infers `E` from the body; novac does not, so a
-            // bare name here is the subset's debt, said by name -- never
-            // an unresolved parameter carried into emission.
-            if eff_tparams > 0 && (!is_ty(eff_applied) || @ctx.tys.kind_of(eff_applied) != TypeKind.TkApp) {
-                @report_first_leaf_of(nk, HANDLER_LAMBDA_ARGS_MSG)
-            } else {
-                @type_with_handler_lambda(kids[hexpr_at], name, eff_applied)
-            }
-        } else {
+        if !@type_contextual_handler(kids[hexpr_at], nk, name, eff_tparams, eff_applied) {
             @type_expr(kids[hexpr_at])
+        } else {
+            // The contextual door answered; no second typing pass is needed.
         }
         if @out.len() == hmark {
             ro hty = @tail_type_of(kids[hexpr_at])

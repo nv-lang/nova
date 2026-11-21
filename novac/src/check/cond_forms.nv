@@ -38,6 +38,7 @@ fn Checker mut @type_if_let(st Node, as_value bool = false) -> () {
     @scope.lexical = lexical
 }
 
+/// Type the condition and branches with the condition binding's lexical scope installed.
 fn Checker mut @type_if_let_in_scope(st Node, as_value bool) -> () {
     ro kids = branch_children(st)
     if kids.len() < iflet_body_at(kids) + 1 {

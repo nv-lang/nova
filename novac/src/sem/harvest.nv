@@ -43,7 +43,7 @@ import ../names.{raw_decl, DeclId, NameTable, NamespaceId}
 ///
 /// Lives here and not in the collector because this IS reading a method
 /// declaration, which is what this file does; the collector calls it.
-export fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
+fn harvest_own_method(kids []Node, types []TypeDef, mut defs DefTable,
                              mut tys Interner, mut fns FnTable, target_mask int = 7,
                              target_unknown_mask int = 0, target_os str = "") -> Option[FnRow] {
     ro before = fns.rows.len()

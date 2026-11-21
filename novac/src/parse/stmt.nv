@@ -449,7 +449,7 @@ fn Cursor mut @stmt() -> Node {
                     ck.push(@take())
                 } else {
                     ck.push(@take()) // `|`
-                    while !@at_eof() && @peek() != TokenKind.Pipe {
+                    while !is_terminator(@peek()) && @peek() != TokenKind.Pipe {
                         ro before = @i
                         if @peek() == TokenKind.Ident {
                             ck.push(@take())

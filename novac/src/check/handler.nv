@@ -40,7 +40,7 @@ import ../builtins.{TypeKind, HANDLER_CTOR}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text, leaf_kind, param_name_at, param_mode_at, ty_source_name, ParamMode}
 import ../sem.{EffectDef, EffectTable, effect_op_ret_type_of}
-import ../sem.{applied_args, subst_type}
+import ../sem.{applied_args, subst_type, is_never_ty}
 import ../types.{TyId, no_ty, is_ty}
 
 /// ONE handler literal: resolve the effect name, judge every op against
@@ -105,7 +105,7 @@ fn Checker mut @type_handler_lit(e Node) -> () {
 /// resolving door so that door stays the with-arm's statement-match shape.
 fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclId) -> () {
     ro schema = @ctx.effects.def_of(name) ?? ice_at(
-        "novac/src/check/handler.nv:105",
+        "novac/src/check/handler.nv:107",
         "check: an effect declaration with no op schema reached the handler-literal typist")
     ro before = @out.len()
     // THE CAPTURE MARK (E.9 step 3): every binding that exists now is
@@ -142,7 +142,7 @@ fn Checker mut @type_handler_resolved(e Node, kids []Node, name str, edecl DeclI
     // declared `Effect[Fs]` with that malformed name in the sentence. The
     // with slot never noticed: its rule admits every application kind.
     ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice_at(
-        "novac/src/check/handler.nv:142",
+        "novac/src/check/handler.nv:144",
         "check: the Effect seed is not registered (sem/sem.nv `seed_effect_ctor`)")
     @record(e, @ctx.tys.app(seed, []TyId.of(@ctx.types[raw_decl(edecl)].ty_id)))
 }
@@ -171,6 +171,7 @@ fn Checker mut @type_handler_op(op Node, eff_name str, schema EffectDef) -> () {
     @scope.lexical = lexical
 }
 
+/// Judge one operation with its lexical binding scope already installed.
 fn Checker mut @type_handler_op_in_scope(op Node, eff_name str, schema EffectDef) -> () {
     ro okids = branch_children(op)
     // SILENT-OK: an op with no children at all is the parser's recovery
@@ -416,9 +417,10 @@ fn Checker mut @type_with_handler_lambda(lit Node, eff_name str, applied TyId) -
     @scope.lexical = lexical
 }
 
+/// Type the single-operation handler lambda inside its installed lexical scope.
 fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applied TyId) -> () {
     ro schema = @ctx.effects.def_of(eff_name) ?? ice_at(
-        "novac/src/check/handler.nv:392",
+        "novac/src/check/handler.nv:422",
         "check: an effect declaration with no op schema reached the handler-lambda typist")
     if schema.op_cnt != 1 {
         @report_first_leaf_of(branch_children(lit), HANDLER_LAMBDA_MULTI_OP_MSG)
@@ -450,7 +452,8 @@ fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applie
             } else {
                 ro pname = leaf_text(c)
                 if pname != "_" {
-                    @bind_source(lit.id_of(), pname, subst_type(@ctx, @ctx.effects.op_params[sig.param_off + pi], args), ParamMode.ModeRo)
+                    @bind_source(lit.id_of(), pname,
+                        subst_type(@ctx, @ctx.effects.op_params[sig.param_off + pi], args), ParamMode.ModeRo)
                 } else {
                     // The wildcard param: a position with no binding.
                 }
@@ -477,7 +480,7 @@ fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applie
         // A `-> never` operation (D31's own `fail(value E) -> never`) has no
         // normal completion: like a unit result, a block body is not asked
         // for a tail value. The oracle accepts such bodies (probe p3).
-        ro unitish = @returns_unit(ret) || ty_source_name(@ctx, ret) == "never"
+        ro unitish = @returns_unit(ret) || is_never_ty(@ctx.tys, ret)
         @ret_unit = unitish
         match body.kind_of() {
             NodeKind.Block => {
@@ -517,7 +520,7 @@ fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applie
     match @ctx.defs.type_decl(eff_name) {
         Some(edecl) => {
             ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice_at(
-                "novac/src/check/handler.nv:462",
+                "novac/src/check/handler.nv:522",
                 "check: the Effect seed is not registered")
             ro eff_ty = if is_ty(applied) { applied } else { @ctx.types[raw_decl(edecl)].ty_id }
             @record(lit, @ctx.tys.app(seed, []TyId.of(eff_ty)))

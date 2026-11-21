@@ -88,11 +88,11 @@ export type ConstTable {
 }
 
 /// An empty constant registry.
-export fn ConstTable.new() -> ConstTable => { rows: []ConstDef.new() }
+fn ConstTable.new() -> ConstTable => { rows: []ConstDef.new() }
 
 /// Register one constant (`once` false) or module value (`once` true) and
 /// answer its row.
-export fn ConstTable mut @add(name str, type_id TyId, init []Node, once bool, decl []Node) -> ConstRow {
+fn ConstTable mut @add(name str, type_id TyId, init []Node, once bool, decl []Node) -> ConstRow {
     ro row = ConstRow(@rows.len())
     @rows.push(ConstDef { name, type_id, init, once, decl })
     row
@@ -117,7 +117,7 @@ export type DefTable {
 }
 
 /// Empty registry with the NsDefs namespace.
-export fn DefTable.new() -> DefTable =>
+fn DefTable.new() -> DefTable =>
     { names: NameTable.new(NamespaceId.NsDefs), rows: []Def.new(), prev: []int.new(), homes: []str.new(),
       privs: []bool.new(), foreign_cnt: 0, asker: "" }
 
@@ -184,7 +184,7 @@ export fn DefTable @is_own(i int) -> bool => i >= @foreign_cnt
 
 /// Everything registered so far came from ELSEWHERE; every row after this is the
 /// compiled file's own.
-export fn DefTable mut @seal_foreign() -> () {
+fn DefTable mut @seal_foreign() -> () {
     @foreign_cnt = @rows.len()
 }
 
@@ -250,7 +250,7 @@ export fn DefTable @fn_row(name str) -> Option[FnRow] {
 /// is something else. Same shape as the two doors around it: the sum holds the
 /// row, so no caller has to know which space a payload belongs to.
 #realtime nogc
-export fn DefTable @const_row(name str) -> Option[ConstRow] {
+fn DefTable @const_row(name str) -> Option[ConstRow] {
     ro def = @def_of(name)?
     match def.target {
         DefConst(row) => Some(row)

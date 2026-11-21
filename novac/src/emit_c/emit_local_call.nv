@@ -44,7 +44,7 @@ fn Emitter mut @emit_local_call(e Node, kids []Node, t TyId) -> () {
         None => {}
     }
     if !addressed {
-        ice_at("novac/src/emit_c/emit_local_call.nv:36",
+        ice_at("novac/src/emit_c/emit_local_call.nv:47",
             "emit_c: a local fn call without its binding read or capture -- door A records the read on the call node")
         return
     }

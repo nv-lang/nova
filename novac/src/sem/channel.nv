@@ -271,10 +271,15 @@ export type CheckOut {
     mv_order []int /// module values (constant-table rows) in the order their initializers run: every value after the values it reads (274.5 S6, D200 topological order). One writer: check.
     captures []CaptureRow /// the bindings each handler literal captures, one row per (literal, name) -- E.9 step 3. One writer: check.
     cap_at []int /// NodeId -> the capture row a Name read inside a literal op body is, -1 = none. One writer: check.
-    binding_defs []BindingDef
-    binding_aliases []BindingAlias
-    binding_at []int
-    capture_binding_ids []int
+    binding_defs []BindingDef /// source binding metadata, indexed by stable binding identity
+    binding_aliases []BindingAlias /// (function owner, scope row) -> stable binding identity
+    binding_at []int /// read NodeId -> binding identity, -1 when no source binding is read
+    capture_binding_ids []int /// capture row -> binding identity, parallel to captures
+    binding_names NameTable /// source spelling -> canonical source-name identity (NsLocals)
+    binding_name_cnt int /// next source-name identity, independent of definition rows
+    binding_site_index HashMap[int, int] /// raw binding site -> site bucket index
+    binding_sites []BindingSite /// integer name-indexed buckets for recorded binding sites
+    binding_next []int /// next definition with the same site and source-name identity
     coerce_at []int /// NodeId -> the raw row of the `#coerce` method the RETURN door inserts around this value (D429 R2/R9), -1 = none. One writer: check (`@judge_return`).
     vec_ops NameTable /// implicit vector operation NAME (`new`, `push`, `len`, `index`) -> the row of std's `Vec[T]` declaration it calls, recorded by the checker where it decided an instance novac makes, read by the emitter to name it (274.11 E.10 step 4c-2) (NsCallables)
     cleanups []CleanupRow /// the auto-`@cleanup` calls (D432) the flow decided: one row per (exit site, value), a site's rows contiguous, innermost value first. One writer: check (`@flow_record_cleanups`).
@@ -334,7 +339,11 @@ export fn CheckOut.new(node_count int) -> CheckOut {
                subst_args: []TyId.new(), arg_slots: []SlotBind.new(),
                contract_notes: []ContractNote.new(), mv_order: []int.new(),
                captures: []CaptureRow.new(), cap_at, coerce_at, cleanups: []CleanupRow.new(), cleanup_at, gone_at,
-               binding_defs: []BindingDef.new(), binding_aliases: []BindingAlias.new(), binding_at, capture_binding_ids: []int.new(),
+               binding_defs: []BindingDef.new(), binding_aliases: []BindingAlias.new(), binding_at,
+               capture_binding_ids: []int.new(),
+               binding_names: NameTable.new(NamespaceId.NsLocals), binding_name_cnt: 0,
+               binding_site_index: HashMap[int, int].new(), binding_sites: []BindingSite.new(),
+               binding_next: []int.new(),
                embed_at,
                wanted: []CalleeRef.new(),
                vec_ops: NameTable.new(NamespaceId.NsCallables) }
@@ -456,11 +465,12 @@ export fn CheckOut mut @record_capture(lit NodeId, read NodeId, name str, bind_r
     @cap_at[raw_node(read)] = at
 }
 
+/// The stable binding identity behind a capture row in this channel's snapshot.
 export fn CheckOut @capture_binding(c CaptureRow) -> int {
     for i in 0..@captures.len() {
         if @captures[i].lit == c.lit && @captures[i].bind_row == c.bind_row { return @capture_binding_ids[i] }
     }
-    ice_at("novac/src/sem/channel.nv", "sem: a capture is absent from its binding snapshot")
+    ice_at("novac/src/sem/channel.nv:473", "sem: a capture is absent from its binding snapshot")
 }
 
 /// The capture a Name read is, or None when it reads an ordinary binding.
@@ -608,12 +618,12 @@ export fn CheckOut mut @record_callee(id NodeId, target CalleeTarget, subst []Ty
         Callee(prev) => assert(same_target(prev.target, target),
             "sem: a call was resolved twice to different targets")
         Subst(_) => ice_at(
-            "novac/src/sem/channel.nv:576",
+            "novac/src/sem/channel.nv:620",
             "sem: record_callee on a node already recorded as an instantiation")
         Const(_) => ice_at(
-            "novac/src/sem/channel.nv:579",
+            "novac/src/sem/channel.nv:623",
             "sem: record_callee on a node already recorded as a constant")
-        Contract(_) => ice_at("novac/src/sem/channel.nv:582", "sem: record_callee on a node carrying a contract note")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:626", "sem: record_callee on a node carrying a contract note")
     }
     // The call's decision is the WHOLE answer: which row, and with which type
     // arguments. rustc keeps the same two facts about one node (type_dependent
@@ -634,12 +644,12 @@ export fn CheckOut mut @record_contract(id NodeId, display str, src_line int) ->
 {
     match @res[raw_node(id)] {
         Unresolved => {}
-        Contract(_) => ice_at("novac/src/sem/channel.nv:603", "sem: record_contract on a node already carrying a note")
-        Callee(_) => ice_at("novac/src/sem/channel.nv:604", "sem: record_contract on a node recorded as a call")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:647", "sem: record_contract on a node already carrying a note")
+        Callee(_) => ice_at("novac/src/sem/channel.nv:648", "sem: record_contract on a node recorded as a call")
         Subst(_) => ice_at(
-            "novac/src/sem/channel.nv:605",
+            "novac/src/sem/channel.nv:649",
             "sem: record_contract on a node recorded as an instantiation")
-        Const(_) => ice_at("novac/src/sem/channel.nv:608", "sem: record_contract on a node recorded as a constant")
+        Const(_) => ice_at("novac/src/sem/channel.nv:652", "sem: record_contract on a node recorded as a constant")
     }
     ro idx = @contract_notes.len()
     @contract_notes.push(ContractNote { display, src_line })
@@ -669,10 +679,10 @@ export fn CheckOut mut @record_subst(id NodeId, args []TyId) -> ()
     // instantiation at once" is not a state to forbid -- it does not exist.
     match @res[raw_node(id)] {
         Unresolved => {}
-        Callee(_) => ice_at("novac/src/sem/channel.nv:638", "sem: record_subst on a node already recorded as a call")
-        Subst(_) => ice_at("novac/src/sem/channel.nv:639", "sem: record_subst twice on one node")
-        Const(_) => ice_at("novac/src/sem/channel.nv:640", "sem: record_subst on a node already recorded as a constant")
-        Contract(_) => ice_at("novac/src/sem/channel.nv:641", "sem: record_subst on a node carrying a contract note")
+        Callee(_) => ice_at("novac/src/sem/channel.nv:682", "sem: record_subst on a node already recorded as a call")
+        Subst(_) => ice_at("novac/src/sem/channel.nv:683", "sem: record_subst twice on one node")
+        Const(_) => ice_at("novac/src/sem/channel.nv:684", "sem: record_subst on a node already recorded as a constant")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:685", "sem: record_subst on a node carrying a contract note")
     }
     ro arg_off = @subst_args.len()
     @subst_args.append(args)
@@ -718,11 +728,11 @@ export fn CheckOut @callee_of(id NodeId) -> CalleeRef
     match @res[raw_node(id)] {
         Callee(c) => c
         Unresolved => ice_at(
-            "novac/src/sem/channel.nv:686",
+            "novac/src/sem/channel.nv:730",
             "sem: callee_of on a node with nothing recorded — a hole in the channel")
-        Subst(_) => ice_at("novac/src/sem/channel.nv:689", "sem: callee_of on a node recorded as an instantiation")
-        Const(_) => ice_at("novac/src/sem/channel.nv:690", "sem: callee_of on a node recorded as a constant")
-        Contract(_) => ice_at("novac/src/sem/channel.nv:691", "sem: callee_of on a node carrying a contract note")
+        Subst(_) => ice_at("novac/src/sem/channel.nv:733", "sem: callee_of on a node recorded as an instantiation")
+        Const(_) => ice_at("novac/src/sem/channel.nv:734", "sem: callee_of on a node recorded as a constant")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:735", "sem: callee_of on a node carrying a contract note")
     }
 }
 
@@ -757,7 +767,7 @@ export fn CheckOut mut @record_implicit(id NodeId, target CalleeTarget, subst []
         Callee(prev) => assert(same_target(prev.target, target),
             "sem: an implicit call was resolved twice to different targets")
         Subst(_) | Const(_) | Contract(_) => ice_at(
-            "novac/src/sem/channel.nv:725",
+            "novac/src/sem/channel.nv:769",
             "sem: the implicit table holds calls only -- a non-call arm was written into it")
     }
     ro subst_off = @subst_args.len()
@@ -777,10 +787,10 @@ export fn CheckOut @implicit_of(id NodeId) -> CalleeRef
     match @implicit[raw_node(id)] {
         Callee(c) => c
         Unresolved => ice_at(
-            "novac/src/sem/channel.nv:745",
+            "novac/src/sem/channel.nv:789",
             "sem: implicit_of on a node with nothing recorded -- a hole in the channel")
         Subst(_) | Const(_) | Contract(_) => ice_at(
-            "novac/src/sem/channel.nv:748",
+            "novac/src/sem/channel.nv:792",
             "sem: the implicit table holds calls only -- a non-call arm was read from it")
     }
 }
@@ -838,19 +848,19 @@ export fn CalleeRef @callable_row() -> FnRow {
     match @target {
         CalleeFn(r) => r
         CalleeVariant(_) => ice_at(
-            "novac/src/sem/channel.nv:806",
+            "novac/src/sem/channel.nv:850",
             "sem: the callable row of a variant reference — a variant row is not a callable row")
         CalleeCtor(_) => ice_at(
-            "novac/src/sem/channel.nv:809",
+            "novac/src/sem/channel.nv:853",
             "sem: the callable row of a construction — a type id is not a callable row")
         CalleeSynthDisplay(_) => ice_at(
-            "novac/src/sem/channel.nv:812",
+            "novac/src/sem/channel.nv:856",
             "sem: the callable row of a SYNTHESIZED display — the program wrote no function, so no row exists; ask `synth_display_type` instead")
         CalleeEffectOp(_) => ice_at(
-            "novac/src/sem/channel.nv:815",
+            "novac/src/sem/channel.nv:859",
             "sem: the callable row of an effect operation -- the shell's dispatcher serves it; ask `effect_op_of` instead")
         CalleeLocal(_) => ice_at(
-            "novac/src/sem/channel.nv:818",
+            "novac/src/sem/channel.nv:862",
             "sem: the callable row of a local fn callee -- a local has no declaration row; ask `local_fn_type` instead (door A)")
     }
 }
@@ -908,12 +918,12 @@ export fn CheckOut @callee_slots_of(id NodeId) -> ro []SlotBind
 {
     ro cr = match @res[raw_node(id)] {
         Callee(c) => c
-        Unresolved => ice_at("novac/src/sem/channel.nv:863", "sem: callee_slots_of on a node with nothing recorded")
+        Unresolved => ice_at("novac/src/sem/channel.nv:921", "sem: callee_slots_of on a node with nothing recorded")
         Subst(_) => ice_at(
-            "novac/src/sem/channel.nv:864",
+            "novac/src/sem/channel.nv:922",
             "sem: callee_slots_of on a node recorded as an instantiation")
-        Const(_) => ice_at("novac/src/sem/channel.nv:867", "sem: callee_slots_of on a node recorded as a constant")
-        Contract(_) => ice_at("novac/src/sem/channel.nv:868", "sem: callee_slots_of on a node carrying a contract note")
+        Const(_) => ice_at("novac/src/sem/channel.nv:925", "sem: callee_slots_of on a node recorded as a constant")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:926", "sem: callee_slots_of on a node carrying a contract note")
     }
     @slots_of_ref(cr)
 }
@@ -930,12 +940,12 @@ export fn CheckOut @callee_subst_of(id NodeId) -> ro []TyId
 {
     ro cr = match @res[raw_node(id)] {
         Callee(c) => c
-        Unresolved => ice_at("novac/src/sem/channel.nv:885", "sem: callee_subst_of on a node with nothing recorded")
+        Unresolved => ice_at("novac/src/sem/channel.nv:943", "sem: callee_subst_of on a node with nothing recorded")
         Subst(_) => ice_at(
-            "novac/src/sem/channel.nv:886",
+            "novac/src/sem/channel.nv:944",
             "sem: callee_subst_of on a node recorded as an instantiation")
-        Const(_) => ice_at("novac/src/sem/channel.nv:889", "sem: callee_subst_of on a node recorded as a constant")
-        Contract(_) => ice_at("novac/src/sem/channel.nv:890", "sem: callee_subst_of on a node carrying a contract note")
+        Const(_) => ice_at("novac/src/sem/channel.nv:947", "sem: callee_subst_of on a node recorded as a constant")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:948", "sem: callee_subst_of on a node carrying a contract note")
     }
     @subst_of_ref(cr)
 }
@@ -948,11 +958,11 @@ export fn CheckOut @subst_of(id NodeId) -> ro []TyId
     ro sr = match @res[raw_node(id)] {
         Subst(s) => s
         Unresolved => ice_at(
-            "novac/src/sem/channel.nv:902",
+            "novac/src/sem/channel.nv:960",
             "sem: subst_of on a node with nothing recorded — a hole in the channel")
-        Callee(_) => ice_at("novac/src/sem/channel.nv:905", "sem: subst_of on a node recorded as a call")
-        Const(_) => ice_at("novac/src/sem/channel.nv:906", "sem: subst_of on a node recorded as a constant")
-        Contract(_) => ice_at("novac/src/sem/channel.nv:907", "sem: subst_of on a node carrying a contract note")
+        Callee(_) => ice_at("novac/src/sem/channel.nv:963", "sem: subst_of on a node recorded as a call")
+        Const(_) => ice_at("novac/src/sem/channel.nv:964", "sem: subst_of on a node recorded as a constant")
+        Contract(_) => ice_at("novac/src/sem/channel.nv:965", "sem: subst_of on a node carrying a contract note")
     }
     // A VIEW into the pool, not a copy: the arguments live once (nv-coding-style
     // section 18a; a counted push loop here would allocate per question).

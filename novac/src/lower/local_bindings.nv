@@ -1,57 +1,191 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- adapts the checked binding identities to this compiler's existing IR locals.
+// Role: lowering layer's source binding identity and C-name allocation bridge.
+// Used by: binding, pattern and function lowering before C emission.
+// Guarded by: compiler identity lookups in lower/ir.nv; lower/lower_test.nv.
 module novac.lower
 
-import ../tree.{Node, NodeKind, NodeId, raw_node}
+import ../tree.{Node, NodeKind, raw_node}
 import ../types.{TyId}
 import ../sem.{branch_children, c_ident}
 import ../diag.{ice_at}
 import ../builtins.{RECV_BINDING, RECV_C_NAME}
+import ../names.{NameTable, NamespaceId}
 
-fn binding_site_inside(n Node, site NodeId) -> bool {
-    if n.id_of() == site { return true }
-    if n.kind_of() == NodeKind.LeafNode { return false }
-    for c in branch_children(n) {
-        if binding_site_inside(c, site) { return true }
-    }
-    false
+/// Reserving future user spellings prevents generated rebind names from claiming them first.
+export fn FnBuilder mut @reserve_source_name(name str) -> () {
+    ro reserved = c_ident(name)
+    if @reserved_c_names.find(reserved) >= 0 { return }
+    @reserved_c_names.put(reserved, 1)
+    @reserved_names.push(reserved)
+    @note_c_name(reserved)
 }
 
-fn Lowerer @source_binding(site Node, name str, nested bool) -> int {
-    for i in 0..@out.binding_defs.len() {
-        ro b = @out.binding_defs[i]
-        if b.name != name { continue }
-        if b.site == site.id_of() || (nested && binding_site_inside(site, b.site)) { return i }
-    }
-    ice_at("novac/src/lower/local_bindings.nv", "lower: a source binding has no exported identity")
+/// Source scope, not sanitized C spelling, distinguishes a rebind from nested shadowing.
+#realtime nogc
+fn FnBuilder @source_repeats(name str, scope int) -> bool {
+    ro bucket = @source_scope_index.get(scope) ?? -1
+    if bucket < 0 { return false }
+    ro at = @source_scopes[bucket].members.find(name)
+    if at < 0 { return false }
+    @source_scopes[bucket].counts[at] > 0
 }
 
-fn Lowerer mut @remember_source_bindings(site Node, name str, local Local, nested bool) -> () {
-    for i in 0..@out.binding_defs.len() {
-        ro b = @out.binding_defs[i]
-        if b.name != name { continue }
-        if b.site == site.id_of() || (nested && binding_site_inside(site, b.site)) {
-            @ir.remember_source_binding(i, local)
+/// A generated name must avoid both allocated C names and identifiers reserved for later.
+#realtime nogc
+fn FnBuilder @binding_name_taken(name str) -> bool {
+    ro at = @c_names.find(name)
+    if at < 0 { return false }
+    @c_name_counts[at] > 0
+}
+
+/// Writers alone create source buckets; readers only use integer indices.
+fn FnBuilder mut @source_scope(scope int) -> int {
+    ro at = @source_scope_index.get(scope) ?? -1
+    if at >= 0 { return at }
+    ro bucket = @source_scopes.len()
+    @source_scopes.push(SourceScope { members: NameTable.new(NamespaceId.NsLocals),
+                                     counts: []int.new(), declared: []int.new() })
+    @source_scope_index.insert(scope, bucket)
+    bucket
+}
+
+/// Adjust membership of a canonical spelling in the integer-selected source scope.
+fn FnBuilder mut @note_source_name(name str, scope int, delta int) -> int {
+    ro bucket = @source_scope(scope)
+    mut at = @source_scopes[bucket].members.find(name)
+    if at < 0 {
+        at = @source_scopes[bucket].counts.len()
+        @source_scopes[bucket].members.put(name, at)
+        @source_scopes[bucket].counts.push(0)
+        @source_scopes[bucket].declared.push(-1)
+    } else {
+        // Reuse this scope's existing source-name identity and counters.
+    }
+    ro count = @source_scopes[bucket].counts[at]
+    assert(count + delta >= 0, "lower: source membership count underflow")
+    @source_scopes[bucket].counts[at] = count + delta
+    at
+}
+
+/// C identity survives removal of a parameter reservation; membership is counted separately.
+fn FnBuilder mut @note_c_name(name str) -> int {
+    mut at = @c_names.find(name)
+    if at < 0 {
+        at = @c_name_counts.len()
+        @c_names.put(name, at)
+        @c_name_counts.push(0)
+    } else {
+        // Reuse the canonical C-name identity before increasing membership.
+    }
+    @c_name_counts[at] += 1
+    at
+}
+
+/// Preserve last local index, even when declarations are zeroed out of allocation order.
+fn FnBuilder mut @note_declared(l Local) -> () {
+    ro i = raw_local(l)
+    ro scope = @binding_scopes[i]
+    ro bucket = @source_scope_index.get(scope) ?? -1
+    if bucket < 0 { return }
+    ro name_id = @local_source_names[i]
+    if name_id < 0 { return }
+    ro prev = @source_scopes[bucket].declared[name_id]
+    if i > prev {
+        @source_scopes[bucket].declared[name_id] = i
+    } else {
+        // The highest zeroed local already represents this source name.
+    }
+}
+
+/// Read the highest zeroed local index for this source spelling and scope.
+#realtime nogc
+fn FnBuilder @declared_local(name str, scope int) -> int {
+    ro bucket = @source_scope_index.get(scope) ?? -1
+    if bucket < 0 { return -1 }
+    ro name_id = @source_scopes[bucket].members.find(name)
+    if name_id < 0 { return -1 }
+    @source_scopes[bucket].declared[name_id]
+}
+
+/// An allocated source identity reads its recorded C identity, never resolves source text again.
+#realtime nogc
+fn FnBuilder @binding_uses_c_name(identity int, name str) -> bool {
+    ro at = @c_names.find(name)
+    if at < 0 { return false }
+    (@binding_c_names.get(identity) ?? -1) == at
+}
+
+/// Select the earliest recorded definition, bounded to this site or pattern tree.
+fn Lowerer @source_binding_at(site Node, source_name_id int, nested bool) -> int {
+    mut at = @out.binding_site_first(site.id_of(), source_name_id)
+    mut next = at
+    while next >= 0 {
+        if next < at {
+            at = next
+        } else {
+            // Keep the earliest identity found in this site chain.
         }
+        next = @out.binding_site_next(next)
+    }
+    if nested && site.kind_of() != NodeKind.LeafNode {
+        for child in branch_children(site) {
+            ro found = @source_binding_at(child, source_name_id, true)
+            if found >= 0 && (at < 0 || found < at) {
+                at = found
+            } else {
+                // This child provides no earlier matching source identity.
+            }
+        }
+    } else {
+        // An exact site or leaf has no nested pattern sites to inspect.
+    }
+    at
+}
+
+/// Read the checked binding identity selected by canonical source name and site.
+fn Lowerer @source_binding(site Node, name str, nested bool) -> int {
+    ro source_name_id = @out.source_name_id(name)
+    ro at = @source_binding_at(site, source_name_id, nested)
+    if at >= 0 { return at }
+    ice_at("novac/src/lower/local_bindings.nv:151", "lower: a source binding has no exported identity")
+}
+
+/// Associate the site chain and nested pattern sites with the allocated local.
+fn Lowerer mut @remember_source_bindings_at(site Node, source_name_id int, local Local, nested bool) -> () {
+    mut at = @out.binding_site_first(site.id_of(), source_name_id)
+    while at >= 0 {
+        @ir.remember_source_binding(at, local)
+        at = @out.binding_site_next(at)
+    }
+    if nested && site.kind_of() != NodeKind.LeafNode {
+        for child in branch_children(site) {
+            @remember_source_bindings_at(child, source_name_id, local, true)
+        }
+    } else {
+        // The exact site chain already contains every requested binding.
     }
 }
 
+/// Canonicalize the name once before associating the recorded source identities.
+fn Lowerer mut @remember_source_bindings(site Node, name str, local Local, nested bool) -> () {
+    ro source_name_id = @out.source_name_id(name)
+    assert(source_name_id >= 0, "lower: a source binding has no canonical name identity")
+    @remember_source_bindings_at(site, source_name_id, local, nested)
+}
+
+/// Test whether any recorded initializer read has this canonical C identity.
 fn Lowerer @initializer_uses_c_name(n Node, name str) -> bool {
     if n.kind_of() == NodeKind.LeafNode { return false }
     ro identity = @out.binding_read(n.id_of())
-    if identity >= 0 {
-        for binding in @ir.source_bindings {
-            if binding.identity == identity && @ir.decl_of(binding.local).name == name { return true }
-        }
-        for parameter in @ir.source_parameters {
-            if parameter.identity == identity && parameter.c_name == name { return true }
-        }
-    }
+    if identity >= 0 && @ir.binding_uses_c_name(identity, name) { return true }
     for child in branch_children(n) {
         if @initializer_uses_c_name(child, name) { return true }
     }
     false
 }
 
+/// Allocate a local using the binding's checked scope and remember its identity.
 fn Lowerer mut @named_binding(site Node, ty TyId, name str) -> Local {
     ro id = @source_binding(site, name, false)
     ro b = @out.binding_def(id)
@@ -60,6 +194,7 @@ fn Lowerer mut @named_binding(site Node, ty TyId, name str) -> Local {
     local
 }
 
+/// Allocate a pattern local and associate all matching nested sites with it.
 fn Lowerer mut @named_pattern_binding(site Node, ty TyId, name str) -> Local {
     ro id = @source_binding(site, name, true)
     ro b = @out.binding_def(id)
@@ -68,21 +203,34 @@ fn Lowerer mut @named_pattern_binding(site Node, ty TyId, name str) -> Local {
     local
 }
 
+/// Reserve source names and the function's parameter spellings before allocating locals.
 export fn Lowerer mut @seed_source_bindings(fn_node Node) -> () {
     for b in @out.binding_defs { @ir.reserve_source_name(b.name) }
     for i in 0..@out.binding_defs.len() {
         ro b = @out.binding_defs[i]
         mut parameter = false
-        if fn_node.kind_of() == NodeKind.ClosureLit && b.site == fn_node.id_of() { parameter = true }
+        if fn_node.kind_of() == NodeKind.ClosureLit && b.site == fn_node.id_of() {
+            parameter = true
+        } else {
+            // Not a parameter declared on this closure; receiver and child checks follow.
+        }
         if fn_node.kind_of() == NodeKind.FnDecl && b.site == fn_node.id_of() && b.name == RECV_BINDING {
             parameter = true
+        } else {
+            // Not this function's receiver; keep the classification already found.
         }
         for c in branch_children(fn_node) {
-            if c.kind_of() == NodeKind.Param && b.site == c.id_of() { parameter = true }
+            if c.kind_of() == NodeKind.Param && b.site == c.id_of() {
+                parameter = true
+            } else {
+                // This child is not the binding's parameter site; keep prior matches.
+            }
         }
         if parameter {
             ro name = if b.name == RECV_BINDING { RECV_C_NAME } else { c_ident(b.name) }
             @ir.reserve_source_parameter(i, raw_node(b.scope), b.name, name)
+        } else {
+            // A body binding gets its local when lowered, not a reserved formal name.
         }
     }
 }

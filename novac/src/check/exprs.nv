@@ -491,6 +491,8 @@ fn Checker mut @type_expr(e Node) -> () {
                     // and the emitter must know it (E.9 step 3).
                     if @scope.is_bound(t.text) {
                         @chan.record_binding_read(e.id_of(), @scope.owner, @scope.row_of(t.text))
+                    } else {
+                        // A bool literal has no source binding identity to record.
                     }
                     @note_if_capture(e, t.text)
                 } else if @settle_module_value(t.text) {
@@ -520,7 +522,7 @@ fn Checker mut @type_expr(e Node) -> () {
                             @chan.record_const(e.id_of(), row)
                         }
                         None => ice_at(
-                            "novac/src/check/exprs.nv:519",
+                            "novac/src/check/exprs.nv:524",
                             "check: a constant typed by name that the registry does not carry")
                     }
                 } else {

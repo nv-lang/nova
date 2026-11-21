@@ -527,7 +527,7 @@ export fn Interner mut @subst(t TyId, args []TyId) -> TyId {
         TkParam => {
             if row.head_id < 0 || row.head_id >= args.len() {
                 ice_at(
-                    "novac/src/types/types.nv:525",
+                    "novac/src/types/types.nv:529",
                     "types: subst with a partial argument vector — a Param has no argument")
             }
             return args[row.head_id]
@@ -572,7 +572,7 @@ export fn Interner @subst_known(t TyId, args []TyId) -> TyId {
     if row.kind == TypeKind.TkParam {
         if row.head_id < 0 || row.head_id >= args.len() {
             ice_at(
-                "novac/src/types/types.nv:565",
+                "novac/src/types/types.nv:574",
                 "types: subst with a partial argument vector -- a Param has no argument")
         }
         return args[row.head_id]

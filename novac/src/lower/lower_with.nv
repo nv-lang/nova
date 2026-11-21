@@ -34,17 +34,17 @@ fn Lowerer mut @lower_with(st Node) -> () {
         // schema's frame, not part of the effect's identity here.
         if nm.kind_of() != NodeKind.EffectItem {
             ice_at(
-                "novac/src/lower/lower_with.nv:32",
+                "novac/src/lower/lower_with.nv:36",
                 "lower: a with binding without its effect item reached the lowering")
         }
-        mut hj = bi + 1
-        while hj < kids.len() {
-            ro hk = kids[hj]
-            if hk.kind_of() == NodeKind.LeafNode && leaf_text(hk) == "=" {
-                break
-            } else {
-                hj += 1
-            }
+        ro hj = bi + 1
+        if hj + 1 >= kids.len() {
+            ice_at("novac/src/lower/lower_with.nv:42", "lower: a with binding has no handler value")
+            return
+        }
+        if kids[hj].kind_of() != NodeKind.LeafNode || leaf_text(kids[hj]) != "=" {
+            ice_at("novac/src/lower/lower_with.nv:46", "lower: a with binding has no assignment token")
+            return
         }
         ro hexpr = kids[hj + 1]
         // The handler, evaluated ONCE into a local of its own type -- the
@@ -66,7 +66,7 @@ fn Lowerer mut @lower_with(st Node) -> () {
     ro body = kids[kids.len() - 1]
     if body.kind_of() != NodeKind.Block {
         ice_at(
-            "novac/src/lower/lower_with.nv:55",
+            "novac/src/lower/lower_with.nv:68",
             "lower: a with statement without its body block reached the lowering")
     }
     ro c = @ir.begin_with(swaps)

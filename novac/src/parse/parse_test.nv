@@ -5,11 +5,50 @@
 
 module novac.parse
 
-import ../lex.{lex}
+import ../lex.{lex, TokenKind}
 import ../tree.{Node, NodeKind, tree_reserialize}
 import ../diag.{ice_at}
 
 fn roundtrip(src str) -> bool => tree_reserialize(parse(lex(src))) == src
+
+test "handler lambda parameter recovery preserves enclosing closers and the next declaration" {
+    // Read the statement directly: reserialization alone cannot detect a
+    // closer moved into an Err under the lambda instead of its outer form.
+    for closer in []str.of("}", ")", "]") {
+        ro src = "with E = |x, ? ${closer} fn next() {}"
+        mut p = Cursor { toks: lex(src), i: 0, no_ctor: false, next_id: 0, depth: 0, depth_told: false }
+        ro stmt = p.stmt()
+        assert(stmt.kind_of() == NodeKind.WithStmt)
+        assert(is_terminator(p.peek()))
+        assert(p.peek() != TokenKind.KwFn)
+        assert(p.peek() != TokenKind.Eof)
+        assert(tree_reserialize(p.take()).ends_with(closer))
+        assert(p.peek() == TokenKind.KwFn)
+        assert(p.fn_decl([]Node.new()).kind_of() == NodeKind.FnDecl)
+        assert(p.at_eof())
+    }
+    ro src = "fn broken() { with E = |x, ? }\nfn next() {}"
+    ro f = parse(lex(src))
+    assert(tree_reserialize(f) == src)
+    match f {
+        Branch { children, .. } => {
+            assert(children[0].kind_of() == NodeKind.FnDecl)
+            assert(children[1].kind_of() == NodeKind.FnDecl)
+        }
+        Leaf(_) => assert(false)
+    }
+}
+
+test "handler lambda valid parameter lists remain unchanged" {
+    for params in []str.of("||", "|x|", "|x, y|") {
+        ro src = "with E = ${params} 0 {}"
+        mut p = Cursor { toks: lex(src), i: 0, no_ctor: false, next_id: 0, depth: 0, depth_told: false }
+        ro stmt = p.stmt()
+        assert(stmt.kind_of() == NodeKind.WithStmt)
+        assert(tree_reserialize(stmt) == src)
+        assert(p.at_eof())
+    }
+}
 
 test "tree reserialization: hello program survives byte for byte" {
     assert(roundtrip("// greeting\nmodule basics.hello\n\nfn main() {\n    println(\"Hello, Nova!\")\n}\n"))
@@ -582,7 +621,7 @@ fn handler_lit_test_stmt(f Node) -> ro Node {
         }
         Leaf(_) => {}
     }
-    ice_at("novac/src/parse/parse_test.nv:585", "parse test: the fixture has no with statement")
+    ice_at("novac/src/parse/parse_test.nv:624", "parse test: the fixture has no with statement")
 }
 
 
@@ -645,7 +684,7 @@ fn supervised_test_stmt(f Node) -> ro Node {
         }
         Leaf(_) => {}
     }
-    ice_at("novac/src/parse/parse_test.nv:648", "parse test: the fixture has no supervised statement")
+    ice_at("novac/src/parse/parse_test.nv:687", "parse test: the fixture has no supervised statement")
 }
 
 test "shape: a signature without a body ends where the next declaration begins (#1439)" {

@@ -101,7 +101,7 @@ fn Emitter @arg_slot_ty(id NodeId, s int) -> TyId {
         // type -- the same truth the row gives a declared callee.
         CalleeLocal(t) => @ctx.tys.arg(t, s)
         CalleeFn(_) | CalleeCtor(_) | CalleeSynthDisplay(_) | CalleeEffectOp(_) => ice_at(
-            "novac/src/emit_c/emit_never.nv:97",
+            "novac/src/emit_c/emit_never.nv:103",
             "emit_c: a diverging argument outside a variant's payload passed the checker -- its slot has no type here")
     }
 }

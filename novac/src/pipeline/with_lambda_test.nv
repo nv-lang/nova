@@ -14,7 +14,11 @@
 // novac/src/pipeline/with_lambda_test.nv -- the D31 handler-lambda, as novac writes it.
 
 module novac.pipeline
-import ../sem.{effect_vtable_c}
+import ../sem.{effect_vtable_c, c_type}
+import ../names.{raw_decl}
+import ../lex.{lex}
+import ../parse.{parse}
+import ../diag.{ice_at}
 
 /// The handed declaration the tests share: std's own `Fail[E]`, written in
 /// the frame its operations live in -- the parameter `E` is what the
@@ -29,7 +33,7 @@ test "handler-lambda: the body is typed against the ONE operation, E fixed by th
     // TYPING DOOR. The operation declares `fail(e E)`; `E` is the effect's
     // own parameter, and only the application `Fail[MyErr]` fixes it. The
     // body reads a FIELD of `e` -- a read that exists only when the
-    // parameter was replaced by MyErr (an unresolved parameter refuses it).
+    // parameter was replaced by MyErr (`@type_field` refuses an unresolved receiver).
     ro (d, _) = compile_to_c_with(
         "type MyErr value { msg str }\nfn g() -> int {\n with Fail[MyErr] = |e| { println(e.msg) } {\n  println(\"body\")\n }\n 3\n}\nfn main() {\n println(g())\n}",
         parse_decls(fail_decl()), interop_surface())
@@ -47,7 +51,12 @@ test "handler-lambda: the value is the effect's TABLE with one synthesized op (E
     assert(d.len() == 0, messages(d))
     assert(c.contains("${effect_vtable_c("Fail")}*"), c)
     assert(c.contains("->fail = novac_hop_"), c)
-    assert(c.contains("NovaValue_MyErr e)"), c)
+    ro ctx = context(parse(lex("type MyErr value { msg str }\n")),
+                     parse_decls(fail_decl()), interop_surface())
+    ro decl = ctx.defs.type_decl("MyErr") ?? ice_at(
+        "novac/src/pipeline/with_lambda_test.nv:56", "test: expected MyErr declaration is absent")
+    ro expected = c_type(ctx, ctx.types[raw_decl(decl)].ty_id)
+    assert(c.contains("${expected} e)"), c)
 }
 
 test "handler-lambda: two operations take the handler literal, refused by name (E.13, D31)" {

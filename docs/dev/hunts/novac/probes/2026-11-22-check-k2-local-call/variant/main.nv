@@ -1,0 +1,14 @@
+module hunt_variant
+type Token enum
+    | Hit(int)
+fn exercise(Hit fn(int) -> int, g fn(int) -> int) -> int {
+    mut result = Hit(2)
+    if true {
+        ro Hit = g
+        result += Hit(3)
+    }
+    result + Hit(4)
+}
+fn main() -> () {
+    println(exercise(|x| x + 10, |x| x * 100))
+}

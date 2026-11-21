@@ -55,9 +55,10 @@ fn is_closure_arg_slot(kind NodeKind, c Node) -> bool =>
 /// the walk and died in emit as an ICE, remark 5), that NamedArg's value child
 /// (slot 2, `inherited`), the `with` binding's handler slot (the child after an
 /// `=` leaf, registry 1312), and the fn-typed call argument slot. Syntax only --
-/// the callee's parameter TYPE is judged by the call's typing door, never here.
+/// the callee's parameter TYPE is judged by `@type_arg_expecting`, never here.
 fn closure_pos_of(kind NodeKind, c Node, at int, children []Node, inherited bool) -> bool =>
     (kind == NodeKind.SupervisedStmt && named_arg_is(c, "on_timeout")) ||
     (kind == NodeKind.NamedArg && inherited && at == 2) ||
-    (kind == NodeKind.WithStmt && at > 0 && children[at - 1].kind_of() == NodeKind.LeafNode && leaf_kind(children[at - 1]) == TokenKind.Assign) ||
+    (kind == NodeKind.WithStmt && at > 0 && children[at - 1].kind_of() == NodeKind.LeafNode &&
+        leaf_kind(children[at - 1]) == TokenKind.Assign) ||
     is_closure_arg_slot(kind, c)

@@ -95,7 +95,7 @@ for TRACK in novac guards spec; do
         while IFS= read -r line; do
             case "$line" in "СВЁРНУТО |"*) ;; *) continue ;; esac
             N_FOLDED=$((N_FOLDED + 1))
-            if ! printf '%s\n' "$line" | grep -qE '^СВЁРНУТО \| *20[0-9]{2}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+ *\| *[a-z_]+ *\| *(К|С)[1-7] *\| *находок [0-9]+ *\|'; then
+            if ! printf '%s\n' "$line" | grep -qE '^СВЁРНУТО \| *20[0-9]{2}-[0-9]{2}-[0-9]{2}-[A-Za-z0-9._-]+ *\| *[a-z_]+ *\| *(К|С)[1-7] *\| *находок [0-9]+ *\|'; then
                 echo "check-hunter-fold: FAIL — строка леджера $TRACK не разбирается по формату (№801): $(printf '%s' "$line" | head -c 100)" >&2
                 rc=1
                 continue

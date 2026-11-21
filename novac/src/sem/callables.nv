@@ -310,7 +310,7 @@ export fn FnDef @target_state(target_os str) -> int {
 /// callable -- Nova allows it, the oracle compiles it, and it gets an ordinary
 /// mangled name.
 #realtime nogc
-export fn is_entry_fn(fd FnDef) -> bool =>
+fn is_entry_fn(fd FnDef) -> bool =>
     fd.name == ENTRY_FN && fd.param_cnt == 0 && !fd.has_recv
 
 /// The same question by ROW, for the readers that hold one.

@@ -237,7 +237,7 @@ fn Emitter mut @emit_closure_value(e Node) -> () {
     ro tmp = @lit_tmp[raw_node(e.id_of())]
     if tmp == "" {
         ice_at(
-            "novac/src/emit_c/emit_closure.nv:216",
+            "novac/src/emit_c/emit_closure.nv:239",
             "emit: a closure literal in expression position was never hoisted (E.11 wave)")
     } else {
         // Hoisted: the temporary carries the closure value.

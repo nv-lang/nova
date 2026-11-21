@@ -1,0 +1,10 @@
+module hunt_forward
+fn invoke(f fn(int) -> int, x int) -> int => f(x)
+fn forward(f fn(int) -> int, g fn(int) -> int) -> int {
+    ro saved = f
+    ro saved = g
+    invoke(f, 2) + invoke(saved, 3)
+}
+fn main() -> () {
+    println(forward(|x| x + 10, |x| x * 100))
+}

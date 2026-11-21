@@ -28,13 +28,13 @@ mk_root() {
     git -C "$T" config user.email selftest@example.com
     git -C "$T" config user.name selftest
     git -C "$T" config commit.gpgsign false
-    printf 'свёрнутый отчёт\n' > "$T/docs/dev/hunts/novac/2026-01-01-lex-k2.md"
-    git -C "$T" add docs/dev/hunts/novac/2026-01-01-lex-k2.md
+    printf 'свёрнутый отчёт\n' > "$T/docs/dev/hunts/novac/2026-01-01-lex_Module.2-k2.md"
+    git -C "$T" add docs/dev/hunts/novac/2026-01-01-lex_Module.2-k2.md
     git -C "$T" commit -qm "hunt report that will be folded"
-    git -C "$T" rm -q docs/dev/hunts/novac/2026-01-01-lex-k2.md
+    git -C "$T" rm -q docs/dev/hunts/novac/2026-01-01-lex_Module.2-k2.md
     git -C "$T" commit -qm "fold it"
     printf 'открытый отчёт\n' > "$T/docs/dev/hunts/novac/2026-03-03-parse-k3.md"
-    printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 2 | №810,№811\n' \
+    printf 'СВЁРНУТО | 2026-01-01-lex_Module.2-k2 | lex | К2 | находок 2 | №810,№811\n' \
         > "$T/docs/dev/hunts/novac/LEDGER.md"
     printf '| 810 | t | НАЙДЕНО ОХОТНИКОМ 2026-01-01 (novac). |\n| 811 | t | НАЙДЕНО ОХОТНИКОМ 2026-01-01 (novac). |\n' \
         > "$T/docs/plans/221.1-bug-sweep.md"
@@ -75,7 +75,7 @@ fi
 
 # ── подделка 4: пробы-сироты без открытого отчёта ───────────────────────
 mk_root
-mkdir -p "$T/docs/dev/hunts/novac/probes/2026-01-01-lex-k2/x"
+mkdir -p "$T/docs/dev/hunts/novac/probes/2026-01-01-lex_Module.2-k2/x"
 if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o4" 2>&1; then
     echo "FAIL: пробы свёрнутого отчёта остались в дереве и прошли — свёртка не убирает кучу" >&2
     rc=1
@@ -92,9 +92,9 @@ fi
 
 # ── подделка 6: одна ссылка в двух строках леджера ──────────────────────
 mk_root
-printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 1 | №810\n' \
+printf 'СВЁРНУТО | 2026-01-01-lex_Module.2-k2 | lex | К2 | находок 1 | №810\n' \
     > "$T/docs/dev/hunts/novac/LEDGER.md"
-printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К3 | находок 1 | №810\n' \
+printf 'СВЁРНУТО | 2026-01-01-lex_Module.2-k2 | lex | К3 | находок 1 | №810\n' \
     >> "$T/docs/dev/hunts/novac/LEDGER.md"
 if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o6" 2>&1; then
     echo "FAIL: одна строка реестра засчитана двум свёрткам — знаменатель меры надувается" >&2
@@ -103,7 +103,7 @@ fi
 
 # ── подделка 7: ссылка на ЧУЖУЮ охоту (дата метки не та) ────────────────
 mk_root
-printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 1 | №810\n' \
+printf 'СВЁРНУТО | 2026-01-01-lex_Module.2-k2 | lex | К2 | находок 1 | №810\n' \
     > "$T/docs/dev/hunts/novac/LEDGER.md"
 printf '| 810 | t | НАЙДЕНО ОХОТНИКОМ 2026-07-07 (novac). |\n' \
     > "$T/docs/plans/221.1-bug-sweep.md"
@@ -114,7 +114,7 @@ fi
 
 # ── подделка 8: ссылок больше, чем находок ──────────────────────────────
 mk_root
-printf 'СВЁРНУТО | 2026-01-01-lex-k2 | lex | К2 | находок 1 | №810,№811\n' \
+printf 'СВЁРНУТО | 2026-01-01-lex_Module.2-k2 | lex | К2 | находок 1 | №810,№811\n' \
     > "$T/docs/dev/hunts/novac/LEDGER.md"
 if NOVA_HUNTER_FOLD_BASELINE="$T/base" sh "$GUARD" "$T" >"$T.o8" 2>&1; then
     echo "FAIL: две ссылки при одной находке прошли — счёт свёртки не сходится" >&2

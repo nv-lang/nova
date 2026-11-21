@@ -434,7 +434,7 @@ fn Lowerer mut @lower_stmt(st Node) -> () {
         // subset".
         @lower_block_stmts_fn(st, false)
     } else {
-        ice_at("novac/src/lower/lowering.nv:438", "emit: statement kind outside the subset")
+        ice_at("novac/src/lower/lowering.nv:437", "emit: statement kind outside the subset")
     }
 }
 
@@ -583,7 +583,7 @@ fn Lowerer mut @lower_else_tail(c IfCtx, tail Node) -> () {
         // the IR already had that block -- the outer else.
         @lower_if_let(tail, Some(c))
     } else {
-        ice_at("novac/src/lower/lowering.nv:587", "emit: the else branch is neither a block nor a chained if / if-let")
+        ice_at("novac/src/lower/lowering.nv:586", "emit: the else branch is neither a block nor a chained if / if-let")
     }
 }
 

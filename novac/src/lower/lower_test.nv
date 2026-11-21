@@ -9,6 +9,7 @@
 module novac.lower
 import ../tree.{Node, NodeKind, NodeId, AssignOp, branch}
 import ../types.{TyId}
+import ../sem.{CheckOut, collect_types}
 
 fn stand_in_expr() -> Node => branch(NodeId(0), NodeKind.Lit, []Node.new())
 
@@ -249,6 +250,72 @@ test "disjunction assignments retain the declared name and local allocation orde
     assert(b.decl_of(alternative).name == "value")
     assert(b.decl_of(alternative).decl_at == DeclAt.Zeroed)
     assert(b.decl_of(rebound).name == "value__novac_rebind3")
+}
+
+test "indexed declarations retain the last Zeroed local rather than the last binding" {
+    mut b = FnBuilder.new(TyId(3))
+    ro first = b.named(TyId(5), "value", scope: 1)
+    ro second = b.named(TyId(5), "value", scope: 1)
+    b.declare_zeroed(second)
+    b.declare_zeroed(first)
+    ro nested = b.named(TyId(5), "value", scope: 2)
+    b.declare_zeroed(nested)
+    b.named(TyId(5), "value", scope: 1)
+    ro alternative = b.named_declared(TyId(5), "value", 1)
+    assert(b.decl_of(alternative).name == b.decl_of(second).name)
+    assert(b.decl_of(alternative).decl_at == DeclAt.Zeroed)
+    ro next = b.named_declared(TyId(5), "value", 1)
+    assert(b.declared_local("value", 1) == raw_local(next))
+    assert(b.decl_of(next).name == b.decl_of(second).name)
+}
+
+test "parameter replacement updates both indexed memberships without allocating a local" {
+    mut b = FnBuilder.new(TyId(3))
+    b.reserve_source_parameter(40, 1, "old", "old")
+    b.reserve_source_parameter(40, 2, "new", "new")
+    assert(!b.source_repeats("old", 1))
+    assert(!b.binding_name_taken("old"))
+    assert(b.source_repeats("new", 2))
+    assert(b.binding_name_taken("new"))
+    assert(b.locals.len() == 1)
+    ro nested = b.named(TyId(5), "new", scope: 3)
+    ro rebound = b.named(TyId(5), "new", scope: 2)
+    assert(b.decl_of(nested).name == "new")
+    assert(b.decl_of(rebound).name == "new__novac_rebind2")
+    ro temp = b.temp(TyId(5))
+    assert(b.binding_name_taken(b.decl_of(temp).name))
+    b.seal(b.current(), Terminator.Return)
+    assert(b.source_repeats("new", 2))
+    ro fresh = FnBuilder.new(TyId(3))
+    assert(!fresh.source_repeats("new", 2))
+    assert(!fresh.binding_name_taken("new"))
+}
+
+test "pattern identity reads stay inside their site tree and map every alternative" {
+    ro ctx = collect_types(branch(NodeId(0), NodeKind.File, []Node.new()))
+    mut out = CheckOut.new(30)
+    ro owner = NodeId(0)
+    ro scope = NodeId(1)
+    ro unrelated = out.record_binding(owner, NodeId(20), scope, 0, "value")
+    ro earlier = out.record_binding(owner, NodeId(4), scope, 1, "value")
+    ro later = out.record_binding(owner, NodeId(3), scope, 2, "value")
+    ro left = branch(NodeId(3), NodeKind.Lit, []Node.new())
+    ro right = branch(NodeId(4), NodeKind.Lit, []Node.new())
+    ro pat = branch(NodeId(2), NodeKind.Block, []Node.of(left, right))
+    mut lower = Lowerer { ctx, out, ir: FnBuilder.new(TyId(3)) }
+    assert(lower.source_binding(pat, "value", true) == earlier)
+    assert(lower.source_binding(left, "value", false) == later)
+    ro local = lower.named_pattern_binding(pat, TyId(5), "value")
+    assert(lower.ir.binding_c_name(earlier) == "value")
+    assert(lower.ir.binding_c_name(later) == "value")
+    assert(!lower.ir.binding_uses_c_name(unrelated, "value"))
+    lower.ir.declare_zeroed(local)
+    ro alternative = lower.binder_local(left, TyId(5), "value", []str.of("value"))
+    assert(lower.ir.decl_of(alternative).decl_at == DeclAt.Zeroed)
+    lower.out.record_binding_read(NodeId(6), owner, 1)
+    ro read = branch(NodeId(6), NodeKind.Name, []Node.new())
+    assert(lower.initializer_uses_c_name(read, "value"))
+    assert(!lower.initializer_uses_c_name(read, "other"))
 }
 
 test "each local carries its role: the return place, a binding, a temporary" {

@@ -1,0 +1,15 @@
+module hunt_receiver
+type Box { n int }
+fn Box @exercise(f fn(int) -> int, g fn(int) -> int) -> int {
+    ro first = f(@n)
+    if true {
+        ro f = g
+        ro second = f(@n)
+        println(second)
+    }
+    first + f(@n)
+}
+fn main() -> () {
+    ro b = Box { n: 2 }
+    println(b.exercise(|x| x + 10, |x| x * 100))
+}

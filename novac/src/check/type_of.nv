@@ -430,7 +430,7 @@ fn cast_target_of(e Node, ctx Ctx) -> TyId {
     }
     if !is_ty(found) {
         ice_at(
-            "novac/src/check/type_of.nv:428",
+            "novac/src/check/type_of.nv:432",
             "check: a cast whose target type the registry does not know reached the lattice")
     } else {
         // A type the registry holds: that is the cast's value type.
@@ -485,7 +485,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             return clos_t
         } else {
             ice_at(
-                "novac/src/check/type_of.nv:480",
+                "novac/src/check/type_of.nv:487",
                 "check: a closure literal without its context signature reached the lattice (E.11)")
         }
     }
@@ -555,7 +555,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             // name an earlier refusal bound with no type (`args_read_poisoned`).
             if args_read_poisoned(kids, 3, scope) { return no_ty() }
             ice_at(
-                "novac/src/check/type_of.nv:538",
+                "novac/src/check/type_of.nv:557",
                 "check: method call reached type_of with no decision in the channel (274.4 pass-order)")
         }
         return ctx.fns.rows[raw_row(chan.callee_of(nid).callable_row())].ret_id
@@ -660,7 +660,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 return type_of(branch_children(c)[1], ctx, scope, chan)
             }
         }
-        ice_at("novac/src/check/type_of.nv:644", "check: anonymous constructor without a spread")
+        ice_at("novac/src/check/type_of.nv:663", "check: anonymous constructor without a spread")
     }
     if k == NodeKind.IsTest {
         // A type test is a `bool` (D54); its legality was the walk's.
@@ -719,7 +719,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             Equal | NotEqual => { return ctx.prims.bool_id }
             AndAlso | OrElse => { return ctx.prims.bool_id }
             Range => { ice_at(
-                "novac/src/check/type_of.nv:702",
+                "novac/src/check/type_of.nv:721",
                 "check: a range is not an expression outside a for-head") }
             // Arithmetic AND the bitwise family: the operands' OWN numeric type,
             // decided below -- `u8 & 0x0F` is a `u8` (D405: one concrete integer
@@ -762,7 +762,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // returns before exprs.nv records this node's type -- the only road
         // here. Pinned by pipeline/handed_fields_test.nv and check_test.nv.
         ice_at(
-            "novac/src/check/type_of.nv:745",
+            "novac/src/check/type_of.nv:764",
             "check: binary arithmetic on non-numeric operands past check (#652 class)")
     }
     if k == NodeKind.MatchExpr {
@@ -792,7 +792,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // unknown type travelled on, which is the same shape the
                 // sibling case below already refuses out loud.
                 ro at = arm_body_at(ak) ?? ice_at(
-                    "novac/src/check/type_of.nv:775",
+                    "novac/src/check/type_of.nv:794",
                     "check: a match arm with no body reached type_of")
                 // A BLOCK arm leaves through `return` and yields the match no
                 // value (274.5 wave B9): `no_ty()` is that answer, and the
@@ -848,7 +848,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // An INVARIANT (#700 triage 2026-09-30): a value `match` with no arms
         // is refused by `@type_match` (check/match_arms.nv, EMPTY_MATCH_MSG)
         // before its type is recorded. Pinned by check/check_test.nv.
-        ice_at("novac/src/check/type_of.nv:832", "check: match without arms past check")
+        ice_at("novac/src/check/type_of.nv:851", "check: match without arms past check")
     }
     if k == NodeKind.Call {
         // `size_of[T]()` (D216) is no row's call: the checker recorded its
@@ -869,6 +869,8 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 Some(t) => { return ctx.tys.arg(t, ctx.tys.arg_count(t) - 1) }
                 None => {}
             }
+        } else {
+            // No recorded local callee: continue with variant and registry lookup below.
         }
         // ONE lookup answers "what is this name" (the rustc Res model),
         // then the kind decides.
@@ -895,7 +897,7 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
             return sid
         }
         ro def = ctx.defs.def_of(cname) ?? ice_at(
-            "novac/src/check/type_of.nv:868",
+            "novac/src/check/type_of.nv:899",
             "check: call target not in the registry (#652 class)")
         if DefFn(decl_row) = def.target {
             // The ROW the checker resolved, when it recorded one: `defs` is
@@ -940,13 +942,13 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
                 // until V2b, when the rule made the case real.
                 CalleeFn(row) => ctx.fns.rows[raw_row(row)].ret_id
                 CalleeVariant(_) => ice_at(
-                    "novac/src/check/type_of.nv:913",
+                    "novac/src/check/type_of.nv:944",
                     "check: a type in call position recorded as a variant construction")
                 CalleeSynthDisplay(_) => ice_at(
-                    "novac/src/check/type_of.nv:916",
+                    "novac/src/check/type_of.nv:947",
                     "check: a type in call position recorded as a synthesized display -- the synthesis is recorded on an INTERPOLATION SLOT, never on a call")
                 CalleeEffectOp(_) => ice_at(
-                    "novac/src/check/type_of.nv:919",
+                    "novac/src/check/type_of.nv:950",
                     "check: a type in call position recorded as an effect operation -- an operation's head is an EFFECT, never a type in call position")
                 // A LOCAL fn callee (door A) whose name shadows a declared
                 // type: the early read above answers first, so this arm is
@@ -958,11 +960,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // Nothing recorded: the form was refused (a record's positional
         // construction, a wrong arity), and a refused node has no type.
         ice_at(
-            "novac/src/check/type_of.nv:926",
+            "novac/src/check/type_of.nv:962",
             "check: a type in call position with no construction recorded -- the refusal should have stopped this walk")
     }
     ice_at(
-        "novac/src/check/type_of.nv:930",
+        "novac/src/check/type_of.nv:966",
         "check: expression kind without a type rule — no silent int default (#652 class)")
 }
 

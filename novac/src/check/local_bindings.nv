@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- exports this checker's existing scope rows as stable binding identities.
+// Role: check layer's source-binding scope and channel recording doors.
+// Used by: statement, pattern, parameter and closure typing before lowering.
+// Guarded by: compiler contracts in sem/local_bindings.nv (valid sites and consistent identities).
 module novac.check
 
 import ../tree.{Node, NodeKind, NodeId}
 import ../types.{TyId}
 import ../sem.{ParamMode, branch_children}
 
+/// The body's lexical scope, or the node itself when it has no body child.
 fn binding_scope_of(n Node) -> NodeId {
     for c in branch_children(n) {
         if c.kind_of() == NodeKind.Block || c.kind_of() == NodeKind.FnExprBody {
@@ -14,6 +19,7 @@ fn binding_scope_of(n Node) -> NodeId {
     n.id_of()
 }
 
+/// Bind a source name and export its scope row with its declaration site.
 fn Checker mut @bind_source(site NodeId, name str, ty TyId, mode ParamMode) -> () {
     ro row = @scope.row_count()
     @scope.bind(name, ty, mode)

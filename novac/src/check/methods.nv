@@ -519,10 +519,12 @@ fn Checker mut @type_method_call(e Node) -> () {
                     // A prior refusal (the receiver, an earlier argument): the
                     // walk spoke; a second word would be the second death.
                 }
-            } else {
-                ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
-                @type_arg_expecting(ae, want)
+                argi += 1
+                i += 1
+                continue
             }
+            ro want = if c.kind_of() == NodeKind.NamedArg { no_ty() } else { @param_expect(arg_row, argi, pre) }
+            @type_arg_expecting(ae, want)
             argi += 1
         } else if i > 2 && is_arg_node(c) {
             // A deferred `None` still holds its parameter's place.
@@ -634,7 +636,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     if !@effect_op_head(kids) { return false }
     ro head_name = expr_leaf_name(kids[0])
     ro edecl = @ctx.defs.type_decl(head_name) ?? ice_at(
-        "novac/src/check/methods.nv:622",
+        "novac/src/check/methods.nv:638",
         "check: the effect-op head lost its declaration between two reads of one Option")
     ro onm = match kids[2] {
         Leaf(t) => t
@@ -642,7 +644,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     }
     ro opname = onm.text
     ro schema = @ctx.effects.def_of(head_name) ?? ice_at(
-        "novac/src/check/methods.nv:630",
+        "novac/src/check/methods.nv:646",
         "check: an effect declaration with no op schema reached the effect-op call door")
     // (a) THE OPERATION MUST BE IN THE SCHEMA -- the call-side sibling of
     // the handler literal's E_HANDLER_OP_UNKNOWN (one family, two

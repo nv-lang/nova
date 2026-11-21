@@ -66,7 +66,7 @@ export type ProtoTable {
 }
 
 /// Empty protocol registry with its own namespace.
-export fn ProtoTable.new() -> ProtoTable =>
+fn ProtoTable.new() -> ProtoTable =>
     { names: NameTable.new(NamespaceId.NsProtocols), rows: []ProtoDef.new(),
       sigs: []ProtoSig.new(), sig_params: []TyId.new(), sig_names: NameTable.new(NamespaceId.NsProtocols) }
 

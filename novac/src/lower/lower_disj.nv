@@ -244,12 +244,7 @@ fn Lowerer mut @binder_local(site Node, t TyId, nm str, pre []str) -> Local {
 /// disjunction's `declare_zeroed` above it -- so its assignments are bare: the
 /// same C variable, written by the alternative that held.
 fn FnBuilder mut @named_declared(ty TyId, name str, scope int) -> Local {
-    mut at = -1
-    for i in 0..@locals.len() {
-        if @source_names[i] == name && @binding_scopes[i] == scope && @locals[i].decl_at == DeclAt.Zeroed {
-            at = i
-        }
-    }
+    ro at = @declared_local(name, scope)
     assert(at >= 0, "lower: a disjunction assignment has no declared source binding")
     ro declared = @locals[at]
     ro l = @local(ty, LocalKind.Binding, declared.name)
@@ -257,6 +252,8 @@ fn FnBuilder mut @named_declared(ty TyId, name str, scope int) -> Local {
     @source_names[i] = name
     @binding_scopes[i] = scope
     @locals[i] = LocalDecl { ty, kind: LocalKind.Binding, name: declared.name, decl_at: DeclAt.Zeroed }
+    @local_source_names[i] = @note_source_name(name, scope, 1)
+    @note_declared(l)
     l
 }
 

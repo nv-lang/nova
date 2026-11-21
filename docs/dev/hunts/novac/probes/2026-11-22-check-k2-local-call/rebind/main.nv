@@ -1,0 +1,11 @@
+module hunt_rebind
+fn exercise(f fn(int) -> int, g fn(int) -> int) -> int {
+    ro f = f
+    ro old = f
+    ro f = g
+    ro f = f
+    old(2) + f(3)
+}
+fn main() -> () {
+    println(exercise(|x| x + 10, |x| x * 100))
+}

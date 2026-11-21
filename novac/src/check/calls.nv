@@ -795,6 +795,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // registry alike (door A, D43/D22; reg 2014: this step once stood after
     // the variant dispatch and lost to a constructor of the same name).
     // Scope is what the body reads; a non-fn local is refused here.
+    // SILENT-OK: `@type_local_call` returns true only after recording the call or reporting its refusal.
     if @type_local_call(e, kids, cname) { return }
     // A VARIANT CONSTRUCTOR by bare name (`Red(7)`) is asked of the sums
     // first (wave B6, #964): one sum -> that variant, its payload bound by
@@ -922,7 +923,7 @@ fn Checker mut @type_free_call(e Node) -> () {
     // exhaustive by construction, so a fourth arm of `DefTarget` cannot slip
     // past silently.
     ro def = found ?? ice_at(
-        "novac/src/check/calls.nv:927",
+        "novac/src/check/calls.nv:925",
         "check: the callee row vanished between two reads of one Option")
     match def.target {
         DefFn(_) => {

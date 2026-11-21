@@ -1,0 +1,18 @@
+module hunt_nested
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+fn exercise(f fn(int) -> int, g fn(int) -> int) -> int {
+    mut total = f(1)
+    if true {
+        ro f = g
+        total += f(2)
+        if true {
+            ro f = 7
+            total += f
+        }
+        total += f(3)
+    }
+    total + f(4)
+}
+fn main() -> () {
+    println(exercise(|x| x + 10, |x| x * 100))
+}

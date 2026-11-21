@@ -211,7 +211,7 @@ export type FieldTable {
 }
 
 /// Empty field registry.
-export fn FieldTable.new() -> FieldTable =>
+fn FieldTable.new() -> FieldTable =>
     { rows: []FieldDef.new() }
 
 /// Register one field of `owner_id`. The same-name chain is not grown here:
@@ -223,7 +223,7 @@ export fn FieldTable mut @add(owner_id TyId, name str, type_id TyId, ro_view boo
 /// A field of a handed record that its module keeps PRIVATE: registered, so the
 /// module's own bodies a unit instantiates can read it, and visible from
 /// `home` only (274.11 E.10 step 4c-2).
-export fn FieldTable mut @add_private(owner_id TyId, name str, type_id TyId, ro_view bool, home str,
+fn FieldTable mut @add_private(owner_id TyId, name str, type_id TyId, ro_view bool, home str,
                                       owned bool = false) -> () {
     @rows.push(FieldDef { name, type_id, owner_id, ro_view, private: true, private_to: home, owned })
 }

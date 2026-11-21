@@ -1,60 +1,121 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+// Donor: none -- stores the checker's scope rows and source sites in its existing channel.
+// Role: semantic channel's stable source binding identities and read associations.
+// Used by: check records bindings; lower and emit read their identities afterwards.
+// Guarded by: compiler contracts and assertions below (id ranges and consistent binding reads).
 module novac.sem
 
 import ../tree.{NodeId, raw_node, is_node}
 
+/// Metadata of one source binding, indexed by its stable identity in the channel.
 export type BindingDef value {
-    owner NodeId
-    site NodeId
-    scope NodeId
-    name str
+    owner NodeId /// the function owner whose scope row names this binding
+    site NodeId /// the source declaration or pattern site
+    scope NodeId /// the lexical source scope containing the binding
+    name str /// the source spelling before C sanitization
+    source_name_id int /// canonical source spelling identity in CheckOut.binding_names (NsLocals)
 }
 
+/// Definitions at one site, chained only when owners or scopes differ.
+type BindingSite {
+    by_name HashMap[int, int] /// source-name identity -> first definition in the site chain
+}
+
+/// A function's checker scope row mapped to a stable source binding identity.
 export type BindingAlias value {
-    owner NodeId
-    row int
-    identity int
+    owner NodeId /// the function whose checker scope owns the row
+    scope_row int /// the binding's row in that function's scope
+    binding_id int /// the index in CheckOut.binding_defs
 }
 
+/// Record a scope-row alias, reusing the identity of identical source binding metadata.
 export fn CheckOut mut @record_binding(owner NodeId, site NodeId, scope NodeId, row int, name str) -> int
     requires is_node(owner) && raw_node(owner) < @types.len(), "sem: channel binding owner outside this file's id space"
     requires is_node(site) && raw_node(site) < @types.len(), "sem: channel binding site outside this file's id space"
     requires is_node(scope) && raw_node(scope) < @types.len(), "sem: channel binding scope outside this file's id space"
     requires row >= 0, "sem: channel binding write with no scope row"
 {
+    ro source_name_id = @intern_binding_name(name)
     ro at = @binding_of(owner, row)
     if at >= 0 {
         ro prev = @binding_defs[at]
-        assert(prev.site == site && prev.scope == scope && prev.name == name,
+        assert(prev.site == site && prev.scope == scope && prev.source_name_id == source_name_id,
             "sem: a binding was recorded twice with different metadata")
         return at
     }
-    mut identity = -1
-    for i in 0..@binding_defs.len() {
-        ro binding = @binding_defs[i]
-        if binding.owner == owner && binding.site == site && binding.scope == scope && binding.name == name {
-            identity = i
-            break
-        }
+    ro bucket = @binding_site_bucket(site)
+    ro first = @binding_sites[bucket].by_name.get(source_name_id) ?? -1
+    mut identity = first
+    while identity >= 0 {
+        ro binding = @binding_defs[identity]
+        if binding.owner == owner && binding.scope == scope { break }
+        identity = @binding_next[identity]
     }
     if identity < 0 {
         identity = @binding_defs.len()
-        @binding_defs.push(BindingDef { owner, site, scope, name })
+        @binding_defs.push(BindingDef { owner, site, scope, name, source_name_id })
+        @binding_next.push(first)
+        @binding_sites[bucket].by_name.insert(source_name_id, identity)
+    } else {
+        // A prior scope row already exported this source binding; reuse its identity.
     }
-    @binding_aliases.push(BindingAlias { owner, row, identity })
+    @binding_aliases.push(BindingAlias { owner, scope_row: row, binding_id: identity })
     identity
 }
 
+/// Assign a stable source-name identity through the NsLocals name table.
+fn CheckOut mut @intern_binding_name(name str) -> int {
+    ro prev = @binding_names.find(name)
+    if prev >= 0 { return prev }
+    ro id = @binding_name_cnt
+    @binding_name_cnt += 1
+    @binding_names.put(name, id)
+    id
+}
+
+/// Allocate or reuse the integer-indexed bucket for this source site.
+fn CheckOut mut @binding_site_bucket(site NodeId) -> int {
+    ro prev = @binding_site_index.get(raw_node(site)) ?? -1
+    if prev >= 0 { return prev }
+    ro at = @binding_sites.len()
+    @binding_sites.push(BindingSite { by_name: HashMap[int, int].new() })
+    @binding_site_index.insert(raw_node(site), at)
+    at
+}
+
+/// The checker's canonical spelling identity; a reader never creates one.
 #realtime nogc
-export fn CheckOut @binding_of(owner NodeId, row int) -> int {
+export fn CheckOut @source_name_id(name str) -> int => @binding_names.find(name)
+
+/// Recorded definitions for this exact site and canonical spelling only.
+#realtime nogc
+export fn CheckOut @binding_site_first(site NodeId, source_name_id int) -> int {
+    ro bucket = @binding_site_index.get(raw_node(site)) ?? -1
+    if bucket < 0 { return -1 }
+    @binding_sites[bucket].by_name.get(source_name_id) ?? -1
+}
+
+/// Continue the integer-keyed site chain without a registry-wide name scan.
+#realtime nogc
+export fn CheckOut @binding_site_next(identity int) -> int
+    requires identity >= 0 && identity < @binding_next.len(), "sem: binding site chain outside its pool"
+{
+    @binding_next[identity]
+}
+
+/// The stable binding identity for a function's scope row, or -1 when unrecorded.
+#realtime nogc
+fn CheckOut @binding_of(owner NodeId, row int) -> int {
     for binding in @binding_aliases {
-        if binding.owner == owner && binding.row == row { return binding.identity }
+        if binding.owner == owner && binding.scope_row == row { return binding.binding_id }
     }
     -1
 }
 
+/// Associate this read node with the exported identity of the scope row it resolves to.
 export fn CheckOut mut @record_binding_read(read NodeId, owner NodeId, row int) -> ()
-    requires is_node(read) && raw_node(read) < @binding_at.len(), "sem: channel binding read outside this file's id space"
+    requires is_node(read) &&
+        raw_node(read) < @binding_at.len(), "sem: channel binding read outside this file's id space"
 {
     ro at = @binding_of(owner, row)
     assert(at >= 0, "sem: binding read has no exported definition -- a hole in the channel")
@@ -63,12 +124,14 @@ export fn CheckOut mut @record_binding_read(read NodeId, owner NodeId, row int) 
     @binding_at[raw_node(read)] = at
 }
 
+/// The binding identity read by this node, or -1 for a node with no recorded binding read.
 #realtime nogc
 export fn CheckOut @binding_read(id NodeId) -> int {
     if !is_node(id) || raw_node(id) >= @binding_at.len() { return -1 }
     @binding_at[raw_node(id)]
 }
 
+/// Read the source binding metadata at a valid stable identity.
 #realtime nogc
 export fn CheckOut @binding_def(id int) -> BindingDef
     requires id >= 0 && id < @binding_defs.len(), "sem: channel binding definition outside its pool"

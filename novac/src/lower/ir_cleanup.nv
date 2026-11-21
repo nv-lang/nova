@@ -50,7 +50,7 @@ export type CleanupCall value {
 /// A `consume` binding was laid down as `l`, with drop flag `gone` (or none):
 /// remembered, so an exit below can name it (the same linear table `hoisted_at` is --
 /// a body binds few such values).
-export fn FnBuilder mut @remember_binding(bind NodeId, l Local, gone Local) -> () {
+fn FnBuilder mut @remember_binding(bind NodeId, l Local, gone Local) -> () {
     @bound_at.push(raw_node(bind))
     @bound_to.push(l)
     @bound_gone.push(gone)
@@ -67,7 +67,7 @@ export fn FnBuilder @gone_of(bind int) -> Local {
 
 /// The local a binding statement laid down, `no_local()` when it is not one of this
 /// body's (a parameter).
-export fn FnBuilder @bound_local(bind NodeId) -> Local {
+fn FnBuilder @bound_local(bind NodeId) -> Local {
     for i in 0..@bound_at.len() {
         if @bound_at[i] == raw_node(bind) { return @bound_to[i] }
     }
@@ -75,7 +75,7 @@ export fn FnBuilder @bound_local(bind NodeId) -> Local {
 }
 
 /// One auto-`@cleanup` call, at the current point of the body.
-export fn FnBuilder mut @cleanup_call(c CleanupCall) -> () {
+fn FnBuilder mut @cleanup_call(c CleanupCall) -> () {
     @cur.push(Stmt.Cleanup(c))
 }
 

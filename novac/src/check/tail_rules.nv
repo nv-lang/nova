@@ -323,6 +323,7 @@ fn Checker mut @type_block_value(b Node, required bool) -> TyId {
     result
 }
 
+/// Walk the block's statements and value tail inside the scope installed by the caller.
 fn Checker mut @type_block_value_in_scope(b Node, required bool) -> TyId {
     ro kids = branch_children(b)
     ro last = last_branch_of(kids)

@@ -94,7 +94,7 @@ fn Emitter mut @emit_bound_args(kids []Node, from int, recv_slot bool,
 /// anything at all would invent a value. So it ices.
 fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
     if raw_row(row) < 0 {
-        ice_at("novac/src/emit_c/emit_args.nv:94", "emit_c: a call with no callable row left a slot to a default")
+        ice_at("novac/src/emit_c/emit_args.nv:97", "emit_c: a call with no callable row left a slot to a default")
     } else {
         // A callable row: its declaration is what says the value.
     }
@@ -102,7 +102,7 @@ fn Emitter mut @emit_slot_default(row FnRow, s int) -> () {
     match slot_default_of(@ctx.fns.params, fd.param_off, s) {
         Some(d) => @emit_expr(d)
         None => ice_at(
-            "novac/src/emit_c/emit_args.nv:101",
+            "novac/src/emit_c/emit_args.nv:104",
             "emit_c: a call left a slot to a default its declaration does not write")
     }
 }
