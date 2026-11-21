@@ -182,3 +182,9 @@
 #   потеря закрытия была видна поимённо. Коммит по приказу интегратора
 #   фиксирует ТОЛЬКО closure 2010, остальные номера не трогаются.
 2010
+# 2026-11-21, integrator: local closure of reg 2013/2014 after the owner accepted
+#   the small-scope Door A review at code aeeb8d55e, docs tip 0201940de.
+#   Measured closed count stays 1372: prior FIXED statuses were already counted.
+#   Pin the two numbers; newly closed since baseline 661 -> 659. Routes stay 116.
+#   No push, main or tag change is authorized by this closure.
+2013 2014
