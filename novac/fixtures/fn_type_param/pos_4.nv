@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_4
+
+// Door A, reg 2014: a fn-typed parameter named like a file VARIANT outranks
+// the constructor -- the local step stands before the variant dispatch, so
+// `Pick(x)` calls through the value. RED before the fix: the constructor won
+// and the call was refused ("cannot return value of type Choice ... -> int").
+// The control without the local binding still refuses by the constructor's
+// own type (check/closure_arg_test.nv, the variant-shadow test).
+// Run proof: stdout 7, byte-exact with the oracle (smoke 2026-11-21).
+type Choice enum
+    | Pick(int)
+
+fn call_pick(Pick fn(int) -> int, x int) -> int => Pick(x)
+
+fn main() -> () {
+    println(call_pick(|x| x + 2, 5))
+}

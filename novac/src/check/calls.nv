@@ -791,6 +791,11 @@ fn Checker mut @record_arg_types(kids []Node, from int) -> () {
 fn Checker mut @type_free_call(e Node) -> () {
     ro kids = branch_children(e)
     ro cname = call_callee_text(kids)
+    // A BOUND LOCAL outranks EVERY global table -- variants and the
+    // registry alike (door A, D43/D22; reg 2014: this step once stood after
+    // the variant dispatch and lost to a constructor of the same name).
+    // Scope is what the body reads; a non-fn local is refused here.
+    if @type_local_call(e, kids, cname) { return }
     // A VARIANT CONSTRUCTOR by bare name (`Red(7)`) is asked of the sums
     // first (wave B6, #964): one sum -> that variant, its payload bound by
     // position; several -> ambiguous, refused by name.
@@ -821,9 +826,6 @@ fn Checker mut @type_free_call(e Node) -> () {
     // no row of anyone's, each its own door (check/embed_call.nv).
     // SILENT-OK: the intrinsic's own door recorded its type or refused it by name.
     if @typed_as_intrinsic(e, kids, cname) { return }
-    // A BOUND LOCAL of function type outranks the registry (door A, D43/D22):
-    // the call goes through the value, never a symbol (check/local_call.nv).
-    if @type_local_call(e, kids, cname) { return }
     ro found = @ctx.defs.def_of(cname)
     // FIRST FLOOR, found by probing the guards above (2026-08-16): a
     // trailing `1 +` or `!` swallows the NEXT statement as its operand,

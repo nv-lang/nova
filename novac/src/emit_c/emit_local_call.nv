@@ -16,9 +16,14 @@
 // layout), so the call reads its fn and env pair and casts the pointer to
 // the term's OWN C signature -- result last arg, parameters before it, env
 // first -- exactly the shape the supervised wave measured off the shell.
-// The callee's C name prints TWICE (fn read, env read): the binding read
-// rides the CALL node (the callee itself is a bare Ident leaf), and a
-// binding's name is a pure read with no effect to duplicate.
+// The callee prints TWICE (fn read, env read) through the ORDINARY name
+// reader, @emit_name, which knows BOTH ways a bound local reads: a plain
+// binding's C name and a CAPTURE (`_novac_cap->f`) -- reg 2013, measured
+// 2026-11-21: a fn value captured into a literal and called through the
+// capture reached a raw @lo.ir.binding_c_name and iced at lower/ir.nv:748,
+// because a captured binding has no standalone C name. The read rides the
+// CALL node (the callee itself is a bare Ident leaf), and a binding's name
+// is a pure read with no effect to duplicate.
 
 module novac.emit_c
 
@@ -31,13 +36,18 @@ import ../types.{TyId}
 /// slot order through the one bound-args door (a local has no defaults).
 fn Emitter mut @emit_local_call(e Node, kids []Node, t TyId) -> () {
     ro binding = @out.binding_read(e.id_of())
-    if binding < 0 {
-        ice_at("novac/src/emit_c/emit_local_call.nv:36",
-            "emit_c: a local fn call without its binding read -- door A records the read on the call node")
-    } else {
-        // The read is the door's invariant; the name is what it prints by.
+    // A captured callee offers a binding row but NO standalone C name; the
+    // capture is the name -- either way the ordinary reader prints it.
+    mut addressed = binding >= 0
+    match @out.capture_at(e.id_of()) {
+        Some(_) => { addressed = true }
+        None => {}
     }
-    ro callee = @lo.ir.binding_c_name(binding)
+    if !addressed {
+        ice_at("novac/src/emit_c/emit_local_call.nv:36",
+            "emit_c: a local fn call without its binding read or capture -- door A records the read on the call node")
+        return
+    }
     ro arity = @ctx.tys.arg_count(t) - 1
     ro ret = @ctx.tys.arg(t, arity)
     @body.append("((")
@@ -46,9 +56,9 @@ fn Emitter mut @emit_local_call(e Node, kids []Node, t TyId) -> () {
         @body.append(", ${c_type(@ctx, @ctx.tys.arg(t, i))}")
     }
     @body.append("))(((NovaClosBase*)(")
-    @body.append(callee)
+    @emit_name(e)
     @body.append("))->fn))(((NovaClosBase*)(")
-    @body.append(callee)
+    @emit_name(e)
     @body.append("))->env")
     @emit_bound_args(kids, 1, false, e.id_of(), no_row(), true)
     @body.append(")")

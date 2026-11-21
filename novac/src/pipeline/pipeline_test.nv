@@ -851,7 +851,10 @@ fn main() { println(1) }",
     assert(d1.len() == 0)
     // The rotten pair, both directions of the lid: a WRONG-ARITY application is
     // not a type (the head refusal names what to write), and the forms B2 did
-    // NOT take -- a fn type here -- stay refused by name.
+    // NOT take stay refused by name. The fn-type case that used to sit in this
+    // pair LEFT the door consciously: door A (D43/D22, plan 274.11, 2026-11-21)
+    // opens the declaration position -- a fn-typed parameter is canonical and
+    // this text is clean (the converted pin lives in check/closure_arg_test.nv).
     ro (d2, _) = compile_to_c("module m.b\n\
 fn t(xs Vec[int, str]) -> int => 1\n\
 fn main() { println(1) }",
@@ -862,8 +865,7 @@ fn main() { println(1) }",
 fn t(f fn(int) -> int) -> int => 1\n\
 fn main() { println(1) }",
                               []str.of(handed))
-    assert(d3.len() == 1)
-    assert(d3[0].message.contains("type form"))
+    assert(d3.len() == 0)
 }
 
 test "an array literal is built from the SHELL's instance set, and refused by name outside it" {

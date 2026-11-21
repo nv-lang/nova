@@ -162,3 +162,27 @@ test "local-call: a fn-typed parameter SHADOWS a declared namesake (the scope ou
     ro mb = cam_first_msg(bare)
     assert(mb != "", mb)
 }
+
+test "local-call: a fn-typed parameter shadows a VARIANT of the same name (reg 2014)" {
+    // The constructor used to win: the local step stood AFTER the variant
+    // dispatch, and the call was refused by the constructor's return type
+    // (measured on the door-A pin, 2026-11-21). Scope is what the body reads.
+    ro src = "module m\n\ntype Choice enum\n    | Pick(int)\n\nfn call_pick(Pick fn(int) -> int, x int) -> int => Pick(x)\n\nfn g() -> int => call_pick(|x| x + 2, 5)\n"
+    ro m = cam_first_msg(src)
+    assert(m == "", m)
+    // CONTROL: without the fn-typed parameter the same call is the ordinary
+    // constructor in an int position -- the constructor door still refuses.
+    ro bare = "module m\n\ntype Choice enum\n    | Pick(int)\n\nfn call_pick(x int) -> int => Pick(x)\n"
+    ro mb = cam_first_msg(bare)
+    assert(mb.contains("cannot return value of type"), mb)
+}
+
+test "local-call: a captured fn value is callable through the capture (reg 2013)" {
+    // A fn-typed parameter captured into a literal and called there is a
+    // clean CHECK. The emit side of this class (a raw reader iced at
+    // lower/ir.nv:748) is carried by pos_3's smoke, not by this pin: the
+    // check door never refused the captured call, the EMITTER misprinted it.
+    ro src = "module m\n\nfn apply(f fn(int) -> int, x int) -> int => f(x)\n\nfn nested(f fn(int) -> int) -> int => apply(|x| f(x), 5)\n\nfn g() -> int => nested(|x| x * 2)\n"
+    ro m = cam_first_msg(src)
+    assert(m == "", m)
+}
