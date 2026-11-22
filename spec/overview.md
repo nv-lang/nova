@@ -127,6 +127,8 @@ language explicitly optimized for the pair "LLM writes, human reviews".
    `timeout:`/`cancel:` of that scope (enforcement lives only in the join
    loop, which starts after the body's statements); to be protected by a
    deadline/token you need `spawn { … }`.
+   Channel selection and asynchronous filesystem waits recheck readiness
+   when committing to park ([D93](decisions/06-concurrency.md#d93)).
    Failure supervision is an ordinary `Supervisor` effect
    ([D416](decisions/06-concurrency.md#d416)): ready-made policies
    `escalate()`/`stop()`, custom ones — a handler literal

@@ -961,15 +961,41 @@ static inline int nova_select_try_immediate(SelectCtx* ctx) {
 static NovaStopMode _nova_select_waiter_stop_cb(void* handle) {
     SelectWaiter* w = (SelectWaiter*)handle;
     nova_abool_store(&w->base.cancelled, true);
-    if (w->base.channel) {
-        nova_sched_wake(w->base.scope, w->base.slot);
-    }
+    nova_sched_wake(w->base.scope, w->base.slot);
     return NOVA_STOP_SYNC;
 }
 
 /* Unlink select waiter under channel lock. Caller MUST hold w->base.channel->mu. */
 static inline void _nova_sel_waiter_unlink_locked(SelectWaiter* w) {
     _nova_waiter_unlink_locked(&w->base);
+}
+
+static inline nova_bool _nova_select_ready(void* arg) {
+    SelectCtx* ctx = (SelectCtx*)arg;
+    if (nova_abool_load(&ctx->scope->cancel_requested)) return true;
+    for (int i = 0; i < ctx->n_arms; i++) {
+        SelectSlot* arm = &ctx->arms[i];
+        BaseWaiter* w = &ctx->waiters[i].base;
+        if (!arm->chan || !arm->guard) continue;
+        if (w->scope && nova_abool_load(&w->cancelled)) return true;
+
+        Nova_ChannelState* st = arm->chan;
+        nova_mutex_lock(&st->mu);
+        /* The transfer and unlink must finish before we read its result.
+         * Also detect a channel that became ready before registration. */
+        nova_bool closed = nova_abool_load(&st->closed);
+        nova_bool ready = w->scope && !w->channel;
+        if (arm->is_recv) {
+            ready = ready || (st->count > 0 && !arm->want_none) ||
+                    (closed && st->count == 0 && (arm->wildcard || arm->want_none));
+        } else {
+            ready = ready || (!closed && !nova_abool_load(&st->reader_closed) &&
+                              st->count < st->cap);
+        }
+        nova_mutex_unlock(&st->mu);
+        if (ready) return true;
+    }
+    return false;
 }
 
 /* Park until one select arm becomes ready. ctx->scope and ctx->slot must
@@ -1044,18 +1070,24 @@ static inline void nova_select_park(SelectCtx* ctx) {
      * Race window between two registrations is fine: a producer that
      * fires waiter i fires its CAS; post-park retry of try_immediate
      * sees the consumed state and picks the winner. */
+    int registered = 0;
     for (i = 0; i < n; i++) {
         SelectSlot*   arm = &ctx->arms[i];
         SelectWaiter*   w = &ctx->waiters[i];
         w->base.channel = NULL;
+        w->base.scope = NULL;
         if (!arm->chan || !arm->guard) continue;
         Nova_ChannelState* st = arm->chan;
+        nova_mutex_lock(&st->mu);
         nova_bool cl  = nova_abool_load(&st->closed);
         nova_bool rcl = nova_abool_load(&st->reader_closed);
         /* Plan 173 Ф.3 п.3: не регистрируем waiter на closed-канал для recv
          * (closed+empty) и для `None=rx` на любом closed (см. can_unblock). */
-        if (arm->is_recv && cl && (st->count == 0 || arm->want_none)) continue;
-        if (!arm->is_recv && (cl || rcl)) continue;
+        if ((arm->is_recv && cl && (st->count == 0 || arm->want_none)) ||
+            (!arm->is_recv && (cl || rcl))) {
+            nova_mutex_unlock(&st->mu);
+            continue;
+        }
         w->base.scope    = scope;
         w->base.slot     = slot;
         w->base.channel  = st;
@@ -1067,21 +1099,20 @@ static inline void nova_select_park(SelectCtx* ctx) {
         nova_aint_init(&w->base.fired, 0);
         nova_abool_init(&w->base.cancelled, false);
         w->arm_idx       = i;
-        nova_mutex_lock(&st->mu);
         _nova_waiter_insert_locked(&w->base);
         nova_mutex_unlock(&st->mu);
         nova_sched_register_pending(scope, slot, w, _nova_select_waiter_stop_cb);
+        registered++;
     }
 
-    /* Park. Plan 44.1 R3-7: spurious wakes allowed — post-park always re-checks. */
-    nova_sched_park(scope, slot);
+    if (registered) nova_sched_park_until(scope, slot, _nova_select_ready, ctx);
     nova_sched_unregister_pending(scope, slot);
 
     /* Unlink remaining waiters under their channel's lock. */
     for (i = 0; i < n; i++) {
         SelectWaiter* w = &ctx->waiters[i];
-        if (!w->base.channel) continue;
-        Nova_ChannelState* st = w->base.channel;
+        if (!w->base.scope) continue;
+        Nova_ChannelState* st = ctx->arms[i].chan;
         nova_mutex_lock(&st->mu);
         if (w->base.channel) {
             _nova_waiter_unlink_locked(&w->base);
