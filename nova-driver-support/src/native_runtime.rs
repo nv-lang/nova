@@ -912,11 +912,15 @@ fn build_boehm_lib(
         let vcv =
             vcvars.ok_or_else(|| anyhow!("vcvars required for bdwgc fallback build on Windows"))?;
         let rsp = obj_dir.join("compile.rsp");
+        // LARGE_CONFIG + NO_MSGBOX_ON_ERROR match the SHIPPED package's GC
+        // build (81920 heap sections; a fatal aborts to stderr, no modal
+        // dialog). Reg 2012: the win64 default is 1024 sections AND the
+        // dialog is on.
         let defines = "/DDONT_USE_USER32_DLL /DEMPTY_GETENV_RESULTS /DENABLE_DISCLAIM \
                         /DGC_ATOMIC_UNCOLLECTABLE /DGC_ENABLE_SUSPEND_THREAD /DGC_GCJ_SUPPORT \
                         /DGC_MISSING_EXECINFO_H /DGC_NOT_DLL /DGC_NO_SIGSETJMP /DGC_THREADS \
                         /DJAVA_FINALIZATION /DNO_GETCONTEXT /DPARALLEL_MARK /DTHREAD_LOCAL_ALLOC \
-                        /D_CRT_SECURE_NO_DEPRECATE";
+                        /D_CRT_SECURE_NO_DEPRECATE /DLARGE_CONFIG /DNO_MSGBOX_ON_ERROR";
         let mut lines: Vec<String> = Vec::new();
         lines.push(format!("/c /nologo /W0 /MT /O2 {}", defines));
         lines.push(format!(

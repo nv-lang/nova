@@ -87,7 +87,13 @@ LIBUV_WIN_SYSLIBS = [
 ]
 
 # native_runtime.rs build_boehm_lib: mirrors the repo's vcpkg bdwgc
-# x64-windows-static DEFINES line byte-for-byte.
+# x64-windows-static DEFINES line, plus two defines the SHIPPED package
+# builds with: LARGE_CONFIG (MAX_HEAP_SECTS = 81920 on win64, the same
+# config .github/workflows/windows-oracle-package.yml builds) and
+# NO_MSGBOX_ON_ERROR (a GC fatal aborts to stderr instead of wedging the
+# process in a modal "Fatal error in GC" dialog). Reg 2012: the win64
+# default is 1024 sections AND the dialog is on, and a toolchain-built
+# binary hit both first.
 BDWGC_DEFINES = [
     "/DDONT_USE_USER32_DLL",
     "/DEMPTY_GETENV_RESULTS",
@@ -104,6 +110,8 @@ BDWGC_DEFINES = [
     "/DPARALLEL_MARK",
     "/DTHREAD_LOCAL_ALLOC",
     "/D_CRT_SECURE_NO_DEPRECATE",
+    "/DLARGE_CONFIG",
+    "/DNO_MSGBOX_ON_ERROR",
 ]
 
 
