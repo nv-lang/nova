@@ -175,7 +175,7 @@ fn FnBuilder @binding_uses_c_name(identity int, name str) -> bool {
 /// that prints into the same C block (a supervised body) reads the binding by
 /// identity, while its own tables start empty. The name, not the local, crosses:
 /// the local belongs to the builder that allocated it.
-export type InheritedBinding value {
+type InheritedBinding value {
     identity int /// source binding identity, as in BindingLocal
     name str /// the C spelling the enclosing body gave it
 }

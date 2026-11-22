@@ -498,7 +498,11 @@ lex 11
 #   and `FnBuilder @call_next` -- one turn of a `for` over an iterator (D58, sweep 10), recorded by
 #   lower/lowering.nv and printed by emit_c/emit_place.nv.
 # merge of p274-carina-strarm (D133 steps 1-6) into main (integrator, 2026-10-03): main's number plus strarm's own growth over the merge base, equal to the guard's measure.
-lower 111
+# lower 111 -> 112 (2026-11-22, integrator, combined Door A landing): `@inherit_source_bindings`
+#   -- the door a supervised value/eager body builder asks its enclosing body for the
+#   identity->C-name decisions it can read: the nested body prints into the SAME C block
+#   (emit_c/emit_supervised.nv calls it), and `InheritedBinding` itself stays module-private.
+lower 112
 main 0
 # mono -- НОВЫЙ модуль (2026-08-18, Э2-б2): коллектор достижимого.
 # Наружу три имени: тип Reach, вопрос @has (эмиттер спрашивает про каждую
