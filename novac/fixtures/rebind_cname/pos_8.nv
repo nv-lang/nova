@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 module rebind_cname.pos_8
 
+// The handler's fresh `err` binding and the captured `base` keep distinct C
+// names; the failure a child carries is a non-empty message. The oracle hands
+// `on_child_fail` an EMPTY payload for the same child (registry 221.1 No.2019),
+// so the answer is compared against the oracle's accepted twin (twin/pos_8.nv,
+// D476) -- the twin keeps the handler shape and drops the payload reading.
 fn main() -> () {
     ro base = 40
     with Supervisor = effect Supervisor {
@@ -17,3 +22,5 @@ fn main() -> () {
     }
     println("after")
 }
+
+// NOVAC_TWIN twin/pos_8.nv

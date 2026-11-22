@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module twin.pos_8
+
+// The Oracle-accepted writing of rebind_cname/pos_8.nv. The fixture is about the
+// handler's fresh `err` binding and the captured `base` keeping distinct C names;
+// it also asserted that the carried failure has a non-empty message. The oracle
+// hands `on_child_fail` an EMPTY payload for a failing child (registry 221.1
+// No.2019), so that assertion panics there. This twin keeps the rebinding shape
+// and drops the payload reading: the observable answer -- `caught` once, then
+// `after` -- is what check-novac-differential stage 2 compares byte for byte.
+fn main() -> () {
+    ro base = 40
+    with Supervisor = effect Supervisor {
+        on_child_fail(idx, err) -> Decision {
+            println("caught")
+            Decision.Stop
+        }
+    } {
+        supervised { spawn { println(base / (base - 40)) } }
+    }
+    println("after")
+}

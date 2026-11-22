@@ -2571,5 +2571,9 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,16
 #   max 2014 -> 2016, no new gap and no duplicate.
 # 2026-11-22, reg 2017: indexed source/C identity lookup repair;
 #   measured rows 1925 -> 1926, max 2016 -> 2017, gaps unchanged.
-rows=1926
-max=2017
+# 2026-11-22, integrator: reg 2018 and 2019 file two Oracle defects found by
+#   the Door A landing differential (D347 R3 self-init unimplemented; empty
+#   Supervisor payload on child failure); measured rows 1926 -> 1928, max
+#   2017 -> 2019, no new gap.
+rows=1928
+max=2019

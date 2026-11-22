@@ -240,6 +240,23 @@ test "parameter identities and binding identities survive in the finished body" 
     assert(f.locals[raw_local(temp)].name == "_novac_l2")
 }
 
+test "a nested inline body inherits the enclosing identities and their C names" {
+    mut outer = FnBuilder.new(TyId(3))
+    outer.reserve_source_parameter(40, 1, "input", "input")
+    ro local = outer.named(TyId(5), "base", scope: 2)
+    outer.remember_source_binding(41, local)
+    mut body = FnBuilder.new(TyId(5))
+    body.inherit_source_bindings(outer)
+    // A supervised body prints into the same C block, so the enclosing names ARE
+    // the answer -- by identity, never by re-resolving the source spelling.
+    assert(body.binding_c_name(40) == "input")
+    assert(body.binding_c_name(41) == "base")
+    // A value body inside a value body sees the whole chain, not only one level.
+    mut deeper = FnBuilder.new(TyId(5))
+    deeper.inherit_source_bindings(body)
+    assert(deeper.binding_c_name(41) == "base")
+}
+
 test "disjunction assignments retain the declared name and local allocation order" {
     mut b = FnBuilder.new(TyId(3))
     ro declared = b.named(TyId(5), "value", scope: 1)

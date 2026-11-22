@@ -162,7 +162,61 @@ fn FnBuilder @declared_local(name str, scope int) -> int {
 fn FnBuilder @binding_uses_c_name(identity int, name str) -> bool {
     ro at = @c_names.find(name)
     if at < 0 { return false }
-    @binding_c_names.find(identity) == at
+    if @binding_c_names.find(identity) == at { return true }
+    ro h = @inherited_rows.find(identity)
+    if h < 0 { return false }
+    // An enclosing body's binding: its C name is in scope here, so an
+    // initializer that reads this identity above its own declaration is the
+    // self-init case (D43), exactly as for a local one.
+    @c_names.find(@inherited_bindings[h].name) == at
+}
+
+/// A source identity an ENCLOSING body already gave a C name: a nested builder
+/// that prints into the same C block (a supervised body) reads the binding by
+/// identity, while its own tables start empty. The name, not the local, crosses:
+/// the local belongs to the builder that allocated it.
+export type InheritedBinding value {
+    identity int /// source binding identity, as in BindingLocal
+    name str /// the C spelling the enclosing body gave it
+}
+
+/// A nested builder prints into the SAME C block as its enclosing body (a
+/// `supervised` value or eager body, `emit_supervised.nv`), so the enclosing
+/// bindings are readable there -- but this builder's tables start empty. Carry
+/// the enclosure's identity->C-name decisions over, including those IT inherited:
+/// a value body inside a value body must see the whole chain.
+export fn FnBuilder mut @inherit_source_bindings(from FnBuilder) -> () {
+    for p in from.source_parameters {
+        @inherit_source_binding(p.identity, p.c_name)
+    }
+    for b in from.source_bindings {
+        @inherit_source_binding(b.identity, from.decl_of(b.local).name)
+    }
+    for h in from.inherited_bindings {
+        @inherit_source_binding(h.identity, h.name)
+    }
+}
+
+/// One inherited identity: the row index keeps the read logarithmic, the
+/// C-name table gets the spelling so name resolution stays in NameTable.
+fn FnBuilder mut @inherit_source_binding(identity int, name str) -> () {
+    @inherited_rows.put(identity, @inherited_bindings.len())
+    @inherited_bindings.push(InheritedBinding { identity, name })
+    @note_c_name(name)
+}
+
+/// Missing identities are compiler bugs; source-name fallback would silently undo rebinding.
+#realtime nogc
+export fn FnBuilder @binding_c_name(identity int) -> str {
+    for b in @source_bindings {
+        if b.identity == identity { return @decl_of(b.local).name }
+    }
+    for p in @source_parameters {
+        if p.identity == identity { return p.c_name }
+    }
+    ro h = @inherited_rows.find(identity)
+    if h >= 0 { return @inherited_bindings[h].name }
+    ice_at("novac/src/lower/local_bindings.nv:219", "lower: asking the C name of an unrecorded source binding")
 }
 
 /// Select the earliest recorded definition, bounded to this site or pattern tree.
@@ -197,7 +251,7 @@ fn Lowerer @source_binding(site Node, name str, nested bool) -> int {
     ro source_name_id = @out.source_name_id(name)
     ro at = @source_binding_at(site, source_name_id, nested)
     if at >= 0 { return at }
-    ice_at("novac/src/lower/local_bindings.nv:200", "lower: a source binding has no exported identity")
+    ice_at("novac/src/lower/local_bindings.nv:254", "lower: a source binding has no exported identity")
 }
 
 /// Associate the site chain and nested pattern sites with the allocated local.

@@ -499,7 +499,6 @@ fn Checker mut @type_method_call(e Node) -> () {
     // the receiver, so the k-th written argument stands at parameter k + 1.
     ro arg_row = @method_arg_row(kids, rmark)
     ro pre = @expected_ids(arg_row, saved_expect)
-    ro recv_t = type_of(kids[0], @ctx, @scope, @chan)
     mut argi = 1
     mut i = 0
     for c in kids {
@@ -514,7 +513,13 @@ fn Checker mut @type_method_call(e Node) -> () {
                 // takes its signature from the callee's fn-typed parameter, the
                 // receiver fixing its slots and the body's return the fresh one.
                 if @out.len() == before {
-                    @type_closure_arg(ae, arg_row, argi, recv_t, pre)
+                    // THE RECEIVER IS READ HERE, NOT ABOVE THE LOOP: `type_of`
+                    // on a call the walk already refused is the pass-order ice,
+                    // and a closure written after such a refusal is not typed
+                    // at all (the branch below). Silence so far is what makes
+                    // the read legal.
+                    ro closure_recv = type_of(kids[0], @ctx, @scope, @chan)
+                    @type_closure_arg(ae, arg_row, argi, closure_recv, pre)
                 } else {
                     // A prior refusal (the receiver, an earlier argument): the
                     // walk spoke; a second word would be the second death.
@@ -636,7 +641,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     if !@effect_op_head(kids) { return false }
     ro head_name = expr_leaf_name(kids[0])
     ro edecl = @ctx.defs.type_decl(head_name) ?? ice_at(
-        "novac/src/check/methods.nv:638",
+        "novac/src/check/methods.nv:643",
         "check: the effect-op head lost its declaration between two reads of one Option")
     ro onm = match kids[2] {
         Leaf(t) => t
@@ -644,7 +649,7 @@ fn Checker mut @type_effect_op_call(e Node, kids []Node) -> bool {
     }
     ro opname = onm.text
     ro schema = @ctx.effects.def_of(head_name) ?? ice_at(
-        "novac/src/check/methods.nv:646",
+        "novac/src/check/methods.nv:651",
         "check: an effect declaration with no op schema reached the effect-op call door")
     // (a) THE OPERATION MUST BE IN THE SCHEMA -- the call-side sibling of
     // the handler literal's E_HANDLER_OP_UNKNOWN (one family, two

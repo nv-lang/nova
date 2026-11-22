@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module twin.pos_2
+
+// The Oracle-accepted writing of self_init/pos_2.nv. D347 R1 says a binding's
+// initializer resolves BEFORE the new binding becomes visible, so `ro x = x + 1`
+// reads the OUTER x and the answer is 8 then 7. The oracle does not implement
+// that rule: it reads its own zeroed namesake and panics on the norm's spelling
+// (registry 221.1 No.2018). This twin renames the inner binding, which is the
+// same program in the oracle's accepted form; the observable answer -- 8 then
+// 7 -- is compared byte for byte by check-novac-differential stage 2.
+fn main() -> () {
+    ro x = 7
+    if x > 0 {
+        ro y = x + 1
+        assert(y == 8)
+        println(y)
+    }
+    assert(x == 7)
+    println(x)
+}
