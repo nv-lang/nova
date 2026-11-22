@@ -11,6 +11,10 @@ fn main() Io Time Proc -> () {
         ro ch = Channel[int].new(1)
         ro tx = ch.tx
         ro rx = ch.rx
+        // A second arm exercises multi-arm parking instead of plain recv.
+        ro idle = Channel[int].new(1)
+        ro idle_tx = idle.tx
+        ro idle_rx = idle.rx
         supervised {
             spawn {
                 Time.sleep(1.to_millis())
@@ -20,13 +24,22 @@ fn main() Io Time Proc -> () {
                 tx.close()
             }
             if i % 2 == 0 {
-                select { Some(value) = rx => { assert(value == i) } }
+                mut received = false
+                select {
+                    Some(value) = rx => { assert(value == i); received = true }
+                    Some(_) = idle_rx => { assert(false) }
+                }
+                assert(received)
             } else {
                 mut closed = false
-                select { None = rx => { closed = true } }
+                select {
+                    None = rx => { closed = true }
+                    Some(_) = idle_rx => { assert(false) }
+                }
                 assert(closed)
             }
         }
+        idle_tx.close()
     }
     with Fs = fs.real_fs() {
         for _ in 0..32 {
