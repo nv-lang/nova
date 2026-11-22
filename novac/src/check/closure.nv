@@ -139,6 +139,14 @@ fn Checker mut @type_closure_core(e Node, cps []TyId, ret_expect TyId, infer boo
     @ret_ro = false
     @ret_expect = ret_expect
     @ret_unit = if infer { false } else { @returns_unit(ret_expect) }
+    // AN EXPLICIT RETURN EXPECTATION IS THE TAIL'S EXPECTATION TOO (E2-b3;
+    // pinned by pos_8, the BLOCK-body carrier): the expression tail reaches
+    // it through `@type_tail_value` (which sets `@value_expect = @ret_expect`
+    // itself), but the BLOCK body goes through `@type_block_value`, which
+    // does NOT -- without this line a bare `Ok(x + 1)` as a block's tail met
+    // no expectation and refused GENERIC_PAYLOAD (measured 2026-11-22: the
+    // no-A binary reddens pos_8 rc=1, the integrator's expr-body probes
+    // pos_5/6/7 stay green -- the hunk is read by the block path alone).
     @value_expect = if infer { ret_expect } else { saved_ve }
     mut r = no_ty()
     match body.kind_of() {

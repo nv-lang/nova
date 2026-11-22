@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_8
+
+// E2-b3, the BLOCK-BODY carrier (pins the infer-mode expectation line in
+// @type_closure_core, closure.nv): the expression tail reaches the return
+// expectation through @type_tail_value (which sets it itself), but a block
+// body goes through @type_block_value, which does not -- without the line a
+// bare `Ok(x + 1)` as the block's tail meets no expectation and refuses
+// GENERIC_PAYLOAD. Run proof: stdout 6, oracle parity (novac-e1-smoke).
+fn main() -> () {
+    ro r Result[int, int] = Ok(5)
+    ro m = r.flat_map(|x| { Ok(x + 1) })
+    match m {
+        Ok(v) => println(v)
+        Err(_) => println(0)
+    }
+}
