@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_5
+
+// Door B wave 2 (E2-b3, 2026-11-22): a composite result whose slot the BODY fixes
+// -- Option.flat_map(`fn(T) -> Option[U]`): the receiver fixes T, the body's
+// `Some(x + 1)` fixes U. Before this door the literal was refused by name
+// ("this parameter is not a function type"). Run proof: stdout 6, oracle parity.
+fn main() -> () {
+    ro o = Some(5)
+    ro m = o.flat_map(|x| Some(x + 1))
+    match m {
+        Some(v) => println(v)
+        None => println(0)
+    }
+}
