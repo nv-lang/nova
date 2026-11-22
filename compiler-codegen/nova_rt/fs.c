@@ -66,6 +66,7 @@ static nova_int _fs_fail(int uvrc) {
 typedef struct {
     NovaFiberQueue* scope;
     int             slot;
+    nova_atomic_bool done;
     uv_fs_t         req;
     /* scandir-handle-only fields (unused by every other op): the entry the
      * last fs_scandir_next() call landed on, and whether the underlying
@@ -79,7 +80,7 @@ static void _fs_cb(uv_fs_t* req) {
     _NovaFsReq* fr = (_NovaFsReq*)req->data;
     NovaFiberQueue* sc = fr->scope;
     int sl = fr->slot;
-    fr->scope = NULL;
+    nova_abool_store(&fr->done, true);
     if (sc) nova_sched_wake(sc, sl);
 }
 
@@ -95,6 +96,7 @@ static NovaStopMode _fs_stop_cb(void* handle) {
 static _NovaFsReq* _fs_begin(void) {
     _NovaFsReq* fr = (_NovaFsReq*)nova_alloc(sizeof(_NovaFsReq));
     memset(fr, 0, sizeof(*fr));
+    nova_abool_init(&fr->done, false);
     fr->req.data = fr;
     fr->scope = _nova_active_scope;
     fr->slot  = _nova_active_slot;
@@ -105,6 +107,11 @@ static _NovaFsReq* _fs_begin(void) {
     return fr;
 }
 
+static nova_bool _fs_ready(void* arg) {
+    _NovaFsReq* fr = (_NovaFsReq*)arg;
+    return nova_abool_load(&fr->done);
+}
+
 /* Park until the issued request completes. Returns req.result (>= 0 or the
  * negative UV code). Caller uv_fs_req_cleanup's AFTER reading statbuf/ptr. */
 static ssize_t _fs_wait(_NovaFsReq* fr, int issue_rc) {
@@ -112,7 +119,7 @@ static ssize_t _fs_wait(_NovaFsReq* fr, int issue_rc) {
     NovaFiberQueue* scope = fr->scope;
     int slot = fr->slot;
     nova_sched_register_pending(scope, slot, fr, _fs_stop_cb);
-    nova_sched_park(scope, slot);
+    nova_sched_park_until(scope, slot, _fs_ready, fr);
     nova_sched_unregister_pending(scope, slot);
     return (ssize_t)fr->req.result;
 }

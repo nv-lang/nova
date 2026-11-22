@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT park predicates completed
+// EXPECT_TIMEOUT_MS 20000
+
+module standalone.park_predicates_complete
+
+import std.fs
+
+fn main() Io Time Proc -> () {
+    for i in 0..512 {
+        ro ch = Channel[int].new(1)
+        ro tx = ch.tx
+        ro rx = ch.rx
+        supervised {
+            spawn {
+                Time.sleep(1.to_millis())
+                if i % 2 == 0 {
+                    assert(tx.send(i))
+                }
+                tx.close()
+            }
+            if i % 2 == 0 {
+                select { Some(value) = rx => { assert(value == i) } }
+            } else {
+                mut closed = false
+                select { None = rx => { closed = true } }
+                assert(closed)
+            }
+        }
+    }
+    with Fs = fs.real_fs() {
+        for _ in 0..32 {
+            assert(fs.metadata(".".to_path()).is_ok())
+        }
+    }
+    print("park predicates completed")
+}
