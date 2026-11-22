@@ -9,6 +9,10 @@ cd "$ROOT"
 for name in nested intrinsic forward rebind capture stored variant receiver; do
     printf '\nprobe: %s\n' "$name"
     if output=$("$NOVAC_BIN" check "$HERE/$name/main.nv" 2>&1); then
+        [ "$name" != stored ] || {
+            printf 'stored: expected named subset refusal, but check succeeded\n' >&2
+            exit 1
+        }
         "$NOVAC_BIN" emit --target-os windows "$HERE/$name/main.nv" >/dev/null
     else
         rc=$?
