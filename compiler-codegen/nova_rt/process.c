@@ -270,11 +270,11 @@ nova_int os_process_run(const uint8_t* program, nova_int program_len,
  *   - NovaProcPipe: refcount starts at 2 = "existence" unit (released by the
  *     uv_close callback) + "Nova owner" unit (released exactly once by
  *     proc_pipe_close / proc_child_release). Every read/write holds one more
- *     unit across park + wake. The struct is freed by whoever drops the last.
+ *     unit across park + wake. On Boehm the last release drops the native root;
+ *     reachable Nova copies keep the closed pipe identity alive.
  *   - NovaProcChild: same shape; existence unit released by the process close
  *     callback (fired from exit_cb), Nova unit by proc_child_release.
- * Structs are nova_alloc_uncollectable: they live between separate Nova calls
- * and libuv keeps interior pointers to them.
+ * Native references outlive individual Nova calls and may be interior pointers.
  * =========================================================================== */
 
 #define PP_IDLE    0
@@ -309,6 +309,9 @@ typedef struct NovaProcPipe {
     nova_atomic_int stage;         /* PP_IDLE / PP_CLOSING / PP_CLOSED */
     nova_atomic_int refcount;
     nova_atomic_int user_release_done;
+#ifdef NOVA_GC_BOEHM
+    struct NovaProcPipe** live_root;
+#endif
 
     /* read slot */
     NovaFiberQueue* read_scope;
@@ -334,7 +337,11 @@ static inline void _pp_acquire(NovaProcPipe* p) { (void)nova_aint_inc(&p->refcou
 static inline void _pp_release(NovaProcPipe* p) {
     if (nova_aint_fetch_sub_release(&p->refcount) == 1) {
         nova_thread_fence_acquire();
+#ifdef NOVA_GC_BOEHM
+        nova_free_uncollectable(p->live_root);
+#else
         nova_free_uncollectable(p);
+#endif
     }
 }
 
@@ -368,8 +375,15 @@ static NovaStopMode _pp_stop_cb(void* handle) {
 }
 
 static NovaProcPipe* _pp_new(uv_loop_t* loop) {
-    NovaProcPipe* p = (NovaProcPipe*)nova_alloc_uncollectable(sizeof(NovaProcPipe));
-    memset(p, 0, sizeof(*p));
+#ifdef NOVA_GC_BOEHM
+    /* libuv owns a native reference. After close, a reachable ChildPipe
+     * can still refer to this address and observe the closed state. */
+    NovaProcPipe* p = (NovaProcPipe*)nova_alloc(sizeof(*p));
+    p->live_root = (NovaProcPipe**)nova_alloc_uncollectable(sizeof(*p->live_root));
+    *p->live_root = p;
+#else
+    NovaProcPipe* p = (NovaProcPipe*)nova_alloc_uncollectable(sizeof(*p));
+#endif
     nova_aint_init(&p->stage, PP_IDLE);
     nova_aint_init(&p->refcount, 2);          /* existence + Nova owner */
     nova_aint_init(&p->user_release_done, 0);
