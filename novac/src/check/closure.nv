@@ -25,6 +25,8 @@ module novac.check
 import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, no_node}
 import ../sem.{branch_children, leaf_text, leaf_kind, closure_param_count, ParamMode, FnRow, raw_row, slot_binding_in}
+import ../sem.{decl_index_of_ty}
+import ../types.{DeclId}
 import ../builtins.{TypeKind}
 import ../types.{TyId, is_ty, no_ty}
 
@@ -137,7 +139,7 @@ fn Checker mut @type_closure_core(e Node, cps []TyId, ret_expect TyId, infer boo
     @ret_ro = false
     @ret_expect = ret_expect
     @ret_unit = if infer { false } else { @returns_unit(ret_expect) }
-    @value_expect = if infer { no_ty() } else { saved_ve }
+    @value_expect = if infer { ret_expect } else { saved_ve }
     mut r = no_ty()
     match body.kind_of() {
         NodeKind.Block => {
@@ -178,7 +180,18 @@ fn Checker mut @type_closure_core(e Node, cps []TyId, ret_expect TyId, infer boo
             @type_tail_value(body)
             if @out.len() == bmark {
                 r = @tail_type_of(body)
-                @judge_return(body, r)
+                if infer {
+                    // INFER MODE DOES NOT JUDGE AGAINST THE CANDIDATE (E2-b3):
+                    // the expectation the tail met is the SYMBOLIC composite
+                    // (the row's fresh slots kept as parameters), and judging
+                    // a concrete return against it compares apples to
+                    // parameters -- `Result[int, int]` vs `Result[U, int]`
+                    // measured 2026-11-22. The ARGUMENT door validates the
+                    // shape itself: `subst(raw_ret, bindings) == r` after its
+                    // slot reading, or a named refusal.
+                } else {
+                    @judge_return(body, r)
+                }
             } else {
                 // Refused while typing: the walk already spoke.
             }
@@ -212,6 +225,29 @@ fn Checker mut @type_closure_core(e Node, cps []TyId, ret_expect TyId, infer boo
 /// `@subst` is total by contract (types.nv:501): a partial vector is the
 /// C++-template model of generics this project rejects, so F is bound BEFORE the
 /// substitution, never left dangling inside it.
+/// Substitute the BOUND slots of a row's type, keeping each unbound one as
+/// its own parameter (E2-b3): the candidate the closure body's tail meets.
+/// A bound slot takes its binding; an unbound one stays symbolic -- the same
+/// shape `raw_ret` already has, no hole inside any term.
+fn Checker mut @subst_bound(t TyId, bindings []TyId) -> TyId {
+    if @ctx.tys.kind_of(t) == TypeKind.TkParam {
+        ro slot = @ctx.tys.param_slot_of(t)
+        if slot >= 0 && slot < bindings.len() && is_ty(bindings[slot]) {
+            return bindings[slot]
+        } else {
+            // Unbound: the parameter itself is the candidate's argument.
+            return t
+        }
+    }
+    if @ctx.tys.kind_of(t) != TypeKind.TkApp { return t }
+    if @ctx.tys.arg_count(t) == 0 { return t }
+    mut args = []TyId.new()
+    for i in 0..@ctx.tys.arg_count(t) {
+        args.push(@subst_bound(@ctx.tys.arg(t, i), bindings))
+    }
+    @ctx.tys.app(DeclId(decl_index_of_ty(@ctx, t)), args)
+}
+
 fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []TyId) -> () {
     ro kids = branch_children(c)
     if raw_row(row) < 0 || at < 0 {
@@ -284,15 +320,73 @@ fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []T
         @record(c, sig)
         return
     }
-    // A composite result (`Result[T, F]`, `flat_map_err`): concrete only when the
-    // receiver/position bound every slot it mentions; a still-unbound composite is
-    // a later door -- named, not silent.
-    ro ret_b = @ctx.tys.subst(raw_ret, bindings)
+    // A composite result (`Result[T, F]`, `flat_map`): when the receiver and the
+    // position already fixed every slot it mentions, the signature is known
+    // before the body. Otherwise the BODY'S RETURN fixes the rest (E2-b3 wave 2,
+    // 2026-11-22): the body is typed once with the partially substituted result
+    // as its expectation -- the slots still unbound stay symbolic, so a bare
+    // `Ok(x + 1)` meets `Result[U, int]` and answers concretely -- and each
+    // remained-unbound slot is read off the concrete return at its own place
+    // (`slot_binding_in`, the argument deduction's reverse-match instrument).
+    // A slot no return place fixes, or a return whose shape disagrees with the
+    // declared result, is named, not silently chosen.
+    // THE COMPOSITE RESULT'S CANDIDATE (E2-b3 wave 2, 2026-11-22): the total
+    // `subst` contract returns no_ty when ANY slot is unfilled (types.nv:501),
+    // and a generic method's fresh slot (`U` of `flat_map`) is unfilled BY
+    // DESIGN until the body speaks -- so the total door answered no_ty and the
+    // body was typed with no expectation at all (measured: the bare `Ok(x+1)`
+    // refused GENERIC_PAYLOAD with the expectation empty at the instance
+    // door). The candidate substitutes the BOUND slots and keeps each unbound
+    // one as its own parameter -- a symbolic application exactly like the
+    // row's own `raw_ret`, no hole inside any term; the constructor door
+    // reads only CONCRETE arguments out of it, and a slot it would fill with
+    // a parameter is named as not decided (option_rules), never guessed.
+    ro ret_b = @subst_bound(raw_ret, bindings)
     if is_ty(ret_b) && @ctx.tys.is_concrete(ret_b) {
         cps.push(ret_b)
         @type_closure_lit(c, @ctx.tys.fn_type(cps))
         // SILENT-OK: `@type_closure_lit` records the known signature or reports the body's refusal.
         return
     }
-    @report_first_leaf_of(kids, CLOSURE_ARG_NEEDS_FN_MSG)
+    ro r = @type_closure_core(c, cps, ret_b, true)
+    if !is_ty(r) {
+        // SILENT-OK: the body refused itself or produced no value; the walk spoke.
+        return
+    }
+    // The slots are read off the RETURN's own parameters, in the same
+    // numbering `subst` uses -- not off the row's slot list: the pattern
+    // (`raw_ret`) is where each slot OCCURS, and `slot_binding_in` matches
+    // the pattern's occurrences against the concrete return.
+    for j in 0..@ctx.tys.arg_count(raw_ret) {
+        ro pt = @ctx.tys.arg(raw_ret, j)
+        if @ctx.tys.kind_of(pt) != TypeKind.TkParam {
+            // A concrete argument or a nested composite: this door reads
+            // top-level slots only (a nested unbound composite stays a
+            // dated boundary).
+        } else {
+            ro slot = @ctx.tys.param_slot_of(pt)
+            if is_ty(bindings[slot]) {
+                // Fixed by the receiver or the position already.
+            } else {
+                ro at = slot_binding_in(@ctx.tys, raw_ret, r, slot)
+                if is_ty(at) {
+                    bindings[slot] = at
+                } else {
+                    // No return place carries this slot: nothing fixes it.
+                }
+            }
+        }
+    }
+    ro sig = @ctx.tys.subst(p, bindings)
+    if !is_ty(sig) || !@ctx.tys.is_concrete(sig) {
+        @report_first_leaf_of(kids, CLOSURE_ARG_NEEDS_FN_MSG)
+        return
+    }
+    if @ctx.tys.subst(raw_ret, bindings) != r {
+        // The body's return does not have the declared result's shape (a `()`
+        // body, an unbound payload): the context cannot bind this literal.
+        @report_first_leaf_of(kids, CLOSURE_ARG_NEEDS_FN_MSG)
+        return
+    }
+    @record(c, sig)
 }

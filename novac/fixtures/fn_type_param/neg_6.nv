@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_COMPILE_ERROR
+module fn_type_param.neg_6
+// nova:expect E_NOVAC_SUBSET 11
+
+// E2-b3 boundary (2026-11-22): a body that names NO slot of the composite
+// result -- `|e| Ok(1)` for `fn(E) -> Result[T, F]` leaves F undecided (the
+// Ok lane never mentions the error type), so the context cannot give the
+// literal a complete signature: named refusal, not a guess. The oracle
+// refuses this shape too (both sides measured 2026-11-22).
+fn main() -> () {
+    ro r Result[int, int] = Err(7)
+    ro m = r.flat_map_err(|e| Ok(1))
+}

@@ -70,6 +70,12 @@ fn Checker mut @type_arg_expecting(c Node, want TyId) -> () {
     if c.kind_of() == NodeKind.ClosureLit {
         if is_ty(want) && @ctx.tys.kind_of(want) == TypeKind.TkFn {
             @type_closure_lit(c, want)
+        } else if is_ty(@chan.type_if_known(c.id_of())) {
+            // SILENT-OK: the ARGUMENT door already typed this literal with the
+            // full inference (`@type_closure_arg`, E2-b3) -- a generic method's
+            // fn-parameter is not concrete (`fn(E) -> F`), so `@param_expect`
+            // answered no_ty here, and re-refusing would kill the recorded
+            // decision: one cause, one diagnostic (P4).
         } else {
             @report_first_leaf_of(branch_children(c), CLOSURE_ARG_NEEDS_FN_MSG)
         }

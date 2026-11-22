@@ -10,7 +10,16 @@
 // Door A (2026-11-20, plan 274.11, D43/D22) OPENED the declaration door:
 // its front pin converts to a CLEAN check, and the local-call door's own
 // refusals are pinned below. The Result instance and `spawn` remain the
-// next doors. These tests pin the achieved front so a later change cannot
+// next doors.
+// 
+// E2-b3 (2026-11-22): the COMPOSITE-result machinery (the symbolic
+// candidate, the slot reading off the body's return) is pinned by FIXTURES,
+// not here: a module test cannot declare its own generic sum (generic
+// declarations are outside the subset, measured on the own-sum probe) and
+// the module-test shell hands no std method -- the same reason the wave's
+// std carriers live in fixtures. The latch: novac/fixtures/fn_type_param/
+// pos_6.nv (Result.flat_map), pos_7.nv (flat_map_err), neg_6.nv (the
+// unnamed-slot boundary), all differential + smoke-pinned. These tests pin the achieved front so a later change cannot
 // roll it back silently, and pin each next door by the text that now
 // answers first, so the next wave starts from a measured place.
 //

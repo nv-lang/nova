@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_7
+
+// E2-b3 (2026-11-22): the error-lane twin of pos_6 -- Result.flat_map_err
+// (`fn(E) -> Result[T, F]`): the receiver fixes T, the body's `Err(e + 100)`
+// fixes the fresh F, and the Ok lane reads T off the candidate. Run proof:
+// stdout 107, oracle parity (novac-e1-smoke).
+fn main() -> () {
+    ro r Result[int, int] = Err(7)
+    ro m = r.flat_map_err(|e| Err(e + 100))
+    match m {
+        Ok(v) => println(v)
+        Err(w) => println(w)
+    }
+}

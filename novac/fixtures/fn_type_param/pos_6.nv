@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+module fn_type_param.pos_6
+
+// E2-b3 (2026-11-22): a composite result with TWO slots -- Result.flat_map
+// (`fn(T) -> Result[U, E]`): the receiver fixes T and E, and the body's bare
+// `Ok(x + 1)` fixes the fresh U THROUGH the symbolic candidate -- the Ok's
+// payload names T's place, the error slot reads off the receiver-bound E, and
+// the instance door answers concretely. Before the wave the total `subst`
+// answered no_ty for the unfilled U and the body met no expectation at all.
+// Run proof: stdout 6, oracle parity (novac-e1-smoke).
+fn main() -> () {
+    ro r Result[int, int] = Ok(5)
+    ro m = r.flat_map(|x| Ok(x + 1))
+    match m {
+        Ok(v) => println(v)
+        Err(_) => println(0)
+    }
+}
