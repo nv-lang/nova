@@ -203,11 +203,28 @@ static inline void nova_goready(mco_coro* co) {
         if (nova_spawn_pool_diag()) nova_spawn_ctx_diag_check_live(base, "goready");
     }
 
-    /* R2: sole-dispatcher election. ACQ_REL on success, ACQUIRE on failure. */
-    int32_t expected = NOVA_PARK_WAIT;
-    if (__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
-                                    NOVA_PARK_DISPATCHED, false,
-                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    /* Use the state observed by a failed CAS for the next election.
+     * A park can publish WAIT while we are trying to latch NIL->READY. */
+    int32_t expected = nova_park_state_load(co);
+    for (;;) {
+        if (expected == NOVA_PARK_NIL) {
+            if (__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
+                                            NOVA_PARK_READY, false,
+                                            __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+                if (_r3m) _nova_r3_log("goready-R3-latch", co, NOVA_PARK_NIL, 0);
+                return;
+            }
+            continue;
+        }
+        if (expected != NOVA_PARK_WAIT) {
+            if (_r3m) _nova_r3_log("goready-R4-noop", co, (long)expected, 0);
+            return;
+        }
+        if (!__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
+                                         NOVA_PARK_DISPATCHED, false,
+                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            continue;
+        }
         if (_r3m) _nova_r3_log("goready-R2-won", co, (long)expected, 0);
         /* WON WAIT->DISPATCHED. Consistency order (review correction #4):
          *   (2) fiber_state PARKED->IDLE
@@ -248,29 +265,15 @@ static inline void nova_goready(mco_coro* co) {
         return;
     }
 
-    /* R3: ready-before-park latch. NIL->READY (ACQ_REL). gopark's G3 recheck
-     * will consume it and return without yielding. */
-    expected = NOVA_PARK_NIL;
-    if (__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
-                                    NOVA_PARK_READY, false,
-                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        if (_r3m) _nova_r3_log("goready-R3-latch", co, (long)expected, 0);
-        return;
-    }
-
-    /* R4: observed READY or DISPATCHED — idempotent no-op (double-goready
-     * coalesces; the prior dispatcher already re-queued or latched). */
-    if (_r3m) _nova_r3_log("goready-R4-noop", co, (long)expected, 0);
 }
 
-/* nova_gopark(unlock_fn, unlock_arg): commit the current fiber to a wait.
- * Returns when a peer/cancel goready dispatches us (or immediately, on the
- * ready-before-park fast-path). MUST be called from fiber context.
- *
- * unlock_fn/unlock_arg (may be NULL) is the lock to release AFTER the fiber
- * has parked — stashed in TLS and drained by the scheduler on the yield path,
- * or run INLINE here on the ready-before-park fast-path. */
-static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
+typedef nova_bool (*NovaParkPredicate)(void* ctx);
+
+/* Commit the current fiber to a wait. A predicate-backed wait may finish
+ * inline if its operation is complete and no waker has taken dispatch.
+ * For lock-backed waits the scheduler releases unlock_fn after yield. */
+static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg,
+                               NovaParkPredicate pred, void* pred_ctx) {
     mco_coro* co = mco_running();
     if (!co) {
         fprintf(stderr, "nova: nova_gopark: not in fiber context\n");
@@ -287,59 +290,24 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
      * SEQ_CST G1 store publishes PARKED too (single coherent observation point
      * for goready's R2 PARKED->IDLE — review fence_hazard #1). */
     nova_fiber_state_store(co, NOVA_FIBER_STATE_PARKED);
-    /* G1: park_state -> WAIT (SEQ_CST = XCHG on x86, full fence, drains store
-     * buffer). The load-bearing publish: globally visible before any waker that
-     * later acquires the resource lock (released by unlock_fn post-yield).
-     *
-     * [item 19 root 3 - DIAGNOSED, FIX NEEDS DESIGN] this blind WAIT store is
-     * the exact lost-wake point, captured under 6-way load with
-     * NOVA_DIAG_ITEM19_R3: the main thread was preempted between entering
-     * gopark and this store while its driver sleep fired - close_cb's goready
-     * saw park_state==NIL, took the R3 NIL->READY latch ("G3 will consume
-     * it") and returned; this store then overwrote READY with WAIT, G3's
-     * READY->DISPATCHED CAS failed on our own WAIT, the fiber yielded with
-     * no waker left - permanent park (the process prints nothing: the rounds
-     * line dies in the killed process's stdout buffer). A first minimal fix
-     * (xchg at G1, consume the observed READY like the G3 fast path) was
-     * A/B-tested and REVERTED: it traded the hang for segfaults under load
-     * (5 crashes / 18 loaded runs vs 0/18 with the blind store; suspected: a
-     * STALE READY latched by a late waker of the PREVIOUS wait turns a
-     * single-shot park into a skip, breaking exactly-once-yield sites). The
-     * correct consume semantics - a G1 that preserves a concurrent latch
-     * without skipping the park - needs its own scheduler-design pass. See
-     * nova_park_state_xchg (fibers.h). */
-    nova_park_state_store(co, NOVA_PARK_WAIT, __ATOMIC_SEQ_CST);
-    /* G2: stash deferred-unlock in TLS — the scheduler drains it AFTER the fiber
-     * yields (runtime.c / supervised_step), so the unlock (and thus a peer's
-     * waker reachability) happens strictly after G1's WAIT is visible. */
+    /* G1 publishes PARKED before a waker can win WAIT->DISPATCHED. */
+    if (pred) {
+        /* Acquire a READY latch that raced the commit, then read the actual
+         * completion state. A stale latch alone cannot complete this wait. */
+        nova_park_state_xchg(co, NOVA_PARK_WAIT);
+        if (pred(pred_ctx) &&
+            nova_park_state_cas(co, NOVA_PARK_WAIT, NOVA_PARK_DISPATCHED,
+                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            nova_fiber_state_store(co, NOVA_FIBER_STATE_RUNNING);
+            nova_park_state_store(co, NOVA_PARK_NIL, __ATOMIC_RELEASE);
+            return;
+        }
+        /* If a waker won the CAS, its queue entry requires this yield. */
+    } else {
+        nova_park_state_store(co, NOVA_PARK_WAIT, __ATOMIC_SEQ_CST);
+    }
     _nova_park_unlock_fn  = unlock_fn;
     _nova_park_unlock_arg = unlock_arg;
-    /* G3: commit-recheck. A goready that latched NIL->READY before G1 (or raced
-     * between G1 and now) is caught here: CAS READY->DISPATCHED. */
-    if (nova_park_state_cas(co, NOVA_PARK_READY, NOVA_PARK_DISPATCHED,
-                            __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-        /* Ready-before-park: do NOT yield. The scheduler never drains the TLS on
-         * this path (no yield), so we MUST run the unlock inline AND clear the
-         * single non-stack TLS slot to avoid a later stale double-unlock
-         * (review correction #2 / lost_wake_hazard #2). */
-        _nova_park_unlock_fn  = NULL;
-        _nova_park_unlock_arg = NULL;
-        nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
-        if (unlock_fn) unlock_fn(unlock_arg);
-        {
-            NovaSpawnCtxBase* _b = (NovaSpawnCtxBase*)mco_get_user_data(co);
-            if (_nova_r3_diag() && _b && _b->_nova_fiber_scope == NULL) {
-                _nova_r3_log("gopark-G3-fastpath", co, 0, 0);
-            }
-        }
-        return;
-    }
-    /* G3 failed ⇒ state is WAIT (normal) or DISPATCHED (a peer goready already
-     * won WAIT->DISPATCHED and re-queued us). In BOTH cases ALWAYS yield exactly
-     * once: the dispatcher (self via READY above, or a peer via DISPATCHED) has
-     * guaranteed a re-queue, so the next resume picks us up. Skipping the yield
-     * on DISPATCHED would fall through while ALSO on the runq → double-run
-     * (review fence_hazard #2). */
     /* Plan 201 Ф.2: this IS the scheduling point (control leaves this fiber
      * here) — tripwire for the "ambient TLS staging slot with no-scheduling-
      * window invariant" defect class (see effects.h doc-comment above
@@ -356,9 +324,7 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg) {
             _nova_r3_log("gopark-returned", co, (long)_b->_nova_park_state, 0);
         }
     }
-    /* Reset the descriptor latch to NIL at the canonical end-of-wait (review
-     * correction #3): a late/duplicate cross-thread waker that latched NIL->READY
-     * after we resumed would otherwise make our NEXT gopark skip yielding. */
+    /* Reopen the latch for the next wait after the dispatch has resumed us. */
     nova_park_state_store(co, NOVA_PARK_NIL, __ATOMIC_RELEASE);
 }
 
@@ -430,7 +396,7 @@ static inline void nova_sched_park(NovaFiberQueue* scope, int slot) {
         abort();
     }
     _nova_park_mark_slot(scope, slot, co);
-    nova_gopark(NULL, NULL);
+    nova_gopark(NULL, NULL, NULL, NULL);
     _nova_park_clear_slot(scope, slot);
 }
 
@@ -482,7 +448,7 @@ static inline void nova_sched_park_with_unlock(NovaFiberQueue* scope, int slot,
      * held by the caller (gopark releases it only post-yield). A racing waker
      * thus observes parked_co before it can reach us via the unlocked resource. */
     _nova_park_mark_slot(scope, slot, co);
-    nova_gopark(unlock_fn, unlock_arg);
+    nova_gopark(unlock_fn, unlock_arg, NULL, NULL);
     _nova_park_clear_slot(scope, slot);
 }
 
@@ -546,8 +512,6 @@ static inline nova_bool nova_sched_is_parked(NovaFiberQueue* scope, int slot) {
  * Если `pred == NULL` — legacy single-shot park (равно `nova_sched_park`).
  * Это для backward-compat сайтов, где caller сам делает predicate-recheck. */
 
-typedef nova_bool (*NovaParkPredicate)(void* ctx);
-
 static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
                                           NovaParkPredicate pred, void* ctx) {
     if (pred && pred(ctx)) return;       /* fast-path: condition уже выполнено */
@@ -576,8 +540,7 @@ static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
          * некому. Если предикат истинен после публикации — слот снимается и
          * возврат БЕЗ gopark: до G1 никакой goready не мог перевести нас в
          * DISPATCHED (R2 требует WAIT), максимум — латч NIL→READY, который
-         * следующий gopark потребит как spurious (пред-циклы это переживают
-         * по контракту). */
+         * следующая парковка с предикатом может поглотить как spurious. */
         mco_coro* _co656 = mco_running();
         if (!_co656) {
             nova_sched_park(scope, slot); /* его же честный abort не-fiber */
@@ -592,7 +555,7 @@ static inline void nova_sched_park_until(NovaFiberQueue* scope, int slot,
             _nova_park_clear_slot(scope, slot);
             return;
         }
-        nova_gopark(NULL, NULL);
+        nova_gopark(NULL, NULL, pred, ctx);
         _nova_park_clear_slot(scope, slot);
         if (pred(ctx)) return;           /* predicate satisfied */
         /* spurious wake → re-park */

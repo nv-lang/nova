@@ -6715,24 +6715,25 @@ concurrency suite 105/4. adversarial diff-review: fence_hazards VERIFIED CLEAN, 
 `mco_get_user_data(co)`, НЕ по (scope,slot)). Ортогонален `_nova_fiber_state`
 (IDLE/RUNNING/PARKED/DEAD = resume-ownership): park_state = wait/ready handshake.
 
-**`nova_gopark(unlock_fn, unlock_arg)` — строгий порядок (lost-wakeup-free):**
-- **G0** `_nova_fiber_state` → PARKED (RELEASE; до G1, чтобы SEQ_CST G1 опубликовал и PARKED).
-- **G1** `_nova_park_state` → WAIT (**SEQ_CST** = XCHG на x86, full fence). Несущая публикация:
-  глобально видима до того, как любой waker возьмёт lock ресурса (который отпускает unlock_fn).
-- **G2** stash unlock_fn/arg в TLS — scheduler сливает ПОСЛЕ yield'а (unlock, а значит
-  reachability для peer-waker'а, строго после видимости WAIT).
-- **G3** commit-recheck: CAS READY→DISPATCHED. Успех = ready-before-park (goready латчнул
-  NIL→READY до G1 или в гонке) → **НЕ yield**: unlock_fn вызывается **inline** (через local
-  copies) + TLS self-drain (scheduler не сливает на этом пути) + fiber_state IDLE + return.
-- **G4** иначе `mco_yield`. После resume: TLS clear + reset park_state→NIL (end-of-wait;
-  иначе поздний cross-thread NIL→READY заставил бы СЛЕДУЮЩИЙ gopark пропустить yield).
+**`nova_gopark` — порядок парковки:**
+- **G0** `_nova_fiber_state` → PARKED (RELEASE), до публикации WAIT.
+- **G1** `_nova_park_state` → WAIT (SEQ_CST). Для ожидания с предикатом используется
+  обмен, чтобы получить публикацию завершения от раннего NIL→READY.
+- **G2** Если предикат после G1 подтверждает завершение, CAS WAIT→DISPATCHED
+  решает, кто завершит ожидание. Если победил сам файбер, он возвращается
+  inline в состоянии RUNNING и сбрасывает latch в NIL. Если победил
+  будильщик, файбер обязан уступить управление для уже выбранной диспетчеризации.
+- **G3** На пути с yield планировщик вызывает отложенный unlock из TLS после
+  `mco_yield`. Публикация WAIT предшествует доступу будильщика к защищённому
+  ресурсу. После resume файбер очищает TLS и сбрасывает latch в NIL.
 
-**`nova_goready(co)` — single-winner CAS-ladder (by-pointer):**
-- CAS WAIT→DISPATCHED → **единственный** диспетчер: `dispatch_ready(co)` + fiber_state
-  PARKED→IDLE + clear `parked[slot]`/`parked_co[slot]`.
-- иначе CAS NIL→READY → латч (ready-before-park).
-- иначе (READY/DISPATCHED/dead) → идемпотентный no-op. `mco_status != MCO_DEAD` гардит
-  каждую мутацию/dispatch.
+**`nova_goready(co)` — выбор единственного диспетчера по указателю:**
+- WAIT→DISPATCHED: победитель CAS переводит PARKED→IDLE, очищает
+  `parked[slot]` и `parked_co[slot]`, затем диспетчеризует файбер.
+- NIL→READY: CAS сохраняет раннее пробуждение для ожидания с предикатом.
+- При промахе CAS будильщик повторяет выбор по полученному состоянию. В
+  частности, переход NIL→WAIT требует новой попытки WAIT→DISPATCHED.
+- READY и DISPATCHED означают, что пробуждение уже обработано.
 
 **Сосуществование cancel (by-slot) + примитив (by-pointer):** оба воронкуют re-queue через
 ОДИН `nova_goready(co)` → single-winner (WAIT→DISPATCHED CAS) элек­тит ровно одного диспетчера
