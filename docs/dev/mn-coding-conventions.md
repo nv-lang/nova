@@ -442,7 +442,7 @@ scope->child_ctx = nova_alloc(sizeof(void*) * cap);  /* collectable, GC-scan */
 **ПРОВЕРКА.** Дискриминатор `NOVA_UNCOLL_QUAR=1` (карантин всех
 `nova_free_uncollectable` — poison 0xDD + осознанная утечка, `alloc_boehm.c`):
 если краш исчезает при карантине ⇒ порча через реюз released-uncollectable-блока.
-R1-трипваер пула (`NOVA_SPAWN_POOL_DIAG=1`).
+R1-трипваер пула — снят 2026-11-23 (см. §12-R1 и `docs/dev/simplifications.md`).
 
 ---
 
@@ -671,13 +671,19 @@ MAX_INFLIGHT>2): сервер жив, БЕЗ permanent-000, single-req посл�
 выставленном env). Это не опция — это часть определения «готового» M:N-кода
 (173.0 §EXEC требует tripwire ставить ДО опасного кода).
 
-### R1 — poison + canary (pool-recycle aliasing) — `NOVA_SPAWN_POOL_DIAG=1`
+### R1 — poison + canary (pool-recycle aliasing)
 Буфер SpawnCtx при release — `memset(0xDD)` + magic-canary в `NovaSpawnCtxBase`.
 Точки чтения ctx (goready/resume/sweep/driver) проверяют canary перед
 разыменованием и `abort("ctx recycled under supervisor")` при порче.
 Плюс guard-assert в `nova_spawn_pool_release`. Ловит R1 (§EXEC): retained-указатель,
-переписанный следующим spawn до decision-loop. Реализовано:
-`nova_spawn_ctx_diag_check_live`, `alloc_boehm.c`.
+переписанный следующим spawn до decision-loop. ИСТОРИЯ: этот трипваер был
+реализован (`nova_spawn_ctx_diag_check_live`, env `NOVA_SPAWN_POOL_DIAG=1`) и
+приёмкой закрывал R1; снят с очисткой диагностики 2026-11-23 (реестр №2024
+соседний; маркер [M-mn-spawnctx-corruption-cancel-wake] решён, решение — в
+`docs/dev/simplifications.md`). ДИСЦИПЛИНА ОСТАЁТСЯ: окно, добавляющее новый
+class-пул/стек, обязано завести свой трипваер по правилам этого параграфа;
+при расследовании свежей порчи пула трипваер восстанавливается в окне
+расследования, в релиз не включается.
 
 ### R2 — torn-base (grow-during-drain) — debug-assert
 `assert(!scope->_drain_started)` внутри `nova_scope_grow_children` +

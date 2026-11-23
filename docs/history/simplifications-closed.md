@@ -31018,3 +31018,13 @@ current, byte-behaviour). Спека: 02-types §D358 Ф.2-амендмент (`
 - **Фикс**: Split на folder-модуль (std/src/runtime/fmt_buf/{core.nv,core_test.nv}, mirror time/duration/). core.nv: 337 строк (типы, функции), core_test.nv: module-строка + scratch-функция + 8 test-блоков (100 строк). Export-поверхность сохранена (Align/FloatKind/Sign/FmtKind экспортированы, остальное приватно).
 - **Гейты**: `nova test std/src/runtime/fmt_buf/core_test.nv` PASS (8 тестов); `nova test std/src/runtime/string_builder_test.nv` PASS; `nova check std/src/runtime` PASS 18/0; `nova test std/src/checksums` PASS 3/0.
 - **Маркеры**: `[M-p200-17-remaining-1-fmtbuf]` убран из backlog-followups.md; Пункт 17 отмечен 9/9 ✅ в 200-std-improvements.md (99 тестов в пирах, 0 в имплементации).
+
+## 2026-11-23 — [M-timer-leak-stack-frames] СНЯТ (очистка диагностики релиза 0.1.7)
+
+Заводился в Plan 65 Ф.11 как отложенное упрощение: opt-in atexit-дамп (`NOVA_TIMER_METRICS=1`)
+печатал счётчик активных таймеров и LEAK-предупреждение, но не стек-кадры мест аллокации
+(требовал libbacktrace/DbgHelp per-platform). 2026-11-23 владелец распорядился убрать все
+трассировки и отладки из релиза 0.1.7 — atexit-дамп снят коммитом очистки; счётчики сохранены
+для публичного `Time.timer_*()`; в словаре упрощений запись заменена заметкой о снятии, живая
+запись снятия — `[M-release-no-runtime-diagnostics]` в `docs/dev/simplifications.md`.
+Если расследование утечки снова попросит стек-кадры — строится внутри окна расследования.

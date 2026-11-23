@@ -2478,7 +2478,7 @@ historical context, не canonical API reference.
 
 ### [M-bench-timer-metrics-autocapture] (DEFER — Plan 65 Ф.11)
 - **Где:** `nova-cli/src/bench/*` + `compiler-codegen/nova_rt/bench.h`.
-- **Что упрощено:** `NOVA_TIMER_METRICS` counters are queryable via
+- **Что упрощено:** timer counters are queryable via
   `Time.timer_*()` Nova API но не интегрированы автоматически в bench
   history snapshots (Plan 57). Bench-side code должно вызвать
   `Time.timer_*()` manually для capture.
@@ -2488,17 +2488,10 @@ historical context, не canonical API reference.
   hook for per-bench Time.timer_* snapshot.
 - **Приоритет:** L.
 
-### [M-timer-leak-stack-frames] (DEFER — Plan 65 Ф.11)
-- **Где:** `compiler-codegen/nova_rt/channels.h::_nova_timer_metrics_atexit`.
-- **Что упрощено:** Leak warning (`alloc_active > 0` post-main) dumps
-  counter + WARNING line, но НЕ capture'ит stack frames первых N
-  leaked timers (R25 plan-doc spec).
-- **Почему:** best-effort stack capture требует libbacktrace (Linux)
-  или DbgHelp (Windows) integration — нетривиально per-platform.
-- **Как чинить:** integration sees in-flight timer alloc-site backtrace
-  (best effort). Plan 66 / dedicated observability plan.
-- **Приоритет:** L — leak counter + LEAK marker дают достаточно signal'а
-  для investigation; миллион timers с no stack info лучше чем ноль.
+### [M-timer-leak-stack-frames] — СНЯТ 2026-11-23 очисткой диагностики релиза 0.1.7 (см. запись
+### `[M-release-no-runtime-diagnostics]` ниже): the atexit leak dump itself was opt-in env output
+### and is gone; the counters survive for `Time.timer_*()`. If a leak investigation needs stack
+### frames again, it is rebuilt inside that investigation window and does not ship.
 
 ### [M-time-now-schema-mismatch] (PARTIAL-CLOSE BY DESIGN — Plan 175 Ф.1b/Ф.3 option C SHIPPED; typed-effect-wire (Ф.2) SUPERSEDED 2026-07-10, не «остаток», а закрытое решение)
 - **UPDATE 2026-07-10 (Plan 175, 4-й заход на Ф.2):** typed-effect-wire (retire int-wire в СХЕМЕ) исследован
@@ -9367,3 +9360,21 @@ spawn-контекст) числилась починенной в бэклог�
 маркер из `live.nv` исчез полностью.
 
 - **2026-08-29 — `[M-bitwise-operator-method-naming]` СНЯТ решением владельца: имена ОСТАЮТСЯ `@bitand`/`@bitor`/`@bitxor`/`@bitnot`.** Вопрос стоял с 2026-07-27 («@bitand и @and — сравни, возможно назвали неверно»); владелец подтвердил префиксную семью — короткие `@and`/`@or` читались бы как логические, а Rust-эталон префиксует ровно по этой причине. Обе рабочие части маркера были сделаны раньше (D46-амендмент; план 234 ✅ 2026-08-27), оставалось только имя. Остаток по `@rem` на named-tuple живёт в своём маркере `[M-named-tuple-operator-overload-incomplete]` и этим снятием не задет.
+
+### [M-release-no-runtime-diagnostics] (2026-11-23, релиз 0.1.7, решение владельца «все трассировки
+### и отладки убрать из релиза», исполнил интегратор) **Где:** `compiler-codegen/nova_rt/*`.
+**Что упрощено:** релиз не несёт опциональных getenv-диагностик: сняты NOVA_DIAG_P259_DL,
+NOVA_DIAG_ITEM19_R3, NOVA_DIAG_791, NOVA_DIAG_M456, NOVA_DIAG_DEADLINE_OVERRUN,
+NOVA_TRACE_BUSY_YIELD_SLEEP, NOVA_TIMER_METRICS (env + atexit-дамп; счётчики для
+`Time.timer_*()` сохранены), NOVA_GC_PAUSE_DIAG (+ снятый вызовный `nova_gc_pause_diag_snapshot`),
+NOVA_GC_SLOT_PROBE (проверка отображённости слота теперь безусловна), NOVA_WATCHDOG_WORKER,
+NOVA_DIAG_656, NOVA_SPAWN_POOL_DIAG (весь R1-трипваир пула). Остались: детектор зависания
+NOVA_WATCHDOG_DUMP_SECS + `nova_runtime_dump_state` + счётчики 656 (единственный in-release
+детектор класса потери пробуждений, молчит на здоровой программе), NOVA_DIAG_SEGV (несущий:
+`test_runner.rs` принудительно включает его на слитых CU и парсит стек — снятие = переделка
+тестового конвейера), поведенческие тумблеры (NOVA_UNCOLL_QUAR, NOVA_ORPHAN_*, GC/планировщик).
+**Почему:** трассы закрытых инцидентов уезжали в релиз без носителя; полный корпус (650 PASS /
+12 FAIL) байт-в-байт совпал с до-очисточным прогоном, Canopus 0/300 на очищенной сборке —
+поведение не менялось. **Как чинить (условие снятия записи):** при новом расследовании
+диагностический след ставится в окне расследования и в релиз не входит; постоянные дампы
+возвращаются только отдельным решением владельца о расширении детектора. **Приоритет:** L.
