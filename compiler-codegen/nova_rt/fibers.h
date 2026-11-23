@@ -1261,12 +1261,6 @@ static inline int nova_scope_alloc_slot(NovaFiberQueue* scope, mco_coro* co) {
     return slot;
 }
 
-static int _nova_d791_cached = -1;
-static inline int _nova_d791(void) {
-    if (_nova_d791_cached < 0) _nova_d791_cached = (getenv("NOVA_DIAG_791") != NULL) ? 1 : 0;
-    return _nova_d791_cached;
-}
-
 static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
     if (!scope || slot < 0 || slot >= scope->count) return;
     /* Plan 83.11 Ф.3.B: lock so alloc_slot's scan cannot observe this slot
@@ -1278,11 +1272,6 @@ static inline void nova_scope_free_slot(NovaFiberQueue* scope, int slot) {
                 &scope->slot_lock, &_sl_exp, 1,
                 false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         _sl_exp = 0;
-    }
-    if (_nova_d791()) {
-        fprintf(stderr, "[791] %-24s scope=%p slot=%d co=%p\n",
-                "slot:free", (void*)scope, slot, (void*)scope->fibers[slot]);
-        fflush(stderr);
     }
     scope->fibers[slot]    = NULL;
     scope->fiber_ctx[slot] = NULL;  /* release SpawnCtx GC root */
@@ -2502,36 +2491,6 @@ typedef struct NovaResumeOutcome {
  * choose to inline their own restore instead). */
 typedef void (*NovaFiberTlsHook)(void* ctx);
 
-/* [221.1 #791] Caller tag. The measurement contradicts the code as read: the
- * stuck coroutine was resumed exactly once, the resume returned
- * `owned=1 dead=0 parked=0`, and every one of the four live callers answers
- * that outcome by storing IDLE -- yet the dump finds it RUNNING with every
- * yielded-FIFO empty. Reading cannot settle which of those two statements is
- * wrong, because the four sites do NOT agree on what "parked" means: three
- * consult `ro.parked`, while `nova_supervised_step` consults
- * `sched->parked[i] && park_state==WAIT` and, when that holds, deliberately
- * leaves the state alone on the assumption that gopark already wrote PARKED.
- * So each site announces itself, and the log names the caller instead of
- * leaving it to inference. Silent unless NOVA_DIAG_791 is set. */
-static inline void nova_d791_tag(const char* site, mco_coro* co) {
-    if (!_nova_d791()) return;
-    fprintf(stderr, "[791] %-24s co=%p fstate=%d\n",
-            site, (void*)co, (int)nova_fiber_state_load(co));
-    fflush(stderr);
-}
-/* [221.1 #791] Same tag with one integer -- used for the yielded-FIFO,
- * where the worker id is the whole question: the dump shows exactly one
- * worker whose FIFO ever grew (cap 8) and is now empty, i.e. one push and
- * one pop, while the pop site has no path to anything but a tagged resume
- * -- and no third resume was logged. One of those three readings is wrong,
- * and only the FIFO itself can say which. */
-static inline void nova_d791_tag_n(const char* site, mco_coro* co, int n) {
-    if (!_nova_d791()) return;
-    fprintf(stderr, "[791] %-24s co=%p fstate=%d w=%d\n",
-            site, (void*)co, (int)nova_fiber_state_load(co), n);
-    fflush(stderr);
-}
-
 static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
                                                     NovaFiberTlsHook restore_inner,
                                                     NovaFiberTlsHook save_inner) {
@@ -2616,22 +2575,6 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         out.parked = (ps == NOVA_PARK_WAIT || ps == NOVA_PARK_DISPATCHED);
     }
 
-    /* [221.1 #791] Diagnostic bracket around the ONE foreign call left between
-     * `mco_resume` returning and the caller writing the fiber state. Every live
-     * caller of this function does clear RUNNING (all four enumerated), yet a
-     * fiber is still found SUSPENDED-with-RUNNING — so the question is whether
-     * control ever gets back to them. If BOTH lines below appear for the stuck
-     * coroutine, the loss is downstream of this return; if only the first does,
-     * the deferred park-unlock is where control left. Off unless NOVA_DIAG_791
-     * is set; it prints per resume, so it is a probe, not a default. */
-    int _d791 = _nova_d791();
-    if (_d791) {
-        fprintf(stderr, "[791] resume-tail-enter co=%p owned=%d dead=%d parked=%d fstate=%d\n",
-                (void*)co, (int)out.owned, (int)out.dead, (int)out.parked,
-                (int)nova_fiber_state_load(co));
-        fflush(stderr);
-    }
-
     /* Deferred park-unlock: same ordering every pre-unification call site
      * used — after classification, before returning to the caller. */
     if (_nova_park_unlock_fn) {
@@ -2640,12 +2583,6 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
         _nova_park_unlock_fn  = NULL;
         _nova_park_unlock_arg = NULL;
         fn(arg);
-    }
-
-    if (_d791) {
-        fprintf(stderr, "[791] resume-tail-return co=%p fstate=%d\n",
-                (void*)co, (int)nova_fiber_state_load(co));
-        fflush(stderr);
     }
 
     return out;
@@ -3133,7 +3070,6 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         NovaStepTlsCtx step_ctx = { q, i };
         NovaResumeOutcome ro = nova_resume_fiber(co, &step_ctx,
             _nova_resume_restore_step_tls, _nova_resume_save_step_tls);
-        nova_d791_tag("step:post-resume", co);
         if (!ro.owned) {
             /* Should not happen under bootstrap's single-thread guarantee;
              * defensive fallback — don't touch co, still count it alive so
@@ -3159,7 +3095,6 @@ static inline int nova_supervised_step(NovaFiberQueue* q) {
         } else {
             nova_fiber_state_store(co, NOVA_FIBER_STATE_IDLE);
         }
-        nova_d791_tag("step:handled", co);
         if (ro.dead) {
             _nova_gc_remove_fiber_roots(co);
             mco_destroy(co);
@@ -3235,8 +3170,6 @@ static inline void _nova_pump_wait_once(uv_loop_t* loop, int64_t deadline_ns) {
 #define NOVA_DRAIN_TICK_NS (250LL * 1000000LL)
 
 static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
-    int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
-    long long _nv456_iters = 0;
     /* [221.1 #791] PRE-EXIT WATCHDOG. This fence had NO watchdog and no state
      * dump at all, while `nova_supervised_run_impl`'s twin loop has both --
      * and that asymmetry is why #791 read for weeks as "the process simply
@@ -3332,12 +3265,6 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
             if (_v >= 0) _pxwd_secs = _v;
         }
     }
-    if (_nv456_diag) {
-        fprintf(stderr, "[m456] drain_main_scope ENTER q=%p remote=%d pending_sweeps=%d\n",
-                (void*)q, (int)nova_aint_load(&q->pending_remote),
-                (int)nova_aint_load(&q->pending_sweeps));
-        fflush(stderr);
-    }
     for (;;) {
         int alive = nova_supervised_step(q);
         if (alive == 0) {
@@ -3345,11 +3272,6 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
-            if (_nv456_diag && (++_nv456_iters % 20000) == 0) {
-                fprintf(stderr, "[m456] drain_main_scope STILL WAITING remote loop q=%p remote=%d iters=%lld\n",
-                        (void*)q, remote, _nv456_iters);
-                fflush(stderr);
-            }
             /* [221.1 #791] orphan-drain stop -- see the banner above.
              * [item 19 root 2] the stop used to fire ONCE. A fiber that
              * parks in a worker scope AFTER that single fan-out walk (it
@@ -3403,32 +3325,17 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
                                  time_monotonic_ns() + NOVA_DRAIN_TICK_NS);  /* №1406 */
         }
     }
-    if (_nv456_diag) {
-        fprintf(stderr, "[m456] drain_main_scope past-remote-loop q=%p pending_sweeps=%d\n",
-                (void*)q, (int)nova_aint_load(&q->pending_sweeps));
-        fflush(stderr);
-    }
     /* [196.6 / D466 §6 class]: wait for worker-side sweeps of this scope's
      * remote children (see pending_sweeps field doc / supervised_run_impl
      * tail). The orphan scope is static, but drain is also the pre-exit
      * fence — keep the sweep/ctx-pool accounting symmetric. */
     {
-        long long _nv456_iters2 = 0;
         while (nova_aint_load(&q->pending_sweeps) > 0) {
             uv_run(nova_current_loop(), UV_RUN_NOWAIT);
             if (nova_aint_load(&q->pending_sweeps) > 0) {
                 uv_sleep(1);
-                if (_nv456_diag && (++_nv456_iters2 % 2000) == 0) {
-                    fprintf(stderr, "[m456] drain_main_scope STILL WAITING pending_sweeps q=%p val=%d iters=%lld\n",
-                            (void*)q, (int)nova_aint_load(&q->pending_sweeps), _nv456_iters2);
-                    fflush(stderr);
-                }
             }
         }
-    }
-    if (_nv456_diag) {
-        fprintf(stderr, "[m456] drain_main_scope DONE q=%p\n", (void*)q);
-        fflush(stderr);
     }
     nova_sched_drop_state(q);
     /* Plan 44.5 Layer 5: cross-worker first_error_atomic check. */
@@ -3896,29 +3803,6 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
         if (_dl_ns != 0 && !_dl_fired
             && !nova_abool_load(&q->cancel_requested)
             && time_monotonic_ns() >= _dl_ns) {
-            /* 221.1 №470/№474: permanent, getenv-gated point-probe (cold path
-             * — only the RARE branch where a deadline actually fires, zero
-             * cost otherwise). Shows how far past the deadline `now` already
-             * is, correlated against the GC-pause counters AT THAT MOMENT —
-             * this is what separated «GC stop-the-world pause» from «OS
-             * thread-scheduling contention external to Nova» during the
-             * №470 investigation: if `gc_pause_count_so_far` jumps right at
-             * this fire, blame Boehm; if it stays flat across many
-             * consecutive fires while `over_by_ns` stays large, the delay is
-             * NOT GC — look at scheduling/contention instead. */
-            if (getenv("NOVA_DIAG_DEADLINE_OVERRUN")) {
-                uint64_t gc_count = 0, gc_total_ns = 0, gc_max_ns = 0;
-                nova_gc_pause_diag_snapshot(&gc_count, &gc_total_ns, &gc_max_ns);
-                int64_t now = time_monotonic_ns();
-                fprintf(stderr,
-                    "[deadline-overrun-diag] q=%p dl_ns=%lld now=%lld over_by_ns=%lld "
-                    "gc_pause_count_so_far=%llu gc_pause_total_ns_so_far=%llu gc_pause_max_ns_so_far=%llu\n",
-                    (void*)q, (long long)_dl_ns, (long long)now,
-                    (long long)(now - _dl_ns),
-                    (unsigned long long)gc_count, (unsigned long long)gc_total_ns,
-                    (unsigned long long)gc_max_ns);
-                fflush(stderr);
-            }
             _dl_fired = true;
             nova_scope_deliver_cancel(q, NULL);
         }
@@ -4061,22 +3945,10 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * See §12.31 for VEH-localized crash analysis. ACQUIRE load synchronizes
      * with the driver's RELEASE decrement at end of handle_cancel_scope. */
     {
-        int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
-        long long _nv456_iters = 0;
-        if (_nv456_diag && nova_aint_load(&q->pending_driver_jobs) > 0) {
-            fprintf(stderr, "[m456] pending_driver_jobs wait ENTER q=%p val=%d\n",
-                    (void*)q, (int)nova_aint_load(&q->pending_driver_jobs));
-            fflush(stderr);
-        }
         while (nova_aint_load(&q->pending_driver_jobs) > 0) {
             uv_run(nova_current_loop(), UV_RUN_NOWAIT);
             if (nova_aint_load(&q->pending_driver_jobs) > 0) {
                 uv_sleep(1);  /* yield ~1ms; driver thread is independent of our loop */
-                if (_nv456_diag && (++_nv456_iters % 2000) == 0) {
-                    fprintf(stderr, "[m456] pending_driver_jobs STILL WAITING q=%p val=%d iters=%lld\n",
-                            (void*)q, (int)nova_aint_load(&q->pending_driver_jobs), _nv456_iters);
-                    fflush(stderr);
-                }
             }
         }
     }
@@ -4093,22 +3965,10 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
      * the sweep is the very next thing the worker does after the fiber
      * returns. See pending_sweeps field doc. */
     {
-        int _nv456_diag = getenv("NOVA_DIAG_M456") != NULL;
-        long long _nv456_iters = 0;
-        if (_nv456_diag && nova_aint_load(&q->pending_sweeps) > 0) {
-            fprintf(stderr, "[m456] pending_sweeps wait ENTER q=%p val=%d\n",
-                    (void*)q, (int)nova_aint_load(&q->pending_sweeps));
-            fflush(stderr);
-        }
         while (nova_aint_load(&q->pending_sweeps) > 0) {
             uv_run(nova_current_loop(), UV_RUN_NOWAIT);
             if (nova_aint_load(&q->pending_sweeps) > 0) {
                 uv_sleep(1);
-                if (_nv456_diag && (++_nv456_iters % 2000) == 0) {
-                    fprintf(stderr, "[m456] pending_sweeps STILL WAITING q=%p val=%d iters=%lld\n",
-                            (void*)q, (int)nova_aint_load(&q->pending_sweeps), _nv456_iters);
-                    fflush(stderr);
-                }
             }
         }
     }
@@ -5296,15 +5156,6 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
         if (mco_running()) {
             nova_fiber_yield();
         } else if (_nova_active_scope) {
-            /* Plan 221.1 №108: sibling of the busy-yield door below
-             * (`ms > 0` branch's doc comment) — same NO-HIT candidate,
-             * same opt-in trace. */
-            if (NOVA_UNLIKELY(getenv("NOVA_TRACE_BUSY_YIELD_SLEEP") != NULL)) {
-                fprintf(stderr,
-                    "nova: [NO-HIT-TRACE] busy-yield main-flow Time.sleep(0) "
-                    "hit (scope=%p) — Plan 221.1 #108 candidate for removal\n",
-                    (void*)_nova_active_scope);
-            }
             nova_supervised_step(_nova_active_scope);
         }
         return NOVA_UNIT;
@@ -5341,23 +5192,11 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
          * unreachable through normal program flow post-#108 (main-body,
          * every `supervised{}` body incl. nested, every test/bench-runner
          * chunk — all execute inside the main-fiber now). NOT YET removed
-         * by NO-HIT procedure: that requires a corpus-wide trace proof
-         * (spec_tests/conformance mega-CU + flagship) which is the
-         * INTEGRATOR's authoritative gate, not this window's (mega-CU
-         * explicitly out of scope here). `NOVA_TRACE_BUSY_YIELD_SLEEP=1`
-         * opt-in (zero-cost when unset — one branch on a cached bool) logs
-         * to stderr on every hit; flip it on for the mega-CU + flagship
-         * gate run — zero hits there is the NO-HIT proof this branch (and
-         * its `time_sleep_ms(0)`-path sibling above, the bare
-         * `nova_supervised_step` call) needs before deletion. A hit found
-         * that IS legitimate (not a bug) means: don't delete, explain why
-         * here instead. */
-        if (NOVA_UNLIKELY(getenv("NOVA_TRACE_BUSY_YIELD_SLEEP") != NULL)) {
-            fprintf(stderr,
-                "nova: [NO-HIT-TRACE] busy-yield main-flow Time.sleep hit "
-                "(scope=%p) — Plan 221.1 #108 candidate for removal, see "
-                "fibers.h time_sleep_ms doc comment\n", (void*)_nova_active_scope);
-        }
+         * by NO-HIT procedure: that requires a corpus-wide proof
+         * (spec_tests/conformance mega-CU + flagship) that this branch
+         * is never hit, which is the INTEGRATOR's authoritative gate.
+         * A hit found that IS legitimate (not a bug) means: don't
+         * delete, explain why here instead. */
         /* Main flow inside a scope (D92 implicit либо explicit supervised):
          * drain queue + bounded uv_run пока deadline не пройдёт.
          * Plan 22 Ф.6: вместо busy-loop'а — drain ready, потом uv_run
