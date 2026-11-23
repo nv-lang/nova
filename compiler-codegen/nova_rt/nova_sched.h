@@ -191,10 +191,6 @@ static inline void nova_goready(mco_coro* co) {
     if (!co) return;
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
     if (!base) return;  /* legacy fiber без base — no latch; cannot have gopark'd */
-    /* [item 19 root 3 diag] main-fiber wake attempt: record the park_state
-     * BEFORE the election so a lost R4 (no-op on WAIT) is visible. */
-    int _r3m = _nova_r3_diag() && base->_nova_fiber_scope == NULL;
-    if (_r3m) _nova_r3_log("goready-pre", co, (long)base->_nova_park_state, 0);
     /* [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер: сигнатура-2 гонки —
      * мусорный/освобождённый SpawnCtx к моменту wake. Диаг-режим ловит его
      * ЗДЕСЬ (точка детонации по gdb-раскопке), до разыменования полей.
@@ -211,13 +207,11 @@ static inline void nova_goready(mco_coro* co) {
             if (__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
                                             NOVA_PARK_READY, false,
                                             __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-                if (_r3m) _nova_r3_log("goready-R3-latch", co, NOVA_PARK_NIL, 0);
                 return;
             }
             continue;
         }
         if (expected != NOVA_PARK_WAIT) {
-            if (_r3m) _nova_r3_log("goready-R4-noop", co, (long)expected, 0);
             return;
         }
         if (!__atomic_compare_exchange_n(&base->_nova_park_state, &expected,
@@ -225,7 +219,6 @@ static inline void nova_goready(mco_coro* co) {
                                          __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
             continue;
         }
-        if (_r3m) _nova_r3_log("goready-R2-won", co, (long)expected, 0);
         /* WON WAIT->DISPATCHED. Consistency order (review correction #4):
          *   (2) fiber_state PARKED->IDLE
          *   (3) clear parked[slot] (cancel-reachability bit) + parked_co[slot]
@@ -279,13 +272,6 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg,
         fprintf(stderr, "nova: nova_gopark: not in fiber context\n");
         abort();
     }
-    /* [item 19 root 3 diag] main-fiber park attempt. */
-    {
-        NovaSpawnCtxBase* _b = (NovaSpawnCtxBase*)mco_get_user_data(co);
-        if (_nova_r3_diag() && _b && _b->_nova_fiber_scope == NULL) {
-            _nova_r3_log("gopark-enter", co, (long)_b->_nova_park_state, 0);
-        }
-    }
     /* G0: fiber_state RUNNING -> PARKED (RELEASE). Ordered BEFORE G1 so the
      * SEQ_CST G1 store publishes PARKED too (single coherent observation point
      * for goready's R2 PARKED->IDLE — review fence_hazard #1). */
@@ -317,13 +303,6 @@ static inline void nova_gopark(void (*unlock_fn)(void*), void* unlock_arg,
     /* Resumed. Clear the TLS the scheduler already drained (yield path). */
     _nova_park_unlock_fn  = NULL;
     _nova_park_unlock_arg = NULL;
-    /* [item 19 root 3 diag] main-fiber park returned (wake consumed). */
-    {
-        NovaSpawnCtxBase* _b = (NovaSpawnCtxBase*)mco_get_user_data(co);
-        if (_nova_r3_diag() && _b && _b->_nova_fiber_scope == NULL) {
-            _nova_r3_log("gopark-returned", co, (long)_b->_nova_park_state, 0);
-        }
-    }
     /* Reopen the latch for the next wait after the dispatch has resumed us. */
     nova_park_state_store(co, NOVA_PARK_NIL, __ATOMIC_RELEASE);
 }
