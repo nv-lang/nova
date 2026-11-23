@@ -97,8 +97,6 @@ extern "C" {
 struct NovaFiberQueue;
 void  nova_runtime_cancel_worker_fibers(struct NovaFiberQueue* scope);
 void  nova_diag656_count_first_run(void);
-int   nova_spawn_pool_diag(void);
-void  nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
 struct NovaFiberQueue* nova_runtime_orphan_scope(void);
 void  nova_runtime_dump_state(const char* reason);
 void  nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);

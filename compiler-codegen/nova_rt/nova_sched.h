@@ -191,14 +191,6 @@ static inline void nova_goready(mco_coro* co) {
     if (!co) return;
     NovaSpawnCtxBase* base = (NovaSpawnCtxBase*)mco_get_user_data(co);
     if (!base) return;  /* legacy fiber без base — no latch; cannot have gopark'd */
-    /* [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер: сигнатура-2 гонки —
-     * мусорный/освобождённый SpawnCtx к моменту wake. Диаг-режим ловит его
-     * ЗДЕСЬ (точка детонации по gdb-раскопке), до разыменования полей.
-     * Прототипы — extern, т.к. runtime.h включается ПОСЛЕ этого заголовка. */
-    {
-        if (nova_spawn_pool_diag()) nova_spawn_ctx_diag_check_live(base, "goready");
-    }
-
     /* Use the state observed by a failed CAS for the next election.
      * A park can publish WAIT while we are trying to latch NIL->READY. */
     int32_t expected = nova_park_state_load(co);

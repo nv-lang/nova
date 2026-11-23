@@ -473,22 +473,6 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
              * thanks to Fix A in alloc_slot). Use -2 sentinel (< 0, not -1). */
             NovaSpawnCtxBase* displaced_ctx =
                 (NovaSpawnCtxBase*)mco_get_user_data(expected_co);
-            /* [M-mn-spawnctx-corruption-cancel-wake] R1-трипваер: если
-             * expected_co на деле умер и его арена-слот переиспользован новым
-             * файбером, эта запись «-2» портит ЧУЖОЙ живой SpawnCtx. Диаг-режим
-             * логирует displaced-событие и валидирует ctx перед записью. */
-            {
-                if (nova_spawn_pool_diag()) {
-                    fprintf(stderr,
-                            "nova: [R1-DIAG] driver WRONG-FIBER sub-case A: slot=%d "
-                            "expected_co=%p actual_co=%p displaced_ctx=%p\n",
-                            sl, (void*)expected_co, (void*)actual_co, (void*)displaced_ctx);
-                    fflush(stderr);
-                    if (displaced_ctx) {
-                        nova_spawn_ctx_diag_check_live(displaced_ctx, "driver-displaced-write");
-                    }
-                }
-            }
             if (displaced_ctx) {
                 displaced_ctx->_nova_worker_slot = -2;  /* DISPLACED: epilogue skips free_slot */
             }

@@ -346,9 +346,8 @@ void nova_free_uncollectable(void* ptr) {
     /* [M-mn-spawnctx-corruption-cancel-wake] дискриминатор (opt-in,
      * NOVA_UNCOLL_QUAR=1): вместо GC_free — poison 0xDD + осознанная утечка.
      * Если краш исчезает под этим флагом без иных изменений — порча течёт
-     * через реюз какого-то released-uncollectable блока (SpawnCtx-пул уже
-     * закрыт отдельным NOVA_SPAWN_POOL_DIAG-карантином; сюда попадают
-     * остальные: ctx_pins[], effect-snapshots, sync-примитивы и т.д.).
+     * через реюз какого-то released-uncollectable блока (сюда попадают
+     * ctx_pins[], effect-snapshots, sync-примитивы и т.д.).
      * Читатель stale-указателя получает детерминированный 0xDD-паттерн
      * вместо случайного мусора. Ноль оверхеда без env (кеш-бранч). */
     {
