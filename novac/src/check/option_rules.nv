@@ -44,6 +44,7 @@ const BARE_GENERIC_VARIANT_MSG = "a bare `None` here has no type to take: it sta
 
 /// A payload the walk could not type, so the sum's parameter stays unknown.
 const GENERIC_PAYLOAD_UNTYPED_MSG = "outside the subset: the type argument of this sum cannot be inferred from the payload -- its type is not decided here (E2-b3)"
+const NEW_TYPE_KIND_IN_SUM_SLOT_MSG = "the closure-body slot filler has no branch for this TypeKind: a newly added variant must decide here explicitly (P21)"
 
 /// The expectation ONE payload argument meets (registry №1933): its slot's
 /// own type when concrete; for a GENERIC slot, the binding the position's
@@ -213,15 +214,22 @@ fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, arg
         for i in 0..subst.len() {
             if !is_ty(subst[i]) {
                 ro ex = @ctx.tys.arg(@value_expect, i)
-                if @ctx.tys.kind_of(ex) == TypeKind.TkParam {
+                ro k = @ctx.tys.kind_of(ex)
+                if k == TypeKind.TkParam {
                     // The position's own parameter, not a decision (E2-b3): a
                     // symbolic candidate (the closure body's free-return
                     // expectation) names the slot only as itself -- the body
                     // has not spoken yet. Left unfilled, the final check
                     // refuses by name; filling it would plant a symbolic
                     // instance the shell check would misreport.
-                } else {
+                } else if k == TypeKind.TkPrim || k == TypeKind.TkRecord ||
+                          k == TypeKind.TkSum || k == TypeKind.TkApp ||
+                          k == TypeKind.TkInfer || k == TypeKind.TkNewtype ||
+                          k == TypeKind.TkTuple || k == TypeKind.TkPtr ||
+                          k == TypeKind.TkFn || k == TypeKind.TkEffect {
                     subst[i] = ex
+                } else {
+                    @report_first_leaf_of(kids, NEW_TYPE_KIND_IN_SUM_SLOT_MSG)
                 }
             } else {
                 // Fixed by a payload slot.

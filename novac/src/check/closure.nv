@@ -26,7 +26,7 @@ import ../lex.{TokenKind}
 import ../tree.{Node, NodeKind, no_node}
 import ../sem.{branch_children, leaf_text, leaf_kind, closure_param_count, ParamMode, FnRow, raw_row, slot_binding_in}
 import ../sem.{decl_index_of_ty}
-import ../types.{DeclId}
+import ../names.{DeclId}
 import ../builtins.{TypeKind}
 import ../types.{TyId, is_ty, no_ty}
 
@@ -256,6 +256,10 @@ fn Checker mut @subst_bound(t TyId, bindings []TyId) -> TyId {
     @ctx.tys.app(DeclId(decl_index_of_ty(@ctx, t)), args)
 }
 
+/// Type a closure LITERAL at a call-argument position: the parameter must be a
+/// fn type; receiver and position bindings fix the fn's slots, the concrete
+/// parameter types are substituted, and the bare-parameter result door lets the
+/// body speak (inference) before the signature is recorded.
 fn Checker mut @type_closure_arg(c Node, row FnRow, at int, recv_t TyId, pre []TyId) -> () {
     ro kids = branch_children(c)
     if raw_row(row) < 0 || at < 0 {
