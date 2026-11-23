@@ -167,3 +167,29 @@ as .c.txt per the evidence-file rule) confirmed it deterministically:
 Nova-level stress on the redesigned runtime (mini-D, SHA-256
 `eb7aa386585c00184e44abd8ed5e83d2640b6ab3d79400786f869804de25eac6`):
 **500 solo + 300 under 20-way load, 0 failures**, same protocol as above.
+
+
+## Acceptance-review fix: restore stream handle.data before the drain close
+
+The acceptor's diff audit caught it: the drain pointed the stream's
+`uv handle.data` at `NovaDrainCtx` (so drain read callbacks find their
+context), but `_nn2_drain_finish` queued `uv_close` on the stream
+WITHOUT restoring it -- and `_nn2_stream_close_cb` reads `h->data` as
+`NovaNet2Stream*`. The first harness run MISSED this because its free
+counter did not distinguish the stream allocation from the context
+allocation (false GREEN); after switching the counter to
+pointer-identity of the stream allocation the defect shows as
+`stream_frees = 0` (the stream is never freed, the context refcount is
+corrupted instead).
+
+Fix: `_nn2_drain_finish` restores `s->handle.data = s` BEFORE `uv_close`
+is queued on the stream. All other stream-close paths keep
+`handle.data == s` throughout (audited).
+
+- RED unchanged: same harness on 041a1f6c3 reproduces the AV inside
+  `uv_run`'s endgame.
+- GREEN: all three scenarios (normal graceful close, uv_timer_init
+  failure, uv_timer_start failure) report `stream_frees == 1`.
+- Nova-level stress after the fix (mini-E, SHA-256
+  `e112a05637b2723cc4805aac156ab8221491516cc5df0dcf063b171f1b8728d1`):
+  500 solo + 300 under 20-way load, 0 failures.

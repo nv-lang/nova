@@ -1359,6 +1359,11 @@ static void _nn2_drain_finish(NovaDrainCtx* d) {
     d->finished = 1;
     uv_timer_stop(&d->timer);
     uv_close((uv_handle_t*)&d->timer, _nn2_drain_timer_close_cb);
+    /* The drain pointed the stream's handle.data at this context so the
+     * drain read callbacks could find it; _nn2_stream_close_cb reads
+     * h->data as NovaNet2Stream*. Restore it BEFORE the stream close is
+     * queued, whatever order the endgame processes the two handles in. */
+    d->s->handle.data = d->s;
     if (!uv_is_closing((uv_handle_t*)&d->s->handle)) {
         uv_close((uv_handle_t*)&d->s->handle, _nn2_stream_close_cb);
     }
