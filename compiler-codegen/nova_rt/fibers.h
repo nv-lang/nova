@@ -2522,7 +2522,7 @@ static inline NovaResumeOutcome nova_resume_fiber(mco_coro* co, void* tls_ctx,
      * эмитится кодогеном в эпилоге (emit_spawn); но inc==first_run при
      * зависании уже отвечает: все дети бегали → потеря ниже по течению.
      * Счётчик безусловный (атомарный inc — копейки), печать — только в
-     * дампе состояния (NOVA_DIAG_656/сторож). */
+     * дампе состояния (сторож). */
     {
         NovaSpawnCtxBase* _d656 = (NovaSpawnCtxBase*)mco_get_user_data(co);
         if (_d656 && _d656->_nova_worker_slot < 0) {
@@ -3175,9 +3175,9 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
      * and that asymmetry is why #791 read for weeks as "the process simply
      * does not exit", with not one diagnostic line. Measured 2026-08-31: a
      * polaris server whose /shutdown handler cancels its own governing token
-     * spins here forever on remote=1, and NOVA_DIAG_656=1 produced ZERO
-     * output, because the 656 dump is wired into the supervised loop, not
-     * into this one.
+     * spins here forever on remote=1, and the wired-in 656 dump produced
+     * ZERO output, because it is wired into the supervised loop, not into
+     * this one.
      *
      * WHY THIS ONE FIRES UNCONDITIONALLY, unlike the supervised twin. There
      * the dump is gated on `nova_runtime_has_stuck_fibers()`, and rightly so:
@@ -3753,25 +3753,7 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
             if (v >= 0) _watchdog_threshold_secs = v;
         }
     }
-    /* [M-187-sse-live-tls-server-hang] diagnostic-only, opt-in (2026-07-15):
-     * the worker-thread nested-supervised path (this same fn, invoked from
-     * `nova_runtime_worker_pump_scope`'s caller when a `supervised{}` block
-     * runs INSIDE an already-spawned fiber) has NO dump path at all today —
-     * `_nova_on_worker_thread()` unconditionally disables the watchdog there.
-     * That leaves this class of hang (nested supervised deep inside a spawned
-     * connection-handler fiber, aggregator flagship's own shape) completely
-     * undiagnosable via the existing mechanism. Opt-in via a SEPARATE env var
-     * (default off — zero behavior change unless explicitly requested) lets
-     * worker-thread scopes dump too; `_watchdog_active_scope` stays a single
-     * global (cosmetic race across concurrent workers, dump's per-worker/
-     * per-slot fiber detail below is unaffected — that part is what actually
-     * localizes the stuck fiber). Not wired into production defaults. */
-    bool _watchdog_worker_opt_in = false;
-    {
-        const char* wenv = getenv("NOVA_WATCHDOG_WORKER");
-        if (wenv && wenv[0] == '1') _watchdog_worker_opt_in = true;
-    }
-    bool _watchdog_enabled = (!_nova_on_worker_thread() || _watchdog_worker_opt_in)
+    bool _watchdog_enabled = !_nova_on_worker_thread()
                               && _watchdog_threshold_secs > 0;
     if (_watchdog_enabled) {
         nova_runtime_set_watchdog_scope((struct NovaFiberQueue*)q);
@@ -3894,10 +3876,8 @@ static inline void nova_supervised_run_impl(NovaFiberQueue* q,
                      * ребёнку — он ищет SUSPENDED-not-parked по слотам, а у
                      * неисполненного нет ни корутины, ни слота. Доказано
                      * живым зависанием 2026-08-14: remote=1, все очереди
-                     * пусты, дамп не сработал (лог из одной строки). Под
-                     * NOVA_DIAG_656 дамп стреляет по одному порогу времени —
-                     * диагностический режим, по умолчанию поведение прежнее. */
-                    if (nova_runtime_has_stuck_fibers() || getenv("NOVA_DIAG_656")) {
+                     * пусты, дамп не сработал (лог из одной строки). */
+                    if (nova_runtime_has_stuck_fibers()) {
                         _watchdog_fired = true;
                         char buf[64];
                         snprintf(buf, sizeof(buf),

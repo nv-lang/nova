@@ -217,13 +217,6 @@ static void _nova_fw_gc_push_region(char* lo, char* hi) {
 /* GC_set_push_other_roots-колбэк. Mark-фаза, мир остановлен — все
  * GC-зарегистрированные потоки suspended → bitmap/high_water стабильны;
  * обход append-only списка без лока безопасен. */
-/* №868: выключатель проверки отображённости слота. `NOVA_GC_SLOT_PROBE=0`
- * — читать `mco_status` без проверки, то есть ДОФИКСНОЕ поведение.
- * Нужен только для пробы обеих сторон на ОДНОМ бинаре; в проде не
- * ставится. Читается ОДИН раз: это mark-фаза, getenv на каждый слот
- * стоил бы дороже самой проверки. */
-static int _nova_fw_slot_probe_flag = 1;
-
 /* 221.1 №1857: effects.c -- the handler TLS slots of every thread (effects.h,
  * "THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS"). Declared here, not by
  * including effects.h: this TU stays off nova_rt.h. */
@@ -272,22 +265,18 @@ static void _nova_fw_gc_push_other_roots(void) {
              * Пропуск такого слота безопасен для GC: если заголовок корутины
              * не закоммичен, то корутины там ещё (или уже) нет, а значит нет
              * и корней, которые надо было бы оттуда пушить.
-             * ВЫКЛЮЧАТЕЛЬ `NOVA_GC_SLOT_PROBE=0` возвращает ДОФИКСНОЕ поведение
-             * буквально (читать без проверки), чтобы обе стороны пробы
-             * показывались на ОДНОМ бинаре. */
-            if (_nova_fw_slot_probe_flag) {
-                MEMORY_BASIC_INFORMATION co_mbi;
-                if (!VirtualQuery(co, &co_mbi, sizeof(co_mbi))) continue;
-                if (co_mbi.State != MEM_COMMIT) continue;
-                if (co_mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) continue;
-                /* заголовок обязан целиком лежать в этом же закоммиченном
-                 * регионе: проверить первую страницу и прочитать поле за её
-                 * границей — та же ошибка одним шагом позже. */
-                {
-                    size_t avail = (size_t)((char*)co_mbi.BaseAddress
-                                            + co_mbi.RegionSize - (char*)co);
-                    if (avail < sizeof(mco_coro)) continue;
-                }
+             */
+            MEMORY_BASIC_INFORMATION co_mbi;
+            if (!VirtualQuery(co, &co_mbi, sizeof(co_mbi))) continue;
+            if (co_mbi.State != MEM_COMMIT) continue;
+            if (co_mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) continue;
+            /* заголовок обязан целиком лежать в этом же закоммиченном
+             * регионе: проверить первую страницу и прочитать поле за её
+             * границей — та же ошибка одним шагом позже. */
+            {
+                size_t avail = (size_t)((char*)co_mbi.BaseAddress
+                                        + co_mbi.RegionSize - (char*)co);
+                if (avail < sizeof(mco_coro)) continue;
             }
             if (mco_status(co) == MCO_DEAD) continue;
             /* закоммиченные диапазоны usable-региона слота (minicoro-
@@ -322,9 +311,6 @@ static BOOL CALLBACK _nova_fw_global_init(PINIT_ONCE once, PVOID param,
 #ifdef NOVA_GC_BOEHM
     /* Read configuration before publishing the stop-the-world callback.
      * getenv and stdio can lock the CRT while their owner is suspended. */
-    const char* slot_probe = getenv("NOVA_GC_SLOT_PROBE");
-    _nova_fw_slot_probe_flag =
-        !(slot_probe && slot_probe[0] == '0' && slot_probe[1] == '\0');
     GC_set_push_other_roots(_nova_fw_gc_push_other_roots);
 #endif
     return TRUE;

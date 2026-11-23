@@ -102,7 +102,6 @@ void  nova_spawn_ctx_diag_check_live(const void* vbase, const char* where);
 struct NovaFiberQueue* nova_runtime_orphan_scope(void);
 void  nova_runtime_dump_state(const char* reason);
 void  nova_runtime_set_watchdog_scope(struct NovaFiberQueue* q);
-void  nova_gc_pause_diag_snapshot(uint64_t* count, uint64_t* total_ns, uint64_t* max_ns);
 bool  nova_runtime_has_stuck_fibers(void);
 bool  nova_driver_is_started(void);
 int   nova_runtime_current_worker_id(void);

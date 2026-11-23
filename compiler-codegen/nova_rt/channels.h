@@ -1170,11 +1170,10 @@ static inline void nova_select_park(SelectCtx* ctx) {
 
 /* ── Plan 65 Ф.11: Timer observability counters ────────────────────
  *
- * Enabled when env var NOVA_TIMER_METRICS=1 is set at process start.
  * Counters are unconditionally maintained (cost = 1 atomic incr per
- * alloc/fire/cancel) — disabled path == disabled dump. Atomic primitives
- * use C11 stdatomic when available, else fall back to non-atomic int64
- * (single-thread bootstrap correct; M:N upgrade tracked in Plan 23).
+ * alloc/fire/cancel). Atomic primitives use C11 stdatomic when available,
+ * else fall back to non-atomic int64 (single-thread bootstrap correct;
+ * M:N upgrade tracked in Plan 23).
  *
  * Counters:
  *   alloc_total      — lifetime sum of timer allocations (close_after calls
@@ -1186,52 +1185,16 @@ static inline void nova_select_park(SelectCtx* ctx) {
  *                       maximum, not running sample).
  *
  * Bench-history snapshot is dumped via Time.timer_stats() — see fibers.h.
- * Leak warning at atexit when alloc_active > 0. */
+ */
 typedef struct {
     int64_t alloc_total;
     int64_t alloc_active;
     int64_t fired;
     int64_t cancelled;
     int64_t longest_pending_ms;
-    bool    metrics_enabled;
-    bool    atexit_installed;
 } NovaTimerStats;
 
 static NovaTimerStats _nova_timer_stats = {0};
-
-static void _nova_timer_metrics_atexit(void) {
-    if (!_nova_timer_stats.metrics_enabled) return;
-    fprintf(stderr,
-        "\nNOVA TIMER STATS:\n"
-        "  alloc_total:       %lld\n"
-        "  alloc_active:      %lld%s\n"
-        "  fired:             %lld\n"
-        "  cancelled:         %lld\n"
-        "  longest_pending:   %lld ms\n",
-        (long long)_nova_timer_stats.alloc_total,
-        (long long)_nova_timer_stats.alloc_active,
-        _nova_timer_stats.alloc_active > 0 ? "    [LEAK]" : "",
-        (long long)_nova_timer_stats.fired,
-        (long long)_nova_timer_stats.cancelled,
-        (long long)_nova_timer_stats.longest_pending_ms);
-    if (_nova_timer_stats.alloc_active > 0) {
-        fprintf(stderr,
-            "nova: WARNING: %lld timer(s) still active at process exit\n"
-            "      (Plan 65 leak detection — consider tok.cancel() or scope-exit cleanup)\n",
-            (long long)_nova_timer_stats.alloc_active);
-    }
-}
-
-static inline void _nova_timer_metrics_init_lazy(void) {
-    /* Single-thread bootstrap: check env once on first call. */
-    if (_nova_timer_stats.atexit_installed) return;
-    _nova_timer_stats.atexit_installed = true;
-    const char* env = getenv("NOVA_TIMER_METRICS");
-    if (env && (env[0] == '1' || env[0] == 't' || env[0] == 'T' || env[0] == 'y' || env[0] == 'Y')) {
-        _nova_timer_stats.metrics_enabled = true;
-        atexit(_nova_timer_metrics_atexit);
-    }
-}
 
 /* ── Time.after — D94 timeout channel (Plan 31 Ф.5) ───────────── */
 
@@ -1285,8 +1248,7 @@ typedef struct NovaAfterState {
  *
  * Counters are ALWAYS maintained (cost = 1 incr/decr per alloc/fire/cancel)
  * so that TimerMetrics.timer_*() queries (Plan 175 Ф.1; ex-Time.timer_*())
- * return valid values regardless of NOVA_TIMER_METRICS env. The env only
- * controls the atexit dump + leak warning. */
+ * return valid values. */
 static inline void _nova_after_metrics_dec(NovaAfterState* st, bool counted_as_cancel) {
     if (!st || !st->metrics_alive) return;
     st->metrics_alive = false;
@@ -1433,9 +1395,7 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
     pair.rx->state->on_select_lost = _nova_after_on_select_lost;
     pair.rx->state->cleanup_data   = st;
     /* Plan 65 Ф.10/Ф.11: register with bound CancelToken (if any) +
-     * tick alloc counter. Counters are always maintained — env only
-     * controls the atexit dump (init_lazy installs atexit when enabled). */
-    _nova_timer_metrics_init_lazy();
+     * tick alloc counter. Counters are always maintained. */
     _nova_timer_stats.alloc_total++;
     _nova_timer_stats.alloc_active++;
     if ((int64_t)ms > _nova_timer_stats.longest_pending_ms) {
