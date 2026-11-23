@@ -437,19 +437,24 @@ static void _nova_driver_handle_cancel_timer(NovaSleepState* st) {
 static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     NovaSleepState* st = (NovaSleepState*)h->data;
     if (!st) return;
-    int _r3m = _nova_r3_diag() && st->home_worker_id < 0;
-    if (_r3m) _nova_r3_log("close-cb-enter-main", st->expected_co, (long)st->slot, 0);
+    /* Snapshot before CLOSED permits the sleeping fiber to unwind. */
+    const int home_worker_id = st->home_worker_id;
+    mco_coro* const expected_co = st->expected_co;
+    NovaFiberQueue* const sleep_scope = st->scope;
+    const int slot = st->slot;
+    int _r3m = _nova_r3_diag() && home_worker_id < 0;
+    if (_r3m) _nova_r3_log("close-cb-enter-main", expected_co, (long)slot, 0);
 
     /* Unlink from armed list (driver-only). */
     _nova_driver_arm_list_unlink(st);
 
-    NovaFiberQueue* sc = st->scope;
-    int sl = st->slot;
+    NovaFiberQueue* sc = sleep_scope;
+    int sl = slot;
     if (getenv("NOVA_DIAG_P259_DL")) {
         int dbg_count = sc ? __atomic_load_n(&sc->count, __ATOMIC_ACQUIRE) : -1;
         mco_coro* dbg_actual = (sc && sl >= 0 && sl < dbg_count) ? sc->fibers[sl] : NULL;
         fprintf(stderr, "[p259-dl] CLOSE_CB st=%p scope=%p slot=%d count=%d actual_co=%p expected_co=%p\n",
-                (void*)st, (void*)sc, sl, dbg_count, (void*)dbg_actual, (void*)st->expected_co);
+                (void*)st, (void*)sc, sl, dbg_count, (void*)dbg_actual, (void*)expected_co);
         fflush(stderr);
     }
     /* [M-mn-spawnctx-corruption-cancel-wake] fix (Plan 211 family): ACQUIRE-load
@@ -478,10 +483,10 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     int sc_count = sc ? __atomic_load_n(&sc->count, __ATOMIC_ACQUIRE) : 0;
     mco_coro* actual_co = (sc && sl >= 0 && sl < sc_count) ? sc->fibers[sl] : NULL;
 
-    if (_r3m && actual_co != st->expected_co) {
-        _nova_r3_log("close-wrong-fiber-main", st->expected_co, (long)st->slot, 0);
+    if (_r3m && actual_co != expected_co) {
+        _nova_r3_log("close-wrong-fiber-main", expected_co, (long)slot, 0);
     }
-    if (actual_co != st->expected_co) {
+    if (actual_co != expected_co) {
         /* WRONG-FIBER: scope->fibers[slot] does not match expected_co.
          * Two sub-cases:
          *   A) actual_co==NULL — fibers[slot] became NULL while expected_co was parked
@@ -497,8 +502,6 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
          * DISPATCHED CAS only fires if expected_co is genuinely parked (sub-case A);
          * a dead/reused expected_co (sub-case B) has park_state==NIL/DEAD so goready
          * is a no-op latch we simply skip. */
-        mco_coro* expected_co = st->expected_co;
-
         if (expected_co && mco_status(expected_co) == MCO_SUSPENDED) {
             /* Sub-case A: expected_co is alive, stuck in mco_yield due to STALE race.
              * Publish CLOSED so the park_until predicate is satisfied on resume. */
@@ -534,7 +537,7 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
             /* [M-driver-sleep-main-thread-wake-gap] — see the doc comment on
              * the "Normal path" call below for the full writeup; same gap
              * applies to this sub-case A resolution. */
-            if (st->home_worker_id < 0) nova_runtime_signal_main();
+            if (home_worker_id < 0) nova_runtime_signal_main();
         } else {
             /* Sub-case B: expected_co is dead — slot was legitimately reused. */
             __atomic_store_n(&st->stage, NOVA_SLEEP_DRV_CLOSED, __ATOMIC_SEQ_CST);
@@ -554,8 +557,8 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
              * покидает sleep до CLOSED; второго close_cb на один st не
              * бывает — «expected_co is already dead» из комментария выше
              * для сна недостижимо). Хотя бы одно плечо видит другое. */
-            nova_sched_wake_expected(st->scope, st->slot, st->expected_co);
-            if (st->home_worker_id < 0) nova_runtime_signal_main();
+            nova_sched_wake_expected(sleep_scope, slot, expected_co);
+            if (home_worker_id < 0) nova_runtime_signal_main();
         }
         return;
     }
@@ -565,8 +568,8 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
     /* [item 19 root 3 diag] a MAIN-thread sleep closed — the wake below plus
      * signal_main is exactly the chain whose loss leaves main parked with an
      * empty-output process. */
-    if (st->home_worker_id < 0 && _nova_r3_diag()) {
-        _nova_r3_log("sleep-close-main", st->expected_co, (long)st->slot, 0);
+    if (home_worker_id < 0 && _nova_r3_diag()) {
+        _nova_r3_log("sleep-close-main", expected_co, (long)slot, 0);
     }
 
     /* №656: wake строго BY-CO, не через слот-резолв. Прежняя строка
@@ -589,7 +592,7 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
      * уже будит sub-case A, «strictly cleaner» по его же комментарию);
      * латч ready-before-park (R3/G3, nova_sched.h) покрывает «wake до
      * парковки» ПО ПОСТРОЕНИЮ, без резолва слота. */
-    if (st->expected_co) nova_goready(st->expected_co);
+    if (expected_co) nova_goready(expected_co);
 
     /* [M-driver-sleep-main-thread-wake-gap] (found investigating Plan 259
      * regression in std/src/concurrency/supervised_cancel_direct_body_test.nv
@@ -635,7 +638,7 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
      * started + direct-body-sleep + an enclosing timeout/deadline + natural
      * completion; Plan 259 Layer 2 makes driver-mode universal from process
      * start, so this is the first wave where it fires deterministically). */
-    if (st->home_worker_id < 0) nova_runtime_signal_main();
+    if (home_worker_id < 0) nova_runtime_signal_main();
 }
 
 /* ── Plan 83.11 Ф.4: blocking offload via driver UV loop ──────────
