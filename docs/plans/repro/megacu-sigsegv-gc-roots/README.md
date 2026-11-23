@@ -90,7 +90,7 @@ SHA-256 3130aedbacc502181dd260f2ac8fdce64d71af6d8d58f32e414a707817fc64cc)
 is the separately-filed fixture race, not a GC/M:N defect.
 
 
-## Follow-up window (codex/tcp-close-reset, base c72fea17c): m_boxcap RST root cause (№TBD-3)
+## Follow-up window (codex/tcp-close-reset, base: the codex/segv-gc-register-dup line over `ebbc2d8cd`): m_boxcap RST root cause (№TBD-3)
 
 Single-diff A/B on the merged-conformance-base build; the ONLY difference
 between the two builds is `compiler-codegen/nova_rt/net.c` (graceful TCP
@@ -143,7 +143,7 @@ Reference points on the same protocol: base (immediate close) 11/396,
 graceful-close-only 3/500 under load.
 
 
-## Lifetime follow-up (041a1f6c3 -> redesign): embedded drain timer UAF
+## Lifetime follow-up (graceful-only variant -> redesign): embedded drain timer UAF
 
 The first drain implementation EMBEDDED the drain `uv_timer_t` in
 `NovaNet2Stream`. libuv's endgame queue PREPENDS, so closing the stream
@@ -153,7 +153,7 @@ the acceptor flagged. A poison-on-free C harness
 (`close_order_test.c.txt`, builds by #include-ing net.c; sources stored
 as .c.txt per the evidence-file rule) confirmed it deterministically:
 
-- RED (041a1f6c3): AV inside `uv_run`'s endgame, faulting instruction
+- RED (the graceful-only variant): AV inside `uv_run`'s endgame, faulting instruction
   resolved via the linker map; the freed stream page is read after the
   free while the timer's endgame unwinds.
 - GREEN (redesign): the drain timer moved into its OWN heap allocation
@@ -186,7 +186,7 @@ Fix: `_nn2_drain_finish` restores `s->handle.data = s` BEFORE `uv_close`
 is queued on the stream. All other stream-close paths keep
 `handle.data == s` throughout (audited).
 
-- RED unchanged: same harness on 041a1f6c3 reproduces the AV inside
+- RED unchanged: same harness on the graceful-only variant reproduces the AV inside
   `uv_run`'s endgame.
 - GREEN: all three scenarios (normal graceful close, uv_timer_init
   failure, uv_timer_start failure) report `stream_frees == 1`.
