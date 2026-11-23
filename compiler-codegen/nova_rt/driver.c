@@ -286,11 +286,6 @@ static void _nova_driver_arm_list_unlink(NovaSleepState* st) {
 /* ARM_SLEEP job handler — driver thread. */
 static void _nova_driver_handle_arm_sleep(NovaSleepState* st, uint64_t ms) {
     if (!st) return;
-    if (getenv("NOVA_DIAG_P259_DL")) {
-        fprintf(stderr, "[p259-dl] ARM_SLEEP recv st=%p scope=%p slot=%d ms=%llu expected_co=%p\n",
-                (void*)st, (void*)st->scope, st->slot, (unsigned long long)ms, (void*)st->expected_co);
-        fflush(stderr);
-    }
 
     /* Init timer on driver's loop. */
     int rc = uv_timer_init(&_nova_driver.loop, &st->timer);
@@ -450,13 +445,6 @@ static void _nova_driver_sleep_close_cb(uv_handle_t* h) {
 
     NovaFiberQueue* sc = sleep_scope;
     int sl = slot;
-    if (getenv("NOVA_DIAG_P259_DL")) {
-        int dbg_count = sc ? __atomic_load_n(&sc->count, __ATOMIC_ACQUIRE) : -1;
-        mco_coro* dbg_actual = (sc && sl >= 0 && sl < dbg_count) ? sc->fibers[sl] : NULL;
-        fprintf(stderr, "[p259-dl] CLOSE_CB st=%p scope=%p slot=%d count=%d actual_co=%p expected_co=%p\n",
-                (void*)st, (void*)sc, sl, dbg_count, (void*)dbg_actual, (void*)expected_co);
-        fflush(stderr);
-    }
     /* [M-mn-spawnctx-corruption-cancel-wake] fix (Plan 211 family): ACQUIRE-load
      * `count` BEFORE indexing `fibers[]`. This driver-thread read raced against
      * the WORKER thread's nova_scope_grow (fibers.h) — an unsynchronized
