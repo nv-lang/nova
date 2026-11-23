@@ -1,0 +1,48 @@
+#define GC_THREADS
+#include <gc.h>
+#include <windows.h>
+#include <stdio.h>
+
+extern void nova_fiber_arena_init(void);
+static HANDLE ready, release_worker;
+static volatile LONG finalized;
+
+static void GC_CALLBACK collected(void *object, void *arg) {
+    (void)object;
+    (void)arg;
+    InterlockedIncrement(&finalized);
+}
+
+static DWORD WINAPI hold_root(void *unused) {
+    (void)unused;
+    void *volatile root = GC_malloc(64);
+    GC_register_finalizer_no_order(root, collected, NULL, NULL, NULL);
+    SetEvent(ready);
+    WaitForSingleObject(release_worker, INFINITE);
+    GC_reachable_here(root);
+    return 0;
+}
+
+int main(void) {
+    GC_INIT();
+    GC_set_finalize_on_demand(1);
+    GC_enable_incremental();
+    nova_fiber_arena_init();
+    ready = CreateEvent(NULL, TRUE, FALSE, NULL);
+    release_worker = CreateEvent(NULL, TRUE, FALSE, NULL);
+    HANDLE worker = CreateThread(NULL, 0, hold_root, NULL, 0, NULL);
+    if (!worker || WaitForSingleObject(ready, 5000) != WAIT_OBJECT_0) return 2;
+    for (int i = 0; i < 5; ++i) {
+        GC_gcollect();
+        GC_invoke_finalizers();
+    }
+    LONG premature = finalized;
+    SetEvent(release_worker);
+    if (WaitForSingleObject(worker, 5000) != WAIT_OBJECT_0) return 3;
+    for (int i = 0; i < 5 && !finalized; ++i) {
+        GC_gcollect();
+        GC_invoke_finalizers();
+    }
+    printf("while_held=%ld after_exit=%ld\n", premature, finalized);
+    return premature ? 1 : finalized != 1 ? 4 : 0;
+}
