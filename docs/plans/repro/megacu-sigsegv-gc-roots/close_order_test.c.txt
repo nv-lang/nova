@@ -1,0 +1,305 @@
+/* Targeted harness for the NovaNet2Stream graceful-close lifetime.
+ *
+ *  1. Callback-order check: the stream struct (which EMBEDS drain_timer)
+ *     must be freed only AFTER the drain timer's close callback ran AND
+ *     libuv's endgame pass completed. Freed memory is poisoned with
+ *     PAGE_NOACCESS, so any libuv touch of the timer after the free
+ *     faults deterministically.
+ *  2. uv_timer_init() failure injection: the close completes without
+ *     waiting for EOF; nothing to release but the stream (freed exactly
+ *     once, after its close callback).
+ *  3. uv_timer_start() failure injection: the created timer is closed and
+ *     its reference released via the timer close callback; the stream is
+ *     freed exactly once, after BOTH the stream close callback and the
+ *     timer close callback.
+ *
+ * Built by #include-ing the runtime's net.c (static functions reachable).
+ * uv_timer_init/uv_timer_start are macro-renamed for net.c only, giving
+ * failure-injection points without touching production code.
+ *
+ * nova_loop_defer_call is stubbed with a per-loop uv_check that drains the
+ * queue on the NEXT loop iteration -- strictly after the current endgame
+ * pass completed, matching the production uv_async semantics. */
+#define WIN32_LEAN_AND_MEAN
+extern int _getpid(void); /* <string.h> below resolves to nova_rt/string.h */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <windows.h>
+#include <process.h>
+#include <psapi.h>
+
+#include "net.h"   /* nova_rt.h + uv.h in the production order */
+#include <uv.h>
+
+static int (real_uv_timer_init)(uv_loop_t* l, uv_timer_t* t) {
+    return uv_timer_init(l, t);
+}
+static int (real_uv_timer_start)(uv_timer_t* t, uv_timer_cb cb,
+                                 uint64_t to, uint64_t rep) {
+    return uv_timer_start(t, cb, to, rep);
+}
+static int g_fail_timer_init = 0;
+static int g_fail_timer_start = 0;
+static int test_timer_init(uv_loop_t* l, uv_timer_t* t) {
+    if (g_fail_timer_init) return -123;
+    return real_uv_timer_init(l, t);
+}
+static int test_timer_start(uv_timer_t* t, uv_timer_cb cb, uint64_t to,
+                            uint64_t rep) {
+    if (g_fail_timer_start) return -124;
+    return real_uv_timer_start(t, cb, to, rep);
+}
+#define uv_timer_init  test_timer_init
+#define uv_timer_start test_timer_start
+
+#include "net.c"
+#undef uv_timer_init
+#undef uv_timer_start
+
+/* minicoro + scheduler TLS: referenced by nova_gopark (never exercised here).
+ * Definitions only — declarations came from minicoro.h / fibers.h above. */
+mco_result mco_yield(mco_coro* co) { (void)co; return MCO_SUCCESS; }
+void* mco_get_user_data(mco_coro* co) { (void)co; return 0; }
+mco_coro* mco_running(void) { return 0; }
+mco_state mco_status(mco_coro* co) { (void)co; return MCO_DEAD; }
+__declspec(thread) void* _nova_park_unlock_arg = 0;
+__declspec(thread) void (*_nova_park_unlock_fn)(void*) = 0;
+__declspec(thread) NovaFiberQueue* _nova_active_scope_tls = 0;
+__declspec(thread) int _nova_active_slot_tls = 0;
+void nova_runtime_poke_bootstrap_driver(void) { }
+void* nova_alloc(size_t size) { void* p = malloc(size); memset(p, 0, size); return p; }
+
+/* ── allocation interception: poison on free ───────────────────────── */
+/* VEH: report the faulting RIP offset at a post-free AV. */
+static LONG WINAPI harness_veh(EXCEPTION_POINTERS* ep) {
+    if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+        HMODULE m = GetModuleHandleA(NULL);
+        HMODULE mods[64];
+        DWORD needed = 0;
+        HANDLE proc = GetCurrentProcess();
+        char mname[MAX_PATH] = "?";
+        ULONG_PTR rip = (ULONG_PTR)ep->ExceptionRecord->ExceptionAddress;
+        EnumProcessModules(proc, mods, sizeof mods, &needed);
+        for (DWORD i = 0; i < needed / sizeof(HMODULE) && i < 64; i++) {
+            MODULEINFO mi;
+            GetModuleInformation(proc, mods[i], &mi, sizeof mi);
+            ULONG_PTR lo = (ULONG_PTR)mi.lpBaseOfDll;
+            ULONG_PTR hi = lo + mi.SizeOfImage;
+            if (rip >= lo && rip < hi) {
+                GetModuleFileNameA(mods[i], mname, MAX_PATH);
+                char* sl = strrchr(mname, (int)(unsigned char)'\\');
+                m = mods[i];
+                /* keep base for ripoff math below */
+                fprintf(stderr, "[AV-DLL %s]\n", sl ? sl : mname);
+                fflush(stderr);
+                break;
+            }
+        }
+        CONTEXT* ctx = ep->ContextRecord;
+        fprintf(stderr,
+                "[AV rip=0x%llx base=0x%llx ripoff=0x%llx data=0x%llx write=%d]\n",
+                (unsigned long long)ctx->Rip,
+                (unsigned long long)m,
+                (unsigned long long)((ULONG_PTR)ctx->Rip - (ULONG_PTR)m),
+                (unsigned long long)ep->ExceptionRecord->ExceptionInformation[1],
+                (int)ep->ExceptionRecord->ExceptionInformation[0]);
+        (void)rip;
+        fflush(stderr);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static SIZE_T g_alloc_size = 0;
+static void* nova_alloc_uncollectable(size_t size) {
+    /* VirtualAlloc, NOT malloc: the poison-on-free below must not poison
+     * pages that belong to the NT heap (heap metadata lives interleaved
+     * with allocations; poisoning breaks later heap walks). */
+    SIZE_T pages = (size + 4095) / 4096;
+    void* p = VirtualAlloc(NULL, pages * 4096, MEM_COMMIT | MEM_RESERVE,
+                           PAGE_READWRITE);
+    memset(p, 0, size);
+    g_alloc_size = pages * 4096;
+    return p;
+}
+static int g_free_count = 0;
+static void* g_stream_ptr = 0;
+static int g_stream_frees = 0;
+static void nova_free_uncollectable(void* p) {
+    /* The stream struct must be freed only after BOTH its own close
+     * callback and the drain timer's close callback ran AND libuv's
+     * endgame pass with them completed. GREEN builds defer the timer-side
+     * release past the endgame; RED (pre-fix) builds free from inside the
+     * endgame callback and the poison below faults on the same pass's
+     * later bookkeeping writes. */
+    g_free_count++;
+    if (p == g_stream_ptr) g_stream_frees++;
+    fprintf(stderr, "[FREE]\n");
+    DWORD oldp = 0;
+    VirtualProtect(p, g_alloc_size, PAGE_NOACCESS, &oldp);
+    (void)oldp; /* Leak on purpose: poisoned pages must stay mapped. */
+}
+
+/* ── stubs for the nova_rt symbols net.c references ────────────────── */
+uv_loop_t* nova_evloop(void) { return NULL; }
+uv_loop_t* nova_current_loop(void) { return NULL; }
+
+static uv_async_t g_defer_async;
+static int g_defer_async_inited = 0;
+static void (*g_defer_fn[64])(void*);
+static void* g_defer_arg[64];
+static int g_defer_n = 0;
+static void on_defer_async(uv_async_t* a) {
+    (void)a;
+    while (g_defer_n > 0) {
+        g_defer_n--;
+        g_defer_fn[g_defer_n](g_defer_arg[g_defer_n]);
+    }
+    /* Nothing queued: stop keeping the loop alive. */
+    uv_close((uv_handle_t*)a, NULL);
+    g_defer_async_inited = 0;
+}
+int nova_loop_defer_call(uv_loop_t* loop, void (*fn)(void*), void* arg) {
+    (void)loop;
+    g_defer_fn[g_defer_n] = fn;
+    g_defer_arg[g_defer_n] = arg;
+    g_defer_n++;
+    if (!g_defer_async_inited) {
+        uv_async_init(loop, &g_defer_async, on_defer_async);
+        g_defer_async_inited = 1;
+    }
+    uv_async_send(&g_defer_async);
+    return 0;
+}
+static void drain_deferred(void) {
+    while (g_defer_n > 0) {
+        g_defer_n--;
+        g_defer_fn[g_defer_n](g_defer_arg[g_defer_n]);
+    }
+}
+int nova_loop_defer_close(uv_loop_t* loop, uv_handle_t* h,
+                          uv_close_cb cb) {
+    (void)loop; uv_close(h, cb); return 0;
+}
+
+/* ── scenario ──────────────────────────────────────────────────────── */
+static uv_loop_t* g_loop;
+static uv_tcp_t g_client;
+static uv_connect_t g_connect;
+static uv_tcp_t g_listener;
+static NovaNet2Stream* g_stream;
+static uv_write_t g_cli_write;
+static uv_write_t g_srv_write;
+static int g_step = 0;
+
+static void on_client_read(uv_stream_t* st, ssize_t n, const uv_buf_t* b) {
+    (void)st; free(b->base);
+    if (n > 0) {
+        g_step = 2;  /* client got the response */
+        uv_close((uv_handle_t*)st, NULL);
+    }
+}
+static void on_client_alloc(uv_handle_t* h, size_t sz, uv_buf_t* b) {
+    (void)h; b->base = malloc(sz); b->len = sz;
+}
+static void on_srv_write_done(uv_write_t* w, int status) {
+    (void)w; (void)status;
+    fprintf(stderr, "[SRV-WRITE status=%d]\n", status); fflush(stderr);
+    g_step = 1;
+    /* Close the server stream via the production path: shutdown -> drain
+     * (the client's GET is UNREAD inbound data) -> uv_close. */
+    net_tcp_close(g_stream);
+}
+static void on_srv_connection(uv_stream_t* srv, int status) {
+    (void)srv; (void)status;
+    fprintf(stderr, "[CONN status=%d]\n", status); fflush(stderr);
+    g_stream = (NovaNet2Stream*)nova_alloc_uncollectable(sizeof(NovaNet2Stream));
+    g_stream_ptr = g_stream;
+    uv_tcp_init(g_loop, &g_stream->handle);
+    uv_accept((uv_stream_t*)&g_listener, (uv_stream_t*)&g_stream->handle);
+    /* One connection is enough for the scenario. */
+    uv_close((uv_handle_t*)&g_listener, NULL);
+    g_stream->loop = g_loop;
+    g_stream->handle.data = g_stream;
+    nova_aint_init(&g_stream->stage, NN2_IDLE);
+    /* Real flow: refcount == 1 "existence" (acquired at accept success)
+     * + 1 "user owns me" -- net_tcp_close releases the latter via its
+     * [#456] one-shot guard. */
+    nova_aint_init(&g_stream->refcount, 2);
+    nova_aint_init(&g_stream->close_release_done, 0);
+    g_stream->split_refcount = 0;
+    /* Server NEVER reads the request -- the fixture's unread-inbound shape. */
+    static const char resp[] = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    uv_buf_t b = uv_buf_init(resp, sizeof resp - 1);
+    uv_write(&g_srv_write, (uv_stream_t*)&g_stream->handle, &b, 1,
+             on_srv_write_done);
+}
+static void on_client_connect(uv_connect_t* c, int status) {
+    (void)c; (void)status;
+    static const char req[] = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    uv_buf_t b = uv_buf_init(req, sizeof req - 1);
+    uv_write(&g_cli_write, (uv_stream_t*)&g_client, &b, 1, NULL);
+    uv_read_start((uv_stream_t*)&g_client, on_client_alloc, on_client_read);
+}
+
+static void on_watchdog(uv_timer_t* t) {
+    fprintf(stderr, "[TICK active=%d]\n", g_loop->active_handles);
+    fflush(stderr);
+    uv_print_all_handles(g_loop, stderr);
+    fflush(stderr);
+    if (g_step == 2 && g_stream_frees == 1) {
+        fprintf(stderr, "[WD-STOP]\n"); fflush(stderr);
+        uv_stop(g_loop);
+    }
+}
+
+static int run_one(const char* label, int fail_init, int fail_start) {
+    fprintf(stderr, "[SCENARIO %s]\n", label); fflush(stderr);
+    g_step = 0; g_free_count = 0; g_defer_n = 0; g_stream_frees = 0; g_stream_ptr = 0;
+    g_fail_timer_init = fail_init; g_fail_timer_start = fail_start;
+    g_loop = malloc(uv_loop_size());
+    uv_loop_init(g_loop);
+    uv_async_init(g_loop, &g_defer_async, on_defer_async);
+    g_defer_async_inited = 1;
+
+    uv_tcp_init(g_loop, &g_listener);
+    struct sockaddr_in addr;
+    uv_ip4_addr("127.0.0.1", 0, &addr);
+    uv_tcp_bind(&g_listener, (const struct sockaddr*)&addr, 0);
+    struct sockaddr_in bound; int blen = sizeof bound;
+    uv_tcp_getsockname(&g_listener, (struct sockaddr*)&bound, &blen);
+    int port = ntohs(bound.sin_port);
+    uv_listen((uv_stream_t*)&g_listener, 8, on_srv_connection);
+    uv_tcp_init(g_loop, &g_client);
+    uv_ip4_addr("127.0.0.1", port, &addr);
+    uv_tcp_connect(&g_connect, &g_client, (const struct sockaddr*)&addr,
+                   on_client_connect);
+    fprintf(stderr, "[PRE-RUN]\n"); fflush(stderr);
+    uv_timer_t wd;
+    uv_timer_init(g_loop, &wd);
+    wd.data = g_loop;
+    uv_timer_start(&wd, on_watchdog, 2000, 1000);
+    uv_run(g_loop, UV_RUN_DEFAULT);
+    fprintf(stderr, "[POST-RUN]\n"); fflush(stderr);
+    drain_deferred();
+    fprintf(stderr, "[DEFERS-DRAINED free=%d]\n", g_free_count); fflush(stderr);
+    int ok = g_step == 2 && g_stream_frees == 1;
+    fflush(stderr);
+    printf("%-26s step=%d free=%d -> %s\n",
+           label, g_step, g_free_count, ok ? "OK" : "FAIL");
+    fflush(stdout);
+    uv_loop_close(g_loop);
+    free(g_loop);
+    return ok;
+}
+
+int main(void) {
+    AddVectoredExceptionHandler(1, harness_veh);
+    int fails = 0;
+    fails += !run_one("normal-graceful-close", 0, 0);
+    fails += !run_one("timer-init-failure",    1, 0);
+    fails += !run_one("timer-start-failure",   0, 1);
+    printf("%s\n", fails == 0 ? "HARNESS OK" : "HARNESS FAIL");
+    fflush(stdout);
+    return fails == 0 ? 0 : 1;
+}

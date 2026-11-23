@@ -141,3 +141,29 @@ everything already sent.
 
 Reference points on the same protocol: base (immediate close) 11/396,
 graceful-close-only 3/500 under load.
+
+
+## Lifetime follow-up (041a1f6c3 -> redesign): embedded drain timer UAF
+
+The first drain implementation EMBEDDED the drain `uv_timer_t` in
+`NovaNet2Stream`. libuv's endgame queue PREPENDS, so closing the stream
+after the timer makes the stream's close callback (which frees the
+struct) run BEFORE the timer's own endgame completes -- a use-after-free
+the acceptor flagged. A poison-on-free C harness
+(`close_order_test.c.txt`, builds by #include-ing net.c; sources stored
+as .c.txt per the evidence-file rule) confirmed it deterministically:
+
+- RED (041a1f6c3): AV inside `uv_run`'s endgame, faulting instruction
+  resolved via the linker map; the freed stream page is read after the
+  free while the timer's endgame unwinds.
+- GREEN (redesign): the drain timer moved into its OWN heap allocation
+  (`NovaDrainCtx`); each close callback frees only its own allocation;
+  the stream is held by one extra reference until the timer's close
+  callback releases it; `uv_timer_init`/`uv_timer_start`/`uv_read_start`
+  failures complete the close without waiting for EOF and release
+  everything already created. Harness: stream freed exactly once, after
+  both close callbacks, no post-free fault.
+
+Nova-level stress on the redesigned runtime (mini-D, SHA-256
+`eb7aa386585c00184e44abd8ed5e83d2640b6ab3d79400786f869804de25eac6`):
+**500 solo + 300 under 20-way load, 0 failures**, same protocol as above.

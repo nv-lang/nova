@@ -409,12 +409,13 @@ typedef struct NovaNet2Stream {
      * unread inbound data, and that RST aborts the outbound path -- an
      * already-acknowledged response can still be destroyed. Draining removes
      * the unread-inbound condition so the handle releases with a clean FIN
-     * close and TCP delivers everything we sent. */
-    uv_timer_t      drain_timer;
-    char            drain_buf[1024];
-    uint64_t        drain_left;    /* bytes still allowed to drain */
-    char            drain_timer_inited;
-    char            drain_finished; /* EOF/timer can race: finish once */
+     * close and TCP delivers everything we sent.
+     * The drain timer lives in its OWN heap allocation (NovaDrainCtx), NOT
+     * embedded here: each uv handle's close callback frees exactly its own
+     * allocation (the libuv contract), so no close callback can free memory
+     * another still-open handle points into, whatever order the endgame
+     * processes them in. */
+    void*           drain_ctx;     /* NovaDrainCtx* while draining, else NULL */
 
     volatile int32_t split_refcount; /* 0 = unsplit / 2 / 1 */
     nova_atomic_int  close_release_done; /* [#456] one-shot release guard, see below */
@@ -1325,47 +1326,73 @@ void net_tcp_mark_split(void* sv) {
  * (bounded: idle timer + total cap) -> uv_close. With no unread inbound
  * bytes the release is a clean FIN close and TCP guarantees delivery of
  * everything we sent. */
-static void _nn2_stream_finish_graceful_close(NovaNet2Stream* s) {
-    if (s->drain_finished) return;  /* EOF and the idle timer can race */
-    s->drain_finished = 1;
-    if (s->drain_timer_inited) {
-        uv_timer_stop(&s->drain_timer);
-        uv_close((uv_handle_t*)&s->drain_timer, NULL);
-    }
-    if (!uv_is_closing((uv_handle_t*)&s->handle)) {
-        uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+/* ── Graceful-close drain: separate drain context ─────────────────────
+ *
+ * NovaDrainCtx owns the drain uv_timer_t. libuv may still touch a handle
+ * while unwinding the endgame pass that runs its close callback, so each
+ * close callback frees ONLY the allocation its own handle lives in (the
+ * documented libuv contract) and the stream is kept alive by an extra
+ * reference until the timer's close callback releases it. EOF, the idle
+ * timer, a drained-cap overflow and a failed uv_read_start all funnel
+ * into the same single-shot finish. */
+typedef struct NovaDrainCtx {
+    uv_timer_t      timer;
+    NovaNet2Stream* s;
+    char            buf[1024];
+    uint64_t        left;          /* bytes still allowed to drain */
+    int             finished;      /* EOF and the idle timer can race */
+} NovaDrainCtx;
+
+static void _nn2_drain_timer_close_cb(uv_handle_t* h) {
+    /* The timer's own endgame is complete: its wrapper allocation may go,
+     * and the stream reference it held goes home. The stream handle is
+     * already fully closed by now (either its close callback ran earlier
+     * without freeing, because this reference was outstanding, or it runs
+     * after this and simply does not reach zero itself). */
+    NovaDrainCtx* d = (NovaDrainCtx*)h->data;
+    _nn2_stream_release(d->s);   /* may free the stream -- read d first */
+    nova_free_uncollectable(d);
+}
+
+static void _nn2_drain_finish(NovaDrainCtx* d) {
+    if (d->finished) return;  /* EOF and the idle timer can race */
+    d->finished = 1;
+    uv_timer_stop(&d->timer);
+    uv_close((uv_handle_t*)&d->timer, _nn2_drain_timer_close_cb);
+    if (!uv_is_closing((uv_handle_t*)&d->s->handle)) {
+        uv_close((uv_handle_t*)&d->s->handle, _nn2_stream_close_cb);
     }
 }
 
-static void _nn2_stream_drain_timer_cb(uv_timer_t* t) {
+static void _nn2_drain_timer_cb(uv_timer_t* t) {
     /* Peer went idle without closing its side -- stop waiting and release
      * with whatever the kernel decides; the outbound data has been flushed
      * (our FIN preceded this), so any residual RST lands after delivery. */
-    NovaNet2Stream* s = (NovaNet2Stream*)t->data;
-    uv_read_stop((uv_stream_t*)&s->handle);
-    _nn2_stream_finish_graceful_close(s);
+    NovaDrainCtx* d = (NovaDrainCtx*)t->data;
+    uv_read_stop((uv_stream_t*)&d->s->handle);
+    _nn2_drain_finish(d);
 }
 
-static void _nn2_stream_drain_alloc(uv_handle_t* h, size_t suggested,
-                                    uv_buf_t* buf) {
+static void _nn2_drain_alloc(uv_handle_t* h, size_t suggested,
+                             uv_buf_t* buf) {
     (void)suggested;
-    NovaNet2Stream* s = (NovaNet2Stream*)h->data;
-    buf->base = s->drain_buf;
-    buf->len = sizeof s->drain_buf;
+    NovaDrainCtx* d = (NovaDrainCtx*)h->data;
+    buf->base = d->buf;
+    buf->len = sizeof d->buf;
 }
 
-static void _nn2_stream_drain_read_cb(uv_stream_t* st, ssize_t nread,
-                                      const uv_buf_t* buf) {
+static void _nn2_drain_read_cb(uv_stream_t* st, ssize_t nread,
+                               const uv_buf_t* buf) {
     (void)buf;
-    NovaNet2Stream* s = (NovaNet2Stream*)st->data;
-    if (nread < 0 || (uint64_t)nread >= s->drain_left) {
+    NovaDrainCtx* d = (NovaDrainCtx*)st->data;
+    if (nread < 0 || (uint64_t)nread >= d->left) {
         /* EOF (peer saw our FIN and closed), an error, or the total cap --
          * all end the drain. */
         uv_read_stop(st);
-        _nn2_stream_finish_graceful_close(s);
+        _nn2_drain_finish(d);
         return;
     }
-    s->drain_left -= (uint64_t)nread;
+    d->left -= (uint64_t)nread;
     /* nread == 0: no data right now, keep the read armed until EOF. */
 }
 
@@ -1373,24 +1400,60 @@ static void _nn2_stream_close_after_shutdown(uv_shutdown_t* req, int status) {
     NovaNet2Stream* s = (NovaNet2Stream*)req->data;
     if (status != 0 || uv_is_closing((uv_handle_t*)&s->handle)) {
         /* Shutdown itself failed (already half-closed, disconnected):
-         * closing is still the only valid teardown. */
-        _nn2_stream_finish_graceful_close(s);
+         * closing is still the only valid teardown, and no drain context
+         * exists yet -- release straight away. */
+        if (!uv_is_closing((uv_handle_t*)&s->handle)) {
+            uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+        }
         return;
     }
     /* Drain inbound to EOF so the handle releases without unread data (no
      * RST). An in-flight parked user read would make uv_read_start fail --
      * then fall back to closing right away, as before this fix. */
-    s->drain_left = 1u << 20;  /* 1 MiB total cap */
-    s->drain_timer.data = s;
-    if (uv_timer_init(s->loop, &s->drain_timer) == 0) {
-        s->drain_timer_inited = 1;
-        uv_timer_start(&s->drain_timer, _nn2_stream_drain_timer_cb, 300, 0);
+    NovaDrainCtx* d = (NovaDrainCtx*)nova_alloc_uncollectable(sizeof *d);
+    if (!d) {
+        if (!uv_is_closing((uv_handle_t*)&s->handle)) {
+            uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+        }
+        return;
     }
-    s->handle.data = s;
+    d->s = s;
+    d->left = 1u << 20;  /* 1 MiB total cap */
+    d->finished = 0;
+    d->timer.data = d;
+    s->drain_ctx = d;
+    if (uv_timer_init(s->loop, &d->timer) != 0) {
+        /* No timer resource created -- finish without the drain wait;
+         * the (unused) context goes back and nothing else was created. */
+        s->drain_ctx = NULL;
+        nova_free_uncollectable(d);
+        if (!uv_is_closing((uv_handle_t*)&s->handle)) {
+            uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+        }
+        return;
+    }
+    /* Hold the stream until the timer's close callback released it (see
+     * _nn2_drain_timer_close_cb). */
+    _nn2_stream_acquire(s);
+    if (uv_timer_start(&d->timer, _nn2_drain_timer_cb, 300, 0) != 0) {
+        /* Armed nothing: tear down the created timer (its close callback
+         * frees the context and releases the held reference) and finish
+         * the close without waiting for EOF. */
+        uv_close((uv_handle_t*)&d->timer, _nn2_drain_timer_close_cb);
+        if (!uv_is_closing((uv_handle_t*)&s->handle)) {
+            uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+        }
+        return;
+    }
+    s->handle.data = d;  /* drain read callbacks route to the context */
     if (uv_read_start((uv_stream_t*)&s->handle,
-                      _nn2_stream_drain_alloc,
-                      _nn2_stream_drain_read_cb) != 0) {
-        _nn2_stream_finish_graceful_close(s);
+                      _nn2_drain_alloc,
+                      _nn2_drain_read_cb) != 0) {
+        s->handle.data = s;
+        uv_close((uv_handle_t*)&d->timer, _nn2_drain_timer_close_cb);
+        if (!uv_is_closing((uv_handle_t*)&s->handle)) {
+            uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+        }
     }
 }
 
@@ -1400,7 +1463,7 @@ static void _nn2_stream_graceful_close_issue(void* argp) {
     int rc = uv_shutdown(&s->close_shutdown_req, (uv_stream_t*)&s->handle,
                          _nn2_stream_close_after_shutdown);
     if (rc != 0 && !uv_is_closing((uv_handle_t*)&s->handle)) {
-        _nn2_stream_finish_graceful_close(s);
+        uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
     }
 }
 
