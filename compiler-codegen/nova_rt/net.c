@@ -403,6 +403,19 @@ typedef struct NovaNet2Stream {
      * uv_close can release a stream whose peer still has unread input. */
     uv_shutdown_t   close_shutdown_req;
 
+    /* Graceful-close drain (see _nn2_stream_graceful_close_issue): after the
+     * FIN, inbound bytes are drained to EOF (bounded by an idle timer and a
+     * total cap) BEFORE uv_close. Windows sends RST for closesocket with
+     * unread inbound data, and that RST aborts the outbound path -- an
+     * already-acknowledged response can still be destroyed. Draining removes
+     * the unread-inbound condition so the handle releases with a clean FIN
+     * close and TCP delivers everything we sent. */
+    uv_timer_t      drain_timer;
+    char            drain_buf[1024];
+    uint64_t        drain_left;    /* bytes still allowed to drain */
+    char            drain_timer_inited;
+    char            drain_finished; /* EOF/timer can race: finish once */
+
     volatile int32_t split_refcount; /* 0 = unsplit / 2 / 1 */
     nova_atomic_int  close_release_done; /* [#456] one-shot release guard, see below */
 } NovaNet2Stream;
@@ -1303,17 +1316,81 @@ void net_tcp_mark_split(void* sv) {
     __atomic_store_n(&s->split_refcount, 2, __ATOMIC_RELEASE);
 }
 
-/* Runs on the handle's owner loop.  Closing a TCP handle immediately after a
- * successful write can be abortive on Windows when the peer still has unread
- * bytes in the other direction: the peer observes EOF/reset before queued
- * response data.  Complete a graceful shutdown first; if shutdown cannot be
- * issued (already half-closed or disconnected), closing is still the only
- * valid teardown. */
-static void _nn2_stream_close_after_shutdown(uv_shutdown_t* req, int status) {
-    (void)status;
-    NovaNet2Stream* s = (NovaNet2Stream*)req->data;
+/* ── Graceful close (owner loop only) ─────────────────────────────────
+ *
+ * closesocket with unread inbound data makes Windows send RST, and that
+ * RST aborts the outbound path: an already-written (even acknowledged)
+ * response can still be destroyed before the peer delivers it. Sequence:
+ * uv_shutdown (FIN flushes the outbound queue) -> drain inbound to EOF
+ * (bounded: idle timer + total cap) -> uv_close. With no unread inbound
+ * bytes the release is a clean FIN close and TCP guarantees delivery of
+ * everything we sent. */
+static void _nn2_stream_finish_graceful_close(NovaNet2Stream* s) {
+    if (s->drain_finished) return;  /* EOF and the idle timer can race */
+    s->drain_finished = 1;
+    if (s->drain_timer_inited) {
+        uv_timer_stop(&s->drain_timer);
+        uv_close((uv_handle_t*)&s->drain_timer, NULL);
+    }
     if (!uv_is_closing((uv_handle_t*)&s->handle)) {
         uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+    }
+}
+
+static void _nn2_stream_drain_timer_cb(uv_timer_t* t) {
+    /* Peer went idle without closing its side -- stop waiting and release
+     * with whatever the kernel decides; the outbound data has been flushed
+     * (our FIN preceded this), so any residual RST lands after delivery. */
+    NovaNet2Stream* s = (NovaNet2Stream*)t->data;
+    uv_read_stop((uv_stream_t*)&s->handle);
+    _nn2_stream_finish_graceful_close(s);
+}
+
+static void _nn2_stream_drain_alloc(uv_handle_t* h, size_t suggested,
+                                    uv_buf_t* buf) {
+    (void)suggested;
+    NovaNet2Stream* s = (NovaNet2Stream*)h->data;
+    buf->base = s->drain_buf;
+    buf->len = sizeof s->drain_buf;
+}
+
+static void _nn2_stream_drain_read_cb(uv_stream_t* st, ssize_t nread,
+                                      const uv_buf_t* buf) {
+    (void)buf;
+    NovaNet2Stream* s = (NovaNet2Stream*)st->data;
+    if (nread < 0 || (uint64_t)nread >= s->drain_left) {
+        /* EOF (peer saw our FIN and closed), an error, or the total cap --
+         * all end the drain. */
+        uv_read_stop(st);
+        _nn2_stream_finish_graceful_close(s);
+        return;
+    }
+    s->drain_left -= (uint64_t)nread;
+    /* nread == 0: no data right now, keep the read armed until EOF. */
+}
+
+static void _nn2_stream_close_after_shutdown(uv_shutdown_t* req, int status) {
+    NovaNet2Stream* s = (NovaNet2Stream*)req->data;
+    if (status != 0 || uv_is_closing((uv_handle_t*)&s->handle)) {
+        /* Shutdown itself failed (already half-closed, disconnected):
+         * closing is still the only valid teardown. */
+        _nn2_stream_finish_graceful_close(s);
+        return;
+    }
+    /* Drain inbound to EOF so the handle releases without unread data (no
+     * RST). An in-flight parked user read would make uv_read_start fail --
+     * then fall back to closing right away, as before this fix. */
+    s->drain_left = 1u << 20;  /* 1 MiB total cap */
+    s->drain_timer.data = s;
+    if (uv_timer_init(s->loop, &s->drain_timer) == 0) {
+        s->drain_timer_inited = 1;
+        uv_timer_start(&s->drain_timer, _nn2_stream_drain_timer_cb, 300, 0);
+    }
+    s->handle.data = s;
+    if (uv_read_start((uv_stream_t*)&s->handle,
+                      _nn2_stream_drain_alloc,
+                      _nn2_stream_drain_read_cb) != 0) {
+        _nn2_stream_finish_graceful_close(s);
     }
 }
 
@@ -1323,7 +1400,7 @@ static void _nn2_stream_graceful_close_issue(void* argp) {
     int rc = uv_shutdown(&s->close_shutdown_req, (uv_stream_t*)&s->handle,
                          _nn2_stream_close_after_shutdown);
     if (rc != 0 && !uv_is_closing((uv_handle_t*)&s->handle)) {
-        uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+        _nn2_stream_finish_graceful_close(s);
     }
 }
 

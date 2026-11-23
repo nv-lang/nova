@@ -119,3 +119,25 @@ destroying the still-undelivered outbound response. The
 `NOVA_MAXPROCS` dependence is timing (when close lands relative to
 response delivery), not handle ownership — the cross-worker hypothesis
 in the original marker is refuted.
+
+
+## Residual after the shutdown-first close: drain-before-close (final fix)
+
+The acceptor's independent run found 1/300 residual failure (LENOVO-RYZEN);
+reproduced locally as 3/500 under 20-way load — ALL still "connection reset
+by peer". Reason: `uv_shutdown` sends the FIN, but `closesocket` with unread
+inbound bytes still RSTs and the RST aborts the outbound path — the
+not-yet-delivered tail of the response dies. Final fix: after the FIN,
+DRAIN inbound to EOF (bounded by a 300 ms idle timer and a 1 MiB cap; a
+busy user read falls back to an immediate close) before `uv_close`. With
+no unread inbound bytes there is no RST, and TCP guarantees delivery of
+everything already sent.
+
+| series (mini-C-drain, SHA-256 `a3adb3aa2434…b4`) | result |
+|---|---|
+| 500 solo (`NOVA_GC_INCREMENTAL=1 NOVA_MAXPROCS=16`) | **0 failures** |
+| 300 under 20-way concurrent load | **0 failures** |
+| smoke, 20-way × 12 | 240/240 |
+
+Reference points on the same protocol: base (immediate close) 11/396,
+graceful-close-only 3/500 under load.
