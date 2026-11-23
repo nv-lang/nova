@@ -9,12 +9,10 @@ import std.fs
 fn main() Io Time Proc -> () {
     for i in 0..512 {
         ro ch = Channel[int].new(1)
-        ro tx = ch.tx
-        ro rx = ch.rx
+        ro { tx, rx } = ch
         // A second arm exercises multi-arm parking instead of plain recv.
         ro idle = Channel[int].new(1)
-        ro idle_tx = idle.tx
-        ro idle_rx = idle.rx
+        ro { tx: idle_tx, rx: idle_rx } = idle
         supervised {
             spawn {
                 Time.sleep(1.to_millis())
