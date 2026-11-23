@@ -1,0 +1,121 @@
+# Repro: merged-CU intermittent SIGSEGV — lost GC roots via unchained `GC_push_other_roots` (№TBD-1) + illegal `GC_unregister_my_thread` after `GC_DUPLICATE` (№TBD-2)
+
+Base: `ebbc2d8cd` (`origin/integrate/wake-loss-320-b`), Windows, MSVC/clang,
+vcpkg `gc.lib` (GC_THREADS, GWW_VDB, THREAD_LOCAL_ALLOC, PARALLEL_MARK).
+Date: 2026-11-23, worktree `codex-segv`, branch `codex/segv-gc-register-dup`.
+
+## Defect №TBD-2 — deterministic C harness (RED/GREEN both ways)
+
+`repro_gc_dup.c.txt` (buggy) / `repro_gc_dup_fixed.c.txt` (guarded unregister) — `.c`-суффиксы спрятаны в `.txt` по правилу улик №695 (глобальный `.gitignore` игнорирует `*.c`).
+
+- 16 `CreateThread` threads (gc.h maps `CreateThread` to `GC_CreateThread`,
+  so every thread is ALREADY registered implicitly); each calls
+  `GC_register_my_thread()` → prints rc (observed: `GC_DUPLICATE` = 1 for
+  all 16), allocates, then calls `GC_unregister_my_thread()`.
+- `GC_enable_incremental()` on.
+
+Build (MSVC, same `gc.lib` as Nova test binaries):
+
+```bat
+call "<vcvars64.bat>"
+set GCLIB=<NOVA_GC_LIB_DIR>
+set GCINC=%GCLIB%\..\include
+cl /nologo /W0 /MT /O2 /DGC_THREADS /I%GCINC% repro_gc_dup.c.txt ^
+   /Fe:repro_gc_dup.exe /link /LIBPATH:%GCLIB% gc.lib
+```
+
+Measured (10 runs each, same machine):
+
+| variant | result |
+|---|---|
+| buggy (unconditional unregister) | **10/10 SIGSEGV** |
+| guarded (`if (rc == GC_SUCCESS)`) | **10/10 exit 0** |
+
+In the current Nova runtime the raw register returns `GC_SUCCESS` for all
+worker/driver threads (measured 17/17 rc=0: they are created via
+libuv's own `CreateThread`, which the gc.h macro does NOT intercept),
+so this defect is latent for Nova today but activates silently if
+nova_rt ever creates threads through the intercepted path.
+
+## Defect №TBD-1 — lost roots (mechanism, static + stress)
+
+`fiber_arena_win.c` published `_nova_fw_gc_push_other_roots` through
+`GC_set_push_other_roots` without chaining. The default callback on
+`GC_WIN32_THREADS` is `GC_push_all_stacks()` — the only scanner of the
+native stacks of every GC-registered thread. The driver thread never
+creates a fiber arena and a worker has none until its first `mco_create`
+(lazy arenas, D137), so their native stacks were never pushed →
+premature collect under `NOVA_MAXPROCS=16` → torn live objects
+(SIGSEGV in free-list walk, null HashMap bucket, torn HTTP response).
+
+Fix: `GC_get_push_other_roots()` before `GC_set_push_other_roots`, call
+the predecessor first inside the callback.
+
+## Stress protocol (`stress.sh`)
+
+Merged CU: `nova test spec_tests --filter a_q3_println_debug_record
+--keep-artifacts` (folder-module peer merge — the exe contains the whole
+`spec_tests/conformance` corpus, 3298 embedded test blocks), then run the
+kept exe directly:
+
+```sh
+NOVA_MAXPROCS=16 NOVA_GC_INCREMENTAL=1 NOVA_DIAG_SEGV=1 ./a_q3_println_debug_record.exe
+```
+
+A/B discipline: SHA-256 every exe variant (old runtime vs conditional
+unregister vs chained callback) before comparing; ≥8 concurrent copies ×
+12 rounds reproduces the load-sensitive modes; solo sequential runs are
+the clean-lane criterion (5 × 60 = 300 target).
+
+## Known separate defect found while stress-testing (№TBD-3, [M-net-stream-cross-worker-reset])
+
+`m_boxcap_detach_cancel_token_pos` fails ~1/300 solo, ~11/96 under 8-way
+load, identically on old/conditional-unregister/chained runtimes (not the
+GC defects) and on a solo-file twin; raising the supervised timeout
+5s→60s does not help. Instrumented twin shows connect SUCCEEDS, the
+client writes, then read fails with **"connection reset by peer"** (the
+server closes the connection before responding). At `NOVA_MAXPROCS=1`
+the twin is 96/96 green under the same load → M:N-scheduler dependent.
+Hypothesis: the detached response-writing fiber runs on a worker whose
+libuv loop does not own the accepted TcpStream handle (D98 per-worker
+loops; libuv handle ops are not thread-safe) → RST. Dedicated window
+required; tracked as №TBD-3 in 221.1-bug-sweep.md.
+
+## Final series (chained runtime, exe
+SHA-256 3130aedbacc502181dd260f2ac8fdce64d71af6d8d58f32e414a707817fc64cc)
+
+300 sequential solo runs, `NOVA_MAXPROCS=16 NOVA_GC_INCREMENTAL=1`:
+**0 SIGSEGV**, 299×exit 0, 1×exit 1 = the m_boxcap fixture flake above
+(run 298), i.e. no SIGSEGV-mode run in the series; the residual exit-1
+is the separately-filed fixture race, not a GC/M:N defect.
+
+
+## Follow-up window (codex/tcp-close-reset, base c72fea17c): m_boxcap RST root cause (№TBD-3)
+
+Single-diff A/B on the merged-conformance-base build; the ONLY difference
+between the two builds is `compiler-codegen/nova_rt/net.c` (graceful TCP
+close: `uv_shutdown` on the owner loop, `uv_close` in its callback).
+
+| exe | net.c | SHA-256 |
+|---|---|---|
+| mini-A-base.exe | base (immediate close) | `7578d84804ac25dbe672f87455b13d8efae5a8e3c877f793bec3ab2615d63dda` |
+| mini-B-graceful.exe | graceful close | `65807a90abae1ef9757e86346dda77bd16731b7f2f08d0d355b984ae4dd3a9b1` |
+
+Failure classification (instrumented twin, `NOVA_GC_INCREMENTAL=1`,
+`NOVA_MAXPROCS=16`): EVERY failure in every series is
+**connect OK / write OK / read fails "connection reset by peer" /
+got.len=0** — never a connect error, never a write error, never clean
+EOF, never partial response.
+
+| series | base (immediate close) | graceful close |
+|---|---|---|
+| 8 processes x 12 rounds | 7/96 fail (all RST-on-read) | **96/96 pass** |
+| 300 solo runs | 4/300 fail | **300/300 pass** |
+
+Root cause: `net_tcp_close` issued `uv_close` immediately after the
+response write completed. On Windows, `closesocket` with unread inbound
+bytes (the fixture server never reads the client's GET) sends RST,
+destroying the still-undelivered outbound response. The
+`NOVA_MAXPROCS` dependence is timing (when close lands relative to
+response delivery), not handle ownership — the cross-worker hypothesis
+in the original marker is refuted.

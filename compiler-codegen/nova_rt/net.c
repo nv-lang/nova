@@ -399,6 +399,9 @@ typedef struct NovaNet2Stream {
 
     /* shutdown (half-close) */
     uv_shutdown_t   shutdown_req;
+    /* Ordinary close uses its own request: it must wait for FIN before
+     * uv_close can release a stream whose peer still has unread input. */
+    uv_shutdown_t   close_shutdown_req;
 
     volatile int32_t split_refcount; /* 0 = unsplit / 2 / 1 */
     nova_atomic_int  close_release_done; /* [#456] one-shot release guard, see below */
@@ -1300,6 +1303,30 @@ void net_tcp_mark_split(void* sv) {
     __atomic_store_n(&s->split_refcount, 2, __ATOMIC_RELEASE);
 }
 
+/* Runs on the handle's owner loop.  Closing a TCP handle immediately after a
+ * successful write can be abortive on Windows when the peer still has unread
+ * bytes in the other direction: the peer observes EOF/reset before queued
+ * response data.  Complete a graceful shutdown first; if shutdown cannot be
+ * issued (already half-closed or disconnected), closing is still the only
+ * valid teardown. */
+static void _nn2_stream_close_after_shutdown(uv_shutdown_t* req, int status) {
+    (void)status;
+    NovaNet2Stream* s = (NovaNet2Stream*)req->data;
+    if (!uv_is_closing((uv_handle_t*)&s->handle)) {
+        uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+    }
+}
+
+static void _nn2_stream_graceful_close_issue(void* argp) {
+    NovaNet2Stream* s = (NovaNet2Stream*)argp;
+    s->close_shutdown_req.data = s;
+    int rc = uv_shutdown(&s->close_shutdown_req, (uv_stream_t*)&s->handle,
+                         _nn2_stream_close_after_shutdown);
+    if (rc != 0 && !uv_is_closing((uv_handle_t*)&s->handle)) {
+        uv_close((uv_handle_t*)&s->handle, _nn2_stream_close_cb);
+    }
+}
+
 void net_tcp_close(void* sv) {
     NovaNet2Stream* s = (NovaNet2Stream*)sv;
     /* Split streams: only the last half actually closes the handle. Each
@@ -1318,8 +1345,7 @@ void net_tcp_close(void* sv) {
     nova_bool _nv456_won_cas = __atomic_compare_exchange_n((volatile int32_t*)&s->stage,
             &expected, NN2_CLOSING, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
     if (_nv456_won_cas) {
-        nova_loop_defer_close(s->loop, (uv_handle_t*)&s->handle,
-                              _nn2_stream_close_cb);
+        nova_loop_defer_call(s->loop, _nn2_stream_graceful_close_issue, s);
     }
     /* [M-net2stream-close-refcount-uaf] fix: release the Nova-level "user
      * owns me" unit acquired once at net_tcp_connect/net_tcp_accept success
