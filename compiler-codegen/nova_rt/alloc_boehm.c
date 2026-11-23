@@ -43,6 +43,36 @@
  * x86/ARM, no barrier needed for RELAXED). */
 static size_t _alloc_count = 0;
 
+/* [M-gc-thread-register-duplicate-unregister]: per-thread flag — did THIS
+ * thread succeed at an EXPLICIT GC_register_my_thread? Only such a thread
+ * may call GC_unregister_my_thread (gc.h contract). A thread bdwgc already
+ * registered implicitly (Windows CreateThread under GC_THREADS) reports
+ * GC_DUPLICATE from register and MUST NOT be explicitly unregistered:
+ * the unregister then removes a thread the collector still owns, corrupting
+ * its thread table / free lists — observed as SIGSEGV in
+ * GC_print_free_list <- GC_generic_malloc_many <- GC_malloc_kind <- nova_alloc
+ * on the merged conformance CU (0xC0000005). */
+#if defined(_WIN32)
+static __declspec(thread) int _nova_gc_explicitly_registered = 0;
+#else
+static __thread int _nova_gc_explicitly_registered = 0;
+#endif
+
+int nova_gc_register_my_thread(void) {
+    struct GC_stack_base sb;
+    if (GC_get_stack_base(&sb) != GC_SUCCESS) return 0;
+    int rc = GC_register_my_thread(&sb);
+    _nova_gc_explicitly_registered = (rc == GC_SUCCESS);
+    return _nova_gc_explicitly_registered;
+}
+
+void nova_gc_unregister_my_thread(void) {
+    if (_nova_gc_explicitly_registered) {
+        GC_unregister_my_thread();
+        _nova_gc_explicitly_registered = 0;
+    }
+}
+
 /* Plan 57.C.2: last GC pause длительность в наносекундах (monotonic timer
  * wraps GC_gcollect). Updated в nova_gc_collect; consumers (bench, gc.last_pause_ns)
  * читают через nova_gc_last_pause_ns(). */

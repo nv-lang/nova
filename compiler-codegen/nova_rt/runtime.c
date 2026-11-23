@@ -1068,10 +1068,16 @@ static void _worker_main(void* arg) {
      * GC objects referenced only from worker stack → premature collect → SIGSEGV.
      * All platforms: vcpkg bdwgc built with -DGC_THREADS; client passes same flag. */
 #ifdef NOVA_GC_THREADS_REGISTER
-    struct GC_stack_base sb;
-    if (GC_get_stack_base(&sb) == GC_SUCCESS) {
-        GC_register_my_thread(&sb);
-    }
+    /* [M-gc-thread-register-duplicate-unregister]: wrapper remembers
+     * per-thread whether registration was explicit (GC_SUCCESS) —
+     * GC_unregister_my_thread is legal ONLY for such a thread (gc.h
+     * contract). uv_thread_create does NOT go through the gc.h
+     * CreateThread macro, so the raw call reports GC_SUCCESS here
+     * (measured 17/17); a thread created via the macro path would
+     * report GC_DUPLICATE, and the old unconditional unregister at
+     * worker exit would then corrupt the collector's thread table
+     * (C-harness repro: docs/plans/repro/megacu-sigsegv-gc-roots/). */
+    (void)nova_gc_register_my_thread();
 #endif
 #if NOVA_FIBER_ARENA_ENABLED
     /* [M-mn-spawnctx-corruption-cancel-wake]: native-стек воркера в реестр
@@ -1477,7 +1483,9 @@ static void _worker_main(void* arg) {
     nova_effect_roots_retract();
 
 #ifdef NOVA_GC_THREADS_REGISTER
-    GC_unregister_my_thread();
+    /* [M-gc-thread-register-duplicate-unregister]: only if THIS thread
+     * registered explicitly (GC_SUCCESS) — see alloc_boehm.c. */
+    nova_gc_unregister_my_thread();
 #endif
 }
 

@@ -214,9 +214,13 @@ static void _nova_fw_gc_push_region(char* lo, char* hi) {
     }
 }
 
-/* GC_set_push_other_roots-колбэк. Mark-фаза, мир остановлен — все
- * GC-зарегистрированные потоки suspended → bitmap/high_water стабильны;
- * обход append-only списка без лока безопасен. */
+/* GC_set_push_other_roots-колбэк. При ПОЛНОМ (non-incremental) сборе мир
+ * остановлен — все GC-зарегистрированные потоки suspended → bitmap/high_water
+ * стабильны; обход append-only списка без лока безопасен. В incremental-режиме
+ * (GWW_VDB) GC_push_roots также вызывается ИЗ GC_mark_some, пока мутаторы
+ * бегут (bdwgc: «If the world is not stopped, this is unsafe» касается только
+ * его TLS free-list скана; корни пушатся консервативно-супerset'ом, а фолт на
+ * исчезнувшей странице recover'ится WRAP_MARK_SOME). */
 /* 221.1 №1857: effects.c -- the handler TLS slots of every thread (effects.h,
  * "THE HANDLER SLOTS OF EVERY THREAD ARE GC ROOTS"). Declared here, not by
  * including effects.h: this TU stays off nova_rt.h. */
@@ -225,7 +229,19 @@ static void _nova_fw_push_eager(void* lo, void* hi) {
     GC_push_all_eager((char*)lo, (char*)hi);
 }
 
+/* [M-gc-push-other-roots-unchained]: the callback chain predecessor,
+ * captured at _nova_fw_global_init before GC_set_push_other_roots. */
+static GC_push_other_roots_proc _nova_fw_prev_push_other_roots = NULL;
+
 static void _nova_fw_gc_push_other_roots(void) {
+    /* [M-gc-push-other-roots-unchained]: run the default chain first —
+     * GC_push_all_stacks() covers the GC-registered native stacks that no
+     * fiber arena owns (driver thread; a worker before its first fiber).
+     * Invoked under the GC allocation lock, so ordering with the arena
+     * scan below is serialized. Safe even when the world is running
+     * (incremental VDB): thread stacks are always committed, and both
+     * this and the arena scan push conservative supersets. */
+    if (_nova_fw_prev_push_other_roots) _nova_fw_prev_push_other_roots();
     /* №1857: the installed effect handlers -- TLS is not scanned by Boehm. */
     nova_effect_roots_push(_nova_fw_push_eager);
     /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
@@ -311,6 +327,17 @@ static BOOL CALLBACK _nova_fw_global_init(PINIT_ONCE once, PVOID param,
 #ifdef NOVA_GC_BOEHM
     /* Read configuration before publishing the stop-the-world callback.
      * getenv and stdio can lock the CRT while their owner is suspended. */
+    /* [M-gc-push-other-roots-unchained]: CHAIN the previous callback.
+     * On GC_WIN32_THREADS the default callback is GC_push_all_stacks()
+     * (os_dep.c GC_default_push_other_roots) — the ONLY thing that scans
+     * the native stacks of every GC-registered thread. Replacing it
+     * without chaining silently dropped those roots: the driver thread
+     * never creates a fiber arena, and a worker has no arena until its
+     * first mco_create, so _nova_fw_gc_push_other_roots could not cover
+     * them → premature collect under GC pressure (corrupted live objects:
+     * null HashMap bucket / torn free list / torn HTTP response under
+     * NOVA_MAXPROCS=16 + NOVA_GC_INCREMENTAL=1). */
+    _nova_fw_prev_push_other_roots = GC_get_push_other_roots();
     GC_set_push_other_roots(_nova_fw_gc_push_other_roots);
 #endif
     return TRUE;

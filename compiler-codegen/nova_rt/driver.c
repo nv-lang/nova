@@ -161,10 +161,11 @@ static void _nova_driver_main(void* arg) {
     /* Register driver thread с Boehm. Driver code itself doesn't touch GC
      * heap directly, BUT processed jobs may transitively (e.g., wake worker
      * fiber whose context is GC-allocated). Safer to register. */
-    struct GC_stack_base sb;
-    if (GC_get_stack_base(&sb) == GC_SUCCESS) {
-        GC_register_my_thread(&sb);
-    }
+    /* [M-gc-thread-register-duplicate-unregister]: wrapper remembers
+     * per-thread whether registration was explicit (GC_SUCCESS); the
+     * old unconditional unregister at driver exit corrupted the
+     * collector's thread table when register reported GC_DUPLICATE. */
+    (void)nova_gc_register_my_thread();
 #endif
 #if NOVA_FIBER_ARENA_ENABLED
     /* [M-mn-spawnctx-corruption-cancel-wake]: native-стек драйвера в реестр
@@ -199,7 +200,9 @@ static void _nova_driver_main(void* arg) {
     nova_fiber_arena_unregister_native_stack();
 #endif
 #ifdef NOVA_GC_BOEHM
-    GC_unregister_my_thread();
+    /* [M-gc-thread-register-duplicate-unregister]: only if THIS thread
+     * registered explicitly (GC_SUCCESS) — see alloc_boehm.c. */
+    nova_gc_unregister_my_thread();
 #endif
 }
 

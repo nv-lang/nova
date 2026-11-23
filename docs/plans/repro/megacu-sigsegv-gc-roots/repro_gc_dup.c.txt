@@ -1,0 +1,41 @@
+/* Minimal repro: bdwgc explicit register on an implicitly-registered
+ * (GC_DLL-less GC_THREADS build: Win32 GC registers threads implicitly
+ * via its own DllMain when built with DllMain support, or returns
+ * GC_DUPLICATE) CreateThread + unconditional GC_unregister_my_thread.
+ * Doc says unregister is only legal when register returned GC_SUCCESS. */
+#include <windows.h>
+#include <stdio.h>
+#include <gc.h>
+
+static DWORD WINAPI worker(void* arg) {
+    (void)arg;
+    struct GC_stack_base sb;
+    int reg_rc = -99;
+    if (GC_get_stack_base(&sb) == GC_SUCCESS)
+        reg_rc = GC_register_my_thread(&sb);
+    printf("tid=%lu reg_rc=%d\n", (unsigned long)GetCurrentThreadId(), reg_rc);
+    fflush(stdout);
+    for (int i = 0; i < 200000; i++) {
+        void** p = (void**)GC_MALLOC(64);
+        p[0] = (void*)(size_t)i;
+        if (i % 50000 == 0) GC_gcollect();
+    }
+    /* The bug under test: unconditional unregister. */
+    GC_unregister_my_thread();
+    return 0;
+}
+
+int main(void) {
+    GC_INIT();
+    GC_allow_register_threads();
+    GC_enable_incremental();
+    HANDLE th[16];
+    for (int i = 0; i < 16; i++)
+        th[i] = CreateThread(NULL, 0, worker, NULL, 0, NULL);
+    WaitForMultipleObjects(16, th, TRUE, INFINITE);
+    printf("all workers done\n");
+    fflush(stdout);
+    for (int i = 0; i < 5; i++) GC_gcollect();
+    printf("final collects done\n");
+    return 0;
+}

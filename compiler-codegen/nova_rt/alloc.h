@@ -96,6 +96,22 @@ size_t nova_fibers_slots_active(void);      /* currently allocated */
 size_t nova_fibers_high_water(void);        /* peak concurrent slots */
 void   nova_fibers_compact(void);           /* P41-3: batch decay flush */
 
+/* [M-gc-thread-register-duplicate-unregister]: safe explicit thread
+ * registration wrapper. Calls GC_register_my_thread (after
+ * GC_get_stack_base) and remembers PER-THREAD whether registration
+ * succeeded explicitly (GC_SUCCESS). Only a thread whose register call
+ * returned GC_SUCCESS may later call GC_unregister_my_thread (gc.h
+ * contract); a thread bdwgc already registered implicitly (Windows
+ * CreateThread under GC_THREADS) reports GC_DUPLICATE and MUST NOT be
+ * explicitly unregistered — doing so corrupts the collector's thread
+ * table and crashes later inside the allocator (SIGSEGV in
+ * GC_print_free_list / GC_generic_malloc_many).
+ * Returns non-zero iff explicitly registered. Under malloc: no-op, 0. */
+int    nova_gc_register_my_thread(void);
+/* Unregisters the calling thread ONLY if its earlier
+ * nova_gc_register_my_thread returned success; otherwise a no-op. */
+void   nova_gc_unregister_my_thread(void);
+
 #ifdef __cplusplus
 }
 #endif
