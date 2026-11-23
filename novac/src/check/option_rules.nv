@@ -222,9 +222,7 @@ fn Checker mut @type_generic_variant_call(e Node, kids []Node, v VariantRow, arg
                 // slot, exactly as the subset door did before E2-b3; a kind
                 // added to TypeKind later lands in the same fill arm by this
                 // door's contract, not silently in an else.
-                if @ctx.tys.kind_of(ex) != TypeKind.TkParam {
-                    subst[i] = ex
-                }
+                subst[i] = if @ctx.tys.kind_of(ex) == TypeKind.TkParam { subst[i] } else { ex }
             } else {
                 // Fixed by a payload slot.
             }
