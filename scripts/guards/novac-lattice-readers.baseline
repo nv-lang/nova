@@ -1,0 +1,148 @@
+# novac-lattice-readers.baseline — перечень читателей решётки типов
+# (check-novac-lattice-readers.py; реестр 221.1, строка 984, мера класса, п. 1 и 5).
+#
+# Каждое обращение к `type_of(` / `type_if_known(` в novac/src/check/*.nv —
+# одна строка. Столбцы через табуляцию:
+#   файл, функция (как написана после `fn ... mut`), номер по порядку в функции,
+#   род (type_of | type_if_known), класс, основание.
+# Классы: M — проверка отказа стоит выше в этой же функции (страж проверяет
+#   её mechanically, по доминированию); C — проверку ставит вызывающий;
+#   S — тип дан самим узлом (литерал); K — чтение канала, отсутствие разбирается;
+#   T — проход потока владения после типизации файла; R — рука самой решётки.
+# Новый читатель без строки здесь краснит гейт. Перенос функции или правка
+# выше по файлу строк не двигает: ключ — файл, функция и номер по порядку.
+arg_expect.nv	@type_arg_expecting	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the closure door decided or recorded this literal first
+assert_call.nv	@type_assert	1	type_of	M	refusal mark compared above in this function on the dominating path
+assert_call.nv	@type_assert	2	type_of	M	refusal mark compared above in this function on the dominating path
+assert_call.nv	@type_panic_call	1	type_of	M	refusal mark compared above in this function on the dominating path
+assign_rules.nv	@hands_ro_view	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a field view of an untyped owner reads as not a view
+assign_rules.nv	@assigned_operand_type	1	type_of	C	the caller returns on a refusal before calling: the assignment arm of type_stmt_in_scope (typing_stmt.nv)
+assign_rules.nv	@assigned_operand_type	2	type_of	C	the caller returns on a refusal before calling: the assignment arm of type_stmt_in_scope (typing_stmt.nv)
+assign_rules.nv	@assigned_value_type	1	type_of	C	the caller returns on a refusal before calling: assigned_operand_type, itself called after the caller mark
+bind_array.nv	@type_array_lit	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a leafless literal takes the type the call site recorded
+bind_array.nv	@type_array_lit	2	type_of	M	refusal mark compared above in this function on the dominating path
+binds.nv	@type_untyped_bind	1	type_if_known	M	refusal mark compared above in this function on the dominating path
+binds.nv	@type_untyped_bind	2	type_if_known	M	refusal mark compared above in this function on the dominating path
+binds.nv	@type_untyped_bind	3	type_if_known	K	channel read: absence is an answer and the consumer branches on it; after the supervised-value door; absence binds the name poisoned
+binds.nv	@type_untyped_bind	4	type_if_known	M	refusal mark compared above in this function on the dominating path
+binds.nv	@type_untyped_bind	5	type_if_known	K	channel read: absence is an answer and the consumer branches on it; after the if-value door; absence is handled by the branch below
+binds.nv	@type_untyped_bind	6	type_if_known	K	channel read: absence is an answer and the consumer branches on it; after the anonymous constructor was settled; absence refuses it
+binds.nv	@type_untyped_bind	7	type_of	C	the caller returns on a refusal before calling: every kind branch above types the initializer and returns on a refusal; the general walk does the same
+binds.nv	@judge_record_ctor	1	type_of	M	refusal mark compared above in this function on the dominating path
+binds.nv	@settle_anon_ctor	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an already recorded constructor is not settled twice
+calls.nv	@record_arg_types	1	type_of	C	the caller returns on a refusal before calling: every call door (free, local, method, static, effect operation) checks the mark first
+casts.nv	@type_cast	1	type_of	M	refusal mark compared above in this function on the dominating path
+cond_forms.nv	@type_if_let_in_scope	1	type_of	M	refusal mark compared above in this function on the dominating path
+cond_forms.nv	@type_while_let	1	type_of	M	refusal mark compared above in this function on the dominating path
+const_types.nv	@const_type_of	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an unsettled once-constant falls back to its written type
+const_types.nv	@const_type_of	2	type_of	C	the caller returns on a refusal before calling: the readers of a constant screen a poisoned value before asking its type
+const_types.nv	@type_const_decl	1	type_of	C	the caller returns on a refusal before calling: a literal needs no decision; a constant expression returns on a refusal in the block above
+consume_flow.nv	@flow_bind	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@flow_destructure	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@flow_expr	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@flow_expr	2	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@flow_name	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@flow_call	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@is_fresh_owned	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_flow.nv	@flow_fresh_in_view	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_paths.nv	@flow_operand	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_shapes.nv	@flow_ctor_field	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_shapes.nv	@flow_spread	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_shapes.nv	@pattern_owns	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+consume_shapes.nv	@flow_own_binders	1	type_if_known	T	consume-flow walk runs after the file is typed: every node is decided or refused
+destructure.nv	@type_destructure_bind	1	type_of	M	refusal mark compared above in this function on the dominating path
+destructure.nv	@bind_names_untyped	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a binder is recorded or already typed; absence keeps it unbound
+destructure.nv	@bind_names_untyped	2	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a binder is recorded or already typed; absence keeps it unbound
+disj_pattern.nv	@same_binder_types	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; binder types the pattern doors recorded
+disj_pattern.nv	@same_binder_types	2	type_if_known	K	channel read: absence is an answer and the consumer branches on it; binder types the pattern doors recorded
+exprs.nv	@is_poisoned_module_value	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; this read IS the poison test: absence means refused
+exprs.nv	@type_expr	1	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	2	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	3	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	4	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	5	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	6	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	7	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	8	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	9	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	10	type_of	M	refusal mark compared above in this function on the dominating path
+exprs.nv	@type_expr	11	type_of	C	the caller returns on a refusal before calling: the constructor arm settles the literal or returns on an undeclared head
+exprs.nv	@record	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a constant-expression slot is asked only through is_ty
+index_typing.nv	@type_index	1	type_of	M	refusal mark compared above in this function on the dominating path
+index_typing.nv	@type_index	2	type_of	M	refusal mark compared above in this function on the dominating path
+index_typing.nv	@judge_index_store	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an unrecorded receiver reads as no type and the store is skipped
+is_expr.nv	@type_is_test	1	type_of	M	refusal mark compared above in this function on the dominating path
+literal_rules.nv	@adapt_bind_literal	1	type_of	S	the asked node is a literal whose type the node itself gives
+literal_rules.nv	@adapt_literal_args	1	type_of	S	the asked node is a literal whose type the node itself gives
+match_arms.nv	@match_head	1	type_of	M	refusal mark compared above in this function on the dominating path
+match_arms.nv	@type_arm_in_scope	1	type_of	M	refusal mark compared above in this function on the dominating path
+match_arms.nv	@type_arm_in_scope	2	type_of	M	refusal mark compared above in this function on the dominating path
+methods.nv	@method_arg_row	1	type_of	M	refusal mark compared above in this function on the dominating path
+methods.nv	@type_method_call	1	type_of	M	refusal mark compared above in this function on the dominating path
+methods.nv	@type_method_call	2	type_of	M	refusal mark compared above in this function on the dominating path
+methods.nv	@type_effect_op_call	1	type_of	M	refusal mark compared above in this function on the dominating path
+module_values.nv	@type_module_value	1	type_if_known	M	refusal mark compared above in this function on the dominating path
+numeric_positions.nv	@literal_takes	1	type_of	S	the asked node is a literal whose type the node itself gives
+numeric_positions.nv	@judge_value_in	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the recorded type is read and checked with is_ty
+numeric_positions.nv	@judge_value_in	2	type_of	C	the caller returns on a refusal before calling: record-constructor, variant, qualified-payload and declared-bind doors all check a mark first
+operators.nv	@record_operator_callee	1	type_of	C	the caller returns on a refusal before calling: the binary arm of type_expr returns on a refused operand
+operators.nv	@record_operator_callee	2	type_of	C	the caller returns on a refusal before calling: the binary arm of type_expr returns on a refused operand
+operators.nv	@record_str_ordering	1	type_of	C	the caller returns on a refusal before calling: reached from the binary arm of type_expr after its mark
+operators.nv	@is_str_pair	1	type_of	C	the caller returns on a refusal before calling: its callers run after the binary arm of type_expr checked the mark
+operators.nv	@is_str_pair	2	type_of	C	the caller returns on a refusal before calling: its callers run after the binary arm of type_expr checked the mark
+operators.nv	@report_if_operator_needs_protocol	1	type_of	C	the caller returns on a refusal before calling: type_expr binary arm, the mark two lines above the call
+operators.nv	@report_if_operator_needs_protocol	2	type_of	C	the caller returns on a refusal before calling: type_expr binary arm, the mark two lines above the call
+operators.nv	@report_if_unary_needs_protocol	1	type_of	C	the caller returns on a refusal before calling: type_expr unary arm, the mark two lines above the call
+option_rules.nv	@type_variant_call	1	type_if_known	M	refusal mark compared above in this function on the dominating path
+return_rules.nv	@type_tail_value	1	type_of	S	the asked node is a literal whose type the node itself gives
+return_rules.nv	@tail_type_of	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the recorded tail type is read first
+return_rules.nv	@tail_type_of	2	type_of	C	the caller returns on a refusal before calling: every caller types the tail and returns on a refusal before judging it
+slice.nv	@slice_bound_is_int	1	type_of	M	refusal mark compared above in this function on the dominating path
+tail_rules.nv	@type_block_value_tail	1	type_if_known	M	refusal mark compared above in this function on the dominating path
+tail_rules.nv	@type_block_value_tail	2	type_if_known	M	refusal mark compared above in this function on the dominating path
+tail_rules.nv	@type_block_value_tail	3	type_of	M	refusal mark compared above in this function on the dominating path
+tail_rules.nv	@branch_literal_tail	1	type_of	S	the asked node is a literal whose type the node itself gives
+tail_rules.nv	@walk_constant_first	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a literal or an already recorded node needs no first walk
+try_rules.nv	@type_try	1	type_of	M	refusal mark compared above in this function on the dominating path
+type_of.nv	typed_args	1	type_of	C	the caller returns on a refusal before calling: the call, constructor and static-call doors walk the arguments and return on a refusal before building the key
+type_of.nv	owned_field_of_owned_recv	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an unrecorded owner reads as no type and the field as not owned
+type_of.nv	type_of	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a recorded literal wins over its token
+type_of.nv	type_of	2	type_if_known	K	channel read: absence is an answer and the consumer branches on it; coalesce and try are channel decisions
+type_of.nv	type_of	3	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the closure signature is the recorded one
+type_of.nv	type_of	4	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an unbound name reads its module value
+type_of.nv	type_of	5	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a recorded call type wins over the callee row
+type_of.nv	type_of	6	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; the receiver is asked to tell a poisoned receiver from a pass-order violation; absence returns no type
+type_of.nv	type_of	7	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an interpolated string is a channel decision
+type_of.nv	type_of	8	type_if_known	K	channel read: absence is an answer and the consumer branches on it; self is a channel decision
+type_of.nv	type_of	9	type_if_known	K	channel read: absence is an answer and the consumer branches on it; self field is a channel decision
+type_of.nv	type_of	10	type_if_known	K	channel read: absence is an answer and the consumer branches on it; field access is a channel decision
+type_of.nv	type_of	11	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a tuple is a channel decision
+type_of.nv	type_of	12	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an index is a channel decision
+type_of.nv	type_of	13	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an array literal is a channel decision
+type_of.nv	type_of	14	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an if value is a channel decision
+type_of.nv	type_of	15	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an unsafe value is a channel decision
+type_of.nv	type_of	16	type_if_known	K	channel read: absence is an answer and the consumer branches on it; self as a constructor head is a channel decision
+type_of.nv	type_of	17	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a settled constructor is read before it is asked
+type_of.nv	type_of	18	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; the spread source is asked for an anonymous constructor the walk settled
+type_of.nv	type_of	19	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a recorded cast wins over its target
+type_of.nv	type_of	20	type_if_known	K	channel read: absence is an answer and the consumer branches on it; a recorded constant expression wins
+type_of.nv	type_of	21	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; a parenthesised expression asks its inner expression
+type_of.nv	type_of	22	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; a prefix expression asks its operand
+type_of.nv	type_of	23	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; a binary expression asks its left operand
+type_of.nv	type_of	24	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; a binary expression asks its right operand
+type_of.nv	type_of	25	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the agreed match type is the channel decision
+type_of.nv	type_of	26	type_if_known	K	channel read: absence is an answer and the consumer branches on it; an unrecorded scrutinee ends the match ask
+type_of.nv	type_of	27	type_of	R	lattice arm asks a sub-node after the walk decided or refused above; the arm body is asked after the match was typed with no refusal
+typed_bind.nv	@type_declared_bind	1	type_if_known	M	refusal mark compared above in this function on the dominating path
+typing.nv	@type_block	1	type_of	M	refusal mark compared above in this function on the dominating path
+typing.nv	@type_block	2	type_of	M	refusal mark compared above in this function on the dominating path
+typing.nv	@type_block	3	type_if_known	M	refusal mark compared above in this function on the dominating path
+typing.nv	@type_block	4	type_if_known	M	refusal mark compared above in this function on the dominating path
+typing.nv	@type_block	5	type_if_known	M	refusal mark compared above in this function on the dominating path
+typing.nv	@type_call_stmt	1	type_of	S	the asked node is a literal whose type the node itself gives
+typing.nv	@type_call_stmt	2	type_of	M	refusal mark compared above in this function on the dominating path
+typing_stmt.nv	@type_stmt_in_scope	1	type_of	M	refusal mark compared above in this function on the dominating path
+unsafe.nv	@type_ptr_method	1	type_of	C	the caller returns on a refusal before calling: the method door typed the receiver and the arguments and checked the mark
+with_typing.nv	@type_with_stmt	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the handler expression was typed just above; absence is the refusal case
+with_typing.nv	@type_supervised_value	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the tail type is read back after the body was typed
+with_typing.nv	@type_supervised_value	2	type_of	C	the caller returns on a refusal before calling: the body was typed by this door and a refusal returned above
