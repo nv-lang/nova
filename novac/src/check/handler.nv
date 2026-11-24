@@ -492,8 +492,14 @@ fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applie
                 @type_block(body)
             }
             other => {
+                // THE TAIL IS JUDGED ONLY WHEN IT REFUSED NOTHING (registry
+                // 984, the mark rule): `@tail_type_of` asks the lattice when
+                // the channel is silent, and a refused tail leaves it silent.
+                ro emark = @out.len()
                 @type_tail_value(body)
-                if unitish {
+                if @out.len() > emark {
+                    // SILENT-OK: the tail refused itself; the walk spoke.
+                } else if unitish {
                     // A `-> never` operation (or unit): the expression form
                     // has no value to judge -- the oracle accepts
                     // `|_| 0` for such an effect (probe p3), and the field's

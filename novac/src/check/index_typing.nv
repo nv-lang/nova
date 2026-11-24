@@ -130,7 +130,18 @@ fn Checker mut @type_index(e Node) -> TyId {
     } else {
         // One argument: it is the element.
     }
+    // THE INDEX IS ASKED ONLY ONCE IT WAS DECIDED (registry 984, the mark
+    // rule): a refused index leaves nothing to read, and asking the lattice
+    // for a refused node is the pass-order ice -- the reader asked right
+    // after the walk, with no mark between them.
+    ro ibefore = @out.len()
     @type_expr(kids[2])
+    if @out.len() > ibefore {
+        // SILENT-OK: the index refused itself; its cause is the one diagnostic.
+        return no_ty()
+    } else {
+        // Decided: its type is the lattice's answer.
+    }
     ro idx_t = type_of(kids[2], @ctx, @scope, @chan)
     // The comparison goes through `prims`, the door to the seeded primitive ids
     // (the CommonTypes model) -- comparing against a number or against the
