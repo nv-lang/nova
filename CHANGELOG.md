@@ -53,10 +53,13 @@ Runtime:
   in use, which showed as a crash under load. Proved on a C harness that drives
   the collector directly: the finalizer of such an object ran early in 60 of 60
   runs before the fix and in 0 of 60 runs after it.
-- A thread already registered with the collector was still de-registered on
-  exit, which the collector's contract forbids. On the same harness this
-  crashed in 10 of 10 runs; de-registration now happens only after a successful
-  registration.
+- A thread is now de-registered from the collector only after its own
+  registration succeeded. Before, a thread that the collector had registered
+  implicitly was de-registered anyway, which the collector's contract forbids.
+  This could only occur for such an implicitly registered thread, and none of
+  the runtime's threads are registered that way, so no released program reached
+  it. On a second C harness that creates such a thread on purpose, the build
+  without the check crashed in 10 of 10 runs.
 - A program with nested `supervised` scopes could hang at exit: fibers parked
   in an inner scope were not cancelled on the way out.
 - On Windows, closing a TCP stream while unread data was still arriving made
@@ -91,8 +94,9 @@ Compiler:
 - `spawn(|| …)` built and exited with code 0 but never ran the body. A closure
   inside `spawn` that captured a variable broke the C build, and a captured
   mutable variable was copied instead of shared.
-- Declaring a name again with a value of another type inside a nested block
-  broke the build after the block.
+- A name re-bound inside a nested block (`if`, a loop or a `match` arm) to a
+  value of another type broke the build after the block, where the outer
+  binding is used again. The outer binding keeps its type again.
 
 Tools:
 
@@ -127,6 +131,14 @@ tracks it.
 - A user type whose name equals an internal type of the standard library (for
   example `Slot`) breaks the build of the standard library itself, and the
   errors point into its files. Rename the type (row 1030).
+- A name re-bound inside a block by an initializer that reads the same name
+  gets a zeroed value instead of the old one: with `ro x = 7` outside,
+  `ro x = x + 1` inside the block gives 1, not 8. Use a new name (row 2018).
+- The `on_child_fail` handler of a supervisor receives an empty failure
+  message when a child fails. Do not read the message there (row 2019).
+- A `libs` array in the `[ffi]` section of `nova.toml` is ignored when it is
+  written on several lines. The build then fails with `undefined symbol` and
+  does not mention the library. Write the array on one line (row 1055).
 - A one-line `match` arm whose body is an assignment is refused with
   `E_MATCH_ARM_SEP_MISSING`, even when the arms are on separate lines. Put
   braces around the body (row 1984).
@@ -148,8 +160,10 @@ tracks it.
 - With the MSVC toolchain, `p1418_exit_process_immediate` does not compile
   (`C2099: initializer is not a constant`). The Clang toolchain builds it.
 - Tests that measure time can fail or time out when the machine is under load.
-  `timeout_application_level2_t3_8` failed this way once on one machine in a
-  run of 229 tests and never in 72 000 measured sleeps (row 2026).
+  `timeout_application_level2_t3_8` failed this way several times in runs of
+  the merged conformance unit on one machine. An isolated repeat of the same
+  form of failure shows nothing, and in 300 runs of the merged unit after the
+  garbage collector fix it was not seen (row 2026).
 
 [Unreleased]: https://github.com/nv-lang/nova/compare/oracle-v0.1.7...HEAD
 [0.1.7]: https://github.com/nv-lang/nova/compare/oracle-v0.1.6...oracle-v0.1.7
