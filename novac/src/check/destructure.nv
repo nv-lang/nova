@@ -61,13 +61,30 @@ fn Checker mut @type_destructure_bind(st Node) -> () {
         }
         Branch { .. } => @type_expr(init)
     }
-    if @out.len() > before { return }
+    ro pat = kids[1]
+    if @out.len() > before {
+        // A REFUSAL IS STILL A BINDING (registry 984, the no-cascade half):
+        // the initializer was refused, and its cause is the one diagnostic --
+        // but the pattern's names still stand for the rest of the body. Until
+        // this arm they were never bound, so `ro (a, b) = refused(); println(a)`
+        // echoed "unknown name" over the cause (measured 2026-11-24: two
+        // diagnostics). They are bound with no type now, exactly as a refused
+        // plain binding poisons its name.
+        if pat.kind_of() == NodeKind.Pattern {
+            @bind_names_untyped(pat)
+        } else {
+            // SILENT-OK: a recovery gap stands where the pattern should be;
+            // the parser's own marker already said what was expected.
+        }
+        return
+    } else {
+        // The initializer was decided: the pattern is judged against it below.
+    }
     ro pt = type_of(init, @ctx, @scope, @chan)
     // RECORDED, not merely computed (the FieldAccess lesson): the emitter
     // reads the initializer node through the strict door to spell the
     // temporary, and the lattice answer above is not a record.
     @record(init, pt)
-    ro pat = kids[1]
     if pat.kind_of() != NodeKind.Pattern {
         // SILENT-OK: a recovery gap stands where the pattern should be --
         // the parser's own marker already said what was expected here.

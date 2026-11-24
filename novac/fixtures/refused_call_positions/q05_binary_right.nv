@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Registry 984, the row's own carrier: `refused_call()` WITH the parentheses,
+// read in this position. The walk refuses the name once; every later reader of
+// that node must find a decision or keep silent -- ONE diagnostic, never an
+// internal error. Judged by check-novac-fixture-expect.sh (the first
+// diagnostic) and check-novac-no-cascade.sh (exactly one error diagnostic).
+// outside the subset: `refused_call` is not a callable novac knows in an expressio_COMPILE_ERROR
+// NOVAC_outside the subset: `refused_call` is not a callable novac knows in an expressio outside the subset: `refused_call` is not a callable novac knows in an expressio
+module refused_call_positions.q05_binary_right
+
+type Pt value { x int, y int }
+
+fn take(i int) -> int => i
+fn apply(f fn(int) -> int, x int) -> int => f(x)
+fn mk_arr() -> []int => []int.of(1, 2)
+
+fn main() {
+    ro x = 1 + refused_call()
+    println(x)
+}
