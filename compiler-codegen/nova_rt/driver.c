@@ -11,6 +11,7 @@
  * Tokio reference: tokio/src/runtime/driver.rs */
 
 #include "nova_rt.h"   /* full chain — needs NovaSleepState fields + nova_sched_wake */
+#include "timer_start.h"
 #include "driver.h"
 #include "runtime.h"   /* nova_runtime_signal_main if needed */
 #include <stdio.h>
@@ -301,7 +302,7 @@ static void _nova_driver_handle_arm_sleep(NovaSleepState* st, uint64_t ms) {
      * weird, но libuv guarantees timer_cb runs only inside uv_run. We're called
      * from uv_run already (job_async_cb path). Timer registered to fire next
      * iteration. */
-    rc = uv_timer_start(&st->timer, _nova_driver_sleep_timer_cb, ms, 0);
+    rc = nova_timer_start_rel(&st->timer, _nova_driver_sleep_timer_cb, ms);
     if (rc != 0) {
         fprintf(stderr, "nova: driver uv_timer_start failed: %s\n", uv_strerror(rc));
         _nova_driver_arm_list_unlink(st);

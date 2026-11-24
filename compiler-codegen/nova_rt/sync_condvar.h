@@ -52,6 +52,7 @@
 
 #include <stdio.h>    /* fprintf — malloc-failure diagnostics */
 #include <stdlib.h>   /* abort/malloc/free — NovaCondvarTLFHandle (raw-malloc'd, not GC-managed) */
+#include "timer_start.h"
 
 /* ── WaitResult (Plan 103.4, D170) ──────────────────────────────────────
  *
@@ -428,7 +429,7 @@ static inline Nova_WaitResult* Nova_Condvar_method_wait_for(
         Nova_Mutex_method_lock(m);
         return nova_make_WaitResult_TimedOut();
     }
-    rc = uv_timer_start(&handle->timer, _nova_condvar_tlf_timer_cb, delay_ms, 0);
+    rc = nova_timer_start_rel(&handle->timer, _nova_condvar_tlf_timer_cb, delay_ms);
     if (rc != 0) {
         if (w.prev) w.prev->next = w.next; else cv->head = w.next;
         if (w.next) w.next->prev = w.prev; else cv->tail = w.prev;

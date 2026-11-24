@@ -18,6 +18,7 @@
 
 #include <stdio.h>    /* fprintf — malloc-failure diagnostics */
 #include <stdlib.h>   /* abort/malloc/free — NovaSemaphoreTLFHandle (raw-malloc'd, not GC-managed) */
+#include "timer_start.h"
 
 /* ── Semaphore TLF (timer) handle ─────────────────────────────────────────
  *
@@ -336,7 +337,7 @@ static inline nova_bool Nova_Semaphore_method_acquire_for(Nova_Semaphore* s,
         free(handle);
         return false;
     }
-    rc = uv_timer_start(&handle->timer, _nova_sem_tlf_timer_cb, delay_ms, 0);
+    rc = nova_timer_start_rel(&handle->timer, _nova_sem_tlf_timer_cb, delay_ms);
     if (rc != 0) {
         if (w.prev) w.prev->next = NULL; else s->head = NULL;
         s->tail = w.prev;

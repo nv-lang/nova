@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "timer_start.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -1093,7 +1094,7 @@ static inline nova_bool Nova_Mutex_method_lock_for(Nova_Mutex* m,
         free(handle);
         return false;
     }
-    rc = uv_timer_start(&handle->timer, _nova_mutex_tlf_timer_cb, delay_ms, 0);
+    rc = nova_timer_start_rel(&handle->timer, _nova_mutex_tlf_timer_cb, delay_ms);
     if (rc != 0) {
         if (w.prev) w.prev->next = NULL; else m->head = NULL;
         m->tail = w.prev;
@@ -1306,7 +1307,7 @@ static inline bool _nova_rwlock_start_timed_waiter(
         w->tlf_handle = NULL;
         return false;
     }
-    rc = uv_timer_start(&handle->timer, _nova_rwlock_tlf_timer_cb, delay_ms, 0);
+    rc = nova_timer_start_rel(&handle->timer, _nova_rwlock_tlf_timer_cb, delay_ms);
     if (rc != 0) {
         if (w->prev) w->prev->next = NULL; else *head = NULL;
         *tail = w->prev;
@@ -1846,7 +1847,7 @@ static inline nova_bool Nova_ReentrantMutex_method_lock_for(
         free(handle);
         return false;
     }
-    rc = uv_timer_start(&handle->timer, _nova_remutex_tlf_timer_cb, delay_ms, 0);
+    rc = nova_timer_start_rel(&handle->timer, _nova_remutex_tlf_timer_cb, delay_ms);
     if (rc != 0) {
         if (w.prev) w.prev->next = NULL; else rm->head = NULL;
         rm->tail = w.prev;

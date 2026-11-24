@@ -28,6 +28,7 @@
  */
 
 #include "alloc.h"
+#include "timer_start.h"
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>    /* fprintf — diagnostics (Nova_Time_after, timer metrics, select_park) */
@@ -1416,7 +1417,7 @@ static inline Nova_ChanReader* Nova_Time_after(nova_int ms) {
         }
     }
     uint64_t delay = ms > 0 ? (uint64_t)ms : 1;
-    rc = uv_timer_start(&st->timer, _nova_after_timer_cb, delay, 0);
+    rc = nova_timer_start_rel(&st->timer, _nova_after_timer_cb, delay);
     if (rc != 0) {
         fprintf(stderr, "nova: Nova_Time_after: uv_timer_start failed: %s\n",
                 uv_strerror(rc));

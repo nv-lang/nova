@@ -29,6 +29,7 @@
 
 #include <stdio.h>    /* fprintf — malloc-failure diagnostics */
 #include <stdlib.h>   /* malloc/free — NovaBarrierTLFHandle (raw-malloc'd, not GC-managed) */
+#include "timer_start.h"
 
 /* ── Barrier TLF handle (timer-for-wait_for) ─────────────────────────
  *
@@ -485,7 +486,7 @@ static inline NovaOpt_nova_int Nova_Barrier_method_wait_for(Nova_Barrier* b, voi
         free(handle);
         return nova_make_Option_None();
     }
-    rc = uv_timer_start(&handle->timer, _nova_barrier_tlf_timer_cb, delay_ms, 0);
+    rc = nova_timer_start_rel(&handle->timer, _nova_barrier_tlf_timer_cb, delay_ms);
     if (rc != 0) {
         _nova_barrier_dequeue(b, &w);
         b->arrived_count--;

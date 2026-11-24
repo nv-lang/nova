@@ -56,6 +56,7 @@
 #endif
 
 #include "net.h"
+#include "timer_start.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1440,7 +1441,7 @@ static void _nn2_stream_close_after_shutdown(uv_shutdown_t* req, int status) {
     /* Hold the stream until the timer's close callback released it (see
      * _nn2_drain_timer_close_cb). */
     _nn2_stream_acquire(s);
-    if (uv_timer_start(&d->timer, _nn2_drain_timer_cb, 300, 0) != 0) {
+    if (nova_timer_start_rel(&d->timer, _nn2_drain_timer_cb, 300) != 0) {
         /* Armed nothing: tear down the created timer (its close callback
          * frees the context and releases the held reference) and finish
          * the close without waiting for EOF. */

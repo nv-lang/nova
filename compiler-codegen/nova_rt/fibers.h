@@ -54,6 +54,7 @@
 #endif
 #include <uv.h>
 #include "eventloop.h"
+#include "timer_start.h"
 #include "driver.h"  /* Plan 83.11 Ф.3: NovaDriverJob, nova_driver_submit_job */
 
 /* Plan 27 R4 → Plan 44.2 Этап 1/2: Boehm GC + minicoro fiber stacks.
@@ -3148,7 +3149,7 @@ static inline void _nova_pump_wait_once(uv_loop_t* loop, int64_t deadline_ns) {
             int64_t remaining_ms = remaining_ns / 1000000LL + 1;  /* round up, min 1 */
             uv_timer_t w;
             uv_timer_init(loop, &w);
-            uv_timer_start(&w, _nova_scope_deadline_wait_cb, (uint64_t)remaining_ms, 0);
+            nova_timer_start_rel(&w, _nova_scope_deadline_wait_cb, (uint64_t)remaining_ms);
             uv_run(loop, UV_RUN_ONCE);
             uv_timer_stop(&w);
             uv_close((uv_handle_t*)&w, NULL);
@@ -3538,7 +3539,7 @@ static inline void* nova_scope_arm_early_deadline(NovaFiberQueue* q) {
     int64_t remaining_ns = q->deadline_ns - time_monotonic_ns();
     uint64_t remaining_ms = remaining_ns > 0
         ? (uint64_t)(remaining_ns / 1000000LL) : 0;
-    uv_timer_start(&dl->timer, _nova_early_dl_timer_cb, remaining_ms, 0);
+    nova_timer_start_rel(&dl->timer, _nova_early_dl_timer_cb, remaining_ms);
     q->early_deadline_timer = dl;
     return dl;
 }
@@ -4655,7 +4656,7 @@ static inline void _nova_sleep_via_libuv(NovaFiberQueue* scope, int slot,
                    * loop corruption — это runtime bug, не recoverable. */
     }
     st.timer.data = &st;
-    rc = uv_timer_start(&st.timer, _nova_sleep_timer_cb, (uint64_t)ms, 0);
+    rc = nova_timer_start_rel(&st.timer, _nova_sleep_timer_cb, (uint64_t)ms);
     if (rc != 0) {
         fprintf(stderr, "nova: FATAL uv_timer_start failed: %s\n", uv_strerror(rc));
         uv_close((uv_handle_t*)&st.timer, NULL);
@@ -5192,8 +5193,8 @@ static inline nova_unit time_sleep_ms(nova_int ms) {
                 if (remaining > 0) {
                     uv_timer_t main_wait;
                     uv_timer_init(nova_current_loop(), &main_wait);
-                    uv_timer_start(&main_wait, _nova_main_wait_timer_cb,
-                                    (uint64_t)remaining, 0);
+                    nova_timer_start_rel(&main_wait, _nova_main_wait_timer_cb,
+                                         (uint64_t)remaining);
                     uv_run(nova_current_loop(), UV_RUN_ONCE);
                     uv_timer_stop(&main_wait);
                     uv_close((uv_handle_t*)&main_wait, NULL);
