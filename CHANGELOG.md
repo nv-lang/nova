@@ -47,6 +47,13 @@ Runtime:
   park, and also when a `select` arm or a file operation completed at that
   moment. Wake-ups now survive the park, and completion is checked again before
   the fiber sleeps.
+- One-shot relative timers of the runtime were counted from the event loop's
+  cached clock, which is refreshed once per loop iteration, and so fired early
+  by the age of the cache. For example, a `supervised(timeout:)` over a
+  stalled write, entered after a sleep on the same thread, interrupted the
+  write after 0–2 ms under a 200 ms timeout. Every such timer is now armed
+  from the current time. In one conformance fixture the interruption came 8
+  of 8 runs too early before the fix and 5 of 5 runs on time after it.
 - On Windows, the garbage collector did not scan the native stack of a thread
   that has no fiber arena yet: the driver thread, and a worker before its first
   fiber. An object kept alive only by such a stack could be freed while still
@@ -163,7 +170,9 @@ tracks it.
   `timeout_application_level2_t3_8` failed this way several times in runs of
   the merged conformance unit on one machine. An isolated repeat of the same
   form of failure shows nothing, and in 300 runs of the merged unit after the
-  garbage collector fix it was not seen (row 2026).
+  garbage collector fix it was not seen. Whether this is an early wake-up of
+  a timer was not measured, and the timer fix above does not close the item
+  (row 2026).
 
 [Unreleased]: https://github.com/nv-lang/nova/compare/oracle-v0.1.7...HEAD
 [0.1.7]: https://github.com/nv-lang/nova/compare/oracle-v0.1.6...oracle-v0.1.7
