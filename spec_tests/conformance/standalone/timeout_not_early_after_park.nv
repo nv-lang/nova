@@ -1,0 +1,65 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT timeout not early
+// EXPECT_TIMEOUT_MS 20000
+
+// Registry 221.1 No.2030: a one-shot timer was armed against the event loop's
+// CACHED clock, which libuv refreshes once per loop iteration. Armed after a
+// park (here a 300ms sleep on the same thread), the timer counted from an
+// instant at least that old and fired early by the cache's age. For the
+// early-deadline timer of `supervised(timeout:)` over a stalled write that
+// meant an interruption after 0-2 ms under a 200ms timeout (measured 3 of 5
+// runs, never later than 108 ms).
+//
+// The stalled write is the carrier: the owner of the scope is parked in a
+// blocking body operation, so the scope's own deadline gate cannot run and
+// only the early timer can interrupt it. The lower bound is the assertion: a
+// loaded machine may only make the interruption LATER, so the check does not
+// flake under load; the upper side is not asserted on purpose.
+module standalone.timeout_not_early_after_park
+
+import std.net.{TcpStream, TcpListener, SocketAddr, real_net}
+import std.time.duration
+
+fn main() -> () {
+    with Net = real_net() {
+        consume listener = TcpListener.bind(SocketAddr.loopback(0))!!
+        ro port = listener.local_port()
+        ro (done_tx, done_rx) = Channel[int].new(1)
+        supervised {
+            // The peer never reads: the client's send buffer fills and the
+            // write stalls.
+            spawn consume listener {
+                consume peer = listener.accept()!!
+                assert(done_rx.recv() == Some(1))
+                peer.close()
+            }
+            300.to_millis().sleep()
+            mut body []u8 = []u8.new()
+            body.resize(16777216, 65 as u8)
+            ro start = Timestamp.now().unix_millis()
+            with Fail[TimeoutError] = |_e| {
+                // Reached when the scope throws its deadline at exit.
+                assert(Timestamp.now().unix_millis() - start >= 190)
+            } {
+                supervised(timeout: 200.to_millis()) {
+                    consume c = TcpStream.connect(SocketAddr.loopback(port))!!
+                    mut total = 0
+                    while total < body.len() {
+                        match c.write(body[total..total + 65536]) {
+                            Ok(n) => { total += n }
+                            Err(_e) => {
+                                // The interruption itself: this is the moment
+                                // the early timer fired.
+                                assert(Timestamp.now().unix_millis() - start >= 190)
+                                total = body.len()
+                            }
+                        }
+                    }
+                    c.close()
+                }
+            }
+            assert(done_tx.try_send(1))
+        }
+    }
+    print("timeout not early")
+}
