@@ -598,6 +598,7 @@ par_add "$ROOT/scripts/guards/check-novac-ref-field-names.py" "поле-ссыл
 par_add "$ROOT/scripts/guards/check-novac-no-alloc-in-lookup.py" "дверь поиска аллоцирует (П18)"
 par_add "$ROOT/scripts/guards/check-novac-ice-messages.py" "текст ice() повторяется или без модуля (П20)"
 par_add "$ROOT/scripts/guards/check-novac-no-default-branch.py" "ветка «всё остальное» на закрытом множестве (П21)"
+par_add "$ROOT/scripts/guards/check-novac-lattice-readers.py" "читатель решётки без строки в перечне или без проверки отказа (реестр 984)"
 par_add "$ROOT/scripts/guards/check-novac-mangling-one-way.py" "C-имя разбирается обратно (П24)"
 par_add "$ROOT/scripts/guards/check-novac-effects-at-door.sh" "способность ниже двери (П15)"
 par_add "$ROOT/scripts/guards/check-novac-second-door.py" "вторая дверь: одна операция написана дважды"
