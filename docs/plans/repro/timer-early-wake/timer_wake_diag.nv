@@ -1,0 +1,109 @@
+// Diagnostic twin: amplify the early-wake window (acceptance handoff,
+// Defect A / №TBD-4). Each iteration runs a consume-scope whose cleanup
+// sleeps 30ms with a 1ms Level-2 threshold — the exact shape of
+// timeout_application_level2_t3_8, but LOOPED 400 times per run.
+//
+// Classification per the acceptance-review protocol:
+//   dur == -1        -> missed exit-event write (stale/lost record)
+//   0 <= dur <= 19   -> short measurement: sleep ended early or hrtime math
+//   20 <= dur <= 28  -> borderline jitter (timer granularity), still <30
+// Both observed_duration AND observed_overrun are printed per iteration
+// (acceptance review request): overrun distinguishes a missed write from
+// a completed-but-short cleanup.
+module nova_tests.timer_wake_diag
+
+import std.time.duration
+
+type DiagRes {
+    ro id int
+}
+
+fn DiagRes.new(id int) -> DiagRes => { id }
+
+// Cleanup спит 30ms — при пороге 1ms (Level 2) overrun=true.
+fn DiagRes consume @cleanup(_outcome ScopeOutcome) -> () {
+    30.to_millis().sleep()
+    return ()
+}
+
+type DiagStats {
+    mut iterations int
+    mut missed_event int
+    mut short_measure int
+    mut jitter int
+    mut min_duration int
+    mut max_duration int
+    mut first_missed_iter int
+    mut first_short_iter int
+    mut first_short_duration int
+    mut first_missed_overrun bool
+}
+
+fn DiagStats.new() -> DiagStats => {
+    mut iterations = 0
+    mut missed_event = 0
+    mut short_measure = 0
+    mut jitter = 0
+    mut min_duration = 2147483647
+    mut max_duration = -1
+    mut first_missed_iter = -1
+    mut first_short_iter = -1
+    mut first_short_duration = -1
+    mut first_missed_overrun = false
+    { iterations, missed_event, short_measure, jitter, min_duration, max_duration, first_missed_iter, first_short_iter, first_short_duration, first_missed_overrun }
+}
+
+fn diag_record(mut s DiagStats, iter int, duration int, overrun bool) {
+    s.iterations += 1
+    if duration < s.min_duration { s.min_duration = duration }
+    if duration > s.max_duration { s.max_duration = duration }
+    if duration == -1 {
+        s.missed_event += 1
+        if s.first_missed_iter == -1 {
+            s.first_missed_iter = iter
+            s.first_missed_overrun = overrun
+        }
+        println("DIAG MISSED-EVENT iter=${iter} overrun=${overrun}")
+    } else if duration <= 19 {
+        s.short_measure += 1
+        if s.first_short_iter == -1 {
+            s.first_short_iter = iter
+            s.first_short_duration = duration
+        }
+        println("DIAG SHORT-MEASURE iter=${iter} duration=${duration} overrun=${overrun}")
+    } else if duration <= 28 {
+        s.jitter += 1
+        println("DIAG JITTER iter=${iter} duration=${duration}")
+    }
+}
+
+test "timer wake diag: 400x consume-scope with 30ms cleanup under 1ms Level-2 threshold" {
+    mut stats = DiagStats.new()
+    mut iter = 0
+    while iter < 400 {
+        mut observed_duration = -1
+        mut observed_overrun = false
+        with Application = effect Application {
+            register_finalizer(_f) -> () { return () }
+            default_exit_timeout_ms() -> int { return 1 }
+        } {
+            with ResourceTrace = effect ResourceTrace {
+                on_resource_enter(_label) -> () { return () }
+                on_resource_exit(_label, _outcome, duration_ms, overrun) -> () {
+                    observed_duration = duration_ms
+                    observed_overrun = overrun
+                    return ()
+                }
+            } {
+                consume r = DiagRes.new(iter) {
+                    ro _ = r.id
+                }
+            }
+        }
+        println("DIAG-DUR iter=${iter} dur=${observed_duration} overrun=${observed_overrun}")
+        diag_record(stats, iter, observed_duration, observed_overrun)
+        iter += 1
+    }
+    println("DIAG done iterations=${stats.iterations} missed_event=${stats.missed_event} short_measure=${stats.short_measure} jitter=${stats.jitter} min=${stats.min_duration} max=${stats.max_duration} first_missed_iter=${stats.first_missed_iter} first_missed_overrun=${stats.first_missed_overrun} first_short_iter=${stats.first_short_iter} first_short_duration=${stats.first_short_duration}")
+    assert(stats.missed_event == 0 && stats.short_measure == 0)
+}
