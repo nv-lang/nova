@@ -1715,7 +1715,10 @@ no_caveat=0
 # Scanner remains 116 on this branch; no invented +1 or closure of reg 2002.
 # 2026-11-20, integrator numbering: reg 2007/2008/2009 all carry
 # BLOKIRUET TEG: NET (non-blockers); routes stay 116, measured.
-blockers=116
+# 2026-11-24, integrator (owner's word: the nova-alula defect blocks the 0.1.7 tag): row 2029 filed OPEN with
+#   BLOKIRUET TEG: DA (a stalled write is interrupted by supervised(deadline:/timeout:) seconds late under CPU
+#   load; not fixed in the 0.1.7 candidate). Adds one tag-blocker, blockers 116 -> 117; closure by measure lifts it.
+blockers=117
 # 2026-09-23, integrator: 92 -> 85, measured, not derived. The value sat at
 # 92 for two days although the chronicle below already records 92 -> 91:
 # the comment was written and the key was not moved, so the ratchet allowed
