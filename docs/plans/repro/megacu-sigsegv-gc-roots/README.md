@@ -1,10 +1,10 @@
-# Repro: merged-CU intermittent SIGSEGV — lost GC roots via unchained `GC_push_other_roots` (№TBD-1) + illegal `GC_unregister_my_thread` after `GC_DUPLICATE` (№TBD-2)
+# Repro: merged-CU intermittent SIGSEGV — lost GC roots via unchained `GC_push_other_roots` (№2027) + illegal `GC_unregister_my_thread` after `GC_DUPLICATE` (№2028)
 
 Base: `ebbc2d8cd` (`origin/integrate/wake-loss-320-b`), Windows, MSVC/clang,
 vcpkg `gc.lib` (GC_THREADS, GWW_VDB, THREAD_LOCAL_ALLOC, PARALLEL_MARK).
 Date: 2026-11-23, worktree `codex-segv`, branch `codex/segv-gc-register-dup`.
 
-## Defect №TBD-2 — deterministic C harness (RED/GREEN both ways)
+## Defect №2028 — deterministic C harness (RED/GREEN both ways)
 
 `repro_gc_dup.c.txt` (buggy) / `repro_gc_dup_fixed.c.txt` (guarded unregister) — `.c`-суффиксы спрятаны в `.txt` по правилу улик №695 (глобальный `.gitignore` игнорирует `*.c`).
 
@@ -37,7 +37,7 @@ libuv's own `CreateThread`, which the gc.h macro does NOT intercept),
 so this defect is latent for Nova today but activates silently if
 nova_rt ever creates threads through the intercepted path.
 
-## Defect №TBD-1 — lost roots (mechanism, static + stress)
+## Defect №2027 — lost roots (mechanism, static + stress)
 
 `fiber_arena_win.c` published `_nova_fw_gc_push_other_roots` through
 `GC_set_push_other_roots` without chaining. The default callback on
@@ -67,7 +67,7 @@ unregister vs chained callback) before comparing; ≥8 concurrent copies ×
 12 rounds reproduces the load-sensitive modes; solo sequential runs are
 the clean-lane criterion (5 × 60 = 300 target).
 
-## Known separate defect found while stress-testing (№TBD-3, [M-net-stream-cross-worker-reset])
+## Known separate defect found while stress-testing (№2025, [M-net-stream-cross-worker-reset])
 
 `m_boxcap_detach_cancel_token_pos` fails ~1/300 solo, ~11/96 under 8-way
 load, identically on old/conditional-unregister/chained runtimes (not the
@@ -79,7 +79,7 @@ the twin is 96/96 green under the same load → M:N-scheduler dependent.
 Hypothesis: the detached response-writing fiber runs on a worker whose
 libuv loop does not own the accepted TcpStream handle (D98 per-worker
 loops; libuv handle ops are not thread-safe) → RST. Dedicated window
-required; tracked as №TBD-3 in 221.1-bug-sweep.md.
+required; tracked as №2025 in 221.1-bug-sweep.md.
 
 ## Final series (chained runtime, exe
 SHA-256 3130aedbacc502181dd260f2ac8fdce64d71af6d8d58f32e414a707817fc64cc)
@@ -90,7 +90,7 @@ SHA-256 3130aedbacc502181dd260f2ac8fdce64d71af6d8d58f32e414a707817fc64cc)
 is the separately-filed fixture race, not a GC/M:N defect.
 
 
-## Follow-up window (codex/tcp-close-reset, base: the codex/segv-gc-register-dup line over `ebbc2d8cd`): m_boxcap RST root cause (№TBD-3)
+## Follow-up window (codex/tcp-close-reset, base: the codex/segv-gc-register-dup line over `ebbc2d8cd`): m_boxcap RST root cause (№2025)
 
 Single-diff A/B on the merged-conformance-base build; the ONLY difference
 between the two builds is `compiler-codegen/nova_rt/net.c` (graceful TCP
