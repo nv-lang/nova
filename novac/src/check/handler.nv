@@ -526,7 +526,7 @@ fn Checker mut @type_with_handler_lambda_in_scope(lit Node, eff_name str, applie
     match @ctx.defs.type_decl(eff_name) {
         Some(edecl) => {
             ro seed = @ctx.defs.type_decl(HANDLER_CTOR) ?? ice_at(
-                "novac/src/check/handler.nv:522",
+                "novac/src/check/handler.nv:528",
                 "check: the Effect seed is not registered")
             ro eff_ty = if is_ty(applied) { applied } else { @ctx.types[raw_decl(edecl)].ty_id }
             @record(lit, @ctx.tys.app(seed, []TyId.of(eff_ty)))
