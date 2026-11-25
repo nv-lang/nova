@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT deadline reached the parked lookup
+// EXPECT_TIMEOUT_MS 60000
+// ENV NOVA_BLOCKING_THREADS=1
+
+// Registry 221.1 No.2029. The early-deadline timer of a supervised scope is
+// the only thing that bounds the scope owner's direct blocking operations
+// while the body runs, and it fires once. A DNS lookup runs on the libuv
+// thread pool and used to swallow that single shot: the stop callback could
+// not interrupt it, the lookup then finished on its own, and every later
+// park of the same scope waited forever.
+//
+// The deadline is already in the past when the scope is entered, so the
+// timer is certain to fire while the owner is parked in the lookup: the
+// answer can only arrive through a later event-loop iteration, and timers
+// run first. The lookup must then return an error at once. Only that lets
+// the program finish: on the Err arm the body ends. On the Ok arm the body
+// waits for a message that never comes -- the park that the consumed shot
+// no longer protects.
+//
+// NOVA_BLOCKING_THREADS=1 keeps the pool to one thread: the pool is created
+// on the first lookup, and creating threads is slow on some machines.
+module standalone.deadline_interrupts_lookup
+
+import std.net.{real_net, resolve, NetError}
+import std.time.duration
+
+fn main() -> () {
+    with Net = real_net() {
+        ro idle = Channel[int].new(1)
+        ro { rx: idle_rx } = idle
+        mut interrupted = false
+        with Fail[TimeoutError] = |_e| 0 {
+            supervised(deadline: Monotonic.now() - 1.to_millis()) {
+                ro answer = resolve("127.0.0.1", 9)
+                match answer {
+                    Ok(_addrs) => { idle_rx.recv() }
+                    Err(_e) => { interrupted = true }
+                }
+            }
+        }
+        if interrupted {
+            print("deadline reached the parked lookup")
+        } else {
+            print("lookup was not interrupted")
+        }
+    }
+}
