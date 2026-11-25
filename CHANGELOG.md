@@ -13,7 +13,7 @@ its own notes in `docs/dev/`.
 
 ## [Unreleased]
 
-## [0.1.7] - 2026-11-24
+## [0.1.7] - 2026-11-25
 
 Patch release over 0.1.6. It fixes lost wake-ups, premature garbage collection
 and connection resets in the runtime, and closes the remaining holes in
@@ -54,6 +54,19 @@ Runtime:
   write after 0–2 ms under a 200 ms timeout. Every such timer is now armed
   from the current time. In one conformance fixture the interruption came 8
   of 8 runs too early before the fix and 5 of 5 runs on time after it.
+- The time limit of a `supervised(timeout:)` or `supervised(deadline:)` scope
+  could miss its moment and never come again. The limit was checked once, and
+  if at that moment the fiber was inside an operation that cannot be
+  interrupted, the check was lost; every later wait of the same scope then ran
+  without a limit. This happened when a name lookup (`resolve`) took longer
+  than the limit, which is common under CPU load: a read or write that followed
+  could hang forever or return long after the limit. A name lookup (`resolve`)
+  can now be interrupted: when the limit fires while the fiber waits for a
+  lookup, the lookup returns an error at once and the late answer is discarded.
+  In one conformance fixture the lookup hung in 4 of 4 runs before the fix and
+  finished in 6 of 6 runs after it. An operation that is already running in
+  the thread pool — a file operation or a blocking C call — still cannot be
+  interrupted and still outlasts the limit; see Known issues.
 - On Windows, the garbage collector did not scan the native stack of a thread
   that has no fiber arena yet: the driver thread, and a worker before its first
   fiber. An object kept alive only by such a stack could be freed while still
@@ -146,6 +159,11 @@ tracks it.
 - A `libs` array in the `[ffi]` section of `nova.toml` is ignored when it is
   written on several lines. The build then fails with `undefined symbol` and
   does not mention the library. Write the array on one line (row 1055).
+- A file operation or a blocking C call that is already running cannot be
+  interrupted. If it outlasts the time limit of its `supervised` scope, the
+  fiber waits for it to finish, and a later read or write in the same scope is
+  then not interrupted by that limit either (row 2031). Keep such calls shorter
+  than the limit, or run them in their own scope.
 - A one-line `match` arm whose body is an assignment is refused with
   `E_MATCH_ARM_SEP_MISSING`, even when the arms are on separate lines. Put
   braces around the body (row 1984).
