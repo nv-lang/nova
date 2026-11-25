@@ -1898,27 +1898,66 @@ typedef struct {
     int              slot;
     int              status;
     struct addrinfo* res;
-    nova_atomic_int  done;   /* completion latch (lost-wake fix) */
+    nova_atomic_int  done;       /* completion latch (lost-wake fix) */
+    /* Registry 221.1 No.2029: a cancel releases the waiter at once, while the
+     * pool thread may still be inside getaddrinfo writing this request. The
+     * request is therefore allocated UNCOLLECTABLE and freed by whichever
+     * side finishes second: the pool callback (bit 0 of `state`) or the
+     * waiter (bit 1). Each side stops touching the request before setting
+     * its bit. `cancelled` is published by the cancel and read by the
+     * callback, which then discards the answer. */
+    nova_atomic_int  cancelled;
+    nova_atomic_int  state;
 } NovaNet2DnsReq;
 
 static nova_bool _nn2_dns_ready(void* ctx) {
     return nova_aint_load(&((NovaNet2DnsReq*)ctx)->done) != 0;
 }
 
+/* `bit` is the caller's own side (1 = pool callback, 2 = waiter). The last
+ * side frees the address list and the request. */
+static void _nn2_dns_release(NovaNet2DnsReq* dr, int bit) {
+    if (__atomic_fetch_or(&dr->state, bit, __ATOMIC_ACQ_REL) & (3 ^ bit)) {
+        if (dr->res) uv_freeaddrinfo(dr->res);
+        nova_free_uncollectable(dr);
+    }
+}
+
 static void _nn2_dns_cb(uv_getaddrinfo_t* req, int status,
                         struct addrinfo* res) {
     NovaNet2DnsReq* dr = (NovaNet2DnsReq*)req->data;
+    if (nova_aint_load(&dr->cancelled)) {
+        /* The waiter was released by a cancel and no longer owns this
+         * request: the answer is not needed. */
+        dr->res = res;
+        _nn2_dns_release(dr, 1);
+        return;
+    }
     dr->status = status;
     dr->res    = res;
-    nova_aint_store(&dr->done, 1);  /* results published → latch → wake */
+    __atomic_store_n(&dr->done, 1, __ATOMIC_RELEASE);  /* results published → latch → wake */
     NovaFiberQueue* sc = dr->scope; int sl = dr->slot;
     dr->scope = NULL;
-    if (sc) nova_sched_wake(sc, sl);
+    /* A cancel may have raced the publish: it set `cancelled` and released
+     * the waiter itself, and the waiter ignores the answer. Read the flag
+     * before the release -- it may free the request. */
+    int was_cancelled = (int)nova_aint_load(&dr->cancelled);
+    _nn2_dns_release(dr, 1);
+    if (sc && !was_cancelled) nova_sched_wake(sc, sl);
 }
 
 static NovaStopMode _nn2_dns_stop_cb(void* handle) {
-    (void)handle;  /* uv_getaddrinfo can't be cancelled mid-flight */
-    return NOVA_STOP_ASYNC;
+    NovaNet2DnsReq* dr = (NovaNet2DnsReq*)handle;
+    int32_t expect = 0;
+    if (!__atomic_compare_exchange_n(&dr->cancelled, &expect, 1, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        return NOVA_STOP_ASYNC;  /* already released by an earlier cancel */
+    }
+    /* uv_getaddrinfo cannot be interrupted. Publish the cancellation and
+     * release the waiter now; the callback discards the late answer. */
+    dr->status = UV_ECANCELED;
+    __atomic_store_n(&dr->done, 1, __ATOMIC_RELEASE);
+    return NOVA_STOP_SYNC;
 }
 
 /* Copy the i-th NovaNetAddr image out of a GC array into a caller []u8 image
@@ -1952,7 +1991,9 @@ nova_int net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port,
         free(hostz); if (out_err) *out_err = UV_ECANCELED; return -1;
     }
 
-    NovaNet2DnsReq* dr = (NovaNet2DnsReq*)nova_alloc(sizeof(NovaNet2DnsReq));
+    /* Uncollectable: it has to outlive a waiter that a cancel released while
+     * the pool thread is still writing the request (see NovaNet2DnsReq). */
+    NovaNet2DnsReq* dr = (NovaNet2DnsReq*)nova_alloc_uncollectable(sizeof(NovaNet2DnsReq));
     memset(dr, 0, sizeof(*dr));
     dr->req.data = dr;
     dr->scope    = scope;
@@ -1965,26 +2006,36 @@ nova_int net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port,
 
     int rc = uv_getaddrinfo(loop, &dr->req, _nn2_dns_cb, hostz, port_str, &hints);
     free(hostz);
-    if (rc != 0) { if (out_err) *out_err = rc; return -1; }
+    if (rc != 0) {
+        /* Not submitted: no callback will ever come, the request is ours alone. */
+        nova_free_uncollectable(dr);
+        if (out_err) *out_err = rc; return -1;
+    }
 
     nova_sched_register_pending(scope, slot, dr, _nn2_dns_stop_cb);
     nova_sched_park_until(scope, slot, _nn2_dns_ready, dr);
     nova_sched_unregister_pending(scope, slot);
 
-    if (nova_abool_load(&cancel_sc->cancel_requested)) {
-        if (dr->res) uv_freeaddrinfo(dr->res);
-        if (out_err) *out_err = UV_ECANCELED; return -1;
+    /* Every path below is through with the request: the release frees the
+     * address list and, once the pool callback is done, the request itself. */
+    if (nova_aint_load(&dr->cancelled)
+        || nova_abool_load(&cancel_sc->cancel_requested)) {
+        if (out_err) *out_err = UV_ECANCELED;
+        _nn2_dns_release(dr, 2);
+        return -1;
     }
     if (dr->status != 0) {
-        if (dr->res) uv_freeaddrinfo(dr->res);
-        if (out_err) *out_err = dr->status; return -1;
+        int st = dr->status;
+        if (out_err) *out_err = st;
+        _nn2_dns_release(dr, 2);
+        return -1;
     }
 
     nova_int count = 0;
     for (struct addrinfo* ai = dr->res; ai; ai = ai->ai_next)
         if (ai->ai_family == AF_INET || ai->ai_family == AF_INET6) count++;
     if (count == 0) {
-        uv_freeaddrinfo(dr->res);
+        _nn2_dns_release(dr, 2);
         if (out_err) *out_err = UV_EAI_NONAME; return -1;
     }
 
@@ -2000,7 +2051,7 @@ nova_int net_dns_lookup(const uint8_t* host, nova_int host_len, uint16_t port,
         memcpy(&ss, ai->ai_addr, ai->ai_addrlen);
         _nn2_addr_from_ss(&ss, &arr[i++]);
     }
-    uv_freeaddrinfo(dr->res);
+    _nn2_dns_release(dr, 2);
 
     if (out_arr) *out_arr = arr;
     if (out_err) *out_err = 0;
