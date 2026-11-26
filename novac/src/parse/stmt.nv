@@ -507,13 +507,66 @@ fn Cursor mut @stmt() -> Node {
     // SPAWN (wave 274.11 Э.7 item 4): `spawn { body }` -- the D13 pair of
     // `supervised`. Same contextual door, same probed-void hazard (the
     // oracle reserves `spawn` too: "expected identifier, got `spawn`"),
-    // same bodyless marker. No `timeout:`/`cancel:` arguments this wave:
-    // the carrier writes none, and the acceptance is the carrier's shape.
-    if @peek_ident(SPAWN_WORD) && @peek(skip: 1) == TokenKind.LBrace {
+    // same bodyless marker. `spawn consume ...` (E12 wave, D415 §4 with the
+    // No379 amendment) joins the door: the consume list is read WHOLE, so
+    // the tree tells the truth about what was written -- the `spawn` leaf,
+    // the `consume` leaf, one Ident leaf per listed binding, and for the
+    // binding form `c = expr` the `=` leaf and the initializer -- with the
+    // body Block last, exactly where every existing reader looks for it.
+    // The MIXED spelling `a, b = expr` parses too (No379 makes it an
+    // ERROR, and the checker's door names it: the parser's job is the
+    // truth, the refusal's home is check). `detach consume` stays a named
+    // refusal elsewhere.
+    if @peek_ident(SPAWN_WORD) &&
+        (@peek(skip: 1) == TokenKind.LBrace || @peek(skip: 1) == TokenKind.KwConsume) {
         // Same guarantee and the same bare-word semantics as `supervised`
-        // one arm up: the door sees the brace, so the block is direct.
+        // one arm up: the door sees the brace or the consume list, so what
+        // follows is this form and no expression.
         mut kids = []Node.of(@take()) // `spawn`
-        kids.push(@block())
+        if @peek() == TokenKind.KwConsume {
+            kids.push(@take()) // `consume`
+            ro list_ok = @peek() == TokenKind.Ident
+            if list_ok {
+                // Each listed name is a Name NODE around its identifier
+                // leaf -- the shape every other read of a binding has, so
+                // the channel doors (a binding read, a capture) key it by a
+                // real node id, and the checker reads its text through the
+                // one name door.
+                kids.push(@node(NodeKind.Name, []Node.of(@take())))
+                while @peek() == TokenKind.Comma {
+                    kids.push(@take()) // `,`
+                    if @peek() == TokenKind.Ident {
+                        kids.push(@node(NodeKind.Name, []Node.of(@take())))
+                    } else {
+                        // `spawn consume a, {` -- the list broke; the zero-
+                        // width marker keeps the tree honest about it.
+                        kids.push(@error_node(TokenKind.ErrorTok))
+                        break
+                    }
+                }
+                if @peek() == TokenKind.Assign {
+                    // The binding form `c = expr` (or the mixed spelling the
+                    // checker refuses): the initializer is read whole.
+                    kids.push(@take()) // `=`
+                    kids.push(@expr())
+                } else {
+                    // A re-consume list: no initializer to read.
+                }
+            } else {
+                // `spawn consume` with no name after it: the marker.
+                kids.push(@error_node(TokenKind.ErrorTok))
+            }
+        } else {
+            // A plain `spawn { ... }`: no consume list between the word and
+            // the body.
+        }
+        if @peek() == TokenKind.LBrace {
+            kids.push(@block())
+        } else {
+            // `spawn` with no body: the marker, same discipline as a
+            // bodyless if/while.
+            kids.push(@error_node(TokenKind.ErrorTok))
+        }
         return @node(NodeKind.SpawnStmt, kids)
     }
     // DEFER (D90): `defer { body }`. The keyword is lexed; the FORM is read

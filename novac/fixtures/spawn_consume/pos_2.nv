@@ -1,0 +1,42 @@
+module spawn_consume.pos_2
+
+// `spawn consume a, b { pump(a, b) }` (E12): the child CONSUMES both moved
+// bindings through consume parameters -- the auto-cleanup is disarmed by
+// the explicit consumption (No456), so each value is released exactly
+// once. The single-var re-consume form is the same door. Behaviour must
+// match the oracle byte for byte (novac-e1-smoke).
+
+type ScDoor consume {
+    id int,
+}
+
+fn ScDoor.new(id int) -> ScDoor => { id }
+fn ScDoor consume @cleanup(_outcome ScopeOutcome) -> () => ()
+fn ScDoor consume @close() -> () {
+    println("close ${@id}")
+}
+
+fn pump2(consume x ScDoor, consume y ScDoor) -> () {
+    ro _a = x.id
+    ro _b = y.id
+    x.close()
+    y.close()
+}
+
+fn pump1(consume x ScDoor) -> () {
+    ro _a = x.id
+    x.close()
+}
+
+fn main() {
+    consume a = ScDoor.new(1)
+    consume b = ScDoor.new(2)
+    supervised {
+        spawn consume a, b { pump2(a, b) }
+    }
+    consume c = ScDoor.new(3)
+    supervised {
+        spawn consume c { pump1(c) }
+    }
+    println("done")
+}

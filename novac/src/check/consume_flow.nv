@@ -62,6 +62,7 @@ type ConsumeFlow {
     forced bool /// the expression walked next stands where the grammar forces a move (an arm's or a body's value, a `return`, a constructor argument)
     scope_call Node /// the call whose value is a statement's or a binding's own (D476 s2: a scope can embrace it), valid while `scope_ok`
     scope_ok bool /// `scope_call` names such a call
+    child_marks []int /// E12 (`spawn consume`): the first entry each enclosing spawn child owns -- a move of an entry at or past the innermost mark is the CHILD's own and legal at depth > 0; anything below it belongs to the parent and the depth rule stands
     stopped bool /// a refusal stopped tracking this body: what follows is not judged
 }
 
@@ -234,7 +235,7 @@ fn Checker mut @flow_fn(f Node, kinds []TyId, autos AutoCleanups, exported bool)
                            fn_export: exported,
                            depth: 0, nest: 0, dead: false, loop_mark: -1, brk: []VarState.new(), brk_paths: 0,
                            cont: []VarState.new(), cont_paths: 0, forced: false, scope_call: f,
-                           scope_ok: false, stopped: false, fields: 0 }
+                           scope_ok: false, child_marks: []int.new(), stopped: false, fields: 0 }
     // The receiver of a `consume` method owns its `consume` fields: their paths are
     // the first entries, before any parameter (D133 "Field-aware flow").
     if fd.has_recv && fd.param_cnt > 0 && @ctx.fns.params[fd.param_off].mode == ParamMode.ModeConsume {
@@ -514,6 +515,121 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
 /// paths, which the method's exits judge as one record (`@flow_close_record`).
 fn past_fields(fl ConsumeFlow, mark int) -> int => mark.max(fl.fields)
 
+/// Is entry `i` one the innermost `spawn consume` child owns (E12)? Only
+/// such an entry may MOVE at depth > 0 -- it was born inside that body; a
+/// parent's entry keeps the depth rule.
+fn spawn_child_owns(i int, fl ConsumeFlow) -> bool {
+    if fl.child_marks.len() == 0 { return false }
+    i >= fl.child_marks[fl.child_marks.len() - 1]
+}
+
+/// The name nodes of a `spawn consume ...` list (E12), empty for a plain
+/// `spawn { ... }`: the Name children between the `consume` leaf and the
+/// body Block. The `= expr` initializer, when the binding form wrote one,
+/// is the list's one non-Name Branch child.
+fn spawn_consume_name_leaves(st Node) -> []Node {
+    mut out = []Node.new()
+    ro kids = branch_children(st)
+    if kids.len() < 3 { return out }
+    ro head = kids[1]
+    if head.kind_of() != NodeKind.LeafNode || leaf_kind(head) != TokenKind.KwConsume { return out }
+    for i in 2..kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() == NodeKind.Name {
+            out.push(c)
+        } else {
+            // A comma, the `=` leaf, the initializer or the parser's marker.
+        }
+    }
+    out
+}
+
+/// `spawn consume a, b { body }` / `spawn consume c = e { body }` (E12,
+/// D415 s4 with the No379 amendment). Parent side: the binding form's
+/// initializer is evaluated here, and every re-consumed name is MOVED at
+/// the spawn statement -- a later use is D131, judged as `@flow_take`
+/// judges it. Child side: each listed value is owned by the body -- a move
+/// inside it is the child's own (`spawn_child_owns`), and what is still
+/// owned where the body ends is judged exactly as a scope's end judges it:
+/// an affine value's `@cleanup` is recorded at the body (LIFO -- the last
+/// listed name is the innermost), a strictly linear one is D133's error.
+fn Checker mut @flow_spawn_consume(st Node, mut fl ConsumeFlow) -> () {
+    ro kids = branch_children(st)
+    ro body = kids[kids.len() - 1]
+    ro leaves = spawn_consume_name_leaves(st)
+    mut init_at = -1
+    for i in 2..kids.len() - 1 {
+        ro c = kids[i]
+        if c.kind_of() != NodeKind.LeafNode && c.kind_of() != NodeKind.Name {
+            // The binding form's initializer -- the list's one non-Name
+            // Branch: evaluated (and moved into the child) in the PARENT.
+            init_at = i
+            @flow_expr(c, fl, true)
+            if fl.stopped { return }
+        } else {
+            // A name, a comma or the `=` leaf: no flow of its own.
+        }
+    }
+    mut tys = []TyId.new()
+    for n in leaves {
+        ro name = expr_leaf_name(n)
+        ro idx = fl.names.find(name)
+        if idx >= 0 {
+            if fl.state[idx] == VarState.VsConsumed {
+                @flow_reject(n, used_after_consume_msg(name), fl)
+                return
+            } else if fl.state[idx] == VarState.VsMaybe {
+                @flow_reject(n, maybe_consumed_msg(name), fl)
+                return
+            } else {
+                // Owned on every path: it moves below.
+            }
+            fl.state[idx] = VarState.VsConsumed
+            if fl.auto_at[idx] >= 0 && is_node(n.id_of()) {
+                // The move sets the parent's drop flag (D432 s5), read where
+                // the binding's cleanup is conditional; the emitter sets it
+                // at the spawn's fill.
+                @chan.record_gone(n.id_of(), fl.origin[idx].id_of())
+            } else {
+                // Strictly linear, or nothing to disarm.
+            }
+            tys.push(fl.owned_ty[idx])
+        } else if init_at >= 0 {
+            // The binding form: the value is born at the spawn and owned by
+            // the child directly; the parent never holds it.
+            ro it = @chan.type_if_known(kids[init_at].id_of())
+            tys.push(if @is_owned_kind(fl.kinds, it) { it } else { no_ty() })
+        } else {
+            // Not a tracked binding (typing named it, or a copyable type):
+            // nothing this walk owns moves.
+            tys.push(no_ty())
+        }
+    }
+    ro mark = fl.owned_ty.len()
+    for i in 0..leaves.len() {
+        if !is_ty(tys[i]) { continue }
+        flow_own(fl, expr_leaf_name(leaves[i]), tys[i], leaves[i])
+        flow_mark_auto(fl, leaves[i])
+    }
+    fl.child_marks.push(mark)
+    ro was_dead = fl.dead
+    fl.depth += 1
+    if body.kind_of() == NodeKind.Block {
+        @flow_block(body, fl, false)
+    } else {
+        // No body block (the parser's marker): nothing to walk.
+    }
+    fl.depth -= 1
+    fl.dead = was_dead
+    ro _ = fl.child_marks.pop()
+    if !fl.stopped && !was_dead {
+        @flow_scope_end(fl, mark, body)
+    } else {
+        // Refused, or the child's path left early: the exit judged it.
+    }
+    flow_drop_from(fl, mark)
+}
+
 /// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an
 /// exit (`return`, `break`, `continue`) judges what is owned and ends the path -- a
 /// diverging call is judged where it is called, in any position (`@flow_call`); a
@@ -558,6 +674,10 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         @flow_scope_block(st, fl)
     } else if k == NodeKind.Unsafe {
         @flow_scope_block(unsafe_block_of(st), fl)
+    } else if k == NodeKind.SpawnStmt && spawn_consume_name_leaves(st).len() > 0 {
+        // `spawn consume ...` (E12): the listed bindings MOVE at this
+        // statement -- its own door, not the plain nested-body walk.
+        @flow_spawn_consume(st, fl)
     } else if is_compound_kind(k) {
         @flow_nested(st, fl)
     } else {
@@ -802,7 +922,7 @@ fn Checker mut @flow_take(e Node, i int, moved bool, forced bool, mut fl Consume
         @flow_reject(e, maybe_consumed_msg(fl.nm[i]), fl)
     } else if fl.loose[i] && !(moved && forced) {
         @flow_reject(e, pattern_required_msg(fl.nm[i], ty_source_name(@ctx, fl.owned_ty[i])), fl)
-    } else if moved && fl.depth > 0 {
+    } else if moved && fl.depth > 0 && !spawn_child_owns(i, fl) {
         @flow_stop(e, "consumed inside a `with`, a `spawn`, a handler or an assignment", fl)
     } else if moved {
         fl.state[i] = VarState.VsConsumed

@@ -1,0 +1,12 @@
+module spawn_consume.neg_3
+
+// Only an OWNED (`consume`) binding can move into the child fiber (D415
+// s4): a `ro` binding in the list is refused by name (E12 wave).
+// NOVAC_EXPECT needs `a` to be a `consume` binding
+
+fn main() {
+    ro a = 1
+    supervised {
+        spawn consume a { println("x") }
+    }
+}

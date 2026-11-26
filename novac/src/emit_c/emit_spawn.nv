@@ -24,11 +24,12 @@
 module novac.emit_c
 
 import ../tree.{Node, NodeKind, NodeId}
+import ../tree.{raw_node}
 import ../diag.{ice_at}
 import ../builtins.{SUPERVISOR_EFFECT}
 import ../sem.{branch_children, decl_fn_row, file_decls, c_type, effect_slot_c, CaptureRow}
 import ../sem.{c_ident}
-import ../lower.{FnBuilder, SpawnSite}
+import ../lower.{FnBuilder, SpawnSite, raw_local}
 
 /// Every `spawn` of the functions mono reached, in the order of the file --
 /// the index is the spawn's C number.
@@ -190,6 +191,17 @@ fn Emitter mut @emit_spawn_site(s SpawnSite) -> () {
     @body.append("    ${cx}* ${v} = (${cx}*)(${v}_init ? nova_spawn_pool_acquire(sizeof(${cx})) : nova_alloc(sizeof(${cx})));\n")
     for c in @out.captures_of(s.node) {
         @body.append("    ${v}->${c_ident(c.name)} = ${@capture_source(c)};\n")
+        // E12 (`spawn consume`): the fill IS the move of a listed binding --
+        // when the parent's cleanup of it is conditional (D432 s5), its
+        // drop flag is set here, exactly as a `consume`-argument move sets
+        // it. A capture whose binding carries no flag prints nothing.
+        ro gone = @lo.ir.gone_of(raw_node(@out.binding_def(@out.capture_binding(c)).site))
+        if raw_local(gone) >= 0 {
+            @body.append("    ${@lo.ir.decl_of(gone).name} = 1;\n")
+        } else {
+            // No drop flag on this binding: an unconditional cleanup, or
+            // none at all.
+        }
     }
     @body.append("    ${v}->_nova_captured_scope_q = ${qe};\n")
     @body.append("    ${v}->_nova_base._nova_worker_slot = -1;\n    ${v}->_nova_base._nova_parent_slot = -1;\n")

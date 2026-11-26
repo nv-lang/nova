@@ -18,6 +18,8 @@ import ../tree.{Node, NodeKind}
 import ../builtins.{TypeKind, TIMEOUT_ERROR_TYPE}
 import ../names.{raw_decl}
 import ../sem.{branch_children, leaf_text}
+import ../sem.{leaf_kind, expr_leaf_name}
+import ../sem.{ParamMode}
 import ../sem.{is_unit_ty, is_value_tail_kind}
 import ../sem.{ty_source_name, decl_of_ty}
 import ../sem.{first_ident_of, ty_of_type_ref}
@@ -222,6 +224,7 @@ fn Checker mut @type_spawn_body(skids []Node, st Node, sbody Node) -> () {
         @reject_first_leaf_of(skids, SPAWN_OUTSIDE_SUPERVISED_MSG)
         return
     }
+    if !@type_spawn_consume(skids, st) { return }
     @cap_marks.push(@scope.row_count())
     @cap_owners.push(st.id_of())
     // A spawn body runs in a NEW FIBER: a `return` written in it leaves THAT
@@ -245,6 +248,96 @@ fn Checker mut @type_spawn_body(skids []Node, st Node, sbody Node) -> () {
         }
     }
 }
+
+/// The consume list of `spawn consume ...` (E12 wave, D415 s4 with the
+/// No379 amendment): every listed name must be a `consume` binding of the
+/// enclosing scope (the binding form `c = expr` binds its one name here,
+/// typed off the initializer); each is recorded as a BY-COPY capture of the
+/// spawn even when the body never reads it -- the context slot is where the
+/// moved value lives in the child, and the child's `@cleanup` reads it
+/// there. False when a refusal was reported (the body is not typed then:
+/// one cause, one diagnostic).
+fn Checker mut @type_spawn_consume(skids []Node, st Node) -> bool {
+    if skids.len() < 2 { return true }
+    ro head = skids[1]
+    if head.kind_of() != NodeKind.LeafNode || leaf_kind(head) != TokenKind.KwConsume {
+        // A plain `spawn { ... }`: no list to judge.
+        return true
+    } else {
+        // The consume list: judged below.
+    }
+    mut names = []Node.new()
+    mut assign_at = -1
+    mut init_at = -1
+    for i in 2..skids.len() - 1 {
+        ro c = skids[i]
+        match c {
+            Leaf(_) => {
+                if leaf_kind(c) == TokenKind.Assign {
+                    assign_at = i
+                } else {
+                    // The parser's zero-width error marker between names:
+                    // the shape walk's Err arm already speaks for it.
+                }
+            }
+            Branch { .. } => {
+                if c.kind_of() == NodeKind.Name {
+                    names.push(c)
+                } else {
+                    init_at = i
+                }
+            }
+        }
+    }
+    if names.len() == 0 { return true }
+    // A refusal already on the books (the parser's marker, a broken init)
+    // is the ONE cause; the list is not judged on top of it.
+    if assign_at >= 0 && names.len() > 1 {
+        @reject_first_leaf_of([]Node.of(skids[assign_at]), SPAWN_CONSUME_MIX_MSG)
+        return false
+    } else {
+        // A re-consume list, or the single-name binding form: both legal.
+    }
+    if init_at >= 0 {
+        // The binding form: the initializer is typed where it stands (the
+        // PARENT), and the one name is bound here as a `consume` binding of
+        // the enclosing scope, so the body's reads resolve to it and the
+        // capture below carries its value into the child.
+        @type_expr(skids[init_at])
+        ro it = @chan.type_if_known(skids[init_at].id_of())
+        if !is_ty(it) { return false }
+        ro site_saved = @scope.binding_site
+        @scope.binding_site = names[0].id_of()
+        @bind_source(names[0].id_of(), expr_leaf_name(names[0]), it, ParamMode.ModeConsume)
+        @scope.binding_site = site_saved
+    } else {
+        // A re-consume list: every name must already be bound, below.
+    }
+    for n in names {
+        ro name = expr_leaf_name(n)
+        if !@scope.is_bound(name) {
+            @reject_first_leaf_of([]Node.of(n), spawn_consume_unbound_msg(name))
+            return false
+        } else {
+            // Bound: its mode decides below.
+        }
+        if @scope.mode_of_name(name) != ParamMode.ModeConsume {
+            @reject_first_leaf_of([]Node.of(n), spawn_consume_not_consume_msg(name))
+            return false
+        } else {
+            // A consume binding: it can move into the child.
+        }
+        ro row = @scope.row_of(name)
+        @chan.record_binding_read(n.id_of(), @scope.owner, row)
+        // The capture is recorded at the NAME's own leaf: the emitter fills
+        // the context slot from it even when the body never reads the
+        // binding, and a body read shares the row (record_capture dedupes
+        // by binding).
+        @chan.record_capture(st.id_of(), n.id_of(), name, row, @scope.type_of_name(name), false)
+    }
+    true
+}
+
 
 /// May a `mut` binding of type `t` be aliased for mutation from another
 /// fiber? Only a declaration vouched `#share` answers yes; everything else

@@ -1,0 +1,20 @@
+module spawn_consume.neg_1
+
+// A binding listed in `spawn consume ...` is MOVED at the spawn statement:
+// any later use of it in the parent is D131 (E12 wave).
+// NOVAC_EXPECT is used after it was consumed
+
+type ScHalf consume {
+    id int,
+}
+
+fn ScHalf.new(id int) -> ScHalf => { id }
+fn ScHalf consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn main() {
+    consume a = ScHalf.new(1)
+    supervised {
+        spawn consume a { ro _z = a.id }
+    }
+    ro _x = a.id
+}

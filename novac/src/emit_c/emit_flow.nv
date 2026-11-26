@@ -44,6 +44,7 @@ import ../lower.{HandlerSwap, CleanupCall, raw_local}
 import ../sem.{c_callable, c_maker, variant_named_in, raw_vrow, any_tid_c, ty_source_name, Ctx}
 import ../types.{TyId, no_ty}
 import ../sem.{c_type, effect_slot_c}
+import ../sem.{c_ident}
 import ../builtins.{VEC_LEN_METHOD, RECV_C_NAME, SCOPE_OUTCOME_TYPE, SCOPE_OUTCOME_SUCCESS}
 import ../builtins.{SCOPE_OUTCOME_FAILURE, NOVAC_TID_BASE}
 
@@ -510,7 +511,18 @@ fn Emitter mut @print_stmt(s Stmt) -> () {
 /// amended 2026-10-03) -- printed here, not chosen. `Failure(e)` hands `e` boxed into
 /// `any` (`@any_box_of`), its payload the very `Err` value.
 fn Emitter mut @emit_cleanup(c CleanupCall) -> () {
-    ro target = if raw_local(c.local) >= 0 { @lo.ir.decl_of(c.local).name } else { c.name }
+    ro target = if raw_local(c.local) >= 0 {
+        @lo.ir.decl_of(c.local).name
+    } else if @cur_spawn >= 0 {
+        // E12 (`spawn consume`): inside a spawn body the only local-less
+        // cleanup is a value the child owns through its context slot -- the
+        // moved binding lives at `_novac_cap-><name>` (the body has no
+        // parameters, so the parameter reading of `name` cannot collide).
+        "_novac_cap->${c_ident(c.name)}"
+    } else {
+        // A `consume` parameter: its C name is the parameter's spelling.
+        c.name
+    }
     ro outcome_t = @ctx.ty_of_name(SCOPE_OUTCOME_TYPE) ?? no_ty()
     ro arg = match c.outcome {
         NormalExit => {
