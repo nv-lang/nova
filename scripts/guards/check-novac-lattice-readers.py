@@ -16,6 +16,10 @@
   1. ДВУСТОРОННЯЯ СВЕРКА С ПЕРЕЧНЕМ. Каждое обращение к `type_of(` или
      `type_if_known(` в `novac/src/check/*.nv` (тесты не в счёт) стоит в
      `novac-lattice-readers.baseline`, и каждая строка базы есть в исходнике.
+     В счёт идёт и СТРОГАЯ ДВЕРЬ КАНАЛА — `chan.type_of(id)` (CheckOut
+     `@type_of`, sem/channel.nv): она падает внутренним отказом на узле без
+     записи, ровно как решётка, поэтому новый голый читатель через неё
+     краснит так же.
      Новый читатель без строки — красный: он не может «выпасть из перечня
      молча». Односторонняя проверка была бы проверкой, не будучи ею.
   2. КЛАСС И ОСНОВАНИЕ У КАЖДОЙ СТРОКИ. Класс — одна из шести букв:
@@ -54,7 +58,12 @@ NAME = "check-novac-lattice-readers"
 CLASSES = ("M", "C", "S", "K", "T", "R")
 MIN_REASON_WORDS = 5
 
-ANY = re.compile(r"(?<![\w.@])type_of\(|\btype_if_known\(")
+# The lattice itself and the channel's STRICT door are one class of reader:
+# `chan.type_of(id)` (CheckOut `@type_of`, sem/channel.nv) dies on a node
+# with no recorded decision exactly like the lattice does, so a `.type_of(`
+# ask is inventoried too (registry 984, second opinion). `@type_of(` stays
+# out: that is the lattice's own method name, judged at its call sites.
+ANY = re.compile(r"(?<![\w@])type_of\(|\btype_if_known\(")
 FN = re.compile(r"^(?:export\s+)?fn\s+(?:\w+\s+)?(?:mut\s+)?(@?\w+)\s*(?:\(|<)")
 # A COMPARISON with the mark, not its creation: `ro before = @out.len()` makes
 # the mark and guards nothing (the selftest caught the guard counting it).
