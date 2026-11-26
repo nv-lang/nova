@@ -794,6 +794,13 @@ fn Checker mut @walk(n Node, init_pos bool = false, stmt_pos bool = false,
                     // fields are `Field` nodes (2026-10-01), collected as
                     // named payloads and judged as fields where they are read.
                 }
+                UnitLit => {
+                    // Nothing of its own to judge either (E12 wave): the one
+                    // value of the unit type has no payload, no magnitude and
+                    // no escape -- its two leaves are the parens themselves.
+                    // Typing records the unit type; the emitter prints
+                    // `NOVA_UNIT`.
+                }
                 Bin => {
                     // F35: `ro a = 0..3` used to reach an ice ("a range is not
                     // an expression outside a for-head"). It is legal Nova --

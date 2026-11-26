@@ -145,7 +145,12 @@ export fn is_expr_kind(k NodeKind) -> bool {
     // which asks here. The literal is still typed only where a door holds a
     // signature (`@type_arg_expecting`, `@type_closure_lit`); `@type_expr`'s
     // own arm refuses it by name elsewhere, the `Try` precedent.
-    k == NodeKind.ClosureLit
+    k == NodeKind.ClosureLit ||
+    // The UNIT literal `()` (E12 wave) is an expression like any literal:
+    // left off this list, `=> ()` and a `()` argument are not refused --
+    // they are not SEEN (the IfExpr/Index lesson above), and the emitter
+    // meets an untyped node where the fn's tail value should be.
+    k == NodeKind.UnitLit
 }
 
 /// Is this a call to `println` in the source? A question about meaning, so the

@@ -468,6 +468,11 @@ fn type_of(e Node, ctx Ctx, scope Scope, chan CheckOut) -> TyId {
         // first. Keeping a copy here would have been a second home for one rule.
         return literal_prim_of(lk, ctx)
     }
+    if k == NodeKind.UnitLit {
+        // The unit literal `()` (E12 wave): its type is the unit type, a
+        // fact of the grammar, not a decision anyone records.
+        return ctx.prims.unit_id
+    }
     if k == NodeKind.Coalesce || k == NodeKind.Try {
         // DECIDED by the walk (the payload of the left side; of `x?`'s operand,
         // try_rules.nv), read here -- re-deriving it would be the second door

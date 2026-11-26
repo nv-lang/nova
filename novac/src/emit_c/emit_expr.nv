@@ -264,6 +264,13 @@ fn Emitter mut @emit_expr(e Node) -> () {
         // The move inside its own flag set: printed bare below.
     }
     ro k = e.kind_of()
+    if k == NodeKind.UnitLit {
+        // The unit literal `()` (E12 wave): the runtime's one unit value.
+        @body.append("NOVA_UNIT")
+        return
+    } else {
+        // Every other expression kind: the doors below.
+    }
     if k != NodeKind.Lit && is_const_int_expr(e) && @emit_folded_constant(e) { return }
     if k == NodeKind.Lit {
         ro lkids = branch_children(e)
