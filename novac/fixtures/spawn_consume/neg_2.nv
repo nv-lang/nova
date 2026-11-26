@@ -1,0 +1,19 @@
+module spawn_consume.neg_2
+
+// No379: the consume LIST re-consumes existing bindings only -- mixing it
+// with the `= expr` binding form is an error.
+// NOVAC_EXPECT binds ONE name
+
+type ScHalf consume {
+    id int,
+}
+
+fn ScHalf.new(id int) -> ScHalf => { id }
+fn ScHalf consume @cleanup(_outcome ScopeOutcome) -> () => ()
+
+fn main() {
+    consume a = ScHalf.new(1)
+    supervised {
+        spawn consume a, b = ScHalf.new(2) { ro _z = a.id }
+    }
+}

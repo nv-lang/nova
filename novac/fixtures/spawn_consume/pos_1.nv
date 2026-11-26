@@ -1,0 +1,33 @@
+module spawn_consume.pos_1
+
+// `spawn consume a, b { ... }` (E12 wave, D415 s4 with the No379
+// amendment): both bindings MOVE into the child at the spawn statement;
+// what the child still owns at its body's end is cleaned THERE, LIFO (the
+// last listed name first), and the parent's cleanups are disarmed. The
+// binding form `spawn consume c = e { ... }` binds and moves in one
+// statement. Behaviour must match the oracle byte for byte
+// (novac-e1-smoke) -- the cleanup prints make the order observable.
+
+type ScHalf consume {
+    id int,
+}
+
+fn ScHalf.new(id int) -> ScHalf => { id }
+fn ScHalf consume @cleanup(_outcome ScopeOutcome) -> () {
+    println("cleanup ${@id}")
+}
+
+fn main() {
+    consume a = ScHalf.new(1)
+    consume b = ScHalf.new(2)
+    supervised {
+        spawn consume a, b {
+            ro _x = a.id
+            ro _y = b.id
+        }
+        spawn consume c = ScHalf.new(3) {
+            ro _z = c.id
+        }
+    }
+    println("after")
+}

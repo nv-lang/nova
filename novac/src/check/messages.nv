@@ -665,6 +665,21 @@ const CLOSURE_ARG_NEEDS_FN_MSG = "a closure literal takes its signature from the
 /// by name rather than silently dropped (the carrier relay.nv writes it).
 const SUPERVISED_CANCEL_MSG = "outside the subset: `supervised(cancel: ...)` is not compiled yet -- cancellation (D441) is a later wave; this one compiles `timeout:` and `on_timeout:` (E4, the concurrency horizon of plan 274.11)"
 
+/// No379 (D415 s4 amendment): the consume list of `spawn consume a, b { }`
+/// re-consume ALREADY-BOUND owned bindings only; the `= expr` initializer
+/// stays single-name (E_SPAWN_CONSUME_MULTIVAR_BINDING_MIX in the oracle).
+const SPAWN_CONSUME_MIX_MSG = "`spawn consume` with `= expr` binds ONE name -- the list form `a, b { ... }` re-consume existing bindings and takes no initializer (E_SPAWN_CONSUME_MULTIVAR_BINDING_MIX, No379)"
+
+/// `spawn consume c { }` names a binding this scope does not have.
+fn spawn_consume_unbound_msg(name str) -> str =>
+    "`spawn consume ${name}` names no binding of this scope -- the consume list re-consume bindings that already exist here (D415 s4)"
+
+/// `spawn consume c { }` on a binding that is not `consume`: only an owned
+/// binding can MOVE into the child fiber.
+fn spawn_consume_not_consume_msg(name str) -> str =>
+    "`spawn consume ${name}` needs `${name}` to be a `consume` binding -- only an owned value can move into the child fiber (D415 s4); bind it with `consume ${name} = ...` first"
+
+
 /// D449: an `on_timeout:` handler requires a deadline (`timeout:` or
 /// `deadline:`) -- without one there is no timeout to handle
 /// (E_SUPERVISED_ON_TIMEOUT_NO_DEADLINE).
