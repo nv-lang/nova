@@ -13,7 +13,7 @@ its own notes in `docs/dev/`.
 
 ## [Unreleased]
 
-## [0.1.7] - 2026-11-25
+## [0.1.7] - 2026-11-26
 
 Patch release over 0.1.6. It fixes lost wake-ups, premature garbage collection
 and connection resets in the runtime, and closes the remaining holes in
@@ -162,8 +162,13 @@ tracks it.
 - A file operation or a blocking C call that is already running cannot be
   interrupted. If it outlasts the time limit of its `supervised` scope, the
   fiber waits for it to finish, and a later read or write in the same scope is
-  then not interrupted by that limit either (row 2031). Keep such calls shorter
-  than the limit, or run them in their own scope.
+  then not interrupted by that limit either (row 2031). The same applies to a
+  direct `extern "C"` call — one not marked `#blocking`, such as a blocking
+  TLS handshake or record read/write: it runs synchronously on the scheduler
+  worker and has no interrupt path at all; while it runs, its worker is
+  occupied, and if it outlasts the limit, a later read or write in the same
+  scope is unbounded too. Keep such calls shorter than the limit, or run them
+  in their own scope.
 - A one-line `match` arm whose body is an assignment is refused with
   `E_MATCH_ARM_SEP_MISSING`, even when the arms are on separate lines. Put
   braces around the body (row 1984).
