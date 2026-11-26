@@ -56,6 +56,17 @@ rm -f "$FIX/neg_1.nv"
 printf '// NOVAC_EXPECT a slice is not compiled\nfn f() {}\n' > "$FIX/pos_1.nv"
 mkbin "echo \"$D_RANGE\""
 check "pos_* с маркером — не судится" "$(run)" "0"
+rm -f "$FIX/pos_1.nv"
+
+# Матрица refused_call_positions (реестр 984): маркер там — то же
+# обязательство, что в neg_*.
+MATRIX="$TMP/root/novac/fixtures/refused_call_positions"; mkdir -p "$MATRIX"
+printf '// NOVAC_EXPECT a slice is not compiled\nfn f() {}\n' > "$MATRIX/p01_probe.nv"
+mkbin "echo \"$D_SLICE\""
+check "матрица: маркер совпал — зелёный" "$(run)" "0"
+mkbin "echo \"$D_RANGE\""
+check "матрица: пришёл другой текст — красный" "$(run)" "1"
+rm -f "$MATRIX/p01_probe.nv"
 
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
