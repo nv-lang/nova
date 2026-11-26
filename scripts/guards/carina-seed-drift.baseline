@@ -155,3 +155,4 @@ novac/src/sem/binding_test.nv # task 274 (targeted Door A landing gate repairs, 
 novac/src/sem/defs.nv # task 274 (targeted Door A landing gate repairs, registry 2015-2017; seed release follow-up)
 novac/src/sem/file_shape.nv # task 274 (targeted Door A landing gate repairs, registry 2015-2017; seed release follow-up)
 novac/src/sem/protocols.nv # task 274 (targeted Door A landing gate repairs, registry 2015-2017; seed release follow-up)
+novac/src/check/index_typing.nv # task 984 (refused call read in any lattice position is one diagnostic; seed re-pins at the next Carina release)

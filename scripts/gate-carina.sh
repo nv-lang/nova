@@ -134,6 +134,7 @@ check-novac-ref-field-names.py
 check-novac-no-alloc-in-lookup.py
 check-novac-ice-messages.py
 check-novac-no-default-branch.py
+check-novac-lattice-readers.py
 check-novac-mangling-one-way.py
 check-novac-second-door.py
 check-novac-lowering-one-door.py
