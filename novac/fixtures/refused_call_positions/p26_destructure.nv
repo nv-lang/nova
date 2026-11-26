@@ -2,8 +2,9 @@
 // Registry 984, the class measure: a REFUSED call in this reader position.
 // The walk refuses the name once; every later reader of that node must find
 // a decision or keep silent -- ONE diagnostic, never an internal error.
-// Judged by check-novac-fixture-expect.sh (the first diagnostic) and
-// check-novac-no-cascade.sh (exactly one error diagnostic).
+// Judged by check-novac-fixture-expect.sh (the pinned diagnostic text)
+// and check-novac-no-cascade.sh (exactly one error diagnostic); both
+// glob this directory alongside neg_*.
 // EXPECT_COMPILE_ERROR
 // NOVAC_EXPECT unknown name: nothing with this name is bound at this point
 module refused_call_positions.p26_destructure

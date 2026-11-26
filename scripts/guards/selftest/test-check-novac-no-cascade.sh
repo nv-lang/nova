@@ -34,5 +34,14 @@ check "ноль error — красный" "$(run)" "1"
 mkbin 'echo "broken"'
 check "не-JSON — красный" "$(run)" "1"
 
+echo "== матрица refused_call_positions (реестр 984) судится тем же правилом =="
+mkdir -p "$FIX/novac/fixtures/refused_call_positions"
+echo "x" > "$FIX/novac/fixtures/refused_call_positions/p01_probe.nv"
+mkbin "echo \"[$D]\""
+check "матрица: ровно один error — зелёный" "$(run)" "0"
+mkbin "echo \"[$D, $D]\""
+check "матрица: каскад — красный" "$(run)" "1"
+rm -f "$FIX/novac/fixtures/refused_call_positions/p01_probe.nv"
+
 echo "итог: $PASS ok, $FAIL FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

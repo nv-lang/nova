@@ -8,6 +8,11 @@
 # красный. Ноль — фикстура не отвергнута одной причиной, тоже красный.
 # Дифф-гейт каскады НЕ ловит — оракул сам каскадит (§10.3).
 #
+# ТЕМ ЖЕ ПРАВИЛОМ судится матрица реестра 984
+# (novac/fixtures/refused_call_positions/*.nv): каждая её фикстура сеет один
+# отказавший вызов, и критерий (3) строки 984 — «ОДИН диагностик» — держится
+# здесь, а не прозой в шапке фикстуры.
+#
 # НЕ проверяет: схему полей диагностики (это check-novac-diag-schema.sh),
 # severity != error (warnings/notes не считаются), поведение на pos_*.
 # Контракт вызова: '<bin> check <file>', диагностика — JSON на stdout; если
@@ -47,13 +52,13 @@ mkdir -p "$T"
 trap 'rm -rf "$T"' 0
 
 if [ -d "$FIXDIR" ]; then
-    find "$FIXDIR" -type f -name 'neg_*.nv' | sort > "$T/list"
+    find "$FIXDIR" -type f \( -name 'neg_*.nv' -o -path '*/refused_call_positions/*.nv' \) | sort > "$T/list"
 else
     : > "$T/list"
 fi
 N=$(wc -l < "$T/list" | tr -d ' ')
 if [ "$N" -eq 0 ]; then
-    echo "$NAME ok: судить нечего (0 фикстур neg_*.nv в novac/fixtures)"
+    echo "$NAME ok: судить нечего (0 фикстур neg_*.nv и refused_call_positions/*.nv в novac/fixtures)"
     exit 0
 fi
 
