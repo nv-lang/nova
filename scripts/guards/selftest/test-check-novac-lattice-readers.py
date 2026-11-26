@@ -122,6 +122,15 @@ def bare():
             "}\n")
 
 
+def chan_door():
+    """The channel's STRICT door read through a receiver: `chan.type_of(`
+    dies on a hole exactly like the lattice, so it is a reader too."""
+    return ("fn Checker mut @strict(e Node) -> TyId {\n"
+            "    if @chan.embed_row_at(e.id_of()) >= 0 { return @chan.type_of(e.id_of()) }\n"
+            "    no_ty()\n"
+            "}\n")
+
+
 def no_mark():
     return ("fn Checker mut @nomark(e Node) -> () {\n"
             "    @type_expr(e)\n"
@@ -175,6 +184,8 @@ cell("green: ask inside the comparison's block", in_block(), row("@block", 1, "t
 cell("green: else-if chain", chain(), row("@chain", 1, "type_of", "S") + row("@chain", 2, "type_of"), 0, "ok:")
 cell("green: comments and definition lines are not readers", commented(), "", 0, "ok: читателей 0")
 cell("green: a test peer is not judged", bare(), row("@bare", 1, "type_if_known", "K"), 0, "ok:")
+cell("green: the channel's strict door with a baseline row",
+     chan_door(), row("@strict", 1, "type_of", "C", "the branch above proves the channel holds the decision"), 0, "ok:")
 cell("green: every class with a full reason is accepted",
      one_line() + three_line() + in_block() + bare(),
      "# a comment line\n" + row("@one", 1, "type_of", "C") + row("@three", 1, "type_of", "S")
@@ -189,6 +200,8 @@ cell("red: a second reader in the same function is a new row",
      row("@one", 1, "type_of"), 1, "@one #2 (type_of)")
 cell("red: a baseline row whose reader is gone", one_line(),
      row("@one", 1, "type_of") + row("@gone", 1, "type_of"), 1, "больше не соответствует исходнику")
+cell("red: a bare read of the channel's strict door without a row", chan_door(), "", 1,
+     "НОВЫЙ ЧИТАТЕЛЬ без строки в базе: a.nv:4 — @strict #1 (type_of)")
 cell("red: class M with no comparison at all", no_mark(), row("@nomark", 1, "type_of"), 1,
      "класс M без доминирующей проверки отказа: a.nv:5")
 cell("red: class M behind a closed branch that does not exit", closed_branch(), row("@closed", 1, "type_of"), 1,

@@ -146,3 +146,6 @@ unsafe.nv	@type_ptr_method	1	type_of	C	the caller returns on a refusal before ca
 with_typing.nv	@type_with_stmt	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the handler expression was typed just above; absence is the refusal case
 with_typing.nv	@type_supervised_value	1	type_if_known	K	channel read: absence is an answer and the consumer branches on it; the tail type is read back after the body was typed
 with_typing.nv	@type_supervised_value	2	type_of	C	the caller returns on a refusal before calling: the body was typed by this door and a refusal returned above
+type_of.nv	type_of	28	type_of	C	the branch condition above the ask proves the channel holds the decision: embed_row_at >= 0 only after the checker recorded the embed type beside the door row
+type_of.nv	type_of	29	type_of	C	the branch condition above the ask proves the channel holds the decision: contract_of is_some only after the intrinsic door recorded the call type
+type_of.nv	type_of	30	type_of	C	the branch condition above the ask proves the channel holds the decision: the generic instance was decided and recorded by the walk before the tparam_cnt > 0 branch
