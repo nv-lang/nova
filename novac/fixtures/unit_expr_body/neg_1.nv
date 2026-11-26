@@ -1,0 +1,10 @@
+module unit_expr_body.neg_1
+
+// The unit literal is a VALUE of the unit type, not a wildcard: bound where
+// `int` is written it is a plain type mismatch, one diagnostic (E12 wave).
+// NOVAC_EXPECT stands in this binding
+
+fn main() {
+    ro x int = ()
+    println("${x}")
+}

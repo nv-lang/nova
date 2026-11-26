@@ -1,0 +1,22 @@
+module unit_expr_body.pos_1
+
+// The unit literal in an expression body (E12 wave): `=> ()` on a free fn
+// and on a consume-receiver method -- the relay.nv `@cleanup`/`@close`
+// shapes. Behaviour must match the oracle byte for byte (novac-e1-smoke).
+
+fn noop() -> () => ()
+
+type UebDoor consume {
+    id int,
+}
+
+fn UebDoor.new(id int) -> UebDoor => { id }
+fn UebDoor consume @close() -> () => ()
+
+fn main() {
+    noop()
+    consume d = UebDoor.new(1)
+    ro _id = d.id
+    d.close()
+    println("ok")
+}

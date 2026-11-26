@@ -599,6 +599,18 @@ fn Cursor mut @atom() -> Node {
         return @node(NodeKind.Err, kids)
     }
     if @peek() == TokenKind.LParen {
+        // The UNIT literal `()` (E12 wave): `(` immediately closed is the
+        // one value of the unit type, not a grouping with a missing inside
+        // -- `fn f() -> () => ()` and the `@cleanup`/`@close` bodies of
+        // relay.nv are the carriers. Checked before the paren door below,
+        // whose inner `@expr()` would choke on the `)`.
+        if @peek(skip: 1) == TokenKind.RParen {
+            mut uk = []Node.of(@take())
+            uk.push(@take())
+            return @node(NodeKind.UnitLit, uk)
+        } else {
+            // A grouping or a tuple: the paren door below reads it.
+        }
         // A parenthesised expression: grouping is how a program overrides
         // precedence, so a table of precedences without it is only half a
         // grammar (found while adding the operator set, 2026-08-16). The

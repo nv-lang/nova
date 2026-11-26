@@ -179,6 +179,14 @@ export type NodeKind enum
     | Unary
     | Paren
     | Name
+    /// The unit literal `()` (E12 wave): the ONE value of the unit type,
+    /// read where a parenthesised expression would start but with no
+    /// expression inside. Children: the `(` and `)` leaves -- the tree is
+    /// lossless. Until this kind existed the pair fell into the paren door,
+    /// whose inner `@expr()` choked on `)` and the parser's fallback could
+    /// not tell the form from malformed text (`fn f() -> () => ()` was the
+    /// carrier, relay.nv's `@cleanup`/`@close` bodies).
+    | UnitLit
     | Err
 
 /// WHICH binary operator a `Bin` node applies -- the DECISION, taken once.
