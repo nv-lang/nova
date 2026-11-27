@@ -48,7 +48,7 @@ fi
 # Build the worker from the neighbouring checkout once, exactly like the
 # package gates do; without the checkout the lanes judge nothing here anyway.
 if [ -z "${COMPRESS_WORKER_EXE:-}" ] && [ -d "$PKGS_ROOT/nova-compress/src/worker" ]; then
-    ( cd "$PKGS_ROOT/nova-compress" && "$BIN" build src/worker/main.nv --mode release -o target/decode-worker >/dev/null 2>&1 )
+    ( cd "$PKGS_ROOT/nova-compress" && "$BIN" build src/worker/main.nv -o target/decode-worker >/dev/null 2>&1 )
     for w in "$PKGS_ROOT/nova-compress/target/decode-worker" "$PKGS_ROOT/nova-compress/target/decode-worker.exe"; do
         [ -f "$w" ] && export COMPRESS_WORKER_EXE="$w" && break
     done
