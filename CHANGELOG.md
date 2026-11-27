@@ -13,6 +13,49 @@ its own notes in `docs/dev/`.
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-27
+
+Hotfix release over 0.1.7. It fixes the two regressions of 0.1.7: unbounded
+garbage-collector heap growth on Windows, and a process cleanup that could
+kill the caller's own process group on Linux. Oracle compiles to C and then
+to a native binary; there is no interpreter. This is an early alpha: the
+language surface and APIs may change, and compatibility is not guaranteed.
+
+### Fixed
+
+Runtime:
+
+- On Windows, a long-running program could grow its GC heap without bound
+  and die with `nova: out of memory` within minutes while free RAM remained
+  (a hub process reached a 93 GB heap in 8 minutes). The 0.1.7 fix for
+  premature collection had chained `GC_push_all_stacks`; a worker thread
+  whose stack pointer had moved onto a fiber stack made the collector push
+  whole native stacks with stale words, retaining garbage on every mark
+  increment. The runtime now registers native worker stack ranges itself and
+  no longer chains the default stack push. Linux was not affected
+  (row 2036).
+- Cancelling a spawned process could kill the caller's entire process group
+  on Linux: the runtime armed its kill callback before the child existed,
+  and a cancel that landed in that window called `kill(0, SIGKILL)`, which
+  signals the caller's own group and killed the test process or service
+  itself. All kill paths now check the pid, and a cancel that arrives during
+  spawn is applied right after it, so cancellation semantics are unchanged
+  (row 2038).
+
+### Known issues
+
+- Calling a `mut` method on a `ro` parameter compiles but silently does
+  nothing: the mutation is lost without a diagnostic. Declare the parameter
+  `mut` (row 2040).
+- A `parallel for` in the same `supervised` scope as an infinite `spawn`
+  monitor can starve: none of its fibers start. Start the workers with an
+  explicit `spawn` in a loop instead (row 2041).
+- A punned consume field in a record literal (`Sess { g }`) does not move
+  ownership: the local's `@cleanup` still runs at scope exit even though the
+  value is stored in the struct, releasing the resource early. Move the
+  value through a function with a consume parameter instead. Whether the pun
+  should move is an open spec question (row 2039).
+
 ## [0.1.7] - 2026-11-26
 
 Patch release over 0.1.6. It fixes lost wake-ups, premature garbage collection
