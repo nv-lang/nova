@@ -80,9 +80,9 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
     # the worker as a CU and read its designed exit as a failure, while
     # --filter matches test NAMES, not paths. Use the gate's own form.
     if [ "$pkg" = "nova-compress" ]; then
-        out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src/*_test.nv --timeout 600 2>&1) || rc=$?
+        out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src/*_test.nv --timeout 600 --jobs 2 2>&1) || rc=$?
     else
-        out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 2>&1) || rc=$?
+        out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 --jobs 2 2>&1) || rc=$?
     fi
     if [ "$rc" -eq 124 ]; then
         echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 900с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
