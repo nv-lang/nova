@@ -293,16 +293,18 @@ test "a handed function's LITERAL default reaches the call as a literal of no tr
 }
 
 test "a HANDED body with a parse gap is refused by name in its instance, never iced (task #14)" {
-    // novac never compiles std's files as files of their own, so a hole in a
-    // handed body was told nowhere: the instance went straight to typing and the lattice iced
-    // ("expression kind without a type rule") on `()`, the unit value novac
-    // does not parse -- the carrier was `Ok(())` in std's `JsonSerializer
-    // @begin_struct`. The instance pass now tells the gap, in the body's file.
+    // Handed bodies go through the instance pass, which must report the gap
+    // in the body's own file before typing. E12 made the old carrier `()` a
+    // UnitLit. A missing operand immediately before `}` still gives a
+    // zero-width parse gap.
     mut std = std_decls()
-    std.push("module encoding.utf16\nexport fn one() -> int {\n    ro u = ()\n    1\n}\n")
+    ro body_file = "decl_${std.len()}"
+    std.push("module encoding.utf16\nexport fn one() -> int {\n    1 +\n}\n")
     ro (d, _) = compile_to_c_with("import std.encoding.utf16.{one}\nfn main() {\n println(one())\n}",
                                   parse_decls(std), described_bare(std))
     assert(d.len() == 1, messages(d))
     assert(messages(d).contains("did not parse"), messages(d))
-    assert(d[0].file != "", messages(d))
+    assert(d[0].message.contains("in the instance of `one`"), messages(d))
+    assert(d[0].file == body_file, d[0].file)
+    assert(d[0].lo == d[0].hi, messages(d))
 }
