@@ -22,7 +22,9 @@
 //! not owns it.
 
 use crate::native_runtime::collect_c_files;
-use crate::{bytes_to_string, strip_verbatim_prefix, ResolvedFfiConfig};
+#[cfg(target_os = "windows")]
+use crate::strip_verbatim_prefix;
+use crate::{bytes_to_string, ResolvedFfiConfig};
 use anyhow::{anyhow, Result};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -297,7 +299,8 @@ fn build_vendor_ffi_lib(
     include_dirs: &[PathBuf],
     target_dir: &Path,
     lib_names: &[String],
-    vcvars: Option<&Path>,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    vcvars: Option<&Path>, // Used by the MSVC build path.
 ) -> Result<()> {
     let obj_dir = target_dir.join(".vendor-obj");
     if obj_dir.is_dir() {

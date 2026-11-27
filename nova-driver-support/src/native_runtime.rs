@@ -1,9 +1,12 @@
 //! Compiler-free native runtime and archive discovery/build helpers.
 use crate::{
-    bytes_to_string, parse_size_to_bytes, strip_verbatim_prefix, BoehmConfig, BuildOpts, GcKind,
+    bytes_to_string, parse_size_to_bytes, BoehmConfig, BuildOpts, GcKind,
     LibuvConfig, Mode, RuntimeConfig, Toolchain,
 };
 use anyhow::{anyhow, Result};
+#[cfg(target_os = "windows")]
+use crate::strip_verbatim_prefix;
+#[cfg(target_os = "windows")]
 use std::ffi::OsString;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -429,6 +432,7 @@ pub fn main_worktree_root(root: &Path) -> Option<PathBuf> {
 /// Copies into the submodule's OWN `include/` dir are deliberately avoided
 /// (never write into a vendored git submodule's working tree — would show
 /// up as an unexpected dirty submodule / risk being committed by accident).
+#[cfg(target_os = "windows")]
 fn populate_boehm_include_dir(gc_include: &Path, cache_include: &Path) -> Result<()> {
     let nested = cache_include.join("gc");
     std::fs::create_dir_all(&nested)
@@ -673,7 +677,12 @@ pub fn resolve_gc_or_exit(
 
 /// Plan 22 Ф.1: compile libuv source files в libuv.lib / libuv.a.
 /// Кэшируется в repo_root/target/libuv-cache/ через VERSION stamp.
-fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path, vcvars: Option<&Path>) -> Result<()> {
+fn build_libuv_lib(
+    libuv_dir: &Path,
+    cache_dir: &Path,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+    vcvars: Option<&Path>, // Used by the MSVC build path.
+) -> Result<()> {
     std::fs::create_dir_all(cache_dir).map_err(|e| anyhow!("create cache_dir: {:#}", e))?;
     let obj_dir = cache_dir.join("obj");
     if obj_dir.is_dir() {
@@ -756,10 +765,10 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path, vcvars: Option<&Path>) ->
 
     let inc_pub = libuv_dir.join("include");
     let inc_src = libuv_dir.join("src");
-    let inc_win = libuv_dir.join("src").join("win");
 
     #[cfg(target_os = "windows")]
     {
+        let inc_win = src_root.join("win");
         let vcv = vcvars.ok_or_else(|| anyhow!("vcvars required for libuv build on Windows"))?;
         // Write response file (cl.exe @file).
         let rsp = cache_dir.join("compile.rsp");
@@ -908,6 +917,7 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path, vcvars: Option<&Path>) ->
 /// This string is also the cache fingerprint: `detect_or_build_boehm_fallback`
 /// stores it in `gc-build.defines` next to gc.lib and rebuilds on mismatch,
 /// so a cache dir populated by an older toolchain config is never reused.
+#[cfg(target_os = "windows")]
 const BOEHM_FALLBACK_DEFINES: &str = "/DALL_INTERIOR_POINTERS /DDONT_USE_USER32_DLL \
     /DEMPTY_GETENV_RESULTS /DENABLE_DISCLAIM /DGC_ATOMIC_UNCOLLECTABLE \
     /DGC_ENABLE_SUSPEND_THREAD /DGC_GCJ_SUPPORT /DGC_MISSING_EXECINFO_H /DGC_NOT_DLL \
@@ -937,6 +947,7 @@ const BOEHM_FALLBACK_DEFINES: &str = "/DALL_INTERIOR_POINTERS /DDONT_USE_USER32_
 /// MSVC — `cl.exe` has no GCC/clang `__atomic_*` builtins for
 /// `GC_BUILTIN_ATOMIC`) — header-only on x86_64, no separate
 /// `atomic_ops.lib` to build (see caller's doc).
+#[cfg(target_os = "windows")]
 fn build_boehm_lib(
     gc_dir: &Path,
     ao_dir: &Path,
