@@ -258,10 +258,11 @@ fn Checker mut @type_spawn_body(skids []Node, st Node, sbody Node) -> () {
 /// there. False when a refusal was reported (the body is not typed then:
 /// one cause, one diagnostic).
 fn Checker mut @type_spawn_consume(skids []Node, st Node) -> bool {
+    // SILENT-OK: a malformed spawn is the shape walk's Err arm's cause, not this door's.
     if skids.len() < 2 { return true }
     ro head = skids[1]
     if head.kind_of() != NodeKind.LeafNode || leaf_kind(head) != TokenKind.KwConsume {
-        // A plain `spawn { ... }`: no list to judge.
+        // SILENT-OK: a plain `spawn { ... }` carries no list -- nothing here to judge.
         return true
     } else {
         // The consume list: judged below.
@@ -281,14 +282,16 @@ fn Checker mut @type_spawn_consume(skids []Node, st Node) -> bool {
                 }
             }
             Branch { .. } => {
-                if c.kind_of() == NodeKind.Name {
-                    names.push(c)
-                } else {
-                    init_at = i
+                match c.kind_of() {
+                    Name => { names.push(c) }
+                    // The list's one non-Name Branch is the binding form's
+                    // initializer; every other form was refused by the walk.
+                    _ => { init_at = i }
                 }
             }
         }
     }
+    // SILENT-OK: an empty list is the parser's zero-width marker, refused by the walk.
     if names.len() == 0 { return true }
     // A refusal already on the books (the parser's marker, a broken init)
     // is the ONE cause; the list is not judged on top of it.
@@ -305,6 +308,7 @@ fn Checker mut @type_spawn_consume(skids []Node, st Node) -> bool {
         // capture below carries its value into the child.
         @type_expr(skids[init_at])
         ro it = @chan.type_if_known(skids[init_at].id_of())
+        // SILENT-OK: an untyped initializer was refused where it was typed, just above.
         if !is_ty(it) { return false }
         ro site_saved = @scope.binding_site
         @scope.binding_site = names[0].id_of()

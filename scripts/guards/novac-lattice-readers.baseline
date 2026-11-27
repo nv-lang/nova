@@ -149,3 +149,5 @@ with_typing.nv	@type_supervised_value	2	type_of	C	the caller returns on a refusa
 type_of.nv	type_of	28	type_of	C	the branch condition above the ask proves the channel holds the decision: embed_row_at >= 0 only after the checker recorded the embed type beside the door row
 type_of.nv	type_of	29	type_of	C	the branch condition above the ask proves the channel holds the decision: contract_of is_some only after the intrinsic door recorded the call type
 type_of.nv	type_of	30	type_of	C	the branch condition above the ask proves the channel holds the decision: the generic instance was decided and recorded by the walk before the tparam_cnt > 0 branch
+consume_spawn.nv	@flow_spawn_consume	1	type_if_known	T	consume-flow walk runs after the file is typed: the binding-form initializer is typed by @type_spawn_consume before this walk reads it
+with_typing.nv	@type_spawn_consume	1	type_if_known	K	channel read: absence is an answer -- the initializer was typed just above and an untyped (refused) one returns false before any consumer reads the type

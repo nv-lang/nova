@@ -287,6 +287,11 @@ Try =
 Paren =
   '(' Expr ')'
 
+// E12 wave: the unit literal `()` -- `(` immediately closed, no expression
+// inside; read before the Paren door in @atom (parse/expr.nv).
+UnitLit =
+  '(' ')'
+
 TupleExpr =
   '(' Expr (',' Expr)+ ')'
 

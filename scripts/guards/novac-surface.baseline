@@ -396,7 +396,11 @@ atomics 1
 #   `DerivedText` -- the `@serialize` `#impl(Serialize)` derives, as Nova text. Outside because the
 #   PIPELINE injects it before type-check (D341 "Injection ordering") and names a refusal raised inside
 #   it by the method's owner; pass order is the pipeline's, so the check module only spells the text.
-check 5
+# 5 -> 11 (2026-11-27, E12 wave): the consume_flow.nv split by the 1000-line rule moved
+#   the spawn-consume flow and the nested-body kind questions into the co-equal file
+#   check/consume_spawn.nv; cross-file callers (consume_flow.nv, consume_paths.nv) need
+#   them exported -- same module, one author, no new outside consumer.
+check 11
 diag 6
 # emit_c 1 -> 2 (2026-08-21, E2-b2): `Instantiation` -- one already-typed
 # instance crossing the pipeline -> emitter boundary as DATA (declaration,

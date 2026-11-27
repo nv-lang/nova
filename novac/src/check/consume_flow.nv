@@ -483,12 +483,6 @@ fn Checker mut @flow_nested(n Node, mut fl ConsumeFlow) -> () {
     }
 }
 
-/// The bodies that do not run where they are written: a `spawn`'s (another fiber,
-/// D13), a handler's (run when its operation is performed) and a closure-light's
-/// (D22; the supervised-value wave's `on_timeout:` runs when the deadline passes).
-fn runs_elsewhere(k NodeKind) -> bool =>
-    k == NodeKind.SpawnStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp || k == NodeKind.ClosureLit
-
 /// One child of a branch, a loop or a nested block: a block is a list of
 /// statements, and anything else -- a statement or a condition -- is judged as one
 /// (`@flow_stmt` tells a statement from an expression).
@@ -514,121 +508,6 @@ fn flow_any_live(fl ConsumeFlow) -> bool {
 /// Where an exit's judgement of the values bound from `mark` starts: past the field
 /// paths, which the method's exits judge as one record (`@flow_close_record`).
 fn past_fields(fl ConsumeFlow, mark int) -> int => mark.max(fl.fields)
-
-/// Is entry `i` one the innermost `spawn consume` child owns (E12)? Only
-/// such an entry may MOVE at depth > 0 -- it was born inside that body; a
-/// parent's entry keeps the depth rule.
-fn spawn_child_owns(i int, fl ConsumeFlow) -> bool {
-    if fl.child_marks.len() == 0 { return false }
-    i >= fl.child_marks[fl.child_marks.len() - 1]
-}
-
-/// The name nodes of a `spawn consume ...` list (E12), empty for a plain
-/// `spawn { ... }`: the Name children between the `consume` leaf and the
-/// body Block. The `= expr` initializer, when the binding form wrote one,
-/// is the list's one non-Name Branch child.
-fn spawn_consume_name_leaves(st Node) -> []Node {
-    mut out = []Node.new()
-    ro kids = branch_children(st)
-    if kids.len() < 3 { return out }
-    ro head = kids[1]
-    if head.kind_of() != NodeKind.LeafNode || leaf_kind(head) != TokenKind.KwConsume { return out }
-    for i in 2..kids.len() - 1 {
-        ro c = kids[i]
-        if c.kind_of() == NodeKind.Name {
-            out.push(c)
-        } else {
-            // A comma, the `=` leaf, the initializer or the parser's marker.
-        }
-    }
-    out
-}
-
-/// `spawn consume a, b { body }` / `spawn consume c = e { body }` (E12,
-/// D415 s4 with the No379 amendment). Parent side: the binding form's
-/// initializer is evaluated here, and every re-consumed name is MOVED at
-/// the spawn statement -- a later use is D131, judged as `@flow_take`
-/// judges it. Child side: each listed value is owned by the body -- a move
-/// inside it is the child's own (`spawn_child_owns`), and what is still
-/// owned where the body ends is judged exactly as a scope's end judges it:
-/// an affine value's `@cleanup` is recorded at the body (LIFO -- the last
-/// listed name is the innermost), a strictly linear one is D133's error.
-fn Checker mut @flow_spawn_consume(st Node, mut fl ConsumeFlow) -> () {
-    ro kids = branch_children(st)
-    ro body = kids[kids.len() - 1]
-    ro leaves = spawn_consume_name_leaves(st)
-    mut init_at = -1
-    for i in 2..kids.len() - 1 {
-        ro c = kids[i]
-        if c.kind_of() != NodeKind.LeafNode && c.kind_of() != NodeKind.Name {
-            // The binding form's initializer -- the list's one non-Name
-            // Branch: evaluated (and moved into the child) in the PARENT.
-            init_at = i
-            @flow_expr(c, fl, true)
-            if fl.stopped { return }
-        } else {
-            // A name, a comma or the `=` leaf: no flow of its own.
-        }
-    }
-    mut tys = []TyId.new()
-    for n in leaves {
-        ro name = expr_leaf_name(n)
-        ro idx = fl.names.find(name)
-        if idx >= 0 {
-            if fl.state[idx] == VarState.VsConsumed {
-                @flow_reject(n, used_after_consume_msg(name), fl)
-                return
-            } else if fl.state[idx] == VarState.VsMaybe {
-                @flow_reject(n, maybe_consumed_msg(name), fl)
-                return
-            } else {
-                // Owned on every path: it moves below.
-            }
-            fl.state[idx] = VarState.VsConsumed
-            if fl.auto_at[idx] >= 0 && is_node(n.id_of()) {
-                // The move sets the parent's drop flag (D432 s5), read where
-                // the binding's cleanup is conditional; the emitter sets it
-                // at the spawn's fill.
-                @chan.record_gone(n.id_of(), fl.origin[idx].id_of())
-            } else {
-                // Strictly linear, or nothing to disarm.
-            }
-            tys.push(fl.owned_ty[idx])
-        } else if init_at >= 0 {
-            // The binding form: the value is born at the spawn and owned by
-            // the child directly; the parent never holds it.
-            ro it = @chan.type_if_known(kids[init_at].id_of())
-            tys.push(if @is_owned_kind(fl.kinds, it) { it } else { no_ty() })
-        } else {
-            // Not a tracked binding (typing named it, or a copyable type):
-            // nothing this walk owns moves.
-            tys.push(no_ty())
-        }
-    }
-    ro mark = fl.owned_ty.len()
-    for i in 0..leaves.len() {
-        if !is_ty(tys[i]) { continue }
-        flow_own(fl, expr_leaf_name(leaves[i]), tys[i], leaves[i])
-        flow_mark_auto(fl, leaves[i])
-    }
-    fl.child_marks.push(mark)
-    ro was_dead = fl.dead
-    fl.depth += 1
-    if body.kind_of() == NodeKind.Block {
-        @flow_block(body, fl, false)
-    } else {
-        // No body block (the parser's marker): nothing to walk.
-    }
-    fl.depth -= 1
-    fl.dead = was_dead
-    ro _ = fl.child_marks.pop()
-    if !fl.stopped && !was_dead {
-        @flow_scope_end(fl, mark, body)
-    } else {
-        // Refused, or the child's path left early: the exit judged it.
-    }
-    flow_drop_from(fl, mark)
-}
 
 /// One statement. A branch, a loop and a nested block are consumed_paths.nv's; an
 /// exit (`return`, `break`, `continue`) judges what is owned and ends the path -- a
@@ -690,19 +569,6 @@ fn Checker mut @flow_stmt(st Node, mut fl ConsumeFlow, is_last bool) -> () {
         fl.scope_ok = false
     }
 }
-
-/// The kinds walked with the depth raised: a body that runs elsewhere or under a
-/// handler, and an assignment (branches, loops and blocks have their own paths).
-fn is_compound_kind(k NodeKind) -> bool =>
-    k == NodeKind.WithStmt || k == NodeKind.SupervisedStmt || k == NodeKind.SpawnStmt ||
-    k == NodeKind.AssignStmt || k == NodeKind.HandlerLit || k == NodeKind.HandlerOp || k == NodeKind.ClosureLit
-
-/// The kinds that NAME a value where it lives rather than produce one: a name, `@`,
-/// a field, an element. Using one is a view; moving out of one is what step 1 does
-/// not track unless it is a tracked binding's name.
-fn is_place_kind(k NodeKind) -> bool =>
-    k == NodeKind.Name || k == NodeKind.SelfExpr || k == NodeKind.SelfField ||
-    k == NodeKind.FieldAccess || k == NodeKind.Index || k == NodeKind.Paren
 
 /// `consume x = e`, `ro x = e`, `mut x = e`: a must-consume initializer starts an
 /// obligation, and only the `consume` form may hold it (D133).
