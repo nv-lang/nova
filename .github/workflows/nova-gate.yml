@@ -412,6 +412,10 @@ jobs:
       - name: Clone nova-http sibling (path-dependency of examples/nova.toml)
         run: |
           git clone --depth 1 https://github.com/nv-lang/nova-http "${GITHUB_WORKSPACE}/../nova-http"
+          # The packages sweep (check-packages-sweep.sh) builds the compress
+          # decode worker from this sibling and exports COMPRESS_WORKER_EXE --
+          # http 0.3.2+ owned-decompress tests panic without it (by design).
+          git clone --depth 1 https://github.com/nv-lang/nova-compress "${GITHUB_WORKSPACE}/../nova-compress"
 
       # ЯРУС ЗАВИСИТ ОТ ТРИГГЕРА, А НЕ ОТ ВТОРОГО JOB'А. Ярусы накопительные
       # (loop ⊂ push ⊂ full), поэтому ночью тот же job просит БОЛЬШИЙ ярус, и
@@ -549,6 +553,10 @@ jobs:
       - name: Clone nova-http sibling (path-dependency of examples/nova.toml)
         run: |
           git clone --depth 1 https://github.com/nv-lang/nova-http "${GITHUB_WORKSPACE}/../nova-http"
+          # The packages sweep (check-packages-sweep.sh) builds the compress
+          # decode worker from this sibling and exports COMPRESS_WORKER_EXE --
+          # http 0.3.2+ owned-decompress tests panic without it (by design).
+          git clone --depth 1 https://github.com/nv-lang/nova-compress "${GITHUB_WORKSPACE}/../nova-compress"
 
       - name: Flagship examples gate — build under --strict-effects (5 targets)
         run: |
