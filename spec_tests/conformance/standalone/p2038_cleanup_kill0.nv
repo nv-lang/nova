@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT p2038 part1 ok
+// EXPECT_STDOUT p2038 survived
+// EXPECT_TIMEOUT_MS 180000
+//
+// Registry №2038 (candidate 0.1.7 regression, Linux): the runtime's process
+// cleanup could issue kill(0, SIGKILL) — SIGKILL to the CALLER'S OWN process
+// group (kill(-1) would be every process it may signal). Two doors, both
+// closed by the fix in nova_rt/process.c:
+//
+//   part 1 — the carrier shape (nova-compress OwnedDecode gate): a
+//   Tree.Group child is its own group leader; an OUTSIDE killer takes the
+//   whole group down; the owner's cleanup afterwards escalates
+//   Terminate -> grace -> Kill against a group that no longer exists. ESRCH
+//   is the END of the escalation — a correct no-op, never a reason to fall
+//   through to pgid 0. (_pc_send / _pc_note_exit now refuse pid <= 0.)
+//
+//   part 2 — the race that produced the observed kill(0, SIGKILL): the
+//   pending slot of os_process_run is registered BEFORE uv_spawn, so a
+//   supervised(timeout:) expiry delivered from another worker while the
+//   spawn is still in flight reached _proc_stop_cb with req->proc.pid == 0,
+//   and the vendored libuv's uv_process_kill has no pid guard. Pre-fix this
+//   arm is RED on Linux probabilistically (the process dies by SIGKILL
+//   together with its group before printing the survived line — the more
+//   load, the wider the fork+exec window); post-fix the deferred kill is
+//   delivered once the pid is real and the process always survives.
+//
+// Part 1 is green on both trees (the pre-fix pid in that path is positive);
+// it pins the scenario so the escalation semantics cannot regress silently.
+// Children are platform tools present on every CI image (same policy as
+// d453_os_process_run_test.nv); every child is bounded (~30 s) so a failing
+// fixture cannot leave a process running forever.
+
+module standalone.p2038_cleanup_kill0
+
+import std.os.{Command, Tree, Signal, kill_pid}
+import std.time.duration
+
+#cfg(target_os = "windows")
+fn sleeper() -> Command => Command.new("ping").arg("-n").arg("30").arg("127.0.0.1")
+
+#cfg(!target_os = "windows")
+fn sleeper() -> Command => Command.new("sleep").arg("30")
+
+fn main() Proc Io Os Time -> () {
+    // ── Part 1: externally killed group leader + owner's cleanup ──
+    supervised {
+        match sleeper().tree(Tree.Group).start() {
+            Err(e) => panic("p2038: start: ${e}")
+            Ok(consume child) => {
+                // Wait until the child leads its group (setsid happens
+                // between fork and exec), then kill the GROUP from outside
+                // the Child handle — the "внешний надзор" of the carrier.
+                mut killed = false
+                mut tries = 0
+                while !killed && tries < 100 {
+                    match kill_pid(child.pid(), Signal.Kill, true) {
+                        Ok(_) => { killed = true }
+                        Err(e) => { 10.to_millis().sleep(); tries += 1 }
+                    }
+                }
+                if !killed { panic("p2038: could not kill the group") }
+                match child.wait() {
+                    Ok(st) => ()
+                    Err(e) => panic("p2038: wait: ${e}")
+                }
+                // consume-cleanup runs at scope end on a reaped Tree.Group
+                // child whose pgid is already gone: it must signal NOTHING
+                // and this process must live to print.
+            }
+        }
+    }
+    println("p2038 part1 ok")
+
+    // ── Part 2: cancel delivered while uv_spawn is in flight ──
+    mut i = 0
+    while i < 120 {
+        ro r = with Fail[TimeoutError] = |_e| { 0 } {
+            supervised(timeout: 2.to_millis()) {
+                match sleeper().run() {
+                    Ok(st) => ()
+                    Err(e) => ()
+                }
+            }
+            1
+        }
+        i += 1
+    }
+    println("p2038 survived ${i} rounds")
+}
