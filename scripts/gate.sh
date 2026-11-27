@@ -1465,9 +1465,10 @@ if body_runs; then
     # nova-compress/nova-http свежесобранным компилятором на раннере 16 ГБ
     # упиралась в сторож (обрыв, не вердикт — тот же класс №1731). Явный
     # предел 13 ГБ оставляет раннеру запас и называет цифру здесь, у шага.
-    NOVA_MEM_CAP_MB=13000 \
+    NOVA_MEM_CAP_MB=13000
     guard --deadline 3600 "$ROOT/scripts/guards/check-packages-sweep.sh" "$ROOT" \
-        || fail "пакеты nova-* падают на этом тулчейне (свип: см. вывод стража)"
+        || { unset NOVA_MEM_CAP_MB; fail "пакеты nova-* падают на этом тулчейне (свип: см. вывод стража)"; }
+    unset NOVA_MEM_CAP_MB
     NOVA="$ROOT/nova-cli/target/release/nova.exe"
     # Имя бинаря зависит от платформы, и до 2026-08-22 здесь стояло только
     # `nova.exe`: на Linux шаг падал бы «nova.exe not found» на успешно
