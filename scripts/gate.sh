@@ -193,7 +193,7 @@ gate_part_of() {
         "cargo build --release") echo all ;;
         "conformance-full "*) echo conformance ;;
         "mega-CU "*) echo mega ;;
-        "crate-tests "*) echo crates ;;
+        "crate-tests "*|"cargo-no-warnings "*) echo crates ;;
         *) echo rest ;;
     esac
 }
@@ -1484,6 +1484,10 @@ if body_runs; then
     gate_barrier
 
 fi
+
+step push "cargo-no-warnings (четыре Rust-крейта)" "corpus"
+guard --deadline 600 "$ROOT/scripts/guards/check-cargo-no-warnings.sh" "$ROOT" \
+    || fail "проверка предупреждений Cargo не прошла (см. вывод стража)"
 
 # РЕЕСТР №884 (2026-09-02): блок самотестов СТОЯЛ ВЫШЕ этой сборки — и на единственном
 # ярусе, где он вообще исполняется (`full`, то есть НОЧНОЙ прогон CI), три
