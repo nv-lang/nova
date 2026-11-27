@@ -112,7 +112,14 @@ static void _proc_exit_cb(uv_process_t* proc, int64_t exit_status, int term_sign
 static NovaStopMode _proc_stop_cb(void* handle) {
     NovaProcessReq* req = (NovaProcessReq*)handle;
     int32_t was = __atomic_exchange_n((volatile int32_t*)&req->killing, 1, __ATOMIC_ACQ_REL);
-    if (!was) {
+    /* №2038: the pending slot is registered BEFORE uv_spawn, and a cancel can
+     * be delivered from another worker while uv_spawn is still in flight (or
+     * after it failed) — then req->proc.pid is still 0, and the vendored
+     * libuv's uv_process_kill has no pid guard: kill(0, SIGKILL) would
+     * SIGKILL OUR OWN process group (kill(-1) would hit every process we
+     * may signal). Never signal a nonpositive pid; when the spawn does
+     * succeed, os_process_run delivers the deferred kill below. */
+    if (!was && req->proc.pid > 0) {
         uv_process_kill(&req->proc, SIGKILL);
     }
     return NOVA_STOP_ASYNC;
@@ -231,6 +238,16 @@ nova_int os_process_run(const uint8_t* program, nova_int program_len,
     if (rc != 0) {
         nova_sched_unregister_pending(scope, slot);
         return (nova_int)rc;  /* -errno-compatible spawn failure */
+    }
+
+    /* №2038: a cancel delivered while uv_spawn was in flight found pid == 0
+     * and could not kill (see _proc_stop_cb) — deliver the deferred kill now
+     * that the pid is real. A second SIGKILL after a delivered one is a
+     * harmless no-op on a dying process. */
+    if ((nova_abool_load(&cancel_sc->cancel_requested)
+         || nova_aint_load(&req->killing) != 0)
+        && req->proc.pid > 0) {
+        (void)uv_process_kill(&req->proc, SIGKILL);
     }
 
     nova_sched_park_until(scope, slot, _proc_ready, req);
@@ -640,7 +657,10 @@ static void _pc_note_exit(NovaProcChild* c, int64_t exit_status, int term_signal
 #ifdef _WIN32
         if (c->job) TerminateJobObject(c->job, 1);
 #else
-        (void)kill(-(pid_t)c->pid, SIGKILL);
+        /* №2038: never signal a nonpositive group id — kill(0) is OUR OWN
+         * process group, kill(-1) is every process we may signal. A child
+         * struct whose pid was never recorded has no group to sweep. */
+        if (c->pid > 0) (void)kill(-(pid_t)c->pid, SIGKILL);
 #endif
     }
     nova_aint_store(&c->exited, 1);
@@ -671,6 +691,10 @@ static nova_int _pc_send(NovaProcChild* c, int sig) {
     return (rc == 0 || rc == UV_ESRCH) ? 0 : _proc_neg_errno(rc);
 #else
     if (nova_aint_load(&c->exited) != 0) return 0;
+    /* №2038: no recorded pid — nothing we may signal. kill(0) would hit our
+     * own process group, kill(-1) every process we may signal; ESRCH from a
+     * live-pid kill below already ends the escalation the same way (0). */
+    if (c->pid <= 0) return 0;
     int r;
     if (c->group) {
         r = kill(-(pid_t)c->pid, sig);     /* the child is its group's leader (setsid) */
@@ -1630,6 +1654,10 @@ static void _pty_sigchld_cb(uv_signal_t* h, int signum) {
     (void)signum;
     NovaProcChild* c = (NovaProcChild*)h->data;
     if (nova_aint_load(&c->exited) != 0) return;
+    /* №2038: without a recorded pid, waitpid(0) would reap ANY child of our
+     * own process group (stealing one of libuv's) and the exit path would
+     * then sweep a group id of 0 — kill(0) is our own group. */
+    if (c->pid <= 0) return;
     int status = 0;
     pid_t r;
     do r = waitpid((pid_t)c->pid, &status, WNOHANG); while (r == -1 && errno == EINTR);
