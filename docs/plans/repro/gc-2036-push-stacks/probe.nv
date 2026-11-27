@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// probe.nv — №2036 twin-carrier: ~200 fibers allocating 8..64 KiB buffers
+// in a loop with 10 ms sleep; a monitor fiber prints GC heap size every 5 s.
+// Run with NOVA_MAXPROCS=8. Diagnostic A/B for NOVA_GC_PUSH_THREAD_STACKS.
+
+module twin.probe
+
+import std.time.duration
+import std.runtime.gc
+
+fn worker(mut counter AtomicInt) Time -> () {
+    mut i = 0
+    while true {
+        // 1024..8192 ints = 8..64 KiB backing allocation
+        ro n = 1024 + (i % 8) * 1024
+        mut buf = Vec[int].new(n)
+        buf.push(i)
+        buf.push(n)
+        counter.fetch_add(1)
+        (10).to_millis().sleep()
+        i = i + 1
+    }
+}
+
+fn monitor(mut counter AtomicInt) Time -> () {
+    mut k = 0
+    while true {
+        (5000).to_millis().sleep()
+        k = k + 1
+        println("t=", k * 5, "s heap=", gc.heap_size(), " iters=", counter.load())
+    }
+}
+
+fn main() Io {
+    println("diag2036 twin probe: 200 fibers, 8-64KiB alloc + 10ms sleep")
+    mut counter = AtomicInt.new(0)
+    supervised {
+        spawn { monitor(counter) }
+        for w in 0..200 {
+            spawn { worker(counter) }
+        }
+    }
+}

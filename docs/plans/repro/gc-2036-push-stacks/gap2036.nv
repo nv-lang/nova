@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// gap2036.nv — mini-repro of the №2027 gap: heap objects rooted only by a
+// worker's native stack (queued fiber closures before the worker's first
+// mco_create, scheduler frames) must survive concurrent GC. Bursts of
+// fibers over 16 workers + a gc.collect() hammer; every fiber verifies its
+// payload checksum. Run: NOVA_MAXPROCS=16 ./gap2036.exe
+
+module twin.gap2036
+
+import std.runtime.gc
+
+fn payload(id int) -> Vec[int] {
+    mut v = Vec[int].new(64)
+    for i in 0..64 {
+        v.push(id * 1000003 + i)
+    }
+    v
+}
+
+fn checksum(v Vec[int], id int) -> int {
+    mut s = 0
+    for i in 0..64 {
+        s = s + v[i]
+    }
+    s
+}
+
+fn expected(id int) -> int {
+    mut s = 0
+    for i in 0..64 {
+        s = s + id * 1000003 + i
+    }
+    s
+}
+
+fn main() Io {
+    mut bad = AtomicInt.new(0)
+    mut done = AtomicInt.new(0)
+    supervised {
+        spawn {
+            mut k = 0
+            while k < 400 {
+                gc.collect()
+                k = k + 1
+            }
+            println("gc hammer done: ", k, " collections")
+        }
+        mut round = 0
+        while round < 40 {
+            supervised {
+                ro base = round * 500
+                for w in 0..500 {
+                    spawn {
+                        ro id = base + w
+                        ro p = payload(id)
+                        if checksum(p, id) != expected(id) {
+                            bad.fetch_add(1)
+                        }
+                        done.fetch_add(1)
+                    }
+                }
+            }
+            round = round + 1
+        }
+    }
+    println("done=", done.load(), " bad=", bad.load())
+    if bad.load() == 0 {
+        println("GAP-CHECK PASS")
+    } else {
+        println("GAP-CHECK FAIL")
+    }
+}

@@ -1,0 +1,21 @@
+fixed rc histogram:
+    320 0
+pre2027 rc histogram:
+    317 0
+      3 3
+
+crash rounds (pre2027):
+=== round 37 rc=3 ===
+=== round 33 rc=3 ===
+=== round 32 rc=3 ===
+
+first crash SEGV-DIAG header:
+=== [SEGV-DIAG] EXCEPTION_ACCESS_VIOLATION ===
+PID=46836 TID=105692
+ExceptionCode:    0xC0000005
+ExceptionAddress: 00007FF626B6FD1C (RIP at fault)
+AccessMode:       WRITE (info[0]=1)
+FaultAddress:     0x000001E19E40E000 (target of the bad op)
+ExeBase:          00007FF626810000
+RIP-RVA:          0x35FD1C (= RIP - ExeBase, if RIP in exe)
+=== [SEGV-DIAG END] ===
