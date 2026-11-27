@@ -776,7 +776,7 @@ fn layout_of_decl(
             }
         }
         TypeDeclKind::Sum(variants) => {
-            layout_of_sum(td, variants, type_decls, &mut visited)
+            layout_of_sum(variants, type_decls, &mut visited)
         }
         // Newtype / alias — transparent: the layout is the inner type's, but
         // a newtype's field-level GC offsets are the inner classification's
@@ -814,7 +814,6 @@ fn layout_of_decl(
 /// `payload_base + (per-variant field offset)`.  The tag at offset 0 is SCALAR
 /// and never appears in any variant bitmap.
 fn layout_of_sum(
-    td: &TypeDecl,
     variants: &[SumVariant],
     type_decls: &HashMap<String, TypeDecl>,
     _visited: &mut HashSet<String>,
@@ -827,7 +826,6 @@ fn layout_of_sum(
         name: String,
         rel_offsets: Vec<usize>,
         payload_size: usize,
-        payload_align: usize,
         unresolved: bool,
     }
     let mut tmps: Vec<VarTmp> = Vec::with_capacity(variants.len());
@@ -856,7 +854,6 @@ fn layout_of_sum(
             name: v.name.clone(),
             rel_offsets: offsets,
             payload_size: psize,
-            payload_align: palign,
             unresolved,
         });
     }

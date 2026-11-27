@@ -1672,19 +1672,6 @@ pub fn synthesize_debug<Q: DeriveQuery>(
     ))
 }
 
-fn simple_display_block(type_name: &str) -> Block {
-    Block {
-        stmts: vec![Stmt::Expr(member_call(
-            ident("w"),
-            "write",
-            vec![to_bytes(ex(ExprKind::StrLit(type_name.to_string())))],
-        ))],
-        trailing: None,
-        span: span_dummy(),
-        is_unsafe: false,
-    }
-}
-
 /// Plan 208 Ф.3 (D422 §4): compact/positional form — `TypeName(v1, v2)`, no
 /// field names, unlike `synth_debug_record_body`'s named `{ f: v }` form.
 /// Every field (primitive or composite) dispatches uniformly via

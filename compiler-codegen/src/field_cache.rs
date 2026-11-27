@@ -2499,7 +2499,7 @@ fn cache_fn_with_ipa(
                 match regions {
                     Some(regs) => {
                         let mut kept = 0usize;
-                        for (idx, region) in regs.into_iter().enumerate() {
+                        for region in regs {
                             if total_caches >= cfg.max_per_fn { break; }
                             if region.reads < cfg.threshold { continue; }
                             mut_region_targets.push(MutRegionTarget {
@@ -6050,11 +6050,6 @@ fn rewrite_trailing(t: &mut Trailing, replace_map: &HashMap<String, String>) {
 // Naming: `_at_<field>_loop` (distinct from Plan 123.1 `_at_<field>`).
 // Collision avoidance: numeric suffix `_<N>`.
 
-/// Per-fn LICM entry point.
-fn licm_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
-    licm_fn_impl(f, reg, cfg, None)
-}
-
 /// Plan 123 V7.2 (2026-06-02): explicit IPA threading — replaces the
 /// V7.1 thread-local plumbing. `ipa` flows from `cache_module` through
 /// every recursive descent in lieu of LICM_WRITE_SETS.with(...) snapshot.
@@ -6918,7 +6913,7 @@ fn expr_contains_spawn(e: &Expr) -> bool {
         ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. } => {
             block_contains_spawn(body)
         }
-        ExprKind::Throw(e) | ExprKind::Spawn(e) => expr_contains_spawn(e),
+        ExprKind::Throw(e) => expr_contains_spawn(e),
         ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e) | ExprKind::Member { obj: e, .. }
         | ExprKind::TurboFish { base: e, .. } | ExprKind::As(e, _) | ExprKind::Is(e, _)
         | ExprKind::Unary { operand: e, .. } => expr_contains_spawn(e),
@@ -7176,16 +7171,6 @@ fn first_field_span_in_expr(e: &Expr, fname: &str) -> Option<crate::diag::Span> 
 //   LICM).
 // - D217 per-fn cache runs LAST — sees cached pure-call locals
 //   as regular Ident references (no @F pattern match).
-
-/// Per-fn V3 pure-call cache entry point.
-fn pure_cache_fn(
-    f: &mut FnDecl,
-    reg: &FieldRegistry,
-    pure_methods: &HashSet<(String, String)>,
-    cfg: &FieldCacheConfig,
-) {
-    pure_cache_fn_impl(f, reg, pure_methods, cfg, None)
-}
 
 /// Plan 123 V7.2 (2026-06-02): explicit IPA threading for pure-cache.
 /// `ipa` carries (recv_type, write_sets, read_sets) into the frame-aware
@@ -8009,115 +7994,6 @@ fn collect_body_writes_expr(e: &Expr, out: &mut HashSet<String>) {
     }
 }
 
-/// True if body contains any top-level Assign with target = `@<F>`.
-fn body_has_any_self_field_write(body: &FnBody) -> bool {
-    match body {
-        FnBody::Block(b) => block_has_any_self_field_write(b),
-        FnBody::Expr(e) => expr_has_any_self_field_write(e),
-        FnBody::External => false,
-    }
-}
-
-fn block_has_any_self_field_write(b: &Block) -> bool {
-    b.stmts.iter().any(stmt_has_any_self_field_write)
-        || b.trailing.as_ref().map_or(false, |t| expr_has_any_self_field_write(t))
-}
-
-fn stmt_has_any_self_field_write(s: &Stmt) -> bool {
-    match s {
-        Stmt::Assign { target, .. } => {
-            if match_self_field(target).is_some() {
-                return true;
-            }
-            // Even в nested expression — e.g. `let x = if cond { @F = ... }`.
-            // For V3 conservative, just check top-level Assign на target.
-            false
-        }
-        Stmt::Let(d) => expr_has_any_self_field_write(&d.value),
-        Stmt::Const(d) => expr_has_any_self_field_write(&d.value),
-        Stmt::Expr(e) => expr_has_any_self_field_write(e),
-        Stmt::Return { value, .. } => value.as_ref().map_or(false, |v| expr_has_any_self_field_write(v)),
-        Stmt::Throw { value, .. } => expr_has_any_self_field_write(value),
-        Stmt::Defer { body, .. } => {
-            expr_has_any_self_field_write(body)
-        }
-        Stmt::ConsumeScope { init, body, .. } => {
-            expr_has_any_self_field_write(init) || block_has_any_self_field_write(body)
-        }
-        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            expr_has_any_self_field_write(expr)
-        }
-        Stmt::Break(_) | Stmt::Continue(_)
-        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => false,
-        // Plan 136: tuple destructuring assignment.
-        Stmt::TupleAssign { lhs, rhs, .. } => {
-            lhs.iter().any(expr_has_any_self_field_write)
-                || rhs.iter().any(expr_has_any_self_field_write)
-        }
-    }
-}
-
-fn expr_has_any_self_field_write(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(b) => block_has_any_self_field_write(b),
-        ExprKind::If { cond, then, else_ } => {
-            expr_has_any_self_field_write(cond)
-                || block_has_any_self_field_write(then)
-                || else_.as_ref().map_or(false, |eb| match eb {
-                    ElseBranch::Block(b) => block_has_any_self_field_write(b),
-                    ElseBranch::If(e) => expr_has_any_self_field_write(e),
-                })
-        }
-        ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            expr_has_any_self_field_write(scrutinee)
-                || block_has_any_self_field_write(then)
-                || else_.as_ref().map_or(false, |eb| match eb {
-                    ElseBranch::Block(b) => block_has_any_self_field_write(b),
-                    ElseBranch::If(e) => expr_has_any_self_field_write(e),
-                })
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            expr_has_any_self_field_write(scrutinee)
-                || arms.iter().any(|arm| match &arm.body {
-                    MatchArmBody::Expr(e) => expr_has_any_self_field_write(e),
-                    MatchArmBody::Block(b) => block_has_any_self_field_write(b),
-                })
-        }
-        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
-            expr_has_any_self_field_write(iter) || block_has_any_self_field_write(body)
-        }
-        ExprKind::While { cond, body, .. } => {
-            expr_has_any_self_field_write(cond) || block_has_any_self_field_write(body)
-        }
-        ExprKind::WhileLet { scrutinee, body, .. } => {
-            expr_has_any_self_field_write(scrutinee) || block_has_any_self_field_write(body)
-        }
-        ExprKind::Loop { body, .. } => block_has_any_self_field_write(body),
-        ExprKind::With { body, .. } => block_has_any_self_field_write(body),
-        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
-        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
-            block_has_any_self_field_write(body)
-        }
-        ExprKind::Supervised { body, .. } => block_has_any_self_field_write(body),
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
-        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
-        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
-            expr_has_any_self_field_write(e)
-        }
-        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
-            expr_has_any_self_field_write(a) || expr_has_any_self_field_write(b)
-        }
-        ExprKind::Index { obj, index } => {
-            expr_has_any_self_field_write(obj) || expr_has_any_self_field_write(index)
-        }
-        ExprKind::Call { func, args, .. } => {
-            expr_has_any_self_field_write(func)
-                || args.iter().any(|a| expr_has_any_self_field_write(a.expr()))
-        }
-        _ => false, // Conservative — other expressions don't have stmts.
-    }
-}
-
 /// True if body contains Spawn/Supervised/Detach/Blocking/ParallelFor.
 fn body_has_concurrent(body: &FnBody) -> bool {
     match body {
@@ -8577,223 +8453,6 @@ fn canonical_literal_repr(e: &Expr) -> Option<String> {
     }
 }
 
-fn rewrite_pure_calls_in_block(b: &mut Block, renames: &HashMap<String, String>) {
-    for s in &mut b.stmts {
-        rewrite_pure_calls_in_stmt(s, renames);
-    }
-    if let Some(t) = &mut b.trailing {
-        rewrite_pure_calls_in_expr(t, renames);
-    }
-}
-
-fn rewrite_pure_calls_in_stmt(s: &mut Stmt, renames: &HashMap<String, String>) {
-    match s {
-        Stmt::Let(d) => rewrite_pure_calls_in_expr(&mut d.value, renames),
-        Stmt::Const(d) => rewrite_pure_calls_in_expr(&mut d.value, renames),
-        Stmt::Expr(e) => rewrite_pure_calls_in_expr(e, renames),
-        Stmt::Assign { target, value, .. } => {
-            rewrite_pure_calls_in_expr(target, renames);
-            rewrite_pure_calls_in_expr(value, renames);
-        }
-        Stmt::Return { value, .. } => {
-            if let Some(v) = value {
-                rewrite_pure_calls_in_expr(v, renames);
-            }
-        }
-        Stmt::Throw { value, .. } => rewrite_pure_calls_in_expr(value, renames),
-        Stmt::Defer { body, .. } => {
-            rewrite_pure_calls_in_expr(body, renames);
-        }
-        Stmt::ConsumeScope { init, body, .. } => {
-            rewrite_pure_calls_in_expr(init, renames);
-            rewrite_pure_calls_in_block(body, renames);
-        }
-        Stmt::AssertStatic { expr, .. } | Stmt::Assume { expr, .. } => {
-            rewrite_pure_calls_in_expr(expr, renames);
-        }
-        Stmt::Break(_) | Stmt::Continue(_)
-        | Stmt::Apply { .. } | Stmt::Calc { .. } | Stmt::Reveal { .. } => {}
-        // Plan 136: tuple destructuring assignment.
-        Stmt::TupleAssign { lhs, rhs, .. } => {
-            for e in lhs { rewrite_pure_calls_in_expr(e, renames); }
-            for e in rhs { rewrite_pure_calls_in_expr(e, renames); }
-        }
-    }
-}
-
-fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
-    // Detect `@<method>()` pattern → replace с Ident(local).
-    if let ExprKind::Call { func, args, trailing } = &e.kind {
-        if args.is_empty() && trailing.is_none() {
-            if let ExprKind::Member { obj, name } = &func.kind {
-                if matches!(obj.kind, ExprKind::SelfAccess) {
-                    if let Some(local) = renames.get(name) {
-                        e.kind = ExprKind::Ident(local.clone());
-                        return;
-                    }
-                }
-            }
-        }
-    }
-    // Don't recurse into closure bodies — cache locals not in their scope.
-    match &e.kind {
-        ExprKind::ClosureLight { .. } | ExprKind::ClosureFull(_)
-        | ExprKind::Lambda { .. } | ExprKind::HandlerLit { .. }
-        | ExprKind::ProtocolLit { .. } => return,
-        _ => {}
-    }
-    // Recurse children.
-    match &mut e.kind {
-        ExprKind::Block(b) => rewrite_pure_calls_in_block(b, renames),
-        ExprKind::If { cond, then, else_ } => {
-            rewrite_pure_calls_in_expr(cond, renames);
-            rewrite_pure_calls_in_block(then, renames);
-            if let Some(eb) = else_ {
-                match eb {
-                    ElseBranch::Block(b) => rewrite_pure_calls_in_block(b, renames),
-                    ElseBranch::If(e) => rewrite_pure_calls_in_expr(e, renames),
-                }
-            }
-        }
-        ExprKind::IfLet { scrutinee, then, else_, .. } => {
-            rewrite_pure_calls_in_expr(scrutinee, renames);
-            rewrite_pure_calls_in_block(then, renames);
-            if let Some(eb) = else_ {
-                match eb {
-                    ElseBranch::Block(b) => rewrite_pure_calls_in_block(b, renames),
-                    ElseBranch::If(e) => rewrite_pure_calls_in_expr(e, renames),
-                }
-            }
-        }
-        ExprKind::Match { scrutinee, arms } => {
-            rewrite_pure_calls_in_expr(scrutinee, renames);
-            for arm in arms {
-                if let Some(g) = &mut arm.guard { rewrite_pure_calls_in_expr(g, renames); }
-                match &mut arm.body {
-                    MatchArmBody::Expr(e) => rewrite_pure_calls_in_expr(e, renames),
-                    MatchArmBody::Block(b) => rewrite_pure_calls_in_block(b, renames),
-                }
-            }
-        }
-        ExprKind::For { iter, body, .. } | ExprKind::ParallelFor { iter, body, .. } => {
-            rewrite_pure_calls_in_expr(iter, renames);
-            rewrite_pure_calls_in_block(body, renames);
-        }
-        ExprKind::While { cond, body, .. } => {
-            rewrite_pure_calls_in_expr(cond, renames);
-            rewrite_pure_calls_in_block(body, renames);
-        }
-        ExprKind::WhileLet { scrutinee, body, .. } => {
-            rewrite_pure_calls_in_expr(scrutinee, renames);
-            rewrite_pure_calls_in_block(body, renames);
-        }
-        ExprKind::Loop { body, .. } => rewrite_pure_calls_in_block(body, renames),
-        ExprKind::With { bindings, body } => {
-            for wb in bindings { rewrite_pure_calls_in_expr(&mut wb.handler, renames); }
-            rewrite_pure_calls_in_block(body, renames);
-        }
-        ExprKind::Forbid { body, .. } | ExprKind::Realtime { body, .. }
-        | ExprKind::Detach(body) | ExprKind::Blocking(body) => {
-            rewrite_pure_calls_in_block(body, renames);
-        }
-        ExprKind::Supervised { body, cancel, deadline, on_timeout } => {
-            rewrite_pure_calls_in_block(body, renames);
-            if let Some(c) = cancel { rewrite_pure_calls_in_expr(c, renames); }
-            if let Some(_dl) = deadline { rewrite_pure_calls_in_expr(&mut _dl.expr, renames); }
-            if let Some(oh) = on_timeout { rewrite_pure_calls_in_expr(oh, renames); }
-        }
-        ExprKind::Spawn(e) | ExprKind::Throw(e) | ExprKind::Try(e) | ExprKind::Bang(e) | ExprKind::RefArg(e)
-        | ExprKind::Member { obj: e, .. } | ExprKind::TurboFish { base: e, .. }
-        | ExprKind::As(e, _) | ExprKind::Is(e, _) | ExprKind::Unary { operand: e, .. } => {
-            rewrite_pure_calls_in_expr(e, renames);
-        }
-        ExprKind::Coalesce(a, b) | ExprKind::Binary { left: a, right: b, .. } => {
-            rewrite_pure_calls_in_expr(a, renames);
-            rewrite_pure_calls_in_expr(b, renames);
-        }
-        ExprKind::Index { obj, index } => {
-            rewrite_pure_calls_in_expr(obj, renames);
-            rewrite_pure_calls_in_expr(index, renames);
-        }
-        ExprKind::Call { func, args, trailing } => {
-            rewrite_pure_calls_in_expr(func, renames);
-            for a in args {
-                match a {
-                    CallArg::Item(e) | CallArg::Spread(e) => rewrite_pure_calls_in_expr(e, renames),
-                    CallArg::Named { value, .. } => rewrite_pure_calls_in_expr(value, renames),
-                }
-            }
-            if let Some(t) = trailing {
-                match t {
-                    Trailing::Block(b) => rewrite_pure_calls_in_block(b, renames),
-                    Trailing::Fn(_) | Trailing::LegacyBlockWithParams(_) => {}
-                }
-            }
-        }
-        ExprKind::InterpolatedStr { parts } => {
-            for p in parts {
-                if let InterpStrPart::Expr { expr: e, spec: _ } = p { rewrite_pure_calls_in_expr(e, renames); }
-            }
-        }
-        ExprKind::ArrayLit(elems) => {
-            for el in elems {
-                match el {
-                    ArrayElem::Item(e) | ArrayElem::Spread(e) => rewrite_pure_calls_in_expr(e, renames),
-                }
-            }
-        }
-        ExprKind::MapLit { elems, .. } => {
-            for el in elems {
-                match el {
-                    MapElem::Pair(k, v) => {
-                        rewrite_pure_calls_in_expr(k, renames);
-                        rewrite_pure_calls_in_expr(v, renames);
-                    }
-                    MapElem::Spread(e) => rewrite_pure_calls_in_expr(e, renames),
-                }
-            }
-        }
-        ExprKind::RecordLit { fields: rfields, .. } => {
-            for rf in rfields {
-                if let Some(v) = &mut rf.value { rewrite_pure_calls_in_expr(v, renames); }
-            }
-        }
-        ExprKind::TupleLit(elems) => {
-            for el in elems { rewrite_pure_calls_in_expr(el, renames); }
-        }
-        ExprKind::Select { arms } => {
-            for arm in arms {
-                if let Some(g) = &mut arm.guard { rewrite_pure_calls_in_expr(g, renames); }
-                rewrite_pure_calls_in_block(&mut arm.body, renames);
-                match &mut arm.op {
-                    SelectOp::Recv { chan, .. } => rewrite_pure_calls_in_expr(chan, renames),
-                    SelectOp::Send { chan, value } => {
-                        rewrite_pure_calls_in_expr(chan, renames);
-                        rewrite_pure_calls_in_expr(value, renames);
-                    }
-                    SelectOp::Default => {}
-                }
-            }
-        }
-        ExprKind::Range { start, end, .. } => {
-            if let Some(s) = start { rewrite_pure_calls_in_expr(s, renames); }
-            if let Some(e) = end { rewrite_pure_calls_in_expr(e, renames); }
-        }
-        ExprKind::Forall { range, body, .. } | ExprKind::Exists { range, body, .. } => {
-            rewrite_pure_calls_in_expr(range, renames);
-            rewrite_pure_calls_in_expr(body, renames);
-        }
-        ExprKind::Interrupt(opt) => {
-            if let Some(e) = opt { rewrite_pure_calls_in_expr(e, renames); }
-        }
-        ExprKind::TaggedTemplate { tag, args, .. } => {
-            rewrite_pure_calls_in_expr(tag, renames);
-            for a in args { rewrite_pure_calls_in_expr(a, renames); }
-        }
-        _ => {}
-    }
-}
-
 // ===== Plan 123.4 (D217 amend): Chain caching `@a.b.c` =====
 //
 // V4 phase. Caches nested chain access patterns `@a.b.c` when
@@ -8811,10 +8470,6 @@ fn rewrite_pure_calls_in_expr(e: &mut Expr, renames: &HashMap<String, String>) {
 // - No closure capture of any chain occurrence.
 // - No concurrent body (Spawn/Supervised/etc).
 // - Receiver type не protocol/effect/opaque/sum/newtype/alias.
-
-fn chain_cache_fn(f: &mut FnDecl, reg: &FieldRegistry, cfg: &FieldCacheConfig) {
-    chain_cache_fn_impl(f, reg, cfg, None)
-}
 
 /// Plan 123 V7.2 (2026-06-02): explicit IPA threading for chain-cache.
 /// `ipa` carries write_sets для per-root invalidation, replacing CHAIN_IPA_CTX.

@@ -58,7 +58,7 @@ pub fn desugar_module(module: &mut Module) {
     // `module.items` + `peer_files` (folder-module) view, same shape as
     // the type-checker's own scan.
     let mut types_with_insert_new: HashSet<String> = HashSet::new();
-    let mut collect_insert_new = |items: &[Item], out: &mut HashSet<String>| {
+    let collect_insert_new = |items: &[Item], out: &mut HashSet<String>| {
         for item in items {
             if let Item::Fn(f) = item {
                 if f.name == "insert_new" {

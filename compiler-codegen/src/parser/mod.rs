@@ -5336,7 +5336,7 @@ impl Parser {
     /// (D47 unchanged). Field-level explicit `priv`/`pub` override default.
     fn parse_record_fields_with_default(&mut self, default_vis: crate::ast::FieldDefaultVisibility) -> Result<(Vec<RecordField>, Vec<AssocConst>), Diagnostic> {
         let mut fields = Vec::new();
-        let mut assoc_consts = Vec::new();
+        let assoc_consts = Vec::new();
         self.skip_newlines();
         while !matches!(self.peek().kind, TokenKind::RBrace) {
             // D104 rev-2 (2026-08-15): outer `///` on the line ABOVE a field
@@ -13578,7 +13578,6 @@ mod doc_attach_tests {
     //! Plan 45 Ф.2: проверяем, что парсер прикрепляет doc-блоки к
     //! item'ам и к модулю. Тесты идут поверх существующего parser-pipeline
     //! (lex → parser); doc-token'ы попадают в стрим из lexer'а Ф.1.
-    use super::*;
     use crate::ast::{Item, TypeDeclKind};
     use crate::lexer::DocCommentKind;
 

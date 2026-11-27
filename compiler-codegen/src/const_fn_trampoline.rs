@@ -184,7 +184,6 @@ pub fn generate_const_fn_trampolines(
             fn_signatures: &fn_signatures,
             aliases,
             generic_seeds: &mut generic_seeds,
-            errors: &mut errors,
         };
         for item in &mut module.items {
             ctx.visit_item_mut(item);
@@ -802,7 +801,6 @@ struct GenericMutateCtx<'a> {
     fn_signatures: &'a HashMap<String, Vec<TypeRef>>,
     aliases: &'a HashMap<String, String>,
     generic_seeds: &'a mut HashSet<GenericInst>,
-    errors: &'a mut Vec<Diagnostic>,
 }
 
 impl<'a> GenericMutateCtx<'a> {

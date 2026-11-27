@@ -27,7 +27,9 @@
 use std::cell::RefCell;
 use std::sync::Mutex;
 
-use super::ir::{Model, ModelValue, SatResult, SmtTerm};
+use super::ir::{Model, ModelValue, SatResult};
+#[cfg(any(test, feature = "z3-backend"))]
+use super::ir::SmtTerm;
 
 // ─────────────────────────────────────────────────────────────────────
 // Расхождение и процесс-глобальный коллектор
@@ -108,6 +110,7 @@ pub fn set_current_fn(name: Option<String>) {
     CURRENT_FN.with(|c| *c.borrow_mut() = name);
 }
 
+#[cfg(any(test, feature = "z3-backend"))]
 fn current_fn() -> Option<String> {
     CURRENT_FN.with(|c| c.borrow().clone())
 }
@@ -156,6 +159,7 @@ pub fn verdict_label(r: &SatResult) -> String {
 
 /// Pretty-print VC: захваченная формула — это `not(goal)` из `try_prove`;
 /// разворачиваем обратно к `goal`.
+#[cfg(any(test, feature = "z3-backend"))]
 fn pretty_vc(captured: &SmtTerm) -> String {
     if let SmtTerm::App(op, args) = captured {
         if op == "not" && args.len() == 1 {

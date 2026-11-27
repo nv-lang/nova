@@ -1301,7 +1301,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::*;
     use crate::diag::Span;
 
     // ---- tiny AST builders (mirror the source syntax shapes) ----

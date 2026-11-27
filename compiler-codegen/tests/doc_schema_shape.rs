@@ -18,7 +18,7 @@ use std::path::PathBuf;
 #[derive(Debug)]
 enum JsonValue {
     Null,
-    Bool(bool),
+    Bool,
     Number(String), // raw — без парсинга в float (избегаем потери точности)
     String(String),
     Array(Vec<JsonValue>),
@@ -168,10 +168,10 @@ impl<'a> JsonParser<'a> {
     fn parse_bool(&mut self) -> JsonValue {
         if self.input[self.pos] == b't' {
             self.pos += 4;
-            JsonValue::Bool(true)
+            JsonValue::Bool
         } else {
             self.pos += 5;
-            JsonValue::Bool(false)
+            JsonValue::Bool
         }
     }
     fn parse_number(&mut self) -> JsonValue {
