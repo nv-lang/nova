@@ -74,7 +74,13 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
     # nova-polaris (2026-11-10): ws_upgrade needs a real-socket deadline - the
     # suite is 50/50 PASS at --timeout 600; the runner default (116s) killed
     # it under full-suite contention, which read as a package FAIL.
-    out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 2>&1) || rc=$?
+    # nova-compress: src/worker/main.nv is a fail-closed BINARY entry (exit 71
+    # without the worker protocol on stdin), not a test -- the package gate
+    # runs the *_test files; a bare `nova test src` would execute the worker
+    # as a CU and read its designed exit as a failure.
+    filt=""
+    [ "$pkg" = "nova-compress" ] && filt="--filter _test"
+    out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 $filt 2>&1) || rc=$?
     if [ "$rc" -eq 124 ]; then
         echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 900с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
         failed=$((failed+1)); continue
