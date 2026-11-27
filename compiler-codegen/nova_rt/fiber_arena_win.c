@@ -240,8 +240,24 @@ static void _nova_fw_gc_push_other_roots(void) {
      * Invoked under the GC allocation lock, so ordering with the arena
      * scan below is serialized. Safe even when the world is running
      * (incremental VDB): thread stacks are always committed, and both
-     * this and the arena scan push conservative supersets. */
-    if (_nova_fw_prev_push_other_roots) _nova_fw_prev_push_other_roots();
+     * this and the arena scan push conservative supersets.
+     *
+     * №2036 DIAGNOSTIC gate (NOT the final fix): under incremental GC the
+     * chained default GC_push_all_stacks() pushes whole native thread
+     * stacks with stale SP on every mark increment ("Thread stack pointer
+     * out of range, pushing everything") → conservative retention →
+     * unbounded heap growth. NOVA_GC_PUSH_THREAD_STACKS=0 skips the
+     * chained call for the H1 A/B experiment. */
+    {
+        static int _nova_fw_push_stacks_enabled = -1;
+        if (_nova_fw_push_stacks_enabled < 0) {
+            const char* e = getenv("NOVA_GC_PUSH_THREAD_STACKS");
+            _nova_fw_push_stacks_enabled = !(e && e[0] == '0' && e[1] == '\0');
+        }
+        if (_nova_fw_push_stacks_enabled
+            && _nova_fw_prev_push_other_roots)
+            _nova_fw_prev_push_other_roots();
+    }
     /* №1857: the installed effect handlers -- TLS is not scanned by Boehm. */
     nova_effect_roots_push(_nova_fw_push_eager);
     /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
