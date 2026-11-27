@@ -86,15 +86,18 @@ LIBUV_WIN_SYSLIBS = [
     "dbghelp",
 ]
 
-# native_runtime.rs build_boehm_lib: mirrors the repo's vcpkg bdwgc
-# x64-windows-static DEFINES line, plus two defines the SHIPPED package
-# builds with: LARGE_CONFIG (MAX_HEAP_SECTS = 81920 on win64, the same
-# config .github/workflows/windows-oracle-package.yml builds) and
-# NO_MSGBOX_ON_ERROR (a GC fatal aborts to stderr instead of wedging the
-# process in a modal "Fatal error in GC" dialog). Reg 2012: the win64
-# default is 1024 sections AND the dialog is on, and a toolchain-built
-# binary hit both first.
+# native_runtime.rs build_boehm_lib: mirrors the SHIPPED package's bdwgc
+# build (.github/workflows/windows-oracle-package.yml, cmake
+# -DBUILD_SHARED_LIBS=OFF -Denable_large_config=ON over the vendored bdwgc),
+# plus one define the shipped build does NOT have: NO_MSGBOX_ON_ERROR (a GC
+# fatal aborts to stderr instead of wedging the process in a modal "Fatal
+# error in GC" dialog). Reg 2012: the win64 default is 1024 heap sections
+# AND the dialog is on. Reg 2035 defines audit: ALL_INTERIOR_POINTERS and
+# NO_EXECUTE_PERMISSION are unconditional in bdwgc's CMakeLists (line 129)
+# and were missing here; LARGE_CONFIG is MAX_HEAP_SECTS=81920. Keep this
+# list in sync with BOEHM_FALLBACK_DEFINES in native_runtime.rs.
 BDWGC_DEFINES = [
+    "/DALL_INTERIOR_POINTERS",
     "/DDONT_USE_USER32_DLL",
     "/DEMPTY_GETENV_RESULTS",
     "/DENABLE_DISCLAIM",
@@ -106,6 +109,7 @@ BDWGC_DEFINES = [
     "/DGC_NO_SIGSETJMP",
     "/DGC_THREADS",
     "/DJAVA_FINALIZATION",
+    "/DNO_EXECUTE_PERMISSION",
     "/DNO_GETCONTEXT",
     "/DPARALLEL_MARK",
     "/DTHREAD_LOCAL_ALLOC",
@@ -450,8 +454,18 @@ def build_boehm(repo: pathlib.Path, cache: pathlib.Path, vcvars_env: dict[str, s
     cache_dir = cache / "gc"
     gc_lib = cache_dir / "gc.lib"
     cache_include = cache_dir / "include"
+    # Registry 221.1 #2035: reuse the cache only when it was built with the
+    # CURRENT defines — a lib cached by an older config (e.g. without
+    # LARGE_CONFIG) must be rebuilt, not silently reused.
+    stamp_path = cache_dir / "gc-build.defines"
+    stamp = " ".join(BDWGC_DEFINES)
+    stamp_ok = (
+        stamp_path.is_file()
+        and stamp_path.read_text(encoding="utf-8").strip() == stamp
+    )
     if (
         gc_lib.is_file()
+        and stamp_ok
         and (cache_include / "gc.h").is_file()
         and (cache_include / "gc" / "gc.h").is_file()
     ):
@@ -488,6 +502,7 @@ def build_boehm(repo: pathlib.Path, cache: pathlib.Path, vcvars_env: dict[str, s
     run([lib, "@%s" % lib_rsp], env=vcvars_env, timeout=600, what="bdwgc lib.exe")
     if not gc_lib.is_file():
         fail("bdwgc build succeeded but %s not found" % gc_lib)
+    stamp_path.write_text(stamp, encoding="utf-8")
     shutil.rmtree(obj_dir, ignore_errors=True)
     print("carina-native-build: gc.lib built (bdwgc extra/gc.c amalgamation)")
     return gc_lib, cache_include

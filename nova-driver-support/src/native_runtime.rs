@@ -510,6 +510,15 @@ pub fn detect_or_build_boehm_fallback(
         let cache_dir = repo_root.join("target").join("gc-cache");
         let gc_lib = cache_dir.join("gc.lib");
         let cache_include = cache_dir.join("include");
+        // Registry 221.1 #2035: the cache used to be a bare `is_file()`
+        // check, so a gc.lib built by an OLDER toolchain config (e.g.
+        // without LARGE_CONFIG) was reused forever and the defines fix
+        // never reached warm machines. The stamp file records the exact
+        // defines the cached lib was built with; any change rebuilds.
+        let stamp_path = cache_dir.join("gc-build.defines");
+        let stamp_ok = std::fs::read_to_string(&stamp_path)
+            .map(|s| s.trim() == BOEHM_FALLBACK_DEFINES.trim())
+            .unwrap_or(false);
         // Registry 221.1 #1824: the same cross-process lock as libuv's.
         let lock_path = cache_dir.join(".nova-build.lock");
         let _xproc = match crate::fs_lock::lock_exclusive(&lock_path) {
@@ -524,6 +533,7 @@ pub fn detect_or_build_boehm_fallback(
             }
         };
         if gc_lib.is_file()
+            && stamp_ok
             && cache_include.join("gc.h").is_file()
             && cache_include.join("gc").join("gc.h").is_file()
         {
@@ -531,6 +541,14 @@ pub fn detect_or_build_boehm_fallback(
                 include_dir: Some(cache_include),
                 lib_dir: Some(cache_dir),
             });
+        }
+        if gc_lib.is_file() && !stamp_ok {
+            eprintln!(
+                "nova: cached gc.lib was built with a different GC config — rebuilding \
+                 (registry #2035)"
+            );
+            let _ = std::fs::remove_file(&gc_lib);
+            let _ = std::fs::remove_file(&stamp_path);
         }
         eprintln!(
             "nova: Boehm GC (gc.lib) not found via $NOVA_GC_LIB_DIR/vcpkg — \
@@ -548,6 +566,9 @@ pub fn detect_or_build_boehm_fallback(
             return None;
         }
         if gc_lib.is_file() {
+            if let Err(e) = std::fs::write(&stamp_path, BOEHM_FALLBACK_DEFINES) {
+                eprintln!("nova: warning: bdwgc build: write stamp: {:#}", e);
+            }
             eprintln!(
                 "nova: gc.lib built from vendored bdwgc source ({})",
                 gc_lib.display()
@@ -868,6 +889,32 @@ fn build_libuv_lib(libuv_dir: &Path, cache_dir: &Path, vcvars: Option<&Path>) ->
     }
 }
 
+/// Defines of the fallback gc.lib build. Parity target: the SHIPPED
+/// package's GC (`.github/workflows/windows-oracle-package.yml`, cmake
+/// `-DBUILD_SHARED_LIBS=OFF -Denable_large_config=ON` over the vendored
+/// bdwgc — see its CMakeLists.txt `add_definitions` lines for this exact
+/// platform/config), which in turn matches the repo's old vcpkg
+/// `bdwgc` x64-windows-static DEFINES line.
+///
+/// Registry 221.1 #2035 / #2012: LARGE_CONFIG (MAX_HEAP_SECTS 81920 vs the
+/// win64 default 1024 — "Fatal error in GC: Too many heap sections" on big
+/// heaps) and ALL_INTERIOR_POINTERS + NO_EXECUTE_PERMISSION (unconditional
+/// in bdwgc's CMakeLists line 129; Nova sets interior pointers again at
+/// runtime but only AFTER GC_INIT, so the compile-time default must match)
+/// were the divergences found by the #2035 defines audit. NO_MSGBOX_ON_ERROR
+/// is a DELIBERATE extra the shipped build does not have (a GC fatal aborts
+/// to stderr instead of wedging the process in a modal dialog, reg #2012).
+///
+/// This string is also the cache fingerprint: `detect_or_build_boehm_fallback`
+/// stores it in `gc-build.defines` next to gc.lib and rebuilds on mismatch,
+/// so a cache dir populated by an older toolchain config is never reused.
+const BOEHM_FALLBACK_DEFINES: &str = "/DALL_INTERIOR_POINTERS /DDONT_USE_USER32_DLL \
+    /DEMPTY_GETENV_RESULTS /DENABLE_DISCLAIM /DGC_ATOMIC_UNCOLLECTABLE \
+    /DGC_ENABLE_SUSPEND_THREAD /DGC_GCJ_SUPPORT /DGC_MISSING_EXECINFO_H /DGC_NOT_DLL \
+    /DGC_NO_SIGSETJMP /DGC_THREADS /DJAVA_FINALIZATION /DNO_EXECUTE_PERMISSION \
+    /DNO_GETCONTEXT /DPARALLEL_MARK /DTHREAD_LOCAL_ALLOC /D_CRT_SECURE_NO_DEPRECATE \
+    /DLARGE_CONFIG /DNO_MSGBOX_ON_ERROR";
+
 /// #269 Ф.2: compile bdwgc's official single-file amalgamation
 /// (`gc_dir/extra/gc.c` — includes every other `.c` in `gc_dir` via
 /// relative `"../foo.c"` quote-includes, so compiling this ONE file is the
@@ -912,17 +959,8 @@ fn build_boehm_lib(
         let vcv =
             vcvars.ok_or_else(|| anyhow!("vcvars required for bdwgc fallback build on Windows"))?;
         let rsp = obj_dir.join("compile.rsp");
-        // LARGE_CONFIG + NO_MSGBOX_ON_ERROR match the SHIPPED package's GC
-        // build (81920 heap sections; a fatal aborts to stderr, no modal
-        // dialog). Reg 2012: the win64 default is 1024 sections AND the
-        // dialog is on.
-        let defines = "/DDONT_USE_USER32_DLL /DEMPTY_GETENV_RESULTS /DENABLE_DISCLAIM \
-                        /DGC_ATOMIC_UNCOLLECTABLE /DGC_ENABLE_SUSPEND_THREAD /DGC_GCJ_SUPPORT \
-                        /DGC_MISSING_EXECINFO_H /DGC_NOT_DLL /DGC_NO_SIGSETJMP /DGC_THREADS \
-                        /DJAVA_FINALIZATION /DNO_GETCONTEXT /DPARALLEL_MARK /DTHREAD_LOCAL_ALLOC \
-                        /D_CRT_SECURE_NO_DEPRECATE /DLARGE_CONFIG /DNO_MSGBOX_ON_ERROR";
         let mut lines: Vec<String> = Vec::new();
-        lines.push(format!("/c /nologo /W0 /MT /O2 {}", defines));
+        lines.push(format!("/c /nologo /W0 /MT /O2 {}", BOEHM_FALLBACK_DEFINES));
         lines.push(format!(
             "/I \"{}\"",
             strip_verbatim_prefix(&gc_include).display()
