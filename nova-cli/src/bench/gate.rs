@@ -160,8 +160,7 @@ pub fn run(baseline_path: &Path, new_path: &Path,
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::bench::config::{BenchToml, GateConfig};
+    use crate::bench::config::BenchToml;
     use crate::bench::schema::{RawBenchResult, AnalyzedBench};
     use crate::bench::diff::compute_diff;
 
