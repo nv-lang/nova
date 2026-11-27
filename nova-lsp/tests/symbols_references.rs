@@ -107,17 +107,6 @@ impl LspProcess {
         self.read_response_id(id)
     }
 
-    fn request_no_params(&mut self, method: &str) -> serde_json::Value {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.write_message(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-        }));
-        self.read_response_id(id)
-    }
-
     fn initialize(&mut self) -> serde_json::Value {
         self.request(
             "initialize",

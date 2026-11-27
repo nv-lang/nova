@@ -540,6 +540,8 @@ fn build_document_symbols(module: &Module, rope: &Rope) -> Vec<DocumentSymbol> {
                 // Build children: fields, variants, protocol methods.
                 let children: Vec<DocumentSymbol> = build_type_children(&td.kind, rope);
 
+                // This version of lsp-types still requires the deprecated field.
+                #[allow(deprecated)]
                 let sym = DocumentSymbol {
                     name: td.name.clone(),
                     detail: type_detail(&td.kind),
