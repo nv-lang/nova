@@ -357,6 +357,7 @@ pub fn with_result_category(c_type: &str) -> WithResultCategory {
 /// module and pruned there, anchored by the executable's `main`.) This
 /// also keeps negative `EXPECT_CC_ERROR` fixtures intact — their
 /// erroneous, `main`-less function bodies must still reach the C compiler.
+#[cfg(test)]
 fn compute_dead_free_fns(module: &Module) -> HashSet<String> {
     compute_dead_decls(module).dead_fns
 }
@@ -767,7 +768,6 @@ pub struct CEmitter {
     /// `emit_value_record_type`/`emit_record_type` (see `pending_value_nodes`
     /// below) — kept only so the `/*__VALUE_RECORD_DEFS__*/` marker still has
     /// something to `.replace()` with (always empty now, splices to nothing).
-    value_record_defs_buf: String,
     /// [реестр 221.1 №139 Round 3 — unified value-type topo-sort] One entry
     /// per value-type node awaiting placement: `(typedef_tag_name,
     /// field_c_types, rendered_text)`. Populated by `emit_value_record_type`
@@ -2726,7 +2726,6 @@ impl CEmitter {
             deferred_impls: String::new(),
             lambda_forward_decls: String::new(),
             user_type_fwd_decls: String::new(),
-            value_record_defs_buf: String::new(),
             pending_value_nodes: Vec::new(),
             peer_value_record_fields: HashMap::new(),
             peer_value_record_c_base: HashMap::new(),
@@ -4374,12 +4373,6 @@ impl CEmitter {
         c_ty.trim_start_matches("Nova_").trim_end_matches('*').trim()
     }
 
-    /// Repeated-prefix `trim_start_matches("Nova_")` only (no `*`-trim) — the
-    /// receiver-short-name idiom used by the `@minus` overload disambiguation.
-    fn debt_strip_nova_trim_start_bare(s: &str) -> String {
-        s.trim_start_matches("Nova_").to_string()
-    }
-
     /// Is `c` a bare (non-mono) heap struct pointer `Nova_<Name>*` — concrete, so
     /// `fn_ret_by_span` may safely cache it (a `____` mono name is excluded here
     /// because its distinct-mono identity needs the full mono-context path, not
@@ -5849,7 +5842,7 @@ impl CEmitter {
         // function boundary). Extern "nova" cleanups (MutexGuard etc., D194
         // hot path, hand-written C structs) are excluded by `!f.is_external`.
         {
-            let mut collect = |items: &[Item], declared: &mut HashSet<String>, ccount: &mut HashSet<String>| {
+            let collect = |items: &[Item], declared: &mut HashSet<String>, ccount: &mut HashSet<String>| {
                 for item in items {
                     if let Item::Fn(f) = item {
                         if f.name != "cleanup" { continue; }
@@ -7802,7 +7795,7 @@ impl CEmitter {
         // re-insert (HashMap::insert, same key/value) — order between the
         // two no longer matters.
         {
-            let mut register_fn_protocol_params = |f: &FnDecl, out: &mut Self| {
+            let register_fn_protocol_params = |f: &FnDecl, out: &mut Self| {
                 let mut param_protos: Vec<Option<(String, Vec<String>)>> = Vec::new();
                 let mut any_proto = false;
                 for p in &f.params {
@@ -7998,7 +7991,7 @@ impl CEmitter {
         // the type_ref_to_c legacy fallback).
         if self.generic_type_templates.contains_key("Vec") {
             let mut array_elems: Vec<crate::ast::TypeRef> = Vec::new();
-            let mut scan_item = |item: &Item, acc: &mut Vec<crate::ast::TypeRef>| {
+            let scan_item = |item: &Item, acc: &mut Vec<crate::ast::TypeRef>| {
                 match item {
                     Item::Type(t) =>
                         Self::collect_array_elem_typerefs_in_typedecl(t, acc),
@@ -10593,7 +10586,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Plan 91.12 fix: complete value-record struct definitions (NovaValue_X
         // bodies). Placed BEFORE /*__MONO_TUPLE_TYPEDEFS__*/ so that tuples
         // carrying value-records by value see a complete type (not just the
-        // forward typedef). Spliced from value_record_defs_buf in finalize.
+        // forward typedef). Definitions are spliced in finalize.
         self.line("/*__VALUE_RECORD_DEFS__*/");
         // Plan 59: mono'd tuple struct typedefs — splice marker; replaced
         // в finalize. Layout: typedef struct { T1 f0; T2 f1; ... }
@@ -25618,7 +25611,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                     .find(|m| m.name.trim_start_matches('@') == pm_name)
                 else { continue };
                 // Resolve one (protocol position, concrete position) pair.
-                let mut unify_pos = |proto_pos: &crate::ast::TypeRef,
+                let unify_pos = |proto_pos: &crate::ast::TypeRef,
                                      concrete_pos: &crate::ast::TypeRef,
                                      subst: &mut Vec<(String, Option<String>)>| {
                     let target =
@@ -26831,52 +26824,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    /// Plan 48: apply a type param substitution to a TypeRef, returning a C type string.
-    /// Used in infer_expr_c_type for resolving the return type of generic fn calls.
-    /// Returns None if type cannot be resolved from the subst alone (e.g. non-named types).
-    /// Plan 85.4: true если `ty` упоминает любое имя из `names` (имена
-    /// generic-параметров функции). Используется чтобы отличить fully-
-    /// concrete return-тип (резолвится через `type_ref_to_c`) от типа с
-    /// неразрешёнными type-params (erased → void*).
-    fn type_ref_mentions_name(ty: &crate::ast::TypeRef, names: &[String]) -> bool {
-        use crate::ast::TypeRef;
-        match ty {
-            TypeRef::Named { path, generics, .. } => {
-                let n = path.join("_");
-                names.iter().any(|x| x == &n)
-                    || generics.iter().any(|g| Self::type_ref_mentions_name(g, names))
-            }
-            TypeRef::Array(inner, _) | TypeRef::FixedArray(_, inner, _) =>
-                Self::type_ref_mentions_name(inner, names),
-            TypeRef::Tuple(elems, _) =>
-                elems.iter().any(|e| Self::type_ref_mentions_name(e, names)),
-            TypeRef::Func { params, return_type, .. } =>
-                params.iter().any(|p| Self::type_ref_mentions_name(p, names))
-                || return_type.as_ref()
-                    .map(|r| Self::type_ref_mentions_name(r, names))
-                    .unwrap_or(false),
-            // Plan 97 Ф.2: methods могут ссылаться на type-параметры
-            // окружения (например, `[T protocol { @lt(other Self) -> bool }]`
-            // не упоминает T в protocol-теле, но методы более сложных
-            // inline-protocol'ов могут — рекурсивно проверяем).
-            TypeRef::Protocol { methods, .. } => methods.iter().any(|m| {
-                m.params.iter().any(|p| Self::type_ref_mentions_name(&p.ty, names))
-                    || m.return_type.as_ref()
-                        .map(|r| Self::type_ref_mentions_name(r, names))
-                        .unwrap_or(false)
-            }),
-            TypeRef::Unit(_) => false,
-            // D176 (Plan 108): readonly T — transparent.
-            TypeRef::Readonly(inner, _) => Self::type_ref_mentions_name(inner, names),
-            // Plan 118 D216: typed pointer `*T` — recurse on inner.
-            // Plan 118.5: Mut/Unsafe are transparent wrappers.
-            TypeRef::Pointer(inner, _)
-            | TypeRef::Mut(inner, _)
-            | TypeRef::Uninit(inner, _)
-            | TypeRef::Ref(inner, _) => Self::type_ref_mentions_name(inner, names),
-        }
-    }
-
     fn apply_type_subst_to_ref(
         ty: &crate::ast::TypeRef,
         subst: &[(String, Option<String>)],
@@ -27031,46 +26978,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     // one TurboFish-member caller (infer_expr_c_type) now delegates to the single instance
     // `type_ref_to_c`. One type->C path (§0/§2). NOT byte-identical: the smart resolver
     // resolves nested mono type-params to concrete (more precise) — owner-approved 2026-06-20.
-
-    /// Plan 48 V1 fallback: register/emit a void*-erased version of a generic fn on demand.
-    /// Called when type argument inference fails (e.g. generic record params).
-    /// Idempotent — body is only emitted once (guarded by mono_instantiated).
-    fn register_erased_instance(&mut self, fn_decl: &crate::ast::FnDecl) {
-        let erased_name = self.free_fn_c_name(&fn_decl.name);
-        if self.mono_instantiated.contains(&erased_name) {
-            return; // Already registered (either erased or mono base name)
-        }
-        self.mono_instantiated.insert(erased_name.clone());
-        // Build erased signature: type params → void*, other params → void*
-        let type_params: HashSet<String> = fn_decl.generics.iter().map(|g| g.name.clone()).collect();
-        let params_str = if fn_decl.params.is_empty() {
-            "void".to_string()
-        } else {
-            fn_decl.params.iter().map(|p| {
-                match &p.ty {
-                    TypeRef::Named { path, generics, .. } => {
-                        let nm = path.join("_");
-                        if type_params.contains(&nm) { format!("void* {}", Self::mangle_field_name(&p.name)) }
-                        else if !generics.is_empty() && self.record_schemas.contains_key(&nm) {
-                            format!("Nova_{}* {}", nm, Self::mangle_field_name(&p.name))
-                        } else { format!("void* {}", Self::mangle_field_name(&p.name)) }
-                    }
-                    _ => format!("void* {}", Self::mangle_field_name(&p.name)),
-                }
-            }).collect::<Vec<_>>().join(", ")
-        };
-        // Emit forward decl into mono_fwd_decls buffer
-        self.mono_fwd_decls.push_str(&format!("{}void* {}({});\n", self.top_level_storage(), erased_name, params_str));
-        // Register var_types for erased return (legacy)
-        self.var_types.insert(format!("fn_ret_{}", fn_decl.name), "void*".into());
-        // Enqueue in worklist with special marker: empty type_subst = erased mode
-        // We store the ERASED_SENTINEL as fn_name with special prefix to distinguish from mono
-        self.mono_worklist.push((
-            format!("__erased__{}", fn_decl.name),
-            vec![],
-            erased_name,
-        ));
-    }
 
     /// Plan 48: register a monomorphized fn instance (add forward decl + worklist entry).
     /// Idempotent — safe to call multiple times with the same mono_name.
@@ -57001,19 +56908,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
     }
 
-    fn clos_struct_ret_type(clos_c_ty: &str) -> Option<&'static str> {
-        let name = clos_c_ty.trim_end_matches('*').trim();
-        match name {
-            "NovaClos_vi"  => Some("nova_int"),
-            "NovaClos_ii"  => Some("nova_int"),
-            "NovaClos_ib"  => Some("nova_bool"),
-            "NovaClos_iii" => Some("nova_int"),
-            "NovaClos_vii" => Some("nova_int"),
-            "NovaClosBase" => Some("void*"),
-            _ => None,
-        }
-    }
-
     fn clos_fn_ty(param_tys: &[String], ret_ty: &str) -> &'static str {
         match (param_tys, ret_ty) {
             ([], r) if r == "nova_int"                                                => "nova_fn_vi",
@@ -57712,32 +57606,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         trimmed.strip_prefix("Nova_").map(|s| s.to_string())
     }
 
-    /// [M-open-range-len-source-hardcoded] Ф.1: maps a C type to its
-    /// `record_schemas` lookup key, when one exists. Mirrors
-    /// `debt_struct_name_from_c_type` (strip `NovaValue_`/`Nova_` prefix +
-    /// trailing `*` — covers user records AND mono Vec instances, e.g.
-    /// `Nova_Vec____nova_int*` → `Vec____nova_int`, the exact key
-    /// `drain_generic_type_worklist` registers a mono generic record's
-    /// schema under).
-    ///
-    /// **Deliberately excludes `nova_str`** (regression fix, 2026-07-24,
-    /// integrator mega-CU): an earlier revision of this Ф.1 also
-    /// pre-registered a GLOBAL `record_schemas["str"]` entry so str's `len`
-    /// would be structurally visible here too — that revived an UNRELATED
-    /// generic method/`.from` resolution path keyed on "is `str` present in
-    /// `record_schemas`" and un-retracted `str.from(5)` (D410 says it must
-    /// stay a compile error; `neg_str_from_retracted` caught it). str never
-    /// needed this global entry for slice-materialization anyway — its
-    /// open-range `end` is read by its OWN dedicated branch in the
-    /// `ExprKind::Index` Range-arm (`obj_ty == "nova_str"`), which the
-    /// generic reroute below already excludes BEFORE ever calling this
-    /// function. Keeping `nova_str` OUT of this mapping (rather than
-    /// tagging the schema entry "ignore me for method-lookup", which
-    /// `record_schemas` has no mechanism for) is the narrower fix.
-    fn record_schema_key_for_c_type(c_ty: &str) -> Option<String> {
-        Self::debt_struct_name_from_c_type(c_ty)
-    }
-
     /// Plan 284 F.1: does `obj_ty` satisfy the SLICE ROLE — a method
     /// `index(Range)` plus a method `end_index()`?
     ///
@@ -58104,8 +57972,13 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
     /// hot loop only prints once per distinct outcome. Empirically answers
     /// "does Stage-1a's `resolve_return_channel` intercept BEFORE this legacy
     /// fallback is even reached, and when reached does it still resolve?"
+    // Arguments are consumed only by the debug trace.
     #[inline]
-    fn trace_mlrfs(sum_name: &str, method: &str, resolved: bool) {
+    fn trace_mlrfs(
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))] sum_name: &str,
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))] method: &str,
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))] resolved: bool,
+    ) {
         #[cfg(debug_assertions)]
         {
             use std::sync::{OnceLock, Mutex};
@@ -58813,24 +58686,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         } else {
             format!("{}.tag == NOVA_TAG_Option_Some", opt_var)
         }
-    }
-
-    /// Plan 59 Ф.7.5: резолвит (T, E) generics `Result[T,E]` в concrete
-    /// C-типы для mono'd `NovaRes_<ok>_<err>`. Erased type-param / `void*` /
-    /// generic-стаб → fallback `nova_int` / `nova_str` (int/str instance как
-    /// ABI-compat erased представление, аналог `NovaOpt_nova_int`).
-    fn result_mono_c_pair(&self, generics: &[TypeRef]) -> (String, String) {
-        let resolve = |slot: usize, fallback: &str| -> String {
-            if let Some(tr) = generics.get(slot) {
-                if let Ok(c) = self.type_ref_to_c(tr) {
-                    if !c.is_empty() && c != "void*" && !self.debt_is_generic_stub_c(&c) {
-                        return c;
-                    }
-                }
-            }
-            fallback.to_string()
-        };
-        (resolve(0, "nova_int"), resolve(1, "nova_str"))
     }
 
     /// [M-slice-static-deserialize-garbage-len] (extracted №TBD, реестр
@@ -62254,7 +62109,7 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                             return "nova_unit".into();
                         }
                         // Plan 172.1 D402: unannotated ClosureLight call-site return-type
-                        // re-derivation. MUST precede clos_struct_ret_type check below:
+                        // re-derivation:
                         // an unannotated `|v| v` closure defaults to NovaClos_ii (nova_int
                         // return), but if called with uint args the real return type is
                         // nova_uint. Re-infer from actual arg types + body inference to
@@ -63094,30 +62949,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                         // Plan 04 Этап 6: Buffer removed. StringBuilder/WriteBuffer/
                         // ReadBuffer infer ниже.
-                        // Plan 04: built-in StringBuilder/WriteBuffer/ReadBuffer
-                        // static-method type inference.
-                        if let ExprKind::Ident(n) = &obj.kind {
-                            // Plan 196.2 W1 [gate-1]: B11l_{stringbuilder,writebuffer,readbuffer}_static
-                            // REMOVED. `StringBuilder`/`WriteBuffer`/`ReadBuffer` static ctors
-                            // (`new`/`with_capacity`/`from`) are exercised by std (io/text/testing)
-                            // yet NO-HIT across conformance+std → the checker materialises their
-                            // declared return into Channel-2 (structurally unreachable legacy fallback,
-                            // §5 structural-death: exercised-but-never-hit ⟹ Channel-2-covered).
-                            // [M-compiler-nv-porting-wave] items B1/B2: gc/
-                            // fibers/runtime type-inference hardcode (heap_size/
-                            // collect/virtual_reserved/init/is_initialized/…) и
-                            // f64/f32.from_bits/to_bits сняты — numeric.nv теперь
-                            // ЧИСТЫЙ .nv (не extern), обычный Nova-body method-
-                            // return-type инференс резолвит return_c_type.
-                            // Plan 196.2 W1 [gate-1]: B11l_int_to_bits +
-                            // B11l_external_registry_static_ident REMOVED. `int.to_bits`
-                            // (exercised: d141_ptr_bitcast_roundtrip.nv, write_buffer.nv)
-                            // and ExternalRegistry static-ctor lookup (AtomicInt.new()/
-                            // Mutex.new()/WaitGroup.new(), exercised: std/concurrency,
-                            // std/runtime/sync) are both checker-materialised into
-                            // Channel-2 ahead of this legacy. NO-HIT across
-                            // conformance+std ⟹ structurally unreachable (§5).
-                        }
                         // [196-capstone] B11m_stringbuilder_instance REMOVED.
                         // Former: instance-method type inference for a
                         // `Nova_StringBuilder*` receiver (`len`/`byte_len`/
@@ -64146,8 +63977,8 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         }
         if expr.id.is_set() {
             // 2026-07-02 (tally АТОМ 3, [M-closure-two-reprs]): closure-ЗНАЧЕНИЕ
-            // лоуэрится в NovaClos_X* (load-bearing: clos_struct_ret_type на
-            // call-site), а НЕ в общий R::Func→void* (тот — для declared-позиций
+            // лоуэрится в NovaClos_X* для вызова, а НЕ в общий
+            // R::Func→void* (тот — для declared-позиций
             // fn-типов). Kind-гейт: только сами closure-выражения.
             //
             // 197.3 (Q3 B): `closure_channel_miss` — since the ClosureFull
@@ -64876,144 +64707,142 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
         // Channel 6o (2026-07-04): Ident — ДОСЛОВНЫЙ подъём legacy-арма
         // (unit-варианты, empty-sum, self, buf-фоллбеки).
         if let ExprKind::Ident(name) = &expr.kind {
-            return {
-                    // Plan 48 method-param mono: closure-param override (set by
-                    // `infer_mono_method_ret_with_args` before recursing into closure body).
-                    if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
-                        return ty.clone();
-                    }
-                    // Plan 62.D bis-1 (2026-05-18): match-arm pattern binding
-                    // override — set by `infer_expr_c_type(ExprKind::Match)` before
-                    // recursing into arm body. Must be checked BEFORE `var_types` to
-                    // avoid leaked stale entry from a different scope (e.g. `let r =
-                    // Range...` in another test file would otherwise return
-                    // `Nova_Range*` for `r` in `match opt { Some(r) => r }`).
-                    if let Some(ty) = self.pattern_binding_overrides.borrow().get(name) {
-                        return ty.clone();
-                    }
-                    if let Some(ty) = self.var_types.get(name) {
-                        return ty.clone();
-                    }
-                    // Check if it's a unit variant (e.g. None, Err, Ok used as value).
-                    // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
-                    if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
-                        if fields.is_empty() {
-                            if type_name == "Option" || type_name == "NovaOpt_nova_int" {
-                                // Plan 14 Ф.1: None infer'ится по контексту
-                                // current_fn_return_ty (если NovaOpt_<X>),
-                                // иначе legacy NovaOpt_nova_int.
-                                if name == "None" {
-                                    if let Some(t) = self.current_fn_return_ty.as_ref() {
-                                        if t.starts_with("NovaOpt_") {
-                                            return t.clone();
-                                        }
-                                    }
-                                }
-                                return "NovaOpt_nova_int".into();
-                            }
-                            return self.a4_sum_c_type(&type_name);
-                        }
-                    }
-                    // Empty-sum type name used as a value (e.g. `CharTryFromError` in
-                    // `Err(CharTryFromError)`). Empty sums emit `typedef int64_t Nova_X` — the
-                    // Ident IS the type constructor; C type = Nova_X (= int64_t).
-                    if self.sum_schemas.get(name.as_str()).map_or(false, |v| v.is_empty()) {
-                        return format!("Nova_{}", name);
-                    }
-                    // Generic type or record type used as a TurboFish base (e.g. `Vec` in
-                    // `Vec[int].new()`). The Ident itself represents the type constructor;
-                    // return `Nova_{name}*` as the erased heap-pointer C type.
-                    if self.generic_types.contains(name.as_str())
-                        || self.generic_type_templates.contains_key(name.as_str())
-                        || self.record_schemas.contains_key(name.as_str())
-                        || self.sum_schemas.contains_key(name.as_str())
-                    {
-                        return self.a4_sum_c_type(name);
-                    }
-                    // [M-channel-generic-elem-type] (b): `Channel` as a bare
-                    // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
-                    // `Channel` is a compiler intrinsic — `lib.rs::
-                    // is_intrinsic_namespace` — with NO `.nv` type decl, so
-                    // it is (correctly) absent from all four registries
-                    // checked just above; the generic TurboFish-delegation
-                    // arm (`ExprKind::TurboFish{base,..} =>
-                    // self.infer_expr_c_type(base)`) recurses into THIS arm
-                    // for the bare `Ident("Channel")` regardless of which
-                    // caller reached it — not only the `Channel[T].new(cap)`
-                    // call-expr itself, but also structurally-unrelated
-                    // walks that call `infer_expr_c_type` on a `Member.obj`
-                    // sub-expression in isolation (e.g. `expr_diverges_125`'s
-                    // never-returning-method scan, which runs a divergence
-                    // pre-pass over EVERY `let`-bound call — including this
-                    // one — before codegen ever reaches `emit_call`'s
-                    // dedicated Channel.new turbofish handling). Both were
-                    // hitting the `[P67-LEGACY] Ident 'Channel' not in
-                    // var_types` ICE here. `T` is erased at the runtime
-                    // layer regardless (`Nova_ChannelPair` is a fixed,
-                    // non-generic C struct — `nova_rt/channels.h`), so the
-                    // real (non-placeholder) return type is correct and
-                    // safe to give unconditionally.
-                    if name == "Channel" {
-                        return "Nova_ChannelPair".into();
-                    }
-                    // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
-                    // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
-                    // receiver-параметра `nova_self` (зеркало emit-arm'а `self`).
-                    // Всплывает при inline sync-Nova-body (`self.start_won()`).
-                    if name == "self" {
-                        if let Some(t) = self.var_types.get("nova_self") {
-                            // Match the emitted by-value self read and the pointer returned by -> self.
-                            let by_ptr_value = Self::is_value_struct_ptr(&t)
-                                || Self::is_primitive_mut_recv_ptr(&t);
-                            if by_ptr_value && !self.in_recv_ptr_return_position.get() {
-                                return t.trim_end_matches('*').trim().to_string();
-                            }
-                            return t.clone().into();
-                        }
-                    }
-                    // Free-function-as-first-class-value (`ro g = leaf_double`,
-                    // `run_op(triple, x)`): a bare Ident naming a top-level user fn
-                    // used in value position. The EMIT side lowers this via
-                    // `emit_free_fn_value` (thunk + closure literal, `(void*)clos`)
-                    // whenever the fn's signature is in `user_fn_sigs`; MIRROR that
-                    // here so the inference half agrees on the erased closure C type
-                    // `void*`. Without this the checker leaves no `resolved_types`
-                    // annotation for the value-position fn ref → the arm ICE'd with
-                    // `[P67-LEGACY] Ident 'leaf_double' not in var_types`. We are past
-                    // the `var_types.get(name)` (local-var) early-return above, so
-                    // `name` is not a local binding here.
-                    if self.user_fn_sigs.contains_key(name) {
-                        return "void*".into();
-                    }
-                    // Pattern-bound or checker-annotated ident not yet in var_types
-                    // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
-                    // computed before pattern_bind_typed runs). Fall back to the
-                    // checker's resolved_types annotation for this expression.
-                    if expr.id.is_set() {
-                        if let Some(rt) = self.resolved_types.get(&expr.id) {
-                            if let Ok(c_ty) = self.resolved_type_to_c(rt) {
-                                if !c_ty.is_empty() {
-                                    return c_ty;
+            // Plan 48 method-param mono: closure-param override (set by
+            // `infer_mono_method_ret_with_args` before recursing into closure body).
+            if let Some(ty) = self.closure_param_type_overrides.borrow().get(name) {
+                return ty.clone();
+            }
+            // Plan 62.D bis-1 (2026-05-18): match-arm pattern binding
+            // override — set by `infer_expr_c_type(ExprKind::Match)` before
+            // recursing into arm body. Must be checked BEFORE `var_types` to
+            // avoid leaked stale entry from a different scope (e.g. `let r =
+            // Range...` in another test file would otherwise return
+            // `Nova_Range*` for `r` in `match opt { Some(r) => r }`).
+            if let Some(ty) = self.pattern_binding_overrides.borrow().get(name) {
+                return ty.clone();
+            }
+            if let Some(ty) = self.var_types.get(name) {
+                return ty.clone();
+            }
+            // Check if it's a unit variant (e.g. None, Err, Ok used as value).
+            // Plan 62.A.bis Ф.2.2: registry-driven variant resolution.
+            if let Some((type_name, fields)) = self.sum_schema_registry.find_variant_compat(name) {
+                if fields.is_empty() {
+                    if type_name == "Option" || type_name == "NovaOpt_nova_int" {
+                        // Plan 14 Ф.1: None infer'ится по контексту
+                        // current_fn_return_ty (если NovaOpt_<X>),
+                        // иначе legacy NovaOpt_nova_int.
+                        if name == "None" {
+                            if let Some(t) = self.current_fn_return_ty.as_ref() {
+                                if t.starts_with("NovaOpt_") {
+                                    return t.clone();
                                 }
                             }
                         }
+                        return "NovaOpt_nova_int".into();
                     }
-                    // Module-namespace / import-alias prefix (`import … as h`;
-                    // `h.add_one(41)` parses as Member{Ident("h"), "add_one"}). A
-                    // module alias is a NAMESPACE, not a value — inferring its "type"
-                    // is meaningless. Return the empty sentinel (same as other
-                    // namespace prefixes, e.g. `bench`): the method-call inference
-                    // path treats an empty receiver type as a module-qualified free
-                    // fn and resolves the result via `fn_ret_<method>`. Placed LAST so
-                    // any real local/type/variant of the same simple name wins first.
-                    if self.imported_modules.contains(name.as_str()) {
-                        return String::new();
+                    return self.a4_sum_c_type(&type_name);
+                }
+            }
+            // Empty-sum type name used as a value (e.g. `CharTryFromError` in
+            // `Err(CharTryFromError)`). Empty sums emit `typedef int64_t Nova_X` — the
+            // Ident IS the type constructor; C type = Nova_X (= int64_t).
+            if self.sum_schemas.get(name.as_str()).map_or(false, |v| v.is_empty()) {
+                return format!("Nova_{}", name);
+            }
+            // Generic type or record type used as a TurboFish base (e.g. `Vec` in
+            // `Vec[int].new()`). The Ident itself represents the type constructor;
+            // return `Nova_{name}*` as the erased heap-pointer C type.
+            if self.generic_types.contains(name.as_str())
+                || self.generic_type_templates.contains_key(name.as_str())
+                || self.record_schemas.contains_key(name.as_str())
+                || self.sum_schemas.contains_key(name.as_str())
+            {
+                return self.a4_sum_c_type(name);
+            }
+            // [M-channel-generic-elem-type] (b): `Channel` as a bare
+            // TurboFish base (`Channel[T]` in `Channel[T].new(cap)`).
+            // `Channel` is a compiler intrinsic — `lib.rs::
+            // is_intrinsic_namespace` — with NO `.nv` type decl, so
+            // it is (correctly) absent from all four registries
+            // checked just above; the generic TurboFish-delegation
+            // arm (`ExprKind::TurboFish{base,..} =>
+            // self.infer_expr_c_type(base)`) recurses into THIS arm
+            // for the bare `Ident("Channel")` regardless of which
+            // caller reached it — not only the `Channel[T].new(cap)`
+            // call-expr itself, but also structurally-unrelated
+            // walks that call `infer_expr_c_type` on a `Member.obj`
+            // sub-expression in isolation (e.g. `expr_diverges_125`'s
+            // never-returning-method scan, which runs a divergence
+            // pre-pass over EVERY `let`-bound call — including this
+            // one — before codegen ever reaches `emit_call`'s
+            // dedicated Channel.new turbofish handling). Both were
+            // hitting the `[P67-LEGACY] Ident 'Channel' not in
+            // var_types` ICE here. `T` is erased at the runtime
+            // layer regardless (`Nova_ChannelPair` is a fixed,
+            // non-generic C struct — `nova_rt/channels.h`), so the
+            // real (non-placeholder) return type is correct and
+            // safe to give unconditionally.
+            if name == "Channel" {
+                return "Nova_ChannelPair".into();
+            }
+            // U.1.3b Gap A (infer-половина, 2026-07-02): explicit `self` —
+            // ресивер (parser даёт Ident("self"), не SelfAccess); тип = C-тип
+            // receiver-параметра `nova_self` (зеркало emit-arm'а `self`).
+            // Всплывает при inline sync-Nova-body (`self.start_won()`).
+            if name == "self" {
+                if let Some(t) = self.var_types.get("nova_self") {
+                    // Match the emitted by-value self read and the pointer returned by -> self.
+                    let by_ptr_value = Self::is_value_struct_ptr(&t)
+                        || Self::is_primitive_mut_recv_ptr(&t);
+                    if by_ptr_value && !self.in_recv_ptr_return_position.get() {
+                        return t.trim_end_matches('*').trim().to_string();
                     }
-                    self.fatal_codegen_type_unknown(
-                        &format!("Ident `{}` not in var_types / not a sum-variant — unknown type", name),
-                        expr.span,
-                    )
-            };
+                    return t.clone().into();
+                }
+            }
+            // Free-function-as-first-class-value (`ro g = leaf_double`,
+            // `run_op(triple, x)`): a bare Ident naming a top-level user fn
+            // used in value position. The EMIT side lowers this via
+            // `emit_free_fn_value` (thunk + closure literal, `(void*)clos`)
+            // whenever the fn's signature is in `user_fn_sigs`; MIRROR that
+            // here so the inference half agrees on the erased closure C type
+            // `void*`. Without this the checker leaves no `resolved_types`
+            // annotation for the value-position fn ref → the arm ICE'd with
+            // `[P67-LEGACY] Ident 'leaf_double' not in var_types`. We are past
+            // the `var_types.get(name)` (local-var) early-return above, so
+            // `name` is not a local binding here.
+            if self.user_fn_sigs.contains_key(name) {
+                return "void*".into();
+            }
+            // Pattern-bound or checker-annotated ident not yet in var_types
+            // (e.g. `u` in `if Some(u) = opt { u + 1 }` when then_ty is
+            // computed before pattern_bind_typed runs). Fall back to the
+            // checker's resolved_types annotation for this expression.
+            if expr.id.is_set() {
+                if let Some(rt) = self.resolved_types.get(&expr.id) {
+                    if let Ok(c_ty) = self.resolved_type_to_c(rt) {
+                        if !c_ty.is_empty() {
+                            return c_ty;
+                        }
+                    }
+                }
+            }
+            // Module-namespace / import-alias prefix (`import … as h`;
+            // `h.add_one(41)` parses as Member{Ident("h"), "add_one"}). A
+            // module alias is a NAMESPACE, not a value — inferring its "type"
+            // is meaningless. Return the empty sentinel (same as other
+            // namespace prefixes, e.g. `bench`): the method-call inference
+            // path treats an empty receiver type as a module-qualified free
+            // fn and resolves the result via `fn_ret_<method>`. Placed LAST so
+            // any real local/type/variant of the same simple name wins first.
+            if self.imported_modules.contains(name.as_str()) {
+                return String::new();
+            }
+            self.fatal_codegen_type_unknown(
+                &format!("Ident `{}` not in var_types / not a sum-variant — unknown type", name),
+                expr.span,
+            )
         }
         // Channel 6m (2026-07-04): Member — ДОСЛОВНЫЙ подъём главного
         // legacy-арма (schema+subst state-ответ). Дети через dispatcher.
@@ -65308,18 +65137,15 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
                         }
                     }
                     // Second pass: any non-unit, still skipping divergent arms.
-                    let mut all_unit = true;
                     for arm in arms {
                         if arm_diverges(self, arm) { continue; }
                         let t = infer_arm(self, arm);
                         if t != "nova_unit" {
-                            all_unit = false;
                             return if any_unit_arm { "nova_unit".into() } else { t };
                         }
                     }
-                    // All non-divergent arms are nova_unit → match is unit (statement-position).
-                    // Fall back to nova_int only if there are NO non-divergent arms at all.
-                    if all_unit { "nova_unit".into() } else { "nova_int".into() }
+                    // No non-divergent arm supplies a value.
+                    "nova_unit".into()
             };
         }
         // Channel 6j (2026-07-04): value-form if-с-else — ДОСЛОВНЫЙ подъём
@@ -66974,21 +66800,6 @@ static void _nova_throw_scope_timeout_impl(int64_t deadline_ns) {\n\
             ) => {
                 Self::exprs_lvalue_eq_ta(oa.as_ref(), ob.as_ref())
                     && Self::exprs_lvalue_eq_ta(ia.as_ref(), ib.as_ref())
-            }
-            _ => false,
-        }
-    }
-
-    fn stmt_reads_lhs_ta(s: &Stmt, names: &std::collections::HashSet<String>) -> bool {
-        match s {
-            Stmt::Expr(e) => Self::expr_reads_lhs_ta(e, names),
-            Stmt::Let(decl) => Self::expr_reads_lhs_ta(&decl.value, names),
-            Stmt::Assign { target, value, .. } => {
-                Self::expr_reads_lhs_ta(target, names) || Self::expr_reads_lhs_ta(value, names)
-            }
-            Stmt::TupleAssign { lhs, rhs, .. } => {
-                lhs.iter().any(|e| Self::expr_reads_lhs_ta(e, names))
-                    || rhs.iter().any(|e| Self::expr_reads_lhs_ta(e, names))
             }
             _ => false,
         }

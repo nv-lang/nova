@@ -2292,26 +2292,6 @@ struct ArityInfo {
     decl_span: Option<Span>,
 }
 
-/// Plan 114.4 Ф.1: constexpr-eligibility check для `const X = expr`.
-///
-/// Проверяет рекурсивно что RHS — literal-eligible: literals + арифметика
-/// над constexpr operands + record/tuple/array literals из constexpr-полей +
-/// references на другие top-level `const`.
-///
-/// Возвращает `Err(Diagnostic)` если non-constexpr:
-/// - `E_CONST_NOT_CONSTEXPR` — generic non-constexpr expr.
-/// - `E_CONST_REFERS_NON_CONSTEXPR` — Ident на non-const binding.
-/// - `E_CONST_EFFECT_IN_INIT` — runtime call / effect / allocation.
-///
-/// `known_consts` — set имен top-level `const` (для Ident-резолва).
-fn check_const_constexpr(
-    expr: &crate::ast::Expr,
-    known_consts: &HashSet<String>,
-) -> Result<(), Diagnostic> {
-    let empty: HashSet<String> = HashSet::new();
-    check_const_constexpr_ex(expr, None, known_consts, &empty, &empty, &|_| None)
-}
-
 /// Plan 114.4.2 (D199): extended constexpr validator с awareness of
 /// const fn names. Used by check_module's scope-local const validation
 /// + module-level const validation when const fn registry уже built.
@@ -3923,12 +3903,6 @@ impl<'a> TypeTable<'a> {
     fn get(&self, k: &str) -> Option<&&'a TypeDecl> {
         self.trace("get", k);
         self.map.get(k)
-    }
-
-    #[track_caller]
-    fn contains_key(&self, k: &str) -> bool {
-        self.trace("contains_key", k);
-        self.map.contains_key(k)
     }
 
     #[track_caller]
@@ -13133,7 +13107,7 @@ impl<'a> TypeCheckCtx<'a> {
                     }
                 }
             }
-            ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => {
+            ExprKind::Try(inner) | ExprKind::Bang(inner) => {
                 // №253 [M-ok-or-bare-variant-misresolve-try-ice]: `<opt>.ok_or(<bare
                 // variant>)?` — `ok_or`'s Err param `E` (`Option[T] @ok_or[E](err E)
                 // -> Result[T,E]`, prelude/core.nv) is a METHOD-level generic bound
@@ -14982,31 +14956,6 @@ impl<'a> TypeCheckCtx<'a> {
         }
     }
 
-    /// Plan 162 Ф.3: returns true iff `method_name` on type `type_name` is an
-    /// **inherent** method — i.e. declared in the SAME module as `type_name`.
-    ///
-    /// Inherent: `type_method_map[type_name][method_name]` contains at least
-    /// one module_name equal to `type_defining_modules[type_name]`.
-    ///
-    /// Extension: method declared in a DIFFERENT module (no overlap).
-    ///
-    /// Returns false (treated as extension / unknown) when:
-    /// - type_name not in type_defining_modules (unknown origin),
-    /// - method_name not in type_method_map[type_name],
-    /// - no module_name in the method list matches the type's defining module.
-    fn is_inherent_method(&self, type_name: &str, method_name: &str) -> bool {
-        let Some(type_module) = self.type_defining_modules.get(type_name) else {
-            return false;
-        };
-        let Some(type_methods) = self.type_method_map.get(type_name) else {
-            return false;
-        };
-        let Some(method_modules) = type_methods.get(method_name) else {
-            return false;
-        };
-        method_modules.iter().any(|m| m == type_module)
-    }
-
     /// Plan 162 Ф.5: extension method policy enforcement.
     ///
     /// Called when a method `method_name` IS found in `method_table` for type
@@ -15832,7 +15781,6 @@ impl<'a> TypeCheckCtx<'a> {
     fn resolve_return_channel(
         &self,
         recv: &Receiver,
-        recv_ty: &TypeRef,
         peeled: &TypeRef,
         ret: &TypeRef,
         method_names: &HashSet<String>,
@@ -16706,7 +16654,6 @@ impl<'a> TypeCheckCtx<'a> {
         span: Span,
         errors: &mut Vec<Diagnostic>,
     ) {
-        use crate::ast::Pattern;
         // №1415: open types (`int`, `str`, `char`, floats, tuples holding one)
         // and the empty `match` -- decided here, before the sum analysis below,
         // which only knows named sums and gives up silently on everything else.
@@ -26262,7 +26209,6 @@ impl<'a> TypeCheckCtx<'a> {
                 Some(inner_tr)
             }
             // `x as T` — result type is always T (the declared target).
-            ExprKind::As(_, target_ty) => Some(target_ty.clone()),
             // Plan 172.1 §0a: Coalesce (`a ?? b`) — type is the unwrapped inner T from `a:
             // Option[T]`. The fallback `b` must be compatible but DOES NOT determine the result
             // type (a literal `0` is `int` but `v.first() ?? 0` on `Vec[uint]` must be `uint`).
@@ -26420,14 +26366,14 @@ impl<'a> TypeCheckCtx<'a> {
                     // Item 126: одна ветка — голый `None` литерал (дефолтная
                     // догадка `Option[int]`), другая — `Option[X]` → if имеет
                     // тип `Option[X]`.
-                    (Some(tt), Some(te))
+                    (Some(_), Some(te))
                         if bare_none_tail(then)
                             && matches!(ResolvedType::from_type_ref(te),
                                 ResolvedType::Named { name, .. } if name.starts_with("Option") || name.starts_with("NovaOpt")) =>
                     {
                         Some(te.clone())
                     }
-                    (Some(tt), Some(te))
+                    (Some(tt), Some(_))
                         if bare_none_else(eb)
                             && matches!(ResolvedType::from_type_ref(tt),
                                 ResolvedType::Named { name, .. } if name.starts_with("Option") || name.starts_with("NovaOpt")) =>
@@ -27531,33 +27477,6 @@ impl<'a> TypeCheckCtx<'a> {
                 }
                 None
             }
-            // Plan 172.1 P67 D45: If expr type.
-            // Without else → Unit (statement-form if). With else → try then-block tail,
-            // then else-branch. Guards against the checker annotating unit-if with a wrong type.
-            ExprKind::If { then, else_, .. } => {
-                if else_.is_none() {
-                    return Some(TypeRef::Unit(expr.span));
-                }
-                // Try then-block tail first (#1657: its own let names hidden).
-                let then_hidden = scope_hiding_names(&block_let_names(then), scope, then.span);
-                let then_scope = then_hidden.as_ref().unwrap_or(scope);
-                let then_ty = then.stmts.iter().rev().find_map(|s| {
-                    if let Stmt::Expr(e) = s { self.infer_expr_type(e, then_scope) } else { None }
-                });
-                if let Some(t) = then_ty { return Some(t); }
-                // Fall through to else branch.
-                match else_ {
-                    Some(ElseBranch::Block(b)) => {
-                        let else_hidden = scope_hiding_names(&block_let_names(b), scope, b.span);
-                        let else_scope = else_hidden.as_ref().unwrap_or(scope);
-                        b.stmts.iter().rev().find_map(|s| {
-                            if let Stmt::Expr(e) = s { self.infer_expr_type(e, else_scope) } else { None }
-                        })
-                    }
-                    Some(ElseBranch::If(e)) => self.infer_expr_type(e, scope),
-                    None => unreachable!(),
-                }
-            }
             // Plan 172.1 P67 D45: Block expr type = its tail (#1572, `block_value_type`).
             ExprKind::Block(b) => self.block_value_type(b, scope),
             // #1488: `Type.K` / `m.K` / `CR.field` folded into a path (`const_names.rs`).
@@ -28149,7 +28068,7 @@ impl<'a> TypeCheckCtx<'a> {
                     let method_names_ordered: Vec<String> =
                         f.generics.iter().map(|g| g.name.clone()).collect();
                     if let Some((_, ordered)) = self.resolve_return_channel(
-                        recv, recv_ty, peeled, peeled, &method_names,
+                        recv, peeled, peeled, &method_names,
                         &method_names_ordered, &f.params, args_scope, explicit_type_args,
                     ) {
                         if !ordered.is_empty() {
@@ -28294,7 +28213,7 @@ impl<'a> TypeCheckCtx<'a> {
             // checked in EVERY build (not a debug-only assert): there is
             // nothing else to trust a release build's materialization against.
             let channel = self.resolve_return_channel(
-                recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
+                recv, peeled, ret, &method_names, &method_names_ordered, &f.params,
                 args_scope, explicit_type_args);
             return match channel {
                 Some((rt, ordered)) if rt == ResolvedType::from_type_ref(&out_full) => {
@@ -28380,7 +28299,7 @@ impl<'a> TypeCheckCtx<'a> {
         // branch above, gated on independent solver agreement (not a debug-only
         // assert), which is Stage-1a's actual Tier-2 deliverable.
         let channel = self.resolve_return_channel(
-            recv, recv_ty, peeled, ret, &method_names, &method_names_ordered, &f.params,
+            recv, peeled, ret, &method_names, &method_names_ordered, &f.params,
             args_scope, explicit_type_args);
         debug_assert!(
             channel
@@ -31026,9 +30945,6 @@ pub(crate) struct CoercePairEntry {
     /// return) lane (D429 R2). Feeds the R7-mandated use-after-consume
     /// diagnostic text ("consumed by implicit #coerce finalization").
     pub is_finalize: bool,
-    /// Declaring `#coerce fn`'s span — R3/R11 dup-pair diagnostics + (future)
-    /// R7 "inserted here" pointer.
-    pub decl_span: Span,
 }
 
 /// Plan 214 (D429) R6: canonical string key for a `#coerce` pair's I or O
@@ -31607,7 +31523,6 @@ fn collect_coerce_pairs(
             output_key,
             method_name: f.name.clone(),
             is_finalize,
-            decl_span: f.span,
         });
     }
 
@@ -33799,7 +33714,6 @@ impl<'a> BoundCtx<'a> {
                     let is_bool = matches!(rt, R::Bool);
                     let is_str = typeref_is_str(&operand_ty);
                     let is_float = matches!(rt, R::Float { .. });
-                    let is_numeric = matches!(rt, R::Scalar { .. }) || is_float;
                     let bad = match op {
                         UnOp::Neg if is_bool || is_str => Some((
                             "-", "числовой (int/float-семейство) или пользовательский \
@@ -35447,43 +35361,6 @@ impl<'a> BoundCtx<'a> {
                      значение через `mut x = ...` и передай `x`."
                         .to_string(),
                     arg.span,
-                ));
-                false
-            }
-        }
-    }
-
-    /// Plan 172.5 (D326 R4): a `ref`-marked argument must be an addressable
-    /// place — a named binding / `@` receiver, optionally projected through
-    /// `.field` / `[i]`. An rvalue root (call result, literal, arithmetic) has
-    /// no stable storage to borrow. Reuses the `addr_of` chain classifier.
-    /// Returns `true` if addressable (no diagnostic emitted).
-    fn check_ref_place_addressable(&self, place: &Expr, errors: &mut Vec<Diagnostic>) -> bool {
-        match crate::ast::addr_of_chain_root(&place.kind) {
-            crate::ast::AddrChainRoot::Lvalue(_) => true,
-            crate::ast::AddrChainRoot::IndexInChain => {
-                // An array-index link in the chain roots the borrow in a buffer
-                // slot that can move (resize / GC compaction) — same hazard as
-                // `&arr[i].field`. Conservatively banned in V1.
-                errors.push(Diagnostic::new(
-                    "[E_REF_ARG_NOT_ADDRESSABLE] `ref` аргумент проходит через \
-                     индекс массива (`arr[i]...`): слот может переехать (resize / \
-                     GC-compaction), borrow был бы висячим (D326 R4). Скопируй \
-                     элемент в локал и передай `ref` на него."
-                        .to_string(),
-                    place.span,
-                ));
-                false
-            }
-            crate::ast::AddrChainRoot::Rvalue => {
-                errors.push(Diagnostic::new(
-                    "[E_REF_ARG_NOT_ADDRESSABLE] `ref` требует адресуемое место \
-                     (переменная, поле, `@`-ресивер), а не rvalue (результат \
-                     вызова, литерал, арифметика) — у него нет стабильного \
-                     стораджа для in-out borrow (D326 R4). Присвой значение \
-                     `mut`-локалу и передай `ref <локал>`."
-                        .to_string(),
-                    place.span,
                 ));
                 false
             }
@@ -40742,11 +40619,6 @@ struct NameResCtx {
     /// Plan 42.15: fallback для legacy/single-file (peer_files пуст) —
     /// flat все module.items. Рспользуется когда file_id не в group_decls.
     shared_decls: HashSet<String>,
-    /// Plan 42.15: union ВСЕХ declarations (все группы + imported). НЕ
-    /// для name-resolution enforcement (это нарушило бы Rule C) —
-    /// используется ТОЛЬКО как эвристика в `collect_pattern_bindings`
-    /// (отличить pattern-binding `let x` от variant-pattern `Some`).
-    all_decls: HashSet<String>,
     /// Plan 42.15: per-peer imported item names — items ставшие
     /// видимыми в peer'е через его прямые `import` (после rename +
     /// selective filter). Rule C: imports НЕ shared между peers.
@@ -41147,17 +41019,8 @@ impl NameResCtx {
             peer_imported_names.insert(pf.file_id, pf.imported_item_names.clone());
         }
 
-        // Plan 42.15: all_decls — union ВСЕХ declarations (эвристика для
-        // pattern-binding detection, НЕ для enforcement).
-        let mut all_decls: HashSet<String> = shared_decls.clone();
-        for gd in group_decls.values() {
-            all_decls.extend(gd.iter().cloned());
-        }
-        // Также merged module.items (imported items для эвристики).
-        collect_decl_names(&module.items, &mut all_decls);
-
         NameResCtx {
-            group_decls, shared_decls, all_decls, builtins,
+            group_decls, shared_decls, builtins,
             peer_module_names, peer_imported_names, file_priv_leak,
         }
     }
@@ -41858,8 +41721,7 @@ impl NameResCtx {
                 // это variant-pattern, не binding (D52 семантика
                 // pattern-matching). Также Capitalized-имена в bootstrap
                 // — это всегда type/variant (cross-file), не binding.
-                // Plan 55 fix: all_decls contains free function names (lowercase)
-                // which must NOT block for-loop bindings like `for inner in @`.
+                // Free function names can also be used as loop bindings.
                 // Only treat as variant-like if it's a builtin OR capitalized
                 // (Nova convention: variants/types are always PascalCase,
                 // free functions are snake_case).
@@ -43318,14 +43180,6 @@ fn build_recv_subst(recv: &Receiver, recv_ty: &TypeRef) -> HashMap<String, TypeR
 //    непредсказуемой. Detection: AST-форма (ParallelFor, Spawn,
 //    Supervised) + callee.effects intersect с SUSPEND_EFFECTS списком.
 
-/// Эффекты, которые считаются suspend в контексте defer body.
-/// Это approximation для bootstrap — D90 spec говорит «cleanup быстрый»,
-/// безопаснее запретить целую группу чем пытаться различить
-/// blocking vs non-blocking варианты для каждого эффекта.
-const SUSPEND_EFFECT_NAMES: &[&str] = &[
-    "Net", "Fs", "Db", "Time",
-];
-
 /// AST-формы которые сами по себе считаются suspend (даже если effects
 /// не объявлены).
 ///
@@ -44641,24 +44495,6 @@ impl LinearityRegistry {
     fn cleanup_effects(&self, ty: &str) -> Option<&Vec<TypeRef>> {
         if ty.is_empty() { return None; }
         self.cleanup_effect_rows.get(ty)
-    }
-
-    /// D432-амендмент 2026-08-04 (№315 fix): `ty` has ANY declared
-    /// `@cleanup` (pure or fallible/effectful) — i.e. it's auto-cleanup
-    /// eligible at all. Used to skip D162 error/success-path coverage
-    /// diagnostics for such bindings: auto-cleanup already fires on EVERY
-    /// exit path uniformly (success/throw/panic/cancel — that is the whole
-    /// point of D432 hybrid-C), so an `errdefer`/`okdefer` is redundant, not
-    /// missing. Found while rolling out fallible cleanup for №315: a
-    /// regular fail-declaring `fn` with a leftover fallible-cleanup binding
-    /// tripped a false `D162-uncovered-error-path` (`check_d162_coverage`
-    /// didn't know the binding was already covered by auto-cleanup) — the
-    /// SAME latent gap existed for pure-cleanup types (`TcpStream` etc.)
-    /// too, just never exercised: every existing pure-cleanup regression
-    /// test lives in a `test {}` block, and `check_d162_coverage` only runs
-    /// for `Item::Fn` bodies (never `Item::Test`).
-    fn has_any_cleanup(&self, ty: &str) -> bool {
-        self.cleanup_effects(ty).is_some()
     }
 
     /// Plan 100.1 (D133 / D6): `type_is_consume(TypeRef)` — рекурсивно
@@ -48272,7 +48108,7 @@ fn typeref_contains_consume_generic(ty: &TypeRef, consume_generics: &HashSet<Str
 fn check_value_record_escape_after_consume(module: &Module, errors: &mut Vec<Diagnostic>) {
     use std::collections::HashSet;
     let mut value_record_types: HashSet<String> = HashSet::new();
-    let mut collect_vrt = |items: &[Item], out: &mut HashSet<String>| {
+    let collect_vrt = |items: &[Item], out: &mut HashSet<String>| {
         for it in items {
             if let Item::Type(td) = it {
                 if matches!(td.kind, crate::ast::TypeDeclKind::Record(_))
@@ -48474,7 +48310,7 @@ fn check_ref_addr_escape(module: &Module, errors: &mut Vec<Diagnostic>) {
     use std::collections::HashSet;
     // Value-типы приёмника: value-record + named-tuple (по имени).
     let mut value_types: HashSet<String> = HashSet::new();
-    let mut collect = |items: &[Item], out: &mut HashSet<String>| {
+    let collect = |items: &[Item], out: &mut HashSet<String>| {
         for it in items {
             if let Item::Type(td) = it {
                 let is_value = match &td.kind {
@@ -48501,7 +48337,7 @@ fn check_ref_addr_escape(module: &Module, errors: &mut Vec<Diagnostic>) {
     };
 
     let mut local: Vec<Diagnostic> = Vec::new();
-    let mut visit_fn = |fd: &crate::ast::FnDecl, out: &mut Vec<Diagnostic>| {
+    let visit_fn = |fd: &crate::ast::FnDecl, out: &mut Vec<Diagnostic>| {
         let Some(recv) = &fd.receiver else { return };
         if recv.kind != crate::ast::ReceiverKind::Instance { return; }
         // consume-приёмник: значение потребляется — иные правила (D131); не тут.
@@ -49618,7 +49454,7 @@ fn check_d162_coverage(
             // D432-амендмент 2026-08-04 (№315 fix): auto-cleanup-eligible
             // type (ЛЮБОЙ declared `@cleanup`, pure or fallible) — already
             // covered on EVERY exit path by the compiler-inserted call,
-            // errdefer redundant. See `has_any_cleanup` doc.
+            // which makes an explicit errdefer redundant.
             // #1345: a bound-gated container counts only for an eligible element.
             if lin_reg.cleanup_effects_for(&ty, ctx.var_type_refs.get(name.as_str())
                 .or_else(|| ctx.var_type_refs.get(&canon))).is_some() {
@@ -50589,9 +50425,8 @@ fn consume_walk_stmt(ctx: &mut ConsumeCtx, s: &Stmt, errors: &mut Vec<Diagnostic
             if let Some(elem_ty) = decl.ty.as_ref().and_then(array_elem_type) {
                 if let ExprKind::ArrayLit(elems) = &decl.value.kind {
                     for el in elems {
-                        if let ArrayElem::Item(ex) | ArrayElem::Spread(ex) = el {
-                            ctx.credit_coerce_finalize(ex, elem_ty);
-                        }
+                        let (ArrayElem::Item(ex) | ArrayElem::Spread(ex)) = el;
+                        ctx.credit_coerce_finalize(ex, elem_ty);
                     }
                 }
             }
@@ -53366,7 +53201,7 @@ fn consume_walk_expr(ctx: &mut ConsumeCtx, e: &Expr, errors: &mut Vec<Diagnostic
             consume_walk_expr(ctx, index, errors);
         }
         ExprKind::TurboFish { base, .. } => consume_walk_expr(ctx, base, errors),
-        ExprKind::Try(inner) | ExprKind::Bang(inner) | ExprKind::RefArg(inner) => consume_walk_expr(ctx, inner, errors),
+        ExprKind::Try(inner) | ExprKind::Bang(inner) => consume_walk_expr(ctx, inner, errors),
         ExprKind::As(inner, _) | ExprKind::Is(inner, _) => consume_walk_expr(ctx, inner, errors),
         ExprKind::Unary { operand, .. } => consume_walk_expr(ctx, operand, errors),
         ExprKind::Binary { left, right, .. } => {
@@ -55155,7 +54990,7 @@ impl ContractCtx {
                         let (effect_name, expected_arity) = if let Some(entry) = matching {
                             entry
                         } else {
-                            let (effect_name, expected_arity) = &entries[0];
+                            let (effect_name, _) = &entries[0];
                             let effects_hint: Vec<&str> = entries.iter()
                                 .map(|(e, _)| e.as_str())
                                 .collect();
@@ -58782,7 +58617,7 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
 
     // ---- Cycle check over the registered-default graph ----
     let registered: HashSet<&String> = registry.keys().collect();
-    let mut refs_in_expr = |e: &crate::ast::Expr, out: &mut HashSet<String>| {
+    let refs_in_expr = |e: &crate::ast::Expr, out: &mut HashSet<String>| {
         default_handler_collect_idents_expr(e, out);
     };
     let mut edges: HashMap<String, HashSet<String>> = HashMap::new();
@@ -58802,7 +58637,7 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
     }
     // Simple DFS cycle detection over `edges`.
     #[derive(Clone, Copy, PartialEq)]
-    enum Mark { Visiting, Done }
+    enum Mark { Done }
     let mut marks: HashMap<String, Mark> = HashMap::new();
     fn dfs(
         node: &str,
@@ -58885,8 +58720,7 @@ pub(crate) fn check_default_handlers(module: &crate::ast::Module, errors: &mut V
 /// fiber (park until the runtime resumes it): `Time.sleep` and any
 /// `Net.*` op (every TCP/UDP op — accept/connect/read/write/etc. — parks).
 ///
-/// **Deliberately NARROWER than `SUSPEND_EFFECT_NAMES`** (`Fs`/`Db`
-/// excluded) — the D431 amend text scopes this specific check to
+/// The D431 amendment scopes this check to
 /// `Time.sleep`/`Net.*`/channel recv-send; widening it is a separate
 /// decision, not made here.
 ///
@@ -59761,7 +59595,7 @@ pub(crate) fn check_ffi_c_abi_signatures(
     // A fn signature: an `extern "C" fn` has its full param+return types
     // validated as C-ABI; any other fn only has its nested `*extern "C" fn`
     // C-callback types validated (its own Nova-typed params are unrestricted).
-    let mut check_fn = |fd: &crate::ast::FnDecl,
+    let check_fn = |fd: &crate::ast::FnDecl,
                         errors: &mut Vec<Diagnostic>,
                         reported: &mut HashSet<Span>| {
         let is_c_extern = fd.extern_abi.as_deref() == Some("C");

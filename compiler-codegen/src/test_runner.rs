@@ -22,10 +22,8 @@ use anyhow::{anyhow, Result};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 // ---------- Окно p401b-p67-class (реестр 221.1 №401, "ПЕРЕОТКРЫТ"): per-unit
 // panic containment ----------
@@ -459,10 +457,12 @@ pub fn compile_multi_tu_to_exe(
     } else {
         None
     };
+    #[cfg(target_os = "windows")]
     let vcpkg_include = boehm_cfg
         .as_ref()
         .and_then(|c| c.include_dir.clone())
         .unwrap_or_else(|| opts.cg_include.join("vcpkg_installed").join("x64-windows-static").join("include"));
+    #[cfg(target_os = "windows")]
     let vcpkg_lib = boehm_cfg
         .as_ref()
         .and_then(|c| c.lib_dir.clone())
@@ -3387,12 +3387,6 @@ pub fn install_cancel_handler() {
 /// каждым тестом — если true, прекращают забирать новые jobs.
 pub fn is_cancelled() -> bool {
     CANCELLED.load(Ordering::SeqCst)
-}
-
-/// Reset cancel-флага для unit-тестов.
-#[cfg(test)]
-fn reset_cancelled_for_test() {
-    CANCELLED.store(false, Ordering::SeqCst);
 }
 
 /// Plan 26 Ф.12: classify whether outcome looks like transient AV/race
