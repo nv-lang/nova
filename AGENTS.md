@@ -176,6 +176,7 @@ License: code `MIT OR Apache-2.0`, docs `CC-BY-4.0` ([LICENSE-MIT](LICENSE-MIT),
 [dev-workflow](docs/dev/dev-workflow.md) · [D-block index](spec/decisions/README.md) · [plans](docs/plans/README.md) ·
 [backlog-followups](docs/plans/backlog-followups.md) · [test-conventions](docs/dev/test-conventions.md) ·
 [gate-guard-conventions](docs/dev/gate-guard-conventions.md) (writing gates and guards) ·
+[engineering-conventions](docs/dev/engineering-conventions.md) (MANDATORY unitcraft conventions: technical writing, release notes, API, database; deviations table) ·
 [module-conventions](docs/dev/module-conventions.md) (any module + C integration; with
 [ffi-cookbook](docs/guide/ffi-cookbook.md), [nv-coding-style](docs/dev/nv-coding-style.md)) ·
 [simplifications](docs/dev/simplifications.md) · [compiler-codegen/README.md](compiler-codegen/README.md) ·
