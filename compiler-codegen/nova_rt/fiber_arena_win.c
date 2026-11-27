@@ -229,35 +229,34 @@ static void _nova_fw_push_eager(void* lo, void* hi) {
     GC_push_all_eager((char*)lo, (char*)hi);
 }
 
-/* [M-gc-push-other-roots-unchained]: the callback chain predecessor,
- * captured at _nova_fw_global_init before GC_set_push_other_roots. */
-static GC_push_other_roots_proc _nova_fw_prev_push_other_roots = NULL;
+/* №2036 (финальный фикс): реестр native-стеков потоков рантайма — порт
+ * POSIX-модели (fiber_arena.c, [M-mn-spawnctx-corruption-cancel-wake]).
+ * Дефолтный GC_push_all_stacks() НЕ вызывается вообще: при свопнутом TIB
+ * (поток крутит fiber) suspend/GetThreadContext даёт SP ВНЕ нативного
+ * диапазона → «Thread stack pointer out of range, pushing everything» →
+ * пуш [coro-sp, native-bottom] через чужие регионы → консервативное
+ * удержание → неудержимый рост кучи (~535 МБ/с на twin-носителе №2036,
+ * в ОБОИХ режимах — incremental и полный STW). Вместо chaining'а gap
+ * №2027 (потоки без fiber-арены: driver-поток, worker до первого
+ * mco_create) закрывается точечно: каждый поток рантайма регистрирует
+ * свой native-стек на входе (nova_fiber_arena_register_native_stack,
+ * зовётся из runtime.c/driver.c после GC_register_my_thread), колбэк
+ * пушит зарегистрированные диапазоны с VirtualQuery-фильтром. Поток С
+ * ареной дополнительно покрыт per-arena native_base push'ем ниже
+ * (double-push безвреден — тот же conservative range).
+ *
+ * lo = AllocationBase на момент регистрации (стабилен), hi = NT_TIB.
+ * StackBase. Рост стека вниз коммитит страницы ниже lo-снимка — пуш
+ * всегда заново читает AllocationBase по hi-1, поэтому выросший стек
+ * покрыт. NULL в lo/hi = узел снят (поток вышел). */
+struct NovaNativeStackWin {
+    char* volatile lo;
+    char* volatile hi;
+    struct NovaNativeStackWin* volatile next;
+};
+static struct NovaNativeStackWin* volatile _nova_fw_native_stacks = NULL;
 
 static void _nova_fw_gc_push_other_roots(void) {
-    /* [M-gc-push-other-roots-unchained]: run the default chain first —
-     * GC_push_all_stacks() covers the GC-registered native stacks that no
-     * fiber arena owns (driver thread; a worker before its first fiber).
-     * Invoked under the GC allocation lock, so ordering with the arena
-     * scan below is serialized. Safe even when the world is running
-     * (incremental VDB): thread stacks are always committed, and both
-     * this and the arena scan push conservative supersets.
-     *
-     * №2036 DIAGNOSTIC gate (NOT the final fix): under incremental GC the
-     * chained default GC_push_all_stacks() pushes whole native thread
-     * stacks with stale SP on every mark increment ("Thread stack pointer
-     * out of range, pushing everything") → conservative retention →
-     * unbounded heap growth. NOVA_GC_PUSH_THREAD_STACKS=0 skips the
-     * chained call for the H1 A/B experiment. */
-    {
-        static int _nova_fw_push_stacks_enabled = -1;
-        if (_nova_fw_push_stacks_enabled < 0) {
-            const char* e = getenv("NOVA_GC_PUSH_THREAD_STACKS");
-            _nova_fw_push_stacks_enabled = !(e && e[0] == '0' && e[1] == '\0');
-        }
-        if (_nova_fw_push_stacks_enabled
-            && _nova_fw_prev_push_other_roots)
-            _nova_fw_prev_push_other_roots();
-    }
     /* №1857: the installed effect handlers -- TLS is not scanned by Boehm. */
     nova_effect_roots_push(_nova_fw_push_eager);
     /* Plan 151: главный поток может не иметь СОБСТВЕННОЙ fiber-арены в момент
@@ -273,6 +272,19 @@ static void _nova_fw_gc_push_other_roots(void) {
         MEMORY_BASIC_INFORMATION mbi;
         if (VirtualQuery((char*)main_sb - 1, &mbi, sizeof(mbi))) {
             _nova_fw_gc_push_region((char*)mbi.AllocationBase, (char*)main_sb);
+        }
+    }
+    /* №2036: native-стеки потоков рантайма, зарегистрированные на входе
+     * (driver; worker до первой арены — после появления арены диапазон
+     * совпадает с a->native_base ниже, double-push безвреден). */
+    for (struct NovaNativeStackWin* nd = _nova_fw_native_stacks;
+         nd; nd = nd->next) {
+        char* hi = (char*)InterlockedCompareExchangePointer(
+                       (void* volatile*)&nd->hi, NULL, NULL);
+        if (!hi) continue;              /* узел снят (поток вышел) */
+        MEMORY_BASIC_INFORMATION mbi;
+        if (VirtualQuery(hi - 1, &mbi, sizeof(mbi))) {
+            _nova_fw_gc_push_region((char*)mbi.AllocationBase, hi);
         }
     }
     for (NovaFiberArenaWin* a = _nova_fw_arena_list; a; a = a->next) {
@@ -341,19 +353,15 @@ static BOOL CALLBACK _nova_fw_global_init(PINIT_ONCE once, PVOID param,
      * для не-arena фолтов сразу EXCEPTION_CONTINUE_SEARCH → невмешательство. */
     AddVectoredExceptionHandler(1, _nova_fw_veh);
 #ifdef NOVA_GC_BOEHM
-    /* Read configuration before publishing the stop-the-world callback.
-     * getenv and stdio can lock the CRT while their owner is suspended. */
-    /* [M-gc-push-other-roots-unchained]: CHAIN the previous callback.
-     * On GC_WIN32_THREADS the default callback is GC_push_all_stacks()
-     * (os_dep.c GC_default_push_other_roots) — the ONLY thing that scans
-     * the native stacks of every GC-registered thread. Replacing it
-     * without chaining silently dropped those roots: the driver thread
-     * never creates a fiber arena, and a worker has no arena until its
-     * first mco_create, so _nova_fw_gc_push_other_roots could not cover
-     * them → premature collect under GC pressure (corrupted live objects:
-     * null HashMap bucket / torn free list / torn HTTP response under
-     * NOVA_MAXPROCS=16 + NOVA_GC_INCREMENTAL=1). */
-    _nova_fw_prev_push_other_roots = GC_get_push_other_roots();
+    /* №2027/№2036: override БЕЗ chaining'а. Дефолтный колбэк на
+     * GC_WIN32_THREADS — GC_push_all_stacks(); его вызов при свопнутом
+     * TIB (поток крутит fiber) даёт «Thread stack pointer out of range,
+     * pushing everything» → удержание всего подряд → OOM (№2036).
+     * Gap №2027 (стеки потоков без fiber-арены: driver, worker до первого
+     * mco_create) закрыт точечно — реестром _nova_fw_native_stacks
+     * (регистрация на входе потока) + main-стеком Plan 151 + per-arena
+     * native_base. POSIX fiber_arena.c работает по той же модели
+     * (override + полная компенсация слагаемых) с 2026-07-19. */
     GC_set_push_other_roots(_nova_fw_gc_push_other_roots);
 #endif
     return TRUE;
@@ -694,12 +702,56 @@ void nova_fiber_arena_set_main_stack(void) {
 #endif
 }
 
-/* [M-mn-spawnctx-corruption-cancel-wake]: POSIX-реестр native-стеков.
- * На Windows не нужен — колбэк _nova_fw_gc_push_other_roots уже пушит
- * native_base per-arena + main-стек (Plan 151/Ф.2). No-op для паритета
- * API с fiber_arena.c. */
-void nova_fiber_arena_register_native_stack(void) { }
-void nova_fiber_arena_unregister_native_stack(void) { }
+/* [M-mn-spawnctx-corruption-cancel-wake] / №2036: реестр native-стеков
+ * потоков рантайма (порт POSIX-модели fiber_arena.c). Зовётся на ВХОДЕ
+ * потока (runtime.c worker / driver.c libuv-loop, после
+ * GC_register_my_thread); unregister — на выходе, до
+ * GC_unregister_my_thread. Заменяет удалённый chaining дефолтного
+ * GC_push_all_stacks (№2036: stale-SP «push everything» → OOM). */
+void nova_fiber_arena_register_native_stack(void) {
+#ifdef NOVA_GC_BOEHM
+    char* hi = (char*)__readgsqword(0x08);  /* NT_TIB.StackBase */
+    if (!hi) return;
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(hi - 1, &mbi, sizeof(mbi))) return;
+    struct NovaNativeStackWin* nd =
+        (struct NovaNativeStackWin*)malloc(sizeof *nd);
+    if (!nd) return;
+    nd->lo = (char*)mbi.AllocationBase;
+    nd->hi = hi;
+    /* CAS-prepend: регистрация идёт при бегущем мире (incremental GC
+     * может обходить список конкурентно) — узел публикуется целиком. */
+    struct NovaNativeStackWin* h;
+    do {
+        h = _nova_fw_native_stacks;
+        nd->next = h;
+    } while (InterlockedCompareExchangePointer(
+                 (void* volatile*)&_nova_fw_native_stacks, nd, h) != h);
+#endif
+}
+
+/* Поток выходит: обнулить свой узел (стек может быть освобождён/отдан
+ * другому потоку — лишний conservative-пуш по мёртвому диапазону
+ * опасен). Узел ищется по адресу локали текущего потока. Узел НЕ
+ * удаляется из списка (lock-free обход GC-колбэком). */
+void nova_fiber_arena_unregister_native_stack(void) {
+#ifdef NOVA_GC_BOEHM
+    char probe_local;
+    char* p = &probe_local;
+    for (struct NovaNativeStackWin* nd = _nova_fw_native_stacks;
+         nd; nd = nd->next) {
+        char* lo = (char*)InterlockedCompareExchangePointer(
+                       (void* volatile*)&nd->lo, NULL, NULL);
+        char* hi = (char*)InterlockedCompareExchangePointer(
+                       (void* volatile*)&nd->hi, NULL, NULL);
+        if (lo && hi && p >= lo && p < hi) {
+            InterlockedExchangePointer((void* volatile*)&nd->hi, NULL);
+            InterlockedExchangePointer((void* volatile*)&nd->lo, NULL);
+            return;
+        }
+    }
+#endif
+}
 
 bool nova_fiber_arena_contains(const void* ptr) {
     return _nova_fw_find_arena(ptr) != NULL;

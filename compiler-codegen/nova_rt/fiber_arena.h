@@ -259,10 +259,10 @@ void nova_fiber_arena_set_main_stack(void);
  * native-стека потока рантайма (воркер/драйвер/sysmon) для GC
  * push_other_roots-колбэка. Оверрайд push_other_roots (ea85229e0) заменяет
  * дефолтный GC_push_all_stacks bdwgc — колбэк обязан пушить native-стеки
- * САМ (Windows-модель уже пушит native_base per-arena + main; POSIX-порт
- * потерял оба слагаемых — этот реестр их возвращает). Зовётся на ВХОДЕ
- * потока (после GC_register_my_thread); unregister — на выходе, до
- * GC_unregister_my_thread. Windows/non-Boehm — no-op. */
+ * САМ. Зовётся на ВХОДЕ потока (после GC_register_my_thread); unregister —
+ * на выходе, до GC_unregister_my_thread. Windows реализует тот же реестр
+ * с №2036 (chaining дефолтного GC_push_all_stacks удалён — stale-SP
+ * «push everything» давал неудержимый рост кучи); non-Boehm — no-op. */
 void nova_fiber_arena_register_native_stack(void);
 void nova_fiber_arena_unregister_native_stack(void);
 
