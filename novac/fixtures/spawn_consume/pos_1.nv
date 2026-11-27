@@ -7,6 +7,13 @@ module spawn_consume.pos_1
 // binding form `spawn consume c = e { ... }` binds and moves in one
 // statement. Behaviour must match the oracle byte for byte
 // (novac-e1-smoke) -- the cleanup prints make the order observable.
+//
+// ONE printing child per scope: two sibling fibers printing concurrently
+// interleave their `println` halves (text and newline are two runtime
+// writes), and neither compiler promises an order between them -- the
+// first draft of this fixture raced exactly so. The LIFO order INSIDE one
+// child is sequential and deterministic; the two forms are judged in two
+// sequential scopes.
 
 type ScHalf consume {
     id int,
@@ -25,6 +32,8 @@ fn main() {
             ro _x = a.id
             ro _y = b.id
         }
+    }
+    supervised {
         spawn consume c = ScHalf.new(3) {
             ro _z = c.id
         }
