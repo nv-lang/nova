@@ -112,6 +112,7 @@ export fn Checker mut @flow_spawn_consume(st Node, mut fl ConsumeFlow) -> () {
             } else {
                 // Strictly linear, or nothing to disarm.
             }
+            // nova:allow W_MANUAL_SLICE_COPY -- one tracked entry's type by index, not a slice copy
             moved_tys.push(fl.owned_ty[idx])
         } else if init_at >= 0 {
             // The binding form: the value is born at the spawn and owned by
