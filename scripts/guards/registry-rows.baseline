@@ -2585,8 +2585,8 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,16
 # 2026-11-23, landing of task 320 (wake-loss) + runtime-diagnostic cleanup: rows 2023 (task 320 wake-loss; its text also carries the OPEN stolen-work dispatch window) and 2024 (driver sleep close_cb state UAF) numbered by the integrator; rows 1929->1931, max 2020->2024. 2021-2022 were declared gaps= for the E2-b3 convoy; the convoy arrives on top of this landing with its rows 2021/2022 and clears the gap in the same commit; rows 1931->1933 (2021, 2022), max stays 2024.
 # 2026-11-22, door A landing, plan B: row 2020 (novac-gate job-limit vs push-tier budget, both attempts measured)
 # 2026-11-22, convoy e11-2012-e2b3: row 2021 (oracle accepts flat_map_err with an int body, executor wave E2-b3), row 2022 (mirror-sync green no-op, integrator finding at the door A landing)
-rows=1946
-max=2037
+rows=1948
+max=2039
 
 # 2026-11-26, row 2035 filed by the integrator (local GC rebuild lacks LARGE_CONFIG,
 #   diverges from the release artifact; found by the release window answering Canopus):
@@ -2599,3 +2599,8 @@ max=2037
 # 2026-11-27, row 2037 filed by the integrator (residual cascade of row 984:
 #   refused_call().method().method() — one refusal per chain link; route: Carina
 #   window after the 984 landing): rows 1945 -> 1946, max 2036 -> 2037.
+
+# 2026-11-27, rows 2038 (kill(0,SIGKILL) cleanup suicide, compress gate blocker,
+#   hotfix wave with 2036) and 2039 (pun consume-field init does not move, spec
+#   verdict owed) filed by the integrator from Alula's repros: rows 1946 -> 1948,
+#   max 2037 -> 2039.
