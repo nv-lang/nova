@@ -1557,7 +1557,6 @@ mod tests {
         // Cyrillic identifiers in Nova are valid; ensure word_at works with multi-byte.
         // In test: we just verify word_at doesn't panic on multi-byte input.
         let src = "fn привет() => ()\n";
-        let bytes = src.as_bytes();
         // 'п' starts at byte 3 (after "fn ")
         let byte_off = 3;
         let (s, e) = word_at(src, byte_off);
