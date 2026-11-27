@@ -42,6 +42,19 @@ if [ -d "$ROOT/target/gc-cache" ]; then
     export NOVA_GC_INCLUDE_DIR="$ROOT/target/gc-cache/include"
 fi
 
+# nova-compress worker for the owned-decode lanes (the package itself and
+# its consumers, e.g. nova-http 0.3.2+): the tests refuse to guess and panic
+# without COMPRESS_WORKER_EXE (by design -- see decompress_owned_test.nv).
+# Build the worker from the neighbouring checkout once, exactly like the
+# package gates do; without the checkout the lanes judge nothing here anyway.
+if [ -z "${COMPRESS_WORKER_EXE:-}" ] && [ -d "$PKGS_ROOT/nova-compress/src/worker" ]; then
+    ( cd "$PKGS_ROOT/nova-compress" && "$BIN" build src/worker/main.nv --mode release -o target/decode-worker >/dev/null 2>&1 )
+    for w in "$PKGS_ROOT/nova-compress/target/decode-worker" "$PKGS_ROOT/nova-compress/target/decode-worker.exe"; do
+        [ -f "$w" ] && export COMPRESS_WORKER_EXE="$w" && break
+    done
+    [ -n "${COMPRESS_WORKER_EXE:-}" ] && echo "  note: compress worker built for owned-decode lanes: $COMPRESS_WORKER_EXE"         || echo "  note: compress worker build FAILED -- owned-decode lanes will report it" >&2
+fi
+
 checked=0; skipped=0; failed=0
 for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
     [ -f "$toml" ] || continue
