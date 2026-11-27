@@ -541,7 +541,7 @@ pub fn header_text(path: &Path) -> Option<(Arc<String>, bool)> {
     // Одна работа на ключ — см. `dir_index`.
     let guard = if on() {
         match shards(&HEADERS)[shard_of(path)].lock() {
-            Ok(mut g) => {
+            Ok(g) => {
                 if let Some(v) = g.get(path) {
                     return v.clone();
                 }

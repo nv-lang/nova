@@ -124,25 +124,18 @@ impl Tag {
 }
 
 /// П.3 basis + debug-dump vocabulary. `reason` is a FIXED set of static
-/// codes (see the dump in [`run`]) so counters can be grouped; `detail`
-/// carries the offending callee's rendered name for the two
-/// graph-propagated reasons (`calls_unsafe`/`calls_undecided`) — read by
-/// phase 2's [`render_chain`] together with `detail_span` (the SAME
-/// callee's declaration `Span`, i.e. a valid key back into the `tags` map)
-/// to walk the cause backward, one hop per `calls_unsafe`/`calls_undecided`
-/// link, until a TERMINAL reason (anything else) is reached. `detail_span`
-/// is `None` exactly when `detail` is (every non-graph-propagated reason).
+/// codes (see the dump in [`run`]) so counters can be grouped.
+/// For graph-propagated reasons, `detail_span` identifies the callee for [`render_chain`].
 #[derive(Clone, Debug)]
 pub struct FnSafety {
     pub tag: Tag,
     pub reason: &'static str,
-    pub detail: Option<String>,
     pub detail_span: Option<Span>,
 }
 
 // ── Pass 0: flat index over Item::Fn (free fns AND methods) ───────────
 
-fn build_fn_index(module: &Module) -> HashMap<Span, &FnDecl> {
+fn build_fn_index(module: &Module) -> HashMap<FnId, &FnDecl> {
     let mut idx = HashMap::new();
     for item in &module.items {
         if let Item::Fn(fd) = item {
@@ -1280,7 +1273,6 @@ fn facts_to_intra(facts: &FnFacts) -> Intra {
         return Intra::Fixed(FnSafety {
             tag: Tag::Unsafe,
             reason: "unguarded_mutation",
-            detail: None,
             detail_span: None,
         });
     }
@@ -1288,7 +1280,6 @@ fn facts_to_intra(facts: &FnFacts) -> Intra {
         return Intra::Fixed(FnSafety {
             tag: Tag::Undecided,
             reason: "unguarded_mut_param",
-            detail: None,
             detail_span: None,
         });
     }
@@ -1296,7 +1287,6 @@ fn facts_to_intra(facts: &FnFacts) -> Intra {
         return Intra::Fixed(FnSafety {
             tag: Tag::Undecided,
             reason: "cross_module_callee",
-            detail: None,
             detail_span: None,
         });
     }
@@ -1307,7 +1297,6 @@ fn facts_to_intra(facts: &FnFacts) -> Intra {
         return Intra::Fixed(FnSafety {
             tag: Tag::Undecided,
             reason: "field_call_unresolved",
-            detail: None,
             detail_span: None,
         });
     }
@@ -1398,7 +1387,6 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
                                 FnSafety {
                                     tag: Tag::Safe,
                                     reason: "share_verified_extern",
-                                    detail: None,
                                     detail_span: None,
                                 },
                             );
@@ -1514,7 +1502,6 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
                             FnSafety {
                                 tag: Tag::Safe,
                                 reason: "share_verified_extern_args",
-                                detail: None,
                                 detail_span: None,
                             },
                         );
@@ -1546,7 +1533,7 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
             if reason != "generic" {
                 final_tag.insert(
                     span,
-                    FnSafety { tag: Tag::Undecided, reason, detail: None, detail_span: None },
+                    FnSafety { tag: Tag::Undecided, reason, detail_span: None },
                 );
                 continue;
             }
@@ -1588,11 +1575,10 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
                     }
                 }
                 let fs = match worst {
-                    Tag::Safe => FnSafety { tag: Tag::Safe, reason, detail: None, detail_span: None },
+                    Tag::Safe => FnSafety { tag: Tag::Safe, reason, detail_span: None },
                     _ => {
                         let (r, callee_span) = worst_detail.unwrap();
-                        let name = fn_index.get(&callee_span).map(|fd| render_fn_name(fd)).unwrap_or_default();
-                        FnSafety { tag: worst, reason: r, detail: Some(name), detail_span: Some(callee_span) }
+                        FnSafety { tag: worst, reason: r, detail_span: Some(callee_span) }
                     }
                 };
                 final_tag.insert(span, fs);
@@ -1606,7 +1592,7 @@ pub fn run(module: &Module, resolved_callees: &HashMap<ExprId, Span>) -> HashMap
     // path to unsafe never gets marked unsafe" reasoning
     // `thread_affine_closure` already relies on.
     for (&span, &reason) in &candidates {
-        final_tag.entry(span).or_insert(FnSafety { tag: Tag::Safe, reason, detail: None, detail_span: None });
+        final_tag.entry(span).or_insert(FnSafety { tag: Tag::Safe, reason, detail_span: None });
     }
 
     debug_assert_eq!(
@@ -2856,7 +2842,7 @@ fn terminal_reason_text(reason: &str) -> &'static str {
 /// Why `(fn Span, param index)` is required — enough to render the
 /// backward "why does this parameter require a Safe closure" chain
 /// ([`RequiredParams::render_chain`]), mirroring how [`FnSafety`]'s own
-/// `detail`/`detail_span` let [`render_chain`] walk `calls_unsafe`/
+/// `detail_span` lets [`render_chain`] walk `calls_unsafe`/
 /// `calls_undecided` links on the ORIGINAL (Ф.1/Ф.2) tag axis.
 #[derive(Clone, Copy, Debug)]
 enum ReqReason {
@@ -3225,7 +3211,6 @@ pub fn compute_required_params(module: &Module, resolved_callees: &HashMap<ExprI
 fn tag_from_facts_and_callees(
     facts: &FnFacts,
     tags: &HashMap<Span, FnSafety>,
-    fn_index: &HashMap<Span, &FnDecl>,
 ) -> FnSafety {
     match facts_to_intra(facts) {
         Intra::Fixed(fs) => fs,
@@ -3245,11 +3230,10 @@ fn tag_from_facts_and_callees(
                 }
             }
             match worst {
-                Tag::Safe => FnSafety { tag: Tag::Safe, reason, detail: None, detail_span: None },
+                Tag::Safe => FnSafety { tag: Tag::Safe, reason, detail_span: None },
                 _ => {
                     let (r, callee_span) = worst_detail.unwrap();
-                    let name = fn_index.get(&callee_span).map(|fd| render_fn_name(fd)).unwrap_or_default();
-                    FnSafety { tag: worst, reason: r, detail: Some(name), detail_span: Some(callee_span) }
+                    FnSafety { tag: worst, reason: r, detail_span: Some(callee_span) }
                 }
             }
         }
@@ -3540,7 +3524,6 @@ fn closure_own_facts(
     closure_body: ClosureRef,
     ctx: &PassBCtx,
     tags: &HashMap<Span, FnSafety>,
-    fn_index: &HashMap<Span, &FnDecl>,
 ) -> FnSafety {
     let mut facts = FnFacts::default();
     match closure_body {
@@ -3559,7 +3542,7 @@ fn closure_own_facts(
     for t in facts.touches.iter_mut() {
         t.is_self = true;
     }
-    tag_from_facts_and_callees(&facts, tags, fn_index)
+    tag_from_facts_and_callees(&facts, tags)
 }
 
 enum ClosureRef<'e> {
@@ -3588,7 +3571,7 @@ pub fn check_param_passing(
     let type_decls = build_type_decls(module);
     let guarded_params = compute_guarded_params(module);
 
-    let mut check_fn_body = |fd: &FnDecl, errors: &mut Vec<crate::diag::Diagnostic>| {
+    let check_fn_body = |fd: &FnDecl, errors: &mut Vec<crate::diag::Diagnostic>| {
         let receiver_type = fd.receiver.as_ref().map(|r| r.type_name.as_str());
         let (mut_params, param_types) = collect_capturable_mut(fd, resolved_types);
         let mut closure_lets: HashMap<String, &Expr> = HashMap::new();
@@ -3882,11 +3865,11 @@ fn cpp_check_call(
         }
         let found: Option<(Span, FnSafety)> = if let Some(a) = args.get(j) {
             resolve_arg_closure(a.expr(), closure_lets)
-                .map(|cl| (a.expr().span, closure_own_facts(ClosureRef::Literal(cl), ctx, tags, fn_index)))
+                .map(|cl| (a.expr().span, closure_own_facts(ClosureRef::Literal(cl), ctx, tags)))
         } else if trailing_idx == Some(j) {
             match trailing {
                 Some(Trailing::Fn(sb)) => {
-                    Some((sb.span, closure_own_facts(ClosureRef::Sig(sb), ctx, tags, fn_index)))
+                    Some((sb.span, closure_own_facts(ClosureRef::Sig(sb), ctx, tags)))
                 }
                 _ => None,
             }

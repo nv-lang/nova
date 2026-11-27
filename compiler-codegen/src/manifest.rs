@@ -22,7 +22,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 pub use nova_driver_support::{parse_size_to_bytes, FfiConfig, RuntimeConfig};
-use std::process::Command;
 
 pub use nova_driver_support::manifest::{DepSource, Dependency, GitPin};
 

@@ -3859,7 +3859,7 @@ fn conv_all_test_bodies(m: &Module) -> Vec<&Block> {
 /// Имена record-полей типов, ОБЪЯВЛЕННЫХ в этом модуле: тип → поля.
 fn conv_module_record_fields(m: &Module) -> std::collections::HashMap<String, Vec<String>> {
     let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut collect = |items: &[Item], out: &mut std::collections::HashMap<String, Vec<String>>| {
+    let collect = |items: &[Item], out: &mut std::collections::HashMap<String, Vec<String>>| {
         for item in items {
             if let Item::Type(td) = item {
                 if let TypeDeclKind::Record(fields) = &td.kind {
@@ -7588,7 +7588,7 @@ fn scan_auto_cleanup_types(m: &Module) -> (HashSet<String>, HashSet<String>) {
         }
     }
     let mut declared = HashSet::new();
-    let mut collect = |items: &[Item], out: &mut HashSet<String>| {
+    let collect = |items: &[Item], out: &mut HashSet<String>| {
         for item in items {
             if let Item::Type(td) = item {
                 out.insert(td.name.clone());
@@ -9299,7 +9299,7 @@ mod tests {
     mod prelude_shadow {
         use super::*;
         use crate::ast::{Item, PeerFile, TypeDecl, TypeDeclKind};
-        use crate::diag::{FileId, Span};
+        use crate::diag::FileId;
         use std::collections::HashSet;
         use std::path::PathBuf;
 
@@ -9370,7 +9370,7 @@ mod tests {
         fn no_prelude_does_not_suppress_explicit_shadow_lint() {
             // `#no_prelude` (D174, Plan 107) отключает auto-import — visibility set пуст,
             // shadowing невозможен → no warning естественно.
-            let mut m = parse("#no_prelude\nmodule myapp\ntype Option { foo int }\n");
+            let m = parse("#no_prelude\nmodule myapp\ntype Option { foo int }\n");
             // НЕ добавляем fake prelude peer'ы — `no_prelude` исключает их.
             let ws = lint_prelude_shadow(&m);
             assert!(ws.is_empty(), "no_prelude → no prelude visibility, no warning");

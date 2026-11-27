@@ -367,7 +367,6 @@ impl<'a> ConstFnEvaluator<'a> {
         current_fn: &str,
         depth: usize,
     ) -> Result<ConstValue, Diagnostic> {
-        use crate::ast::{BinOp, UnOp};
         match &expr.kind {
             ExprKind::IntLit(v) => Ok(ConstValue::Int(*v)),
             ExprKind::FloatLit(v) => Ok(ConstValue::Float(*v)),
@@ -1017,25 +1016,25 @@ fn is_unresolved_generic_param(t: &crate::ast::TypeRef) -> bool {
     !known
 }
 
-/// Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1: size_of[T]()/align_of[T]() — type layout.
-///
-/// V4.0 supported только primitives (hardcoded 64-bit ABI).
-/// V4.4 Ф.1 (Plan 114.4.4.6 followup) расширил поддержку до composite
-/// types БЕЗ TypeDecl lookup:
-/// - **Tuples** `(T1, T2, ..)` — C struct layout: fields в порядке,
-///   natural alignment, tail-pad up to max field alignment.
-/// - **FixedArray** `[N]T` — `N * size_of(T)` с element alignment.
-/// - **Array** `[]T` — slice ABI = pointer + length = 16 bytes.
-/// - **Unit** `()` — size=0, align=1 (no storage).
-/// - **Readonly** `readonly T` — same layout as T.
-///
-/// `is_align`: true → return alignment, false → return size.
-///
-/// **Still V2** (требует TypeDecl access):
-/// - Named records `Type { f1, f2, .. }` → followup
-///   `[M-114.4.4-trampoline-named-types]`.
-/// - Named sum-types (tagged unions) → same followup.
-/// - Generic instantiations `Option[int]` etc — same followup.
+// Plan 114.4.4 Ф.5 V4 + V4.4 Ф.1: size_of[T]()/align_of[T]() — type layout.
+//
+// V4.0 supported только primitives (hardcoded 64-bit ABI).
+// V4.4 Ф.1 (Plan 114.4.4.6 followup) расширил поддержку до composite
+// types БЕЗ TypeDecl lookup:
+// - **Tuples** `(T1, T2, ..)` — C struct layout: fields в порядке,
+//   natural alignment, tail-pad up to max field alignment.
+// - **FixedArray** `[N]T` — `N * size_of(T)` с element alignment.
+// - **Array** `[]T` — slice ABI = pointer + length = 16 bytes.
+// - **Unit** `()` — size=0, align=1 (no storage).
+// - **Readonly** `readonly T` — same layout as T.
+//
+// `is_align`: true → return alignment, false → return size.
+//
+// **Still V2** (требует TypeDecl access):
+// - Named records `Type { f1, f2, .. }` → followup
+//   `[M-114.4.4-trampoline-named-types]`.
+// - Named sum-types (tagged unions) → same followup.
+// - Generic instantiations `Option[int]` etc — same followup.
 thread_local! {
     /// Plan 114.4.4 V4.6 M1: thread-local TypeDecl registry для resolving
     /// Named user-defined types inside `size_of[T]()` / `align_of[T]()`
@@ -2574,7 +2573,7 @@ fn walk_children(
     ev: &mut OwnedEvaluator,
     errors: &mut Vec<Diagnostic>,
 ) {
-    use crate::ast::{ArrayElem, CallArg, ElseBranch, MapElem, MatchArm};
+    use crate::ast::{ArrayElem, CallArg, ElseBranch, MapElem};
     match &mut e.kind {
         ExprKind::IntLit(_) | ExprKind::FloatLit(_) | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_) | ExprKind::CharLit(_) | ExprKind::UnitLit
@@ -2838,7 +2837,7 @@ impl<'a, 'b> ValidateCtx<'a, 'b> {
                 self.check_runtime_let_to_const_fn(&d.value, d.value.span);
                 self.visit_expr(&d.value);
             }
-            Stmt::Const(d) => {
+            Stmt::Const(_) => {
                 // const ALIAS = const_fn — handled by rewriter alias map.
                 // Don't recurse — Ident на const fn в const RHS is OK.
             }
