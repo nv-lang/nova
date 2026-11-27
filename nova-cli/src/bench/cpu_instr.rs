@@ -48,7 +48,6 @@ pub mod linux {
     const PERF_COUNT_HW_INSTRUCTIONS: u64 = 1;
     // Flags bits (packed in PerfEventAttr.flags):
     const PERF_EVENT_ATTR_DISABLED: u64 = 1 << 0;
-    const PERF_EVENT_ATTR_INHERIT: u64 = 1 << 1;
     const PERF_EVENT_ATTR_EXCLUDE_KERNEL: u64 = 1 << 5;
     const PERF_EVENT_ATTR_EXCLUDE_HV: u64 = 1 << 6;
 
