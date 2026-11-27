@@ -76,11 +76,14 @@ for toml in "$PKGS_ROOT"/nova-*/nova.toml; do
     # it under full-suite contention, which read as a package FAIL.
     # nova-compress: src/worker/main.nv is a fail-closed BINARY entry (exit 71
     # without the worker protocol on stdin), not a test -- the package gate
-    # runs the *_test files; a bare `nova test src` would execute the worker
-    # as a CU and read its designed exit as a failure.
-    filt=""
-    [ "$pkg" = "nova-compress" ] && filt="--filter _test"
-    out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 $filt 2>&1) || rc=$?
+    # runs the *_test files explicitly; a bare `nova test src` would execute
+    # the worker as a CU and read its designed exit as a failure, while
+    # --filter matches test NAMES, not paths. Use the gate's own form.
+    if [ "$pkg" = "nova-compress" ]; then
+        out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src/*_test.nv --timeout 600 2>&1) || rc=$?
+    else
+        out=$(cd "$pkg_dir" && timeout 900 "$BIN" test src --timeout 600 2>&1) || rc=$?
+    fi
     if [ "$rc" -eq 124 ]; then
         echo "  FAIL $pkg (СНЯТ ПРЕДЕЛОМ 900с: вердикта нет — тест-раннер убит, предмет не судился)" >&2
         failed=$((failed+1)); continue
