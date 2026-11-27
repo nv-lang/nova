@@ -157,3 +157,4 @@ novac/src/sem/file_shape.nv # task 274 (targeted Door A landing gate repairs, re
 novac/src/sem/protocols.nv # task 274 (targeted Door A landing gate repairs, registry 2015-2017; seed release follow-up)
 novac/src/check/index_typing.nv # task 984 (refused call read in any lattice position is one diagnostic; seed re-pins at the next Carina release)
 novac/src/check/consume_spawn.nv # task 274 (E12 wave: the consume_flow.nv split by the 1000-line rule -- spawn consume flow and nested-body kind questions; seed re-pins at the next Carina release)
+novac/src/pipeline/handed_free_test.nv # task 274 (registry 2044: the task #14 handed-body carrier outlived its wave -- `()` is legal since E12 UnitLit; carrier `ro u = 1 +`; seed re-pins at the next Carina release)
