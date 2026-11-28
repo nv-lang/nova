@@ -16,7 +16,7 @@ import std.os.{env}
 import std.time.duration
 
 fn quick() Time -> () {
-    (100).to_millis().sleep()
+    100.to_millis().sleep()
     println("orphan ran")
 }
 
