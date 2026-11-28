@@ -3253,6 +3253,31 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
     bool     _ods_early_done = false;
     uint64_t _ods_mark = uv_hrtime();
     int      _ods_last = -1;
+    /* [221.1 #2046, owner word 2026-11-28] ORPHAN-DRAIN GIVE-UP. The stops
+     * above only reach fibers that can observe the cancel (a safepoint, a
+     * registered stop_cb); a detached fiber blocked in a raw extern "C"
+     * call, or one lost to a scheduling race, never does — and the drain
+     * then waits forever (carrier: hub_test wide run, 40/40 green, dump
+     * `pre-exit-drain-10s-remote-4`, zero pending handles on the stuck
+     * fibers). Owner's semantics: progress = the remote count DECREASING;
+     * if it has not decreased for NOVA_ORPHAN_DRAIN_GIVEUP_SECS seconds
+     * (default 60; 0 restores wait-forever), print a loud stderr line,
+     * write a final state dump through the existing watchdog path and end
+     * the process with 70 (EX_SOFTWARE) via nova_process_exit_now — a plain
+     * break would only move the hang into nova_runtime_shutdown's worker
+     * join, which a fiber stuck inside mco_resume never lets finish. The
+     * real main exit code is not computed yet at this point (the drain runs
+     * before main returns), so the give-up code is fixed and loud instead.
+     * Gated on the ORPHAN scope like the stops above: main's own scope has
+     * structured children and keeps its existing semantics. */
+    static int _gu_secs = -1;   /* parsed once; the drain runs on main only */
+    if (_gu_secs < 0) {
+        const char* _gu_env = getenv("NOVA_ORPHAN_DRAIN_GIVEUP_SECS");
+        int _v = (_gu_env && _gu_env[0]) ? atoi(_gu_env) : 60;
+        _gu_secs = (_v >= 0) ? _v : 60;
+    }
+    uint64_t _gu_mark = uv_hrtime();
+    int      _gu_last = -1;
     {
         const char* _pxwd_env = getenv("NOVA_WATCHDOG_DUMP_SECS");
         if (_pxwd_env && _pxwd_env[0]) {
@@ -3267,6 +3292,27 @@ static inline void nova_supervised_drain_main_scope(NovaFiberQueue* q) {
              * fiber'ы running на workers. Wait для них. */
             int remote = (int)nova_aint_load(&q->pending_remote);
             if (remote == 0) break;
+            /* [221.1 #2046] give-up check — see the banner at the top. */
+            if (_ods_is_orphan && _gu_secs > 0) {
+                if (remote != _gu_last) {
+                    _gu_last = remote;          /* progress: re-arm */
+                    _gu_mark = uv_hrtime();
+                } else if ((uv_hrtime() - _gu_mark) / 1000000000ULL
+                           >= (uint64_t)_gu_secs) {
+                    fprintf(stderr,
+                        "nova: pre-exit orphan drain: %d detached fiber(s) still "
+                        "running after %ds without progress — giving up, exit 70 "
+                        "(EX_SOFTWARE); NOVA_ORPHAN_DRAIN_GIVEUP_SECS=0 restores "
+                        "wait-forever; state dump follows\n",
+                        remote, _gu_secs);
+                    fflush(stderr);
+                    char _gu_buf[80];
+                    snprintf(_gu_buf, sizeof(_gu_buf),
+                             "pre-exit-giveup-remote-%d", remote);
+                    nova_runtime_dump_state(_gu_buf);
+                    nova_process_exit_now(70);
+                }
+            }
             /* [221.1 #791] orphan-drain stop -- see the banner above.
              * [item 19 root 2] the stop used to fire ONCE. A fiber that
              * parks in a worker scope AFTER that single fan-out walk (it
