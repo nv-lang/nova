@@ -1,0 +1,25 @@
+module hello.d5
+
+import std.time.duration
+
+fn session(id int) Time -> () {
+    supervised {
+        spawn {
+            // retry-loop child: parks only via sleep inside the NESTED scope
+            mut n = 0
+            while n < 100000000 {
+                (5).to_millis().sleep()
+                n += 1
+            }
+        }
+        spawn {
+            (100).to_millis().sleep()
+        }
+    }
+}
+
+fn main() Io Time Detach -> () {
+    detach { session(0) }
+    detach { session(1) }
+    println("main done")
+}

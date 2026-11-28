@@ -1,0 +1,24 @@
+module hello.d4
+
+import std.time.duration
+import std.concurrency.nvchan.{Chan}
+
+fn session(id int) Time -> () {
+    ro ch = Chan[int].new(1)
+    supervised {
+        spawn {
+            ro v = ch.rx.recv()
+        }
+        spawn {
+            (100).to_millis().sleep()
+        }
+    }
+}
+
+fn main() Io Time Detach -> () {
+    detach { session(0) }
+    detach { session(1) }
+    detach { session(2) }
+    detach { session(3) }
+    println("main done")
+}

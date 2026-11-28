@@ -1,0 +1,8 @@
+module hello.d2
+
+import std.time.duration
+
+fn main() Io Time Detach -> () {
+    detach { (100).to_millis().sleep() }
+    println("main done")
+}

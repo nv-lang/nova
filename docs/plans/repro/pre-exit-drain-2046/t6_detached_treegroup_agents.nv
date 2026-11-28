@@ -1,0 +1,40 @@
+module hello.d6
+
+import std.time.duration
+import std.os.{Command, Tree}
+
+#cfg(target_os = "windows")
+fn agent() -> Command => Command.new("ping").arg("-n").arg("20").arg("127.0.0.1")
+
+#cfg(!target_os = "windows")
+fn agent() -> Command => Command.new("sleep").arg("20")
+
+fn session(id int) Proc Time -> () {
+    supervised {
+        spawn {
+            // an "agent": long-lived Tree.Group child, waited without timeout;
+            // the pre-exit orphan cancel must interrupt the wait and the
+            // scope cleanup must kill the child
+            match agent().tree(Tree.Group).start() {
+                Ok(consume child) => {
+                    match child.wait() {
+                        Ok(st) => ()
+                        Err(e) => ()
+                    }
+                }
+                Err(e) => ()
+            }
+        }
+        spawn {
+            (100).to_millis().sleep()
+        }
+    }
+}
+
+fn main() Proc Io Time Detach -> () {
+    detach { session(0) }
+    detach { session(1) }
+    detach { session(2) }
+    detach { session(3) }
+    println("main done")
+}

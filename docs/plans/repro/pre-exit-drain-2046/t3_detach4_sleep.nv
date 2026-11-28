@@ -1,0 +1,15 @@
+module hello.d3
+
+import std.time.duration
+
+fn worker(id int) Time -> () {
+    (100).to_millis().sleep()
+}
+
+fn main() Io Time Detach -> () {
+    detach { worker(0) }
+    detach { worker(1) }
+    detach { worker(2) }
+    detach { worker(3) }
+    println("main done")
+}
