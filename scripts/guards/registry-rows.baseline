@@ -1005,7 +1005,7 @@
 #   overload'om, kotoryy ne vyzyvaetsya), 1101 (`5 ?? 7` pechataet 7).
 #   Baza podnyata TOY ZHE pravkoy, chto i sliyanie: inache khrapovik otstayot i
 #   molcha razreshaet poteryat' stol'ko zhe strok.
-# [SNYATO 2026-09-15 pri rezolve: vtoraya stroka `gaps=`, strazh chital pervuyu] gaps=174-208,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
+# [SNYATO 2026-09-15 pri rezolve: vtoraya stroka `gaps=`, strazh chital pervuyu] gaps=174-208,2045,210-215,653-654,743,1062,1074,1084,1089,1093-1097,1099-1101
 # 2026-09-14 (integrator): rows -> 1046, max bez izmeneniy (1098), gaps -= 1097.
 #   Stroka 1097 PRIEKHALA ot okna 283 -- imya funktsii v C teryaet svoy modul',
 #   kogda vypolnyayutsya TRI usloviya srazu (dva modulya s odinakovoy
@@ -2539,7 +2539,7 @@ stale_gaps=0
 # arrive from main. The three new findings (map-literal root, live backtick
 # slots, tag empty-args typing) wait for the integrator's numbers as №TBD
 # rows and are invisible to the numbered-row count.
-gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839,1841-1849,1851-1855,1873,1890-1891
+gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,1658-1660,1666-1667,1671-1672,1686-1687,1698,1820-1822,1832-1839,1841-1849,1851-1855,1873,1890-1891,2045
 # 2026-10-09, task #50: row 1870 added (number from the integrator); 1869 is task #43's row, not in this branch -> gaps=; rows 1775->1776, max 1868->1870.
 # 2026-10-08, task #50: row 1868 added (number from the integrator); 1867 is another task's number, not in this branch -> gaps=. rows 1774->1775, max 1866->1868.
 # 2026-10-08, task #46 merging main d69bb9250 (task #47 in: 1831 closed, row 1864): main 1770 + rows 1857, 1860, 1867 = 1773, max 1864 -> 1867; 1857 and 1860 leave gaps= (their rows land here), 1864 has its row, 1858-1859, 1862-1863 and 1865-1866 stay.
@@ -2585,8 +2585,8 @@ gaps=174-208,210-215,653-654,743,1062,1103,1210-1211,1356,1497,1647,1650,1652,16
 # 2026-11-23, landing of task 320 (wake-loss) + runtime-diagnostic cleanup: rows 2023 (task 320 wake-loss; its text also carries the OPEN stolen-work dispatch window) and 2024 (driver sleep close_cb state UAF) numbered by the integrator; rows 1929->1931, max 2020->2024. 2021-2022 were declared gaps= for the E2-b3 convoy; the convoy arrives on top of this landing with its rows 2021/2022 and clears the gap in the same commit; rows 1931->1933 (2021, 2022), max stays 2024.
 # 2026-11-22, door A landing, plan B: row 2020 (novac-gate job-limit vs push-tier budget, both attempts measured)
 # 2026-11-22, convoy e11-2012-e2b3: row 2021 (oracle accepts flat_map_err with an int body, executor wave E2-b3), row 2022 (mirror-sync green no-op, integrator finding at the door A landing)
-rows=1953
-max=2044
+rows=1954
+max=2046
 
 # 2026-11-26, row 2035 filed by the integrator (local GC rebuild lacks LARGE_CONFIG,
 #   diverges from the release artifact; found by the release window answering Canopus):
@@ -2623,3 +2623,8 @@ max=2044
 #   invalidated by a language wave: handed_free task #14 used `ro u = ()`, E12
 #   made () legal; fixed in the same commit by the Carina/fix threads):
 #   rows 1952 -> 1953, max 2043 -> 2044.
+
+# 2026-11-28, row 2046 filed by the integrator (pre-exit-drain hang on 0.1.8
+#   Linux, Canopus carrier; hotfix wave 0.1.9 by the owner's word). Hole 2045
+#   is lawful: reserved on integrate/warn-cleanup (CP1251 test row).
+#   rows 1953 -> 1954, max 2044 -> 2046, gaps += 2045.
