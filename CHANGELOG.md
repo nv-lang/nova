@@ -13,6 +13,89 @@ its own notes in `docs/dev/`.
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-28
+
+Hotfix release over 0.1.8. It fixes a runtime defect that could hang a
+program: sleeps losing their wake-up in the driver loop, seen as a stalled
+test run or an exit that never finishes. It also bounds the pre-exit drain:
+a hung exit now ends with a diagnostic instead of waiting forever. Oracle
+compiles to C and then to a native binary; there is no interpreter. This is
+an early alpha: the language surface and APIs may change, and compatibility
+is not guaranteed.
+
+### Fixed
+
+Runtime:
+
+- **Breaking:** the pre-exit drain waited forever for orphan fibers that
+  could not be cancelled or woken. It now gives up after 60 seconds without
+  progress: the runtime prints a line to stderr, writes a final state dump,
+  and exits with code 70 (`EX_SOFTWARE`). A hung exit now ends with code 70
+  after about a minute instead of hanging. Set
+  `NOVA_ORPHAN_DRAIN_GIVEUP_SECS=0` to restore the previous unbounded wait
+  (row 2046).
+- A sleep could lose its wake-up in the driver loop: the timer was armed and
+  overdue, but the driver thread kept sleeping in `epoll_pwait` and never
+  fired it, so a `supervised` scope or a test run stalled mid-way, and
+  detached fibers sleeping the same way made the pre-exit drain wait forever
+  (row 2046). The driver now kicks itself awake after each job drain, and a
+  watchdog warns when a timer stays overdue for more than 5 seconds inside a
+  poll.
+
+### Upgrading
+
+- If your tooling kills hung processes itself, teach it that exit code 70
+  from a Nova program now means "pre-exit drain gave up; a state dump and a
+  stderr line were produced" and is distinct from test failures. To keep the
+  old unbounded wait, set `NOVA_ORPHAN_DRAIN_GIVEUP_SECS=0`.
+
+### Known issues
+
+- Detach followed by `consume` inside a `while` loop miscompiles into a
+  runaway loop. Do not combine `detach` with `consume` in a loop body until
+  this is fixed (row 2047).
+- Calling a `mut` method on a `ro` parameter compiles but silently does
+  nothing: the mutation is lost without a diagnostic. Declare the parameter
+  `mut` (row 2040).
+- A `parallel for` in the same `supervised` scope as an infinite `spawn`
+  monitor can starve: none of its fibers start. Start the workers with an
+  explicit `spawn` in a loop instead (row 2041).
+- A punned consume field in a record literal (`Sess { g }`) does not move
+  ownership: the local's `@cleanup` still runs at scope exit even though the
+  value is stored in the struct, releasing the resource early. Move the
+  value through a function with a consume parameter instead. Whether the pun
+  should move is an open spec question (row 2039).
+- A fixed array is not accepted where a slice is expected, also when a
+  function returns `[N]T` and the result is passed straight to a `[]T`
+  parameter; the compiler refuses with `E7301`. Copy the elements into a new
+  slice (row 1983, conversion half open).
+- A name re-bound inside a block by an initializer that reads the same name
+  gets a zeroed value instead of the old one: with `ro x = 7` outside,
+  `ro x = x + 1` inside the block gives 1, not 8. Use a new name (row 2018).
+- The `on_child_fail` handler of a supervisor receives an empty failure
+  message when a child fails. Do not read the message there (row 2019).
+- A `libs` array in the `[ffi]` section of `nova.toml` is ignored when it is
+  written on several lines; the build fails with `undefined symbol` without
+  naming the library. Write the array on one line (row 1055).
+- A user type whose name equals an internal type of the standard library
+  (for example `Slot`) breaks the build of the standard library itself, and
+  the errors point into its files. Rename the type (row 1030).
+- `nova test --filter <name>` that selects no test prints `PASS: 0 FAIL: 0`
+  and exits with code 0. Check the count in the summary (row 1040).
+- Function types are still compared permissively in some places (closure
+  literal, `never` tail, generic parameter, erased piece): the build fails
+  later in the generated C (rows 1915-1918).
+- A file operation, a blocking C call, or a direct `extern "C"` call that
+  outlives the time limit of its `supervised` scope cannot be interrupted,
+  and later waits of the same scope are unbounded. Keep such calls shorter
+  than the limit, or run them in their own scope (row 2031).
+- Tests that measure time can fail or time out under machine load; not seen
+  in 300 runs after the 0.1.7 collector fix, early timer wake-up not ruled
+  out (row 2026).
+- Twelve tests of the release source fail on Windows with the Clang
+  toolchain, and `p1418_exit_process_immediate` does not compile with MSVC
+  (`C2099`); observations carried from 0.1.7, not re-measured since.
+
 ## [0.1.8] - 2026-11-27
 
 Hotfix release over 0.1.7. It fixes the two regressions of 0.1.7: unbounded
