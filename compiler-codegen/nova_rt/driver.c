@@ -27,12 +27,19 @@
 
 NovaDriver _nova_driver = {0};
 
+/* [221.1 #2046] driver-global list of armed sleeps for the overdue-timer
+ * watchdog — same insert/unlink funnel as the per-scope armed list,
+ * driver-thread only, no locks. Defined next to _nova_driver so both the
+ * watchdog (below) and the arm/unlink helpers see it. */
+static NovaSleepState* _nova_driver_wd_head = NULL;
+
 /* ── Forward declarations (file-private) ─────────────────────────── */
 static void _nova_driver_main(void* arg);
 static void _nova_driver_job_async_cb(uv_async_t* h);
 static void _nova_driver_shutdown_async_cb(uv_async_t* h);
-static void _nova_driver_drain_jobs(void);
+static int  _nova_driver_drain_jobs(void);
 static void _nova_driver_process_job(NovaDriverJob* job);
+static void _nova_driver_overdue_timer_watch(void);
 
 /* ── Public API ──────────────────────────────────────────────────── */
 
@@ -182,8 +189,32 @@ static void _nova_driver_main(void* arg) {
 
         /* Drain job queue. Also drained от job_async_cb — this is backup
          * for jobs submitted after async fired но before we returned to
-         * top of loop. */
-        _nova_driver_drain_jobs();
+         * top of loop.
+         *
+         * [221.1 #2046] LOST-WAKE BELT-AND-BRACES. Live-carrier evidence
+         * (conserved hub_test, 2026-11-28): an ARM_SLEEP processed by THIS
+         * post-uv_run drain leaves a timer in the heap whose deadline the
+         * NEXT uv_run's poll must honor — every static reading of the loop
+         * says it does, yet the carrier sat in epoll_pwait with a timer
+         * overdue by 34+ s and never fired it (the micro-window resisted
+         * code-level isolation; the empirical fact stood). Cheap guarantee
+         * instead of a proof: if this drain processed anything and the
+         * timer heap is non-empty, kick job_async once. The kick is
+         * coalesced by libuv (uv_async_send is idempotent while pending),
+         * so at most one extra no-op iteration per drain — no storm; the
+         * next iteration's poll then recomputes its timeout with the armed
+         * timer unconditionally. */
+        int drained = _nova_driver_drain_jobs();
+        if (drained > 0) {
+            /* Unconditional on purpose (cheap): libuv coalesces uv_async_send
+             * while pending, and the kicked iteration's async_cb drains an
+             * empty queue (drained == 0 → no further kick) — one no-op
+             * iteration at most, no storm. */
+            (void)uv_async_send(&_nova_driver.job_async);
+        }
+
+        /* [221.1 #2046] overdue-timer watchdog — see the function. */
+        _nova_driver_overdue_timer_watch();
     }
 
     /* Shutdown phase: close all active handles, run loop until clean. */
@@ -211,7 +242,7 @@ static void _nova_driver_main(void* arg) {
 
 static void _nova_driver_job_async_cb(uv_async_t* h) {
     (void)h;
-    _nova_driver_drain_jobs();
+    (void)_nova_driver_drain_jobs();
 }
 
 static void _nova_driver_shutdown_async_cb(uv_async_t* h) {
@@ -222,7 +253,7 @@ static void _nova_driver_shutdown_async_cb(uv_async_t* h) {
 
 /* ── Job processing ──────────────────────────────────────────────── */
 
-static void _nova_driver_drain_jobs(void) {
+static int _nova_driver_drain_jobs(void) {
     /* Move entire queue under lock, then process outside lock (allows new
      * submissions during processing — they go to new queue, picked up next
      * iteration). */
@@ -232,6 +263,7 @@ static void _nova_driver_drain_jobs(void) {
     _nova_driver.jobs.tail = NULL;
     nova_mutex_unlock(&_nova_driver.jobs.mu);
 
+    int n = 0;
     while (job) {
         NovaDriverJob* next = job->next;
         _nova_driver_process_job(job);
@@ -241,6 +273,41 @@ static void _nova_driver_drain_jobs(void) {
          * separately while fiber parked. */
         free(job);
         job = next;
+        n++;
+    }
+    return n;
+}
+
+/* [221.1 #2046] Overdue-timer watchdog. The №2046 carrier sat with a sleep
+ * timer overdue by 34+ s in the driver's timer heap while the driver thread
+ * blocked in epoll — a lost poll-deadline/wake, invisible until someone read
+ * the heap by hand. This check runs on the driver thread once per main-loop
+ * iteration (after uv_run + drain): if the earliest timer is more than
+ * NOVA_DRIVER_OVERDUE_WARN_MS (5000) past due, print one warning line
+ * (rate-limited to one per 5 s) with due/now/nelts so the class is caught
+ * the moment it happens instead of at a 42-minute suite timeout. Diagnostic
+ * only — no state is changed. */
+#define NOVA_DRIVER_OVERDUE_WARN_MS 5000ull
+static void _nova_driver_overdue_timer_watch(void) {
+    if (!_nova_driver_wd_head) return;
+    uv_update_time(&_nova_driver.loop);
+    uint64_t now = uv_now(&_nova_driver.loop);
+    uint64_t min_due = 0;
+    unsigned ntimers = 0;
+    for (NovaSleepState* st = _nova_driver_wd_head; st; st = st->wd_next) {
+        ntimers++;
+        if (min_due == 0 || st->wd_due_ms < min_due) min_due = st->wd_due_ms;
+    }
+    if (min_due + NOVA_DRIVER_OVERDUE_WARN_MS < now) {
+        static uint64_t _last_warn_ms = 0;
+        if (now - _last_warn_ms >= NOVA_DRIVER_OVERDUE_WARN_MS) {
+            _last_warn_ms = now;
+            fprintf(stderr,
+                    "nova: driver: overdue sleep timer: due=%llu ms, now=%llu ms, "
+                    "overdue=%llu ms, timers=%u — a driver-loop wake was lost (#2046)\n",
+                    (unsigned long long)min_due, (unsigned long long)now,
+                    (unsigned long long)(now - min_due), ntimers);
+        }
     }
 }
 
@@ -264,6 +331,16 @@ static void _nova_driver_arm_list_insert(NovaSleepState* st) {
 
 /* O(1) unlink — driver-thread only. */
 static void _nova_driver_arm_list_unlink(NovaSleepState* st) {
+    /* [221.1 #2046] global watchdog list unlink — tolerant (wd_pprev is
+     * NULL when the arm never reached the global insert). Every exit of an
+     * armed timer funnels through this function, so the global list stays
+     * exact. */
+    if (st->wd_pprev) {
+        *(st->wd_pprev) = st->wd_next;
+        if (st->wd_next) st->wd_next->wd_pprev = st->wd_pprev;
+        st->wd_pprev = NULL;
+        st->wd_next = NULL;
+    }
     if (!st->pprev_in_scope) return;  /* already unlinked or never inserted */
     *(st->pprev_in_scope) = st->next_in_scope;
     if (st->next_in_scope) {
@@ -311,6 +388,17 @@ static void _nova_driver_handle_arm_sleep(NovaSleepState* st, uint64_t ms) {
         nova_sched_wake(st->scope, st->slot);
         return;
     }
+
+    /* [221.1 #2046] global watchdog list: record the due time (uv_now was
+     * just refreshed by nova_timer_start_rel) and link globally. Tolerant
+     * unlink lives in _nova_driver_arm_list_unlink — every exit of an armed
+     * timer funnels through it (close_cb on fire/cancel, the failure path
+     * above), so the global list mirrors the per-scope one exactly. */
+    st->wd_due_ms = uv_now(&_nova_driver.loop) + ms;
+    st->wd_pprev = &_nova_driver_wd_head;
+    st->wd_next = _nova_driver_wd_head;
+    if (_nova_driver_wd_head) _nova_driver_wd_head->wd_pprev = &st->wd_next;
+    _nova_driver_wd_head = st;
 }
 
 /* Timer fired naturally (sleep duration elapsed). Driver thread. */

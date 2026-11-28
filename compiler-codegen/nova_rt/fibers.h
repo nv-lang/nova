@@ -4592,6 +4592,14 @@ typedef struct NovaSleepState {
      * close_cb compares scope->fibers[slot] with this to detect slot reuse
      * or scope/slot mismatch (wrong fiber woken). */
     mco_coro*                 expected_co;
+    /* [221.1 #2046] driver-global armed-sleep list for the overdue-timer
+     * watchdog (driver.c) — separate from the per-cancel-scope list above;
+     * driver-thread only. wd_due_ms is captured at arm time (uv_now + ms)
+     * so the watchdog never reads libuv-private timer internals (the timer
+     * heap and QUEUE are not portable public API). */
+    struct NovaSleepState*    wd_next;
+    struct NovaSleepState**   wd_pprev;   /* O(1) unlink, same idiom as above */
+    uint64_t                  wd_due_ms;
 } NovaSleepState;
 
 /* Forward-decl close_cb для использования в timer_cb / stop_cb. */
