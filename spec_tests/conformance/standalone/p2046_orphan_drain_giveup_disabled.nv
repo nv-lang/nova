@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// EXPECT_STDOUT main done
+// EXPECT_STDOUT orphan ran
+// EXPECT_TIMEOUT_MS 30000
+//
+// Registry 221.1 #2046, second arm: NOVA_ORPHAN_DRAIN_GIVEUP_SECS=0 restores
+// the pre-fix wait-forever semantics, and a NORMAL drain must be unaffected
+// by the give-up machinery — the detached 100 ms fiber is waited out, runs
+// to completion ("orphan ran" prints during the drain) and the process
+// exits 0 on its own. Guards against the give-up firing on a healthy drain
+// (progress re-arms the timer) and against env=0 breaking the exit path.
+
+module standalone.p2046_orphan_drain_giveup_disabled
+
+import std.os.{env}
+import std.time.duration
+
+fn quick() Time -> () {
+    (100).to_millis().sleep()
+    println("orphan ran")
+}
+
+fn main() Io Os Time Detach -> () {
+    match env("NOVA_ORPHAN_DRAIN_GIVEUP_SECS", "0") {
+        Ok(_) => ()
+        Err(e) => panic("set env failed")
+    }
+    detach { quick() }
+    println("main done")
+}
